@@ -1,0 +1,81 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "kicad",
+  "version": "8.99",
+  "license": "GPL-2.0+",
+  "dependencies": [
+    "boost-algorithm",
+    "boost-bimap",
+    "boost-filesystem",
+    "boost-functional",
+    "boost-iterator",
+    "boost-locale",
+    "boost-optional",
+    "boost-property-tree",
+    "boost-ptr-container",
+    "boost-random",
+    "boost-range",
+    "boost-test",
+    "boost-uuid",
+    "cairo",
+    "wxwidgets-33",
+    "glew",
+    "curl",
+    {
+      "name": "gettext",
+      "features": [ "tools" ],
+      "host": true
+    },
+    "harfbuzz",
+    "glm",
+    {
+      "name": "opencascade",
+      "features": [ "rapidjson" ]
+    },
+    "opengl",
+    "python3",
+    "openssl",
+    {
+      "name": "sqlite3",
+      "features": [ "fts5", "fts4", "fts3", "rtree", "session" ]
+    },
+    "icu",
+    "ngspice",
+    "wxpython-33",
+    {
+      "name": "libgit2",
+      "features": [ "ssh", "winhttp" ]
+    },
+    "nng",
+    "protobuf",
+    "zstd"
+  ],
+  "overrides": [
+    {
+      "name": "glm",
+      "version": "0.9.9.8#2",
+      "$comment": "Pinned due to bad vcpkg port updating to a non-real version"
+    },
+    {
+      "name": "python3",
+      "version": "3.11.5#0"
+    },
+    {
+      "name": "wxwidgets-33",
+      "version": "3.3.0#3"
+    },
+    {
+      "name": "wxpython-33",
+      "version": "4.2.3#1"
+    },
+    {
+      "name": "ngspice",
+      "version": "44#1"
+    },
+    {
+      "name": "protobuf",
+      "version": "3.21.12#4",
+      "$comment": "Pinned until compat in kicad is improved"
+    }
+  ]
+}

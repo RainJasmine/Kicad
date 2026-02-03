@@ -1,0 +1,12 @@
+# Add all the warnings to the files
+if( COMPILER_SUPPORTS_WARNINGS )
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${WARN_FLAGS_CXX}")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${WARN_FLAGS_C}")
+endif()
+
+include_directories(
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/3d-viewer
+)
+
+add_subdirectory( 3d )

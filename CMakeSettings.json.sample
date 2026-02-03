@@ -1,0 +1,62 @@
+{
+  "environments": [
+    {
+      "BuildDir": "${workspaceRoot}\\build",
+      "InstallDir": "${workspaceRoot}\\build\\install"
+    },
+    {
+      "environment": "vcpkg",
+      "VcPkgDir": "D:/vcpkg/"
+    }
+  ],
+  "configurations": [
+    {
+      "name": "x64-Debug",
+      "generator": "Ninja",
+      "configurationType": "Debug",
+      "inheritEnvironments": [ "msvc_x64_x64", "vcpkg" ],
+      "buildRoot": "${env.BuildDir}\\${name}",
+      "installRoot": "${env.InstallDir}\\${name}",
+      "cmakeCommandArgs": "",
+      "buildCommandArgs": "-v",
+      "ctestCommandArgs": "",
+      "variables": [
+        {
+          "name": "KICAD_BUILD_QA_TESTS",
+          "value": "False",
+          "type": "BOOL"
+        },
+        {
+          "name": "KICAD_WIN32_DPI_AWARE",
+          "value": "ON",
+          "type": "BOOL"
+        }
+      ],
+      "cmakeToolchain": "${env.VcPkgDir}/scripts/buildsystems/vcpkg.cmake"
+    },
+    {
+      "name": "x64-Release",
+      "generator": "Ninja",
+      "configurationType": "RelWithDebInfo",
+      "inheritEnvironments": [ "msvc_x64_x64", "vcpkg" ],
+      "buildRoot": "${env.BuildDir}\\${name}",
+      "installRoot": "${env.InstallDir}\\${name}",
+      "cmakeCommandArgs": "",
+      "buildCommandArgs": "-v",
+      "ctestCommandArgs": "",
+      "variables": [
+        {
+          "name": "KICAD_BUILD_QA_TESTS",
+          "value": "False",
+          "type": "BOOL"
+        },
+        {
+          "name": "KICAD_WIN32_DPI_AWARE",
+          "value": "ON",
+          "type": "BOOL"
+        }
+      ],
+      "cmakeToolchain": "${env.VcPkgDir}/scripts/buildsystems/vcpkg.cmake"
+    }
+  ]
+}

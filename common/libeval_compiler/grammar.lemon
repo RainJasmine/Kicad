@@ -1,0 +1,222 @@
+/*
+    This file is part of libeval, a simple math expression evaluator
+
+    Copyright (C) 2017 Michael Geselbracht, mgeselbracht3@gmail.com
+    Copyright (C) 2019-2020 KiCad Developers, see AUTHORS.txt for contributors.
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+%token_type { LIBEVAL::T_TOKEN }
+%extra_argument { LIBEVAL::COMPILER* pEval }
+
+%type nt {LIBEVAL::TREE_NODE*}
+
+%nonassoc G_IDENTIFIER G_ASSIGN G_SEMCOL.
+%left G_COMMA.
+%left G_BOOL_AND.
+%left G_BOOL_OR.
+%left G_BOOL_XOR.
+%nonassoc G_LESS_THAN G_GREATER_THAN G_LESS_EQUAL_THAN G_GREATER_EQUAL_THAN G_EQUAL G_NOT_EQUAL.
+%right G_BOOL_NOT.
+%left G_PLUS G_MINUS.
+%left G_DIVIDE G_MULT.
+%nonassoc G_STRUCT_REF.
+%nonassoc G_UNIT.
+
+%include {
+#include <assert.h>
+#include <libeval_compiler/libeval_compiler.h>
+}
+
+%syntax_error {
+  pEval->parseError("Syntax error");
+}
+
+%parse_accept {
+  pEval->parseOk();
+}
+
+main ::= in.
+
+/* Allow multiple statements in input string: x=1; y=2 */
+in ::= stmt.
+in ::= in stmt.
+
+/* A statement can be empty, an expr or an expr followed by ';' */
+stmt ::= G_ENDS.
+stmt ::= nt(A) G_ENDS.                          { pEval->setRoot(A); }
+
+nt(A) ::= G_VALUE(B).
+{
+    A = newNode( pEval, TR_NUMBER, B.value );
+}
+
+nt(A) ::= G_VALUE(B) G_UNIT(C).
+{
+    A = newNode( pEval, TR_NUMBER, B.value );
+    A->leaf[0] = newNode( pEval, TR_UNIT, C.value );
+}
+
+nt(A) ::= G_STRING(B).
+{
+    A = newNode( pEval, TR_STRING, B.value );
+}
+
+nt(A) ::= G_IDENTIFIER(B).
+{
+    A = newNode( pEval, TR_IDENTIFIER, B.value );
+}
+
+nt(A) ::= nt(B) G_COMMA nt(C).
+{
+    A = newNode( pEval, TR_ARG_LIST );
+    A->leaf[0] = B;
+    A->leaf[1] = C;
+}
+
+nt(A) ::= nt(B) G_LESS_THAN nt(C).
+{
+    A = newNode( pEval, TR_OP_LESS );
+    A->leaf[0] = B;
+    A->leaf[1] = C;
+}
+
+nt(A) ::= nt(B) G_GREATER_THAN nt(C).
+{
+    A = newNode( pEval, TR_OP_GREATER );
+    A->leaf[0] = B;
+    A->leaf[1] = C;
+}
+
+nt(A) ::= nt(B) G_LESS_EQUAL_THAN nt(C).
+{
+    A = newNode( pEval, TR_OP_LESS_EQUAL );
+    A->leaf[0] = B;
+    A->leaf[1] = C;
+}
+
+nt(A) ::= nt(B) G_GREATER_EQUAL_THAN nt(C).
+{
+    A = newNode( pEval, TR_OP_GREATER_EQUAL );
+    A->leaf[0] = B;
+    A->leaf[1] = C;
+}
+
+nt(A) ::= nt(B) G_NOT_EQUAL nt(C).
+{
+    A = newNode( pEval, TR_OP_NOT_EQUAL );
+    A->leaf[0] = B;
+    A->leaf[1] = C;
+}
+
+
+nt(A) ::= nt(B) G_BOOL_AND nt(C).
+{
+    A = newNode( pEval, TR_OP_BOOL_AND );
+    A->leaf[0] = B;
+    A->leaf[1] = C;
+}
+
+nt(A) ::= nt(B) G_BOOL_OR nt(C).
+{
+    A = newNode( pEval, TR_OP_BOOL_OR );
+    A->leaf[0] = B;
+    A->leaf[1] = C;
+}
+
+nt(A) ::= G_BOOL_NOT nt(B).
+{
+    A = newNode( pEval, TR_OP_BOOL_NOT );
+    A->leaf[0] = B;
+}
+
+nt(A) ::= nt(B) G_PLUS nt(C).
+{
+    A = newNode( pEval, TR_OP_ADD );
+    A->leaf[0] = B;
+    A->leaf[1] = C;
+}
+
+nt(A) ::= G_PLUS nt(B).
+{
+    A = newNode( pEval, B->op, B->value );
+    A->leaf[0] = B->leaf[0];
+    A->leaf[1] = B->leaf[1];
+}
+
+
+nt(A) ::= G_MINUS nt(B).
+{
+    A = newNode( pEval, TR_OP_SUB );
+    A->leaf[0] = newNode( pEval, TR_NUMBER );
+    A->leaf[1] = B;
+}
+
+
+nt(A) ::= nt(B) G_MINUS nt(C).
+{
+    A = newNode( pEval, TR_OP_SUB );
+    A->leaf[0] = B;
+    A->leaf[1] = C;
+}
+
+nt(A) ::= nt(B) G_MULT nt(C).
+{
+    A = newNode( pEval, TR_OP_MUL );
+    A->leaf[0] = B;
+    A->leaf[1] = C;
+}
+
+nt(A) ::= nt(B) G_DIVIDE nt(C).
+{
+    A = newNode( pEval, TR_OP_DIV );
+    A->leaf[0] = B;
+    A->leaf[1] = C;
+}
+
+nt(A) ::= nt(B) G_EQUAL nt(C).
+{
+    A = newNode( pEval, TR_OP_EQUAL );
+    A->leaf[0] = B;
+    A->leaf[1] = C;
+}
+
+nt(A) ::= nt(B) G_STRUCT_REF nt(C).
+{
+    A = newNode( pEval, TR_STRUCT_REF );
+    A->leaf[0] = B;
+    A->leaf[1] = C;
+}
+
+nt(A) ::= G_PARENL nt(B) G_PARENR.
+{
+    A = newNode( pEval, B->op, B->value );
+    A->leaf[0] = B->leaf[0];
+    A->leaf[1] = B->leaf[1];
+}
+
+nt(A) ::= G_IDENTIFIER(F) G_PARENL nt(B) G_PARENR.
+{
+    A = newNode( pEval, TR_OP_FUNC_CALL );
+    A->leaf[0] = newNode( pEval, TR_IDENTIFIER, F.value);
+    A->leaf[1] = B;
+}
+
+nt(A) ::= G_IDENTIFIER(F) G_PARENL G_PARENR.
+{
+    A = newNode( pEval, TR_OP_FUNC_CALL );
+    A->leaf[0] = newNode( pEval, TR_IDENTIFIER, F.value);
+    A->leaf[1] = newNode( pEval, TR_NULL );
+}

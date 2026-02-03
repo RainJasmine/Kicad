@@ -1,0 +1,7 @@
+pytest
+cairosvg
+pytest-image-diff
+fastapi
+uvicorn
+pydantic
+numpy

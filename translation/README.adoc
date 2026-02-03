@@ -1,0 +1,77 @@
+= KiCad GUI translations
+
+This is the repository for the po files that is used for the GUI
+translations for KiCad.
+
+It is cmake equipped to conform with the rest of the installation
+principles for KiCad.
+
+== How to submit translations
+There are two ways to submit translations to KiCad.  We maintain an
+online translation service, curtesy of https://hosted.weblate.org/projects/kicad[Weblate]
+that you can use to suggest translations or changes.  You can also
+run a local translation program of your choice and submit a pull request
+with the modified file.
+
+=== Hosted Translation
+You will need to https://hosted.weblate.org/accounts/register/[make an account on Weblate] to be able to submit translations
+to the KiCad codebase.  After you make the account, you can navigate to the
+correct language and begin working.
+
+The best place to start with existing translations are the lines marked with 
+errors or notes for correction.  You should begin by suggesting a better translation
+for these items.
+
+=== Offline Translation
+No general details about translating po-files will be described here,
+there are plenty of resources on the rest of the www. But a suggestion
+on how to handle updates and translations will be provided.
+
+When you start translating we need to make sure there is an updated
+po-file. You can either ask someone to do push an update or do it
+yourself with the `update-po-files.sh` script. You can add your
+language code as the first argument to the script to only update that
+single language.
+
+When you did update the po-file, please make a commit with the
+following text if you update the german language relative to the kicad
+master branch:
+```
+Update german to master
+
+ca264f898290158f60d4c9dcd55d0428b7fa7965
+```
+
+Here we included the language, branch and sha of the kicad source at
+the time of updating.  Now make your translations and commit that and
+push the pull request.
+
+This is not mandatory, but it makes it easier for other people to
+review your changes when we separate the automatic update from the
+human edits.
+
+
+== Depends
+- Cmake
+- Gettext
+
+== How to install
+```sh
+$ cd kicad-i18n
+$ BUILD_SRC=$(pwd)
+$ mkdir -p ~/tmp/kicad-i18n-build
+$ cd ~/tmp/kicad-i18n-build
+$ cmake ${BUILD_SRC}
+$ make install
+$ cd ..
+$ rm -rf ~/tmp/kicad-i18n-build
+```
+
+If you want to change the default install prefix to match your KiCad
+build, you can add `cmake` option for example use:
+```
+-DCMAKE_INSTALL_PREFIX=/usr
+```
+
+If you occurred some problems, use `cmake --trace -DCMAKE_VERBOSE_MAKEFILE=ON` instead `cmake` to
+make build log more verbose, when you fill issue report.
