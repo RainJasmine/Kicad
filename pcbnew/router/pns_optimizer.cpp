@@ -19,6 +19,7 @@
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <core/typeinfo.h>
 #include <geometry/shape_line_chain.h>
 #include <geometry/shape_rect.h>
 #include <geometry/shape_simple.h>
@@ -222,8 +223,6 @@ bool AREA_CONSTRAINT::Check( int aVertex1, int aVertex2, const LINE* aOriginLine
 
     bool p1_in = m_allowedArea.Contains( p1 );
     bool p2_in = m_allowedArea.Contains( p2 );
-
-    auto dbg = ROUTER::GetInstance()->GetInterface()->GetDebugDecorator();
 
     if( p1_in && p2_in )
         return true;
@@ -470,7 +469,6 @@ bool OPTIMIZER::mergeObtuse( LINE* aLine )
     SHAPE_LINE_CHAIN& line = aLine->Line();
 
     int step = line.PointCount() - 3;
-    int iter = 0;
     int segs_pre = line.SegmentCount();
 
     if( step < 0 )
@@ -478,9 +476,8 @@ bool OPTIMIZER::mergeObtuse( LINE* aLine )
 
     SHAPE_LINE_CHAIN current_path( line );
 
-    while( 1 )
+    while( true )
     {
-        iter++;
         int n_segs = current_path.SegmentCount();
         int max_step = n_segs - 2;
 
@@ -489,8 +486,8 @@ bool OPTIMIZER::mergeObtuse( LINE* aLine )
 
         if( step < 2 )
         {
-            line = current_path;
-            return current_path.SegmentCount() < segs_pre;
+            line = std::move( current_path );
+            return line.SegmentCount() < segs_pre;
         }
 
         bool found_anything = false;
@@ -534,15 +531,13 @@ bool OPTIMIZER::mergeObtuse( LINE* aLine )
         {
             if( step <= 2 )
             {
-                line = current_path;
+                line = std::move( current_path );
                 return line.SegmentCount() < segs_pre;
             }
 
             step--;
         }
     }
-
-    return line.SegmentCount() < segs_pre;
 }
 
 
@@ -560,7 +555,7 @@ bool OPTIMIZER::mergeFull( LINE* aLine )
 
     SHAPE_LINE_CHAIN current_path( line );
 
-    while( 1 )
+    while( true )
     {
         int n_segs = current_path.SegmentCount();
         int max_step = n_segs - 2;
@@ -613,14 +608,6 @@ bool OPTIMIZER::mergeColinear( LINE* aLine )
 
 bool OPTIMIZER::Optimize( const LINE* aLine, LINE* aResult, LINE* aRoot )
 {
-    DEBUG_DECORATOR* dbg = ROUTER::GetInstance()->GetInterface()->GetDebugDecorator();
-
-    if( aRoot )
-    {
-        //PNS_DBG( dbg, AddItem, aRoot, BLUE, 100000, wxT( "root-line" ) );
-    }
-
-
     if( !aResult )
         return false;
 
@@ -858,7 +845,6 @@ OPTIMIZER::BREAKOUT_LIST OPTIMIZER::rectBreakouts( int aWidth, const SHAPE* aSha
     if( aPermitDiagonal )
     {
         int l = aWidth + std::min( s.x, s.y ) / 2;
-        VECTOR2I d_diag;
 
         if( s.x >= s.y )
         {
@@ -996,7 +982,7 @@ int OPTIMIZER::smartPadsSingle( LINE* aLine, ITEM* aPad, bool aEnd, int aEndVert
             {
                 SHAPE_LINE_CHAIN v;
                 SHAPE_LINE_CHAIN connect = dir.BuildInitialTrace(
-                        breakout.CPoint( -1 ), line.CPoint( p ), diag == 0 );
+                        breakout.CLastPoint(), line.CPoint( p ), diag == 0 );
 
                 DIRECTION_45 dir_bkout( breakout.CSegment( -1 ) );
 
@@ -1027,7 +1013,7 @@ int OPTIMIZER::smartPadsSingle( LINE* aLine, ITEM* aPad, bool aEnd, int aEndVert
                     std::get<1>( vp ) = breakout.Length();
                     std::get<2>( vp ) = aEnd ? v.Reverse() : v;
                     std::get<2>( vp ).Simplify2();
-                    variants.push_back( vp );
+                    variants.push_back( std::move( vp ) );
                 }
             }
         }
@@ -1083,7 +1069,7 @@ bool OPTIMIZER::runSmartPads( LINE* aLine )
     if( line.PointCount() < 3 )
         return false;
 
-    VECTOR2I p_start = line.CPoint( 0 ), p_end = line.CPoint( -1 );
+    VECTOR2I p_start = line.CPoint( 0 ), p_end = line.CLastPoint();
 
     ITEM* startPad = findPadOrVia( aLine->Layer(), aLine->Net(), p_start );
     ITEM* endPad = findPadOrVia( aLine->Layer(), aLine->Net(), p_end );
@@ -1125,7 +1111,7 @@ bool OPTIMIZER::fanoutCleanup( LINE* aLine )
 
     DIRECTION_45::CORNER_MODE cornerMode = ROUTER::GetInstance()->Settings().GetCornerMode();
 
-    VECTOR2I p_start = aLine->CPoint( 0 ), p_end = aLine->CPoint( -1 );
+    VECTOR2I p_start = aLine->CPoint( 0 ), p_end = aLine->CLastPoint();
 
     ITEM* startPad = findPadOrVia( aLine->Layer(), aLine->Net(), p_start );
     ITEM* endPad = findPadOrVia( aLine->Layer(), aLine->Net(), p_end );
@@ -1256,7 +1242,7 @@ bool coupledBypass( NODE* aNode, DIFF_PAIR* aPair, bool aRefIsP, const SHAPE_LIN
                 if( coupledLength > bestLength && verifyDpBypass( aNode, aPair, aRefIsP, aRef,
                                                                   newCoupled) )
                 {
-                    bestBypass = newCoupled;
+                    bestBypass = std::move( newCoupled );
                     bestLength = coupledLength;
                     found = true;
                 }
@@ -1265,7 +1251,7 @@ bool coupledBypass( NODE* aNode, DIFF_PAIR* aPair, bool aRefIsP, const SHAPE_LIN
     }
 
     if( found )
-        aNewCoupled = bestBypass;
+        aNewCoupled = std::move( bestBypass );
 
     return found;
 }
@@ -1425,9 +1411,6 @@ bool tightenSegment( bool dir, NODE *aNode, const LINE& cur, const SHAPE_LINE_CH
     if (!dirA.IsObtuse( dirCenter) || !dirCenter.IsObtuse(dirB))
         return false;
 
-    //VECTOR2I perp = (center.B - center.A).Perpendicular();
-    VECTOR2I guideA, guideB ;
-
     SEG guide;
     int initial;
 
@@ -1500,14 +1483,11 @@ bool tightenSegment( bool dir, NODE *aNode, const LINE& cur, const SHAPE_LINE_CH
 
         if ( current == initial )
             break;
-
-
     }
-
-    out = snew;
 
     //dbg->AddLine ( snew, 3, 100000 );
 
+    out = std::move( snew );
     return true;
 }
 
@@ -1538,11 +1518,11 @@ void Tighten( NODE *aNode, const SHAPE_LINE_CHAIN& aOldLine, const LINE& aNewLin
                 {
                     SHAPE_LINE_CHAIN opt = current;
                     opt.Replace( i, i + 3, l_out );
-                    auto optArea = std::abs( shovedArea( aOldLine, opt ) );
-                    auto prevArea = std::abs( shovedArea( aOldLine, current ) );
+                    long long int optArea = std::abs( shovedArea( aOldLine, opt ) );
+                    long long int prevArea = std::abs( shovedArea( aOldLine, current ) );
 
                     if( optArea < prevArea )
-                        current = opt;
+                        current = std::move( opt );
 
                     break;
                 }

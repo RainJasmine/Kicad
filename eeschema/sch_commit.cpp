@@ -40,6 +40,7 @@
 
 
 SCH_COMMIT::SCH_COMMIT( TOOL_MANAGER* aToolMgr ) :
+        COMMIT(),
         m_toolMgr( aToolMgr ),
         m_isLibEditor( false )
 {
@@ -72,17 +73,6 @@ COMMIT& SCH_COMMIT::Stage( EDA_ITEM *aItem, CHANGE_TYPE aChangeType, BASE_SCREEN
 {
     wxCHECK( aItem, *this );
 
-    // If aItem belongs a symbol, sheet or label, the full parent will be saved because undo/redo
-    // does not handle "sub items" modifications.
-    if( aItem->Type() != SCH_SHEET_T
-            && aItem->GetParent() && aItem->GetParent()->IsType( { SCH_SYMBOL_T, LIB_SYMBOL_T,
-                                                                   SCH_SHEET_T,
-                                                                   SCH_LABEL_LOCATE_ANY_T } ) )
-    {
-        aItem = aItem->GetParent();
-        aChangeType = CHT_MODIFY;
-    }
-
     if( aRecurse == RECURSE_MODE::RECURSE )
     {
         if( SCH_GROUP* group = dynamic_cast<SCH_GROUP*>( aItem ) )
@@ -92,8 +82,7 @@ COMMIT& SCH_COMMIT::Stage( EDA_ITEM *aItem, CHANGE_TYPE aChangeType, BASE_SCREEN
         }
     }
 
-    // IS_SELECTED flag should not be set on undo items which were added for
-    // a drag operation.
+    // IS_SELECTED flag should not be set on undo items which were added for a drag operation.
     if( aItem->IsSelected() && aItem->HasFlag( SELECTED_BY_DRAG ) )
     {
         aItem->ClearSelected();
@@ -119,28 +108,15 @@ COMMIT& SCH_COMMIT::Stage( std::vector<EDA_ITEM*> &container, CHANGE_TYPE aChang
 }
 
 
-COMMIT& SCH_COMMIT::Stage( const PICKED_ITEMS_LIST &aItems, UNDO_REDO aModFlag,
-                           BASE_SCREEN *aScreen )
-{
-    return COMMIT::Stage( aItems, aModFlag, aScreen );
-}
-
-
 void SCH_COMMIT::pushLibEdit( const wxString& aMessage, int aCommitFlags )
 {
-    KIGFX::VIEW*       view = m_toolMgr->GetView();
-    SYMBOL_EDIT_FRAME* frame = static_cast<SYMBOL_EDIT_FRAME*>( m_toolMgr->GetToolHolder() );
-
-    if( Empty() )
-        return;
-
     // Symbol editor just saves copies of the whole symbol, so grab the first and discard the rest
-    LIB_SYMBOL* symbol = dynamic_cast<LIB_SYMBOL*>( m_changes.front().m_item );
-    LIB_SYMBOL* copy = dynamic_cast<LIB_SYMBOL*>( m_changes.front().m_copy );
+    LIB_SYMBOL* symbol = dynamic_cast<LIB_SYMBOL*>( m_entries.front().m_item );
+    LIB_SYMBOL* copy = dynamic_cast<LIB_SYMBOL*>( m_entries.front().m_copy );
 
     if( symbol )
     {
-        if( view )
+        if( KIGFX::VIEW* view = m_toolMgr->GetView() )
         {
             view->Update( symbol );
 
@@ -152,12 +128,15 @@ void SCH_COMMIT::pushLibEdit( const wxString& aMessage, int aCommitFlags )
                     RECURSE_MODE::NO_RECURSE );
         }
 
-        if( !( aCommitFlags & SKIP_UNDO ) )
+        if( SYMBOL_EDIT_FRAME* frame = static_cast<SYMBOL_EDIT_FRAME*>( m_toolMgr->GetToolHolder() ) )
         {
-            if( frame && copy )
+            if( !( aCommitFlags & SKIP_UNDO ) )
             {
-                frame->PushSymbolToUndoList( aMessage, copy );
-                copy = nullptr;   // we've transferred ownership to the undo stack
+                if( copy )
+                {
+                    frame->PushSymbolToUndoList( aMessage, copy );
+                    copy = nullptr;   // we've transferred ownership to the undo stack
+                }
             }
         }
 
@@ -171,17 +150,6 @@ void SCH_COMMIT::pushLibEdit( const wxString& aMessage, int aCommitFlags )
 
     m_toolMgr->PostEvent( { TC_MESSAGE, TA_MODEL_CHANGE, AS_GLOBAL } );
     m_toolMgr->ProcessEvent( EVENTS::SelectedItemsModified );
-
-    if( !( aCommitFlags & SKIP_SET_DIRTY ) )
-    {
-        if( frame )
-            frame->OnModify();
-    }
-
-    for( size_t ii = 1; ii < m_changes.size(); ++ii )
-        delete m_changes[ii].m_copy;
-
-    clear();
 }
 
 
@@ -192,6 +160,7 @@ void SCH_COMMIT::pushSchEdit( const wxString& aMessage, int aCommitFlags )
     KIGFX::VIEW*        view = m_toolMgr->GetView();
 
     SCH_EDIT_FRAME*     frame = static_cast<SCH_EDIT_FRAME*>( m_toolMgr->GetToolHolder() );
+    SCH_SCREEN*         currentScreen = frame ? frame->GetScreen() : nullptr;
     SCH_SELECTION_TOOL* selTool = m_toolMgr->GetTool<SCH_SELECTION_TOOL>();
     SCH_GROUP*          enteredGroup = selTool ? selTool->GetEnteredGroup() : nullptr;
     bool                itemsDeselected = false;
@@ -230,13 +199,13 @@ void SCH_COMMIT::pushSchEdit( const wxString& aMessage, int aCommitFlags )
     // We don't know that anything will be added to the entered group, but it does no harm to
     // add it to the commit anyway.
     if( enteredGroup )
-        Modify( enteredGroup );
+        Modify( enteredGroup, frame->GetScreen() );
 
     // Handle wires with Hop Over shapes:
-    for( COMMIT_LINE& ent : m_changes )
+    for( COMMIT_LINE& entry : m_entries )
     {
-        SCH_ITEM* schCopyItem = dynamic_cast<SCH_ITEM*>( ent.m_copy );
-        SCH_ITEM* schItem = dynamic_cast<SCH_ITEM*>( ent.m_item );
+        SCH_ITEM* schCopyItem = dynamic_cast<SCH_ITEM*>( entry.m_copy );
+        SCH_ITEM* schItem = dynamic_cast<SCH_ITEM*>( entry.m_item );
 
         if( schCopyItem && schCopyItem->Type() == SCH_LINE_T )
             frame->UpdateHopOveredWires( schCopyItem );
@@ -246,23 +215,23 @@ void SCH_COMMIT::pushSchEdit( const wxString& aMessage, int aCommitFlags )
     }
 
 
-    for( COMMIT_LINE& ent : m_changes )
+    for( COMMIT_LINE& entry : m_entries )
     {
-        SCH_ITEM* schItem = dynamic_cast<SCH_ITEM*>( ent.m_item );
-        int       changeType = ent.m_type & CHT_TYPE;
+        SCH_ITEM* schItem = dynamic_cast<SCH_ITEM*>( entry.m_item );
+        int       changeType = entry.m_type & CHT_TYPE;
 
         wxCHECK2( schItem, continue );
 
         if( changeType == CHT_REMOVE && schItem->GetParentGroup() )
-            Modify( schItem->GetParentGroup()->AsEdaItem() );
+            Modify( schItem->GetParentGroup()->AsEdaItem(), entry.m_screen );
     }
 
-    for( COMMIT_LINE& ent : m_changes )
+    for( COMMIT_LINE& entry : m_entries )
     {
-        int         changeType = ent.m_type & CHT_TYPE;
-        int         changeFlags = ent.m_type & CHT_FLAGS;
-        SCH_ITEM*   schItem = dynamic_cast<SCH_ITEM*>( ent.m_item );
-        SCH_SCREEN* screen = dynamic_cast<SCH_SCREEN*>( ent.m_screen );
+        int         changeType = entry.m_type & CHT_TYPE;
+        int         changeFlags = entry.m_type & CHT_FLAGS;
+        SCH_ITEM*   schItem = dynamic_cast<SCH_ITEM*>( entry.m_item );
+        SCH_SCREEN* screen = dynamic_cast<SCH_SCREEN*>( entry.m_screen );
 
         wxCHECK2( schItem, continue );
         wxCHECK2( screen, continue );
@@ -302,12 +271,14 @@ void SCH_COMMIT::pushSchEdit( const wxString& aMessage, int aCommitFlags )
                 if( !screen->CheckIfOnDrawList( schItem ) )  // don't want a loop!
                     screen->Append( schItem );
 
-                if( view )
+                if( view && screen == currentScreen )
                     view->Add( schItem );
             }
 
-            if( frame )
+            if( frame && screen == currentScreen )
                 frame->UpdateItem( schItem, true, true );
+            else if( screen )
+                screen->Update( schItem );
 
             bulkAddedItems.push_back( schItem );
 
@@ -324,8 +295,8 @@ void SCH_COMMIT::pushSchEdit( const wxString& aMessage, int aCommitFlags )
             if( !( aCommitFlags & SKIP_UNDO ) )
             {
                 ITEM_PICKER itemWrapper( screen, schItem, UNDO_REDO::DELETED );
-                itemWrapper.SetLink( ent.m_copy );
-                ent.m_copy = nullptr;   // We've transferred ownership to the undo list
+                itemWrapper.SetLink( entry.m_copy );
+                entry.m_copy = nullptr;   // We've transferred ownership to the undo list
                 undoList.PushItem( itemWrapper );
             }
 
@@ -350,12 +321,14 @@ void SCH_COMMIT::pushSchEdit( const wxString& aMessage, int aCommitFlags )
             {
                 screen->Remove( schItem );
 
-                if( view )
+                if( view && screen == currentScreen )
                     view->Remove( schItem );
             }
 
-            if( frame )
+            if( frame && screen == currentScreen )
                 frame->UpdateItem( schItem, true, true );
+            else if( screen )
+                screen->Update( schItem );
 
             if( schItem->Type() == SCH_SHEET_T )
                 refreshHierarchy = true;
@@ -366,7 +339,7 @@ void SCH_COMMIT::pushSchEdit( const wxString& aMessage, int aCommitFlags )
 
         case CHT_MODIFY:
         {
-            const SCH_ITEM* itemCopy = static_cast<const SCH_ITEM*>( ent.m_copy );
+            const SCH_ITEM* itemCopy = static_cast<const SCH_ITEM*>( entry.m_copy );
             SCH_SHEET_PATH  currentSheet;
 
             if( frame )
@@ -378,11 +351,33 @@ void SCH_COMMIT::pushSchEdit( const wxString& aMessage, int aCommitFlags )
                 updateConnectivityFlag( schItem );
             }
 
+            if( schItem->Type() == SCH_SYMBOL_T )
+            {
+                const SCH_SYMBOL* origSymbol = static_cast<const SCH_SYMBOL*>( itemCopy );
+                const SCH_SYMBOL* modSymbol = static_cast<const SCH_SYMBOL*>( schItem );
+
+                if( origSymbol->GetPins().size() != modSymbol->GetPins().size() )
+                    connectivityCleanUp = GLOBAL_CLEANUP;
+            }
+
             if( !( aCommitFlags & SKIP_UNDO ) )
             {
+#if 0
+                // While this keeps us from marking documents modified when someone OK's a dialog with
+                // no changes, it depends on our various SCH_ITEM::operator=='s being bullet-proof. They
+                // currently aren't.
+                if( *itemCopy == *schItem )
+                {
+                    // No actual changes made; short-circuit undo
+                    delete entry.m_copy;
+                    entry.m_copy = nullptr;
+                    break;
+                }
+#endif
+
                 ITEM_PICKER itemWrapper( screen, schItem, UNDO_REDO::CHANGED );
-                itemWrapper.SetLink( ent.m_copy );
-                ent.m_copy = nullptr;   // We've transferred ownership to the undo list
+                itemWrapper.SetLink( entry.m_copy );
+                entry.m_copy = nullptr;   // We've transferred ownership to the undo list
                 undoList.PushItem( itemWrapper );
             }
 
@@ -396,8 +391,10 @@ void SCH_COMMIT::pushSchEdit( const wxString& aMessage, int aCommitFlags )
                     refreshHierarchy = true;
             }
 
-            if( frame )
+            if( frame && screen == currentScreen )
                 frame->UpdateItem( schItem, false, true );
+            else if( screen )
+                screen->Update( schItem );
 
             itemsChanged.push_back( schItem );
             break;
@@ -409,8 +406,8 @@ void SCH_COMMIT::pushSchEdit( const wxString& aMessage, int aCommitFlags )
         }
 
         // Delete any copies we still have ownership of
-        delete ent.m_copy;
-        ent.m_copy = nullptr;
+        delete entry.m_copy;
+        entry.m_copy = nullptr;
 
         // Clear all flags but SELECTED and others used to move and rotate commands,
         // after edition (selected items must keep their selection flag).
@@ -452,14 +449,14 @@ void SCH_COMMIT::pushSchEdit( const wxString& aMessage, int aCommitFlags )
     {
         if( frame )
         {
-            frame->SaveCopyInUndoList( undoList, UNDO_REDO::UNSPECIFIED, false, dirtyConnectivity );
+            if( undoList.GetCount() > 0 )
+                frame->SaveCopyInUndoList( undoList, UNDO_REDO::UNSPECIFIED, false );
 
             if( dirtyConnectivity )
             {
                 wxLogTrace( wxS( "CONN_PROFILE" ),
                             wxS( "SCH_COMMIT::pushSchEdit() %s clean up connectivity rebuild." ),
-                            ( connectivityCleanUp == LOCAL_CLEANUP ) ? wxS( "local" )
-                                                                     : wxS( "global" ) );
+                            connectivityCleanUp == LOCAL_CLEANUP ? wxS( "local" ) : wxS( "global" ) );
                 frame->RecalculateConnections( this, connectivityCleanUp );
             }
         }
@@ -472,38 +469,41 @@ void SCH_COMMIT::pushSchEdit( const wxString& aMessage, int aCommitFlags )
 
     if( selectedModified )
         m_toolMgr->ProcessEvent( EVENTS::SelectedItemsModified );
+}
 
-    if( frame && frame->GetCanvas() )
-        frame->GetCanvas()->Refresh();
 
-    if( !( aCommitFlags & SKIP_SET_DIRTY ) )
+void SCH_COMMIT::Push( const wxString& aMessage, int aCommitFlags )
+{
+    if( Empty() )
+        return;
+
+    if( m_isLibEditor )
+        pushLibEdit( aMessage, aCommitFlags );
+    else
+        pushSchEdit( aMessage, aCommitFlags );
+
+    if( SCH_BASE_FRAME* frame = static_cast<SCH_BASE_FRAME*>( m_toolMgr->GetToolHolder() ) )
     {
-        if( frame )
+        if( !( aCommitFlags & SKIP_SET_DIRTY ) )
             frame->OnModify();
+
+        if( frame && frame->GetCanvas() )
+            frame->GetCanvas()->Refresh();
     }
 
     clear();
 }
 
 
-void SCH_COMMIT::Push( const wxString& aMessage, int aCommitFlags )
-{
-    if( m_isLibEditor )
-        pushLibEdit( aMessage, aCommitFlags );
-    else
-        pushSchEdit( aMessage, aCommitFlags );
-}
-
-
-EDA_ITEM* SCH_COMMIT::parentObject( EDA_ITEM* aItem ) const
+EDA_ITEM* SCH_COMMIT::undoLevelItem( EDA_ITEM* aItem ) const
 {
     EDA_ITEM* parent = aItem->GetParent();
 
-    if( parent && ( parent->Type() == SCH_SYMBOL_T || parent->Type() == LIB_SYMBOL_T ) )
-        return parent;
-
     if( m_isLibEditor )
         return static_cast<SYMBOL_EDIT_FRAME*>( m_toolMgr->GetToolHolder() )->GetCurSymbol();
+
+    if( parent && parent->IsType( { SCH_SYMBOL_T, SCH_TABLE_T, SCH_SHEET_T, SCH_LABEL_LOCATE_ANY_T } ) )
+        return parent;
 
     return aItem;
 }
@@ -517,6 +517,7 @@ EDA_ITEM* SCH_COMMIT::makeImage( EDA_ITEM* aItem ) const
         LIB_SYMBOL*        symbol = frame->GetCurSymbol();
         std::vector<KIID>  selected;
 
+        // Cloning will clear the selected flags, but we want to keep them.
         for( const SCH_ITEM& item : symbol->GetDrawItems() )
         {
             if( item.IsSelected() )
@@ -525,6 +526,7 @@ EDA_ITEM* SCH_COMMIT::makeImage( EDA_ITEM* aItem ) const
 
         symbol = new LIB_SYMBOL( *symbol );
 
+        // Restore selected flags.
         for( SCH_ITEM& item : symbol->GetDrawItems() )
         {
             if( alg::contains( selected, item.m_Uuid ) )
@@ -545,7 +547,7 @@ void SCH_COMMIT::revertLibEdit()
 
     // Symbol editor just saves copies of the whole symbol, so grab the first and discard the rest
     SYMBOL_EDIT_FRAME*  frame = dynamic_cast<SYMBOL_EDIT_FRAME*>( m_toolMgr->GetToolHolder() );
-    LIB_SYMBOL*         copy = dynamic_cast<LIB_SYMBOL*>( m_changes.front().m_copy );
+    LIB_SYMBOL*         copy = dynamic_cast<LIB_SYMBOL*>( m_entries.front().m_copy );
     SCH_SELECTION_TOOL* selTool = m_toolMgr->GetTool<SCH_SELECTION_TOOL>();
 
     if( frame && copy )
@@ -553,9 +555,6 @@ void SCH_COMMIT::revertLibEdit()
         frame->SetCurSymbol( copy, false );
         m_toolMgr->ResetTools( TOOL_BASE::MODEL_RELOAD );
     }
-
-    for( size_t ii = 1; ii < m_changes.size(); ++ii )
-        delete m_changes[ii].m_copy;
 
     if( selTool )
         selTool->RebuildSelection();
@@ -571,7 +570,7 @@ void SCH_COMMIT::Revert()
     SCH_SELECTION_TOOL* selTool = m_toolMgr->GetTool<SCH_SELECTION_TOOL>();
     SCH_SHEET_LIST      sheets;
 
-    if( m_changes.empty() )
+    if( m_entries.empty() )
         return;
 
     if( m_isLibEditor )
@@ -585,7 +584,7 @@ void SCH_COMMIT::Revert()
     std::vector<SCH_ITEM*> bulkRemovedItems;
     std::vector<SCH_ITEM*> itemsChanged;
 
-    for( COMMIT_LINE& ent : m_changes )
+    for( COMMIT_LINE& ent : m_entries )
     {
         int         changeType = ent.m_type & CHT_TYPE;
         int         changeFlags = ent.m_type & CHT_FLAGS;
@@ -638,12 +637,15 @@ void SCH_COMMIT::Revert()
             if( unselect )
             {
                 item->ClearSelected();
-                item->RunOnChildren( []( SCH_ITEM* aChild ) { aChild->ClearSelected(); }, RECURSE_MODE::NO_RECURSE );
+                item->RunOnChildren( []( SCH_ITEM* aChild )
+                                     {
+                                         aChild->ClearSelected();
+                                     },
+                                     RECURSE_MODE::NO_RECURSE );
             }
 
             // Special cases for items which have instance data
-            if( item->GetParent() && item->GetParent()->Type() == SCH_SYMBOL_T
-                    && item->Type() == SCH_FIELD_T )
+            if( item->GetParent() && item->GetParent()->Type() == SCH_SYMBOL_T && item->Type() == SCH_FIELD_T )
             {
                 SCH_FIELD*  field = static_cast<SCH_FIELD*>( item );
                 SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item->GetParent() );
@@ -709,9 +711,7 @@ void SCH_COMMIT::Revert()
         selTool->RebuildSelection();
 
     if( frame )
-    {
         frame->RecalculateConnections( nullptr, NO_CLEANUP );
-    }
 
     clear();
 }

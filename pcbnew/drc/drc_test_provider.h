@@ -68,6 +68,37 @@ public:
 };
 
 
+class DRC_SHOWMATCHES_PROVIDER_REGISTRY
+{
+public:
+    DRC_SHOWMATCHES_PROVIDER_REGISTRY() {}
+
+    ~DRC_SHOWMATCHES_PROVIDER_REGISTRY();
+
+    static DRC_SHOWMATCHES_PROVIDER_REGISTRY& Instance()
+    {
+        static DRC_SHOWMATCHES_PROVIDER_REGISTRY self;
+        return self;
+    }
+
+    void RegisterShowMatchesProvider( DRC_TEST_PROVIDER* provider ) { m_providers.push_back( provider ); }
+    std::vector<DRC_TEST_PROVIDER*> GetShowMatchesProviders() const { return m_providers; }
+
+private:
+    std::vector<DRC_TEST_PROVIDER*> m_providers;
+};
+
+template<class T> class DRC_REGISTER_SHOWMATCHES_PROVIDER
+{
+public:
+    DRC_REGISTER_SHOWMATCHES_PROVIDER()
+    {
+        T* provider = new T;
+        DRC_SHOWMATCHES_PROVIDER_REGISTRY::Instance().RegisterShowMatchesProvider( provider );
+    }
+};
+
+
 /**
  * Represent a DRC "provider" which runs some DRC functions over a #BOARD and spits out
  * #DRC_ITEM and positions as needed.
@@ -106,16 +137,28 @@ protected:
 
 #define REPORT_AUX( s ) if( getLogReporter() ) getLogReporter()->Report( s, RPT_SEVERITY_INFO )
 
-    virtual void reportViolation( std::shared_ptr<DRC_ITEM>& item, const VECTOR2I& aMarkerPos,
-                                  int                        aMarkerLayer,
-                                  DRC_CUSTOM_MARKER_HANDLER* aCustomHandler = nullptr );
+    void reportViolation( std::shared_ptr<DRC_ITEM>& item, const VECTOR2I& aMarkerPos,
+                          int aMarkerLayer,
+                          const std::function<void( PCB_MARKER* )>& aPathGenerator = []( PCB_MARKER* ){} );
+
+    void reportTwoPointGeometry( std::shared_ptr<DRC_ITEM>& aDrcItem, const VECTOR2I& aMarkerPos,
+                                 const VECTOR2I& ptA, const VECTOR2I& ptB, PCB_LAYER_ID aLayer );
+
+    void reportTwoShapeGeometry( std::shared_ptr<DRC_ITEM>& aDrcItem, const VECTOR2I& aMarkerPos,
+                                 const SHAPE* aShape1, const SHAPE* aShape2, PCB_LAYER_ID aLayer,
+                                 int aDistance );
+
+    void reportTwoItemGeometry( std::shared_ptr<DRC_ITEM>& aDrcItem, const VECTOR2I& aMarkerPos,
+                                const BOARD_ITEM* aItem1, const BOARD_ITEM* aItem2, PCB_LAYER_ID aLayer,
+                                int aDistance );
+
     virtual bool reportProgress( size_t aCount, size_t aSize, size_t aDelta = 1 );
     virtual bool reportPhase( const wxString& aStageName );
 
     bool isInvisibleText( const BOARD_ITEM* aItem ) const;
 
-    wxString formatMsg( const wxString& aFormatString, const wxString& aSource, double aConstraint, double aActual,
-                        EDA_DATA_TYPE aDataType = EDA_DATA_TYPE::DISTANCE );
+    wxString formatMsg( const wxString& aFormatString, const wxString& aSource, double aConstraint,
+                        double aActual, EDA_DATA_TYPE aDataType = EDA_DATA_TYPE::DISTANCE );
     wxString formatMsg( const wxString& aFormatString, const wxString& aSource,
                         const EDA_ANGLE& aConstraint, const EDA_ANGLE& aActual );
 
@@ -125,5 +168,6 @@ protected:
 
 protected:
     DRC_ENGINE* m_drcEngine;
+    BOARD*      m_board;
     bool        m_isRuleDriven = true;
 };

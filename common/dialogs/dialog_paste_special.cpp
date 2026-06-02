@@ -24,28 +24,21 @@
 #include <dialogs/dialog_paste_special.h>
 
 
-static PASTE_MODE g_paste_mode = PASTE_MODE::UNIQUE_ANNOTATIONS;
-
-
-DIALOG_PASTE_SPECIAL::DIALOG_PASTE_SPECIAL( wxWindow* aParent,
-                                            PASTE_MODE* aMode,
-                                            const wxString& aReplacement ) :
+DIALOG_PASTE_SPECIAL::DIALOG_PASTE_SPECIAL( wxWindow* aParent, PASTE_MODE* aMode, const wxString& aDefaultRef ) :
     DIALOG_PASTE_SPECIAL_BASE( aParent ),
     m_mode( aMode )
 {
-    m_pasteOptions->SetItemToolTip( static_cast<int>( PASTE_MODE::UNIQUE_ANNOTATIONS ),
-                                    _( "Finds the next available reference designator for "
-                                       "any designators that already exist in the design." ) );
+    m_options->SetItemToolTip( static_cast<int>( PASTE_MODE::UNIQUE_ANNOTATIONS ),
+                               _( "Finds the next available reference designator for any designators that already "
+                                  "exist in the design." ) );
 
-    m_pasteOptions->SetItemToolTip( static_cast<int>( PASTE_MODE::KEEP_ANNOTATIONS ),
-                                    wxT( "" ) ); // Self explanatory
+    m_options->SetItemToolTip( static_cast<int>( PASTE_MODE::KEEP_ANNOTATIONS ),
+                                wxT( "" ) ); // Self explanatory
 
-    m_pasteOptions->SetItemToolTip( static_cast<int>( PASTE_MODE::REMOVE_ANNOTATIONS ),
-                                    wxString::Format( _( "Replaces reference designators "
-                                                         "with '%s'." ),
-                                                      aReplacement ) );
+    m_options->SetItemToolTip( static_cast<int>( PASTE_MODE::REMOVE_ANNOTATIONS ),
+                               wxString::Format( _( "Replaces reference designators with '%s'." ), aDefaultRef ) );
 
-    m_pasteOptions->SetFocus();
+    m_options->SetFocus();
 
     // Now all widgets have the size fixed, call FinishDialogSettings
     finishDialogSettings();
@@ -54,14 +47,26 @@ DIALOG_PASTE_SPECIAL::DIALOG_PASTE_SPECIAL( wxWindow* aParent,
 
 bool DIALOG_PASTE_SPECIAL::TransferDataToWindow()
 {
-    m_pasteOptions->SetSelection( static_cast<int>( g_paste_mode ) );
+    switch( *m_mode )
+    {
+    case PASTE_MODE::UNIQUE_ANNOTATIONS: m_options->SetSelection( 0 ); break;
+    case PASTE_MODE::KEEP_ANNOTATIONS:   m_options->SetSelection( 1 ); break;
+    case PASTE_MODE::REMOVE_ANNOTATIONS: m_options->SetSelection( 2 ); break;
+    }
+
     return true;
 }
 
 
 bool DIALOG_PASTE_SPECIAL::TransferDataFromWindow()
 {
-    g_paste_mode = *m_mode = static_cast<PASTE_MODE>( m_pasteOptions->GetSelection() );
+    switch( m_options->GetSelection() )
+    {
+    case 0: *m_mode = PASTE_MODE::UNIQUE_ANNOTATIONS; break;
+    case 1: *m_mode = PASTE_MODE::KEEP_ANNOTATIONS;   break;
+    case 2: *m_mode = PASTE_MODE::REMOVE_ANNOTATIONS; break;
+    }
+
     return true;
 }
 

@@ -23,6 +23,7 @@
 #include <lib_tree_model.h>
 
 #include <algorithm>
+#include <core/kicad_algo.h>
 #include <eda_pattern_match.h>
 #include <lib_tree_item.h>
 #include <pgm_base.h>
@@ -30,8 +31,23 @@
 
 
 
-void LIB_TREE_NODE::AssignIntrinsicRanks( bool presorted )
+void LIB_TREE_NODE::RebuildSearchTerms( const std::vector<wxString>& aShownColumns )
 {
+    m_SearchTerms.assign( m_sourceSearchTerms.begin(), m_sourceSearchTerms.end() );
+
+    for( const auto& [name, value] : m_Fields )
+    {
+        if( alg::contains( aShownColumns, name ) )
+            m_SearchTerms.push_back( SEARCH_TERM( value, 4 ) );
+    }
+}
+
+
+void LIB_TREE_NODE::AssignIntrinsicRanks( const std::vector<wxString>& aShownColumns, bool presorted )
+{
+    for( std::unique_ptr<LIB_TREE_NODE>& child: m_Children )
+        child->RebuildSearchTerms( aShownColumns );
+
     std::vector<LIB_TREE_NODE*> sort_buf;
 
     if( presorted )
@@ -127,6 +143,7 @@ LIB_TREE_NODE::LIB_TREE_NODE()
       m_PinCount( 0 ),
       m_Unit( 0 ),
       m_IsRoot( false ),
+      m_IsPower( false ),
       m_IsRecentlyUsedGroup( false ),
       m_IsAlreadyPlacedGroup( false )
 {}
@@ -134,29 +151,12 @@ LIB_TREE_NODE::LIB_TREE_NODE()
 
 LIB_TREE_NODE_UNIT::LIB_TREE_NODE_UNIT( LIB_TREE_NODE* aParent, LIB_TREE_ITEM* aItem, int aUnit )
 {
-    static void* locale = nullptr;
-    static wxString namePrefix;
-
-    // Fetching translations can take a surprising amount of time when loading libraries,
-    // so only do it when necessary.
-    if( Pgm().GetLocale() != locale )
-    {
-        namePrefix = _( "Unit" );
-        locale = Pgm().GetLocale();
-    }
-
     m_Parent = aParent;
     m_Type = TYPE::UNIT;
 
     m_Unit = aUnit;
     m_LibId = aParent->m_LibId;
-
-    m_Name = namePrefix + " " + aItem->GetUnitReference( aUnit );
-
-    if( aItem->HasUnitDisplayName( aUnit ) )
-        m_Desc = aItem->GetUnitDisplayName( aUnit );
-    else
-        m_Desc = wxEmptyString;
+    m_Name = aItem->GetUnitName( aUnit );
 
     m_IntrinsicRank = -aUnit;
 }
@@ -191,9 +191,10 @@ LIB_TREE_NODE_ITEM::LIB_TREE_NODE_ITEM( LIB_TREE_NODE* aParent, LIB_TREE_ITEM* a
 
     aItem->GetChooserFields( m_Fields );
 
-    m_SearchTerms = aItem->GetSearchTerms();
+    m_sourceSearchTerms = aItem->GetSearchTerms();
 
     m_IsRoot = aItem->IsRoot();
+    m_IsPower = aItem->IsPowerSymbol();
 
     if( aItem->GetSubUnitCount() > 1 )
     {
@@ -221,9 +222,10 @@ void LIB_TREE_NODE_ITEM::Update( LIB_TREE_ITEM* aItem )
 
     aItem->GetChooserFields( m_Fields );
 
-    m_SearchTerms = aItem->GetSearchTerms();
+    m_sourceSearchTerms = aItem->GetSearchTerms();
 
     m_IsRoot = aItem->IsRoot();
+    m_IsPower = aItem->IsPowerSymbol();
     m_Children.clear();
 
     for( int u = 1; u <= aItem->GetSubUnitCount(); ++u )

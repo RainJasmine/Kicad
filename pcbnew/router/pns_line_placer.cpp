@@ -22,6 +22,10 @@
 #include <optional>
 #include <memory>
 
+#include <wx/log.h>
+
+#include <board_item.h>
+
 #include "pns_arc.h"
 #include "pns_debug_decorator.h"
 #include "pns_line_placer.h"
@@ -33,7 +37,6 @@
 #include "pns_walkaround.h"
 #include "pns_mouse_trail_tracer.h"
 
-#include <wx/log.h>
 
 namespace PNS {
 
@@ -151,7 +154,7 @@ bool LINE_PLACER::handleSelfIntersections()
     }
 
     // ignore the point where head and tail meet
-    if( ipoint == head.CPoint( 0 ) || ipoint == tail.CPoint( -1 ) )
+    if( ipoint == head.CPoint( 0 ) || ipoint == tail.CLastPoint() )
         return false;
 
     // Intersection point is on the first or the second segment: just start routing
@@ -346,7 +349,7 @@ bool LINE_PLACER::mergeHead()
         return false;
     }
 
-    if( n_tail && head.CPoint( 0 ) != tail.CPoint( -1 ) )
+    if( n_tail && head.CPoint( 0 ) != tail.CLastPoint() )
     {
         PNS_DBG( Dbg(), Message, wxT( "Merge failed: head and tail discontinuous." ) );
         return false;
@@ -426,7 +429,7 @@ bool LINE_PLACER::clipAndCheckCollisions( const VECTOR2I& aP, const SHAPE_LINE_C
 
     if( rv )
     {
-        aOut = l2;
+        aOut = std::move( l2 );
         thresholdDist = dist;
     }
 
@@ -443,7 +446,7 @@ bool LINE_PLACER::cursorDistMinimum( const SHAPE_LINE_CHAIN& aL, const VECTOR2I&
     if( aL.PointCount() == 0 )
         return false;
 
-    VECTOR2I lastP = aL.CPoint(-1);
+    VECTOR2I lastP = aL.CLastPoint();
     int accumulatedDist = 0;
 
     dists.reserve( 2 * aL.PointCount() );
@@ -479,7 +482,7 @@ bool LINE_PLACER::cursorDistMinimum( const SHAPE_LINE_CHAIN& aL, const VECTOR2I&
     int minDistGlob = std::numeric_limits<int>::max();
     int minPGlob = -1;
 
-    for( int i = 0; i < dists.size(); i++ )
+    for( int i = 0; i < (int) dists.size(); i++ )
     {
         int d = dists[i];
 
@@ -492,7 +495,7 @@ bool LINE_PLACER::cursorDistMinimum( const SHAPE_LINE_CHAIN& aL, const VECTOR2I&
 
     if( dists.size() >= 3 )
     {
-        for( int i = 0; i < dists.size() - 3; i++ )
+        for( int i = 0; i < (int) dists.size() - 3; i++ )
         {
             if( dists[i + 2] > dists[i + 1] && dists[i] > dists[i + 1] )
             {
@@ -540,11 +543,10 @@ bool LINE_PLACER::cursorDistMinimum( const SHAPE_LINE_CHAIN& aL, const VECTOR2I&
     thresholdDist = 0;
 
     SHAPE_LINE_CHAIN l( aL ), prefL;
-    int minDist = std::numeric_limits<int>::max();
 
     bool ok = false;
 
-    for( int i = 0; i < pts.size() ; i++)
+    for( int i = 0; i < (int) pts.size() ; i++)
     {
         //PNS_DBG( Dbg(), AddPoint, pts[i], BLUE, 500000, wxT( "hug-target-fallback" ) );
 
@@ -664,7 +666,7 @@ bool LINE_PLACER::rhWalkBase( const VECTOR2I& aP, LINE& aWalkLine, int aCollisio
         if( bestLength < hugThresholdLengthComplete && bestLine.has_value() )
         {
             walkFull.SetShape( bestLine->CLine() );
-            walkP = walkFull.CLine().CPoint(-1);
+            walkP = walkFull.CLine().CLastPoint();
             PNS_DBGN( Dbg(), EndGroup );
             continue;
         }
@@ -682,7 +684,7 @@ bool LINE_PLACER::rhWalkBase( const VECTOR2I& aP, LINE& aWalkLine, int aCollisio
             validCw = cursorDistMinimum( wr.lines[WP_CW].CLine(), aP, hugThresholdLength, l_cw );
 
             if( validCw )
-                distCw = ( aP - l_cw.CPoint( -1 ) ).EuclideanNorm();
+                distCw = ( aP - l_cw.CLastPoint() ).EuclideanNorm();
 
             PNS_DBG( Dbg(), AddShape, &l_cw, MAGENTA, 200000, wxString::Format( "wh-result-cw %s",
                                                                                  validCw ? "non-colliding"
@@ -694,7 +696,7 @@ bool LINE_PLACER::rhWalkBase( const VECTOR2I& aP, LINE& aWalkLine, int aCollisio
             validCcw = cursorDistMinimum( wr.lines[WP_CCW].CLine(), aP, hugThresholdLength, l_ccw );
 
             if( validCcw )
-                distCcw = ( aP - l_ccw.CPoint( -1 ) ).EuclideanNorm();
+                distCcw = ( aP - l_ccw.CLastPoint() ).EuclideanNorm();
 
             PNS_DBG( Dbg(), AddShape, &l_ccw, MAGENTA, 200000, wxString::Format( "wh-result-ccw %s",
                                                                                  validCcw ? "non-colliding"
@@ -705,12 +707,12 @@ bool LINE_PLACER::rhWalkBase( const VECTOR2I& aP, LINE& aWalkLine, int aCollisio
         if( distCw < distCcw && validCw )
         {
             walkFull.SetShape( l_cw );
-            walkP = l_cw.CPoint(-1);
+            walkP = l_cw.CLastPoint();
         }
         else if( validCcw )
         {
             walkFull.SetShape( l_ccw );
-            walkP = l_ccw.CPoint(-1);
+            walkP = l_ccw.CLastPoint();
         }
         else
         {
@@ -725,7 +727,7 @@ bool LINE_PLACER::rhWalkBase( const VECTOR2I& aP, LINE& aWalkLine, int aCollisio
     if( l1.EndsWithVia() )
     {
         VIA v ( l1.Via() );
-        v.SetPos( walkFull.CPoint( -1 ) );
+        v.SetPos( walkFull.CLastPoint() );
         walkFull.AppendVia( v );
     }
 
@@ -800,9 +802,9 @@ bool LINE_PLACER::rhWalkOnly( const VECTOR2I& aP, LINE& aNewHead, LINE& aNewTail
 
     if( m_placingVia && viaOk )
     {
-        PNS_DBG( Dbg(), AddPoint, aNewHead.CPoint(-1), RED, 1000000, wxString::Format( "VIA" ) );
+        PNS_DBG( Dbg(), AddPoint, aNewHead.CLastPoint(), RED, 1000000, wxString::Format( "VIA" ) );
 
-        aNewHead.AppendVia( makeVia( aNewHead.CPoint( -1 ) ) );
+        aNewHead.AppendVia( makeVia( aNewHead.CLastPoint() ) );
     }
 
     OPTIMIZER::Optimize( &aNewHead, effort, m_currentNode );
@@ -826,9 +828,10 @@ bool LINE_PLACER::rhMarkObstacles( const VECTOR2I& aP, LINE& aNewHead, LINE& aNe
     // the shove/walk mode that certain users find too intrusive.
     if( obs )
     {
-        int              clearance = m_currentNode->GetClearance( obs->m_item, &m_head, false );
-        SHAPE_LINE_CHAIN hull = obs->m_item->Hull( clearance, m_head.Width(), m_head.Layer() );
-        VECTOR2I         nearest;
+        int clearance = m_currentNode->GetClearance( obs->m_item, &m_head, false );
+        const SHAPE_LINE_CHAIN& hull = m_currentNode->GetRuleResolver()->HullCache(
+                obs->m_item, clearance, m_head.Width(), m_head.Layer() );
+        VECTOR2I nearest;
 
         DIRECTION_45::CORNER_MODE cornerMode = Settings().GetCornerMode();
 
@@ -881,9 +884,9 @@ bool LINE_PLACER::splitHeadTail( const LINE& aNewLine, const LINE& aOldTail, LIN
 
     if( n > 1 && aOldTail.PointCount() > 1 )
     {
-        if( l2.CLine().PointOnEdge( aOldTail.CPoint( -1 ) ) )
+        if( l2.CLine().PointOnEdge( aOldTail.CLastPoint() ) )
         {
-            l2.Line().Split( aOldTail.CPoint( -1 ) );
+            l2.Line().Split( aOldTail.CLastPoint() );
         }
 
         for( i = 0; i < aOldTail.PointCount(); i++ )
@@ -914,13 +917,13 @@ bool LINE_PLACER::splitHeadTail( const LINE& aNewLine, const LINE& aOldTail, LIN
     else
     {
         newTail.Clear();
-        newHead = l2;
+        newHead = std::move( l2 );
     }
 
     PNS_DBG( Dbg(), AddItem, &newHead, BLUE, 500000, wxT( "head-post-split" ) );
 
-    aNewHead = newHead;
-    aNewTail = newTail;
+    aNewHead = std::move( newHead );
+    aNewTail = std::move( newTail );
 
     return true;
 }
@@ -953,7 +956,7 @@ bool LINE_PLACER::rhShoveOnly( const VECTOR2I& aP, LINE& aNewHead, LINE& aNewTai
 
     if( m_placingVia && viaOk )
     {
-        newHead.AppendVia( makeVia( newHead.CPoint( -1 ) ) );
+        newHead.AppendVia( makeVia( newHead.CLastPoint() ) );
         PNS_DBG( Dbg(), AddPoint, newHead.Via().Pos(), GREEN, 1000000, "shove-new-via" );
 
     }
@@ -1006,7 +1009,7 @@ bool LINE_PLACER::rhShoveOnly( const VECTOR2I& aP, LINE& aNewHead, LINE& aNewTai
             aNewHead.AppendVia( newHead.Via() );
 
         OPTIMIZER::Optimize( &aNewHead, effort, m_currentNode );
-        PNS_DBG( Dbg(), AddItem, aNewHead.Clone(), GREEN, 1000000, "head-sh-postopt" );
+        PNS_DBG( Dbg(), AddItem, &aNewHead, GREEN, 1000000, "head-sh-postopt" );
 
         return true;
     }
@@ -1104,7 +1107,7 @@ bool LINE_PLACER::optimizeTailHeadTransition()
 void LINE_PLACER::updatePStart( const LINE& tail )
 {
     if( tail.CLine().PointCount() )
-        m_p_start = tail.CLine().CPoint(-1);
+        m_p_start = tail.CLine().CLastPoint();
     else
         m_p_start = m_currentStart;
 }
@@ -1145,8 +1148,8 @@ void LINE_PLACER::routeStep( const VECTOR2I& aP )
 
         if( !routeHead( aP, newHead, newTail ) )
         {
-            m_tail = prevTail;
-            m_head = prevHead;
+            m_tail = std::move( prevTail );
+            m_head = std::move( prevHead );
 
             // If we fail to walk out of the initial point (no tail), instead of returning an empty
             // line, return a zero-length line so that the user gets some feedback that routing is
@@ -1169,8 +1172,8 @@ void LINE_PLACER::routeStep( const VECTOR2I& aP )
 
         PNS_DBG( Dbg(), Message, wxString::Format( "N VIA H %d T %d\n", m_head.EndsWithVia() ? 1 : 0, m_tail.EndsWithVia() ? 1 : 0 ) );
 
-        m_head = newHead;
-        m_tail = newTail;
+        m_head = std::move( newHead );
+        m_tail = std::move( newTail );
 
         if( handleSelfIntersections() )
         {
@@ -1228,7 +1231,7 @@ bool LINE_PLACER::route( const VECTOR2I& aP )
     if( !m_head.PointCount() )
         return false;
 
-    return m_head.CPoint( -1 ) == aP;
+    return m_head.CLastPoint() == aP;
 }
 
 
@@ -1501,10 +1504,25 @@ bool LINE_PLACER::Move( const VECTOR2I& aP, ITEM* aEndItem )
 
     current = Trace();
 
+    VECTOR2I splitPoint = current.PointCount() ? current.CLine().CLastPoint() : m_p_start;
+
+    if( reachesEnd && aEndItem && current.SegmentCount() && aEndItem->OfKind( ITEM::SEGMENT_T ) )
+    {
+        const SEG lastSeg = current.CLine().CSegment( current.SegmentCount() - 1 );
+        const SEG targetSeg = static_cast<SEGMENT*>( aEndItem )->Seg();
+
+        if( lastSeg.Collinear( targetSeg ) && targetSeg.Overlaps( lastSeg ) )
+        {
+            splitPoint = targetSeg.NearestPoint( lastSeg.A );
+            current.Line().SetPoint( current.PointCount() - 1, splitPoint );
+            m_head.Line().SetPoint( m_head.PointCount() - 1, splitPoint );
+        }
+    }
+
     if( !current.PointCount() )
         m_currentEnd = m_p_start;
     else
-        m_currentEnd = current.CLine().CPoint( -1 );
+        m_currentEnd = splitPoint;
 
     NODE* latestNode = m_currentNode;
     m_lastNode = latestNode->Branch();
@@ -1515,7 +1533,7 @@ bool LINE_PLACER::Move( const VECTOR2I& aP, ITEM* aEndItem )
             && current.SegmentCount() )
     {
         if ( aEndItem->Net() == m_currentNet )
-            SplitAdjacentSegments( m_lastNode, aEndItem, current.CPoint( -1 ) );
+            SplitAdjacentSegments( m_lastNode, aEndItem, splitPoint );
 
         if( Settings().RemoveLoops() )
             removeLoops( m_lastNode, current );
@@ -1608,11 +1626,11 @@ bool LINE_PLACER::FixRoute( const VECTOR2I& aP, ITEM* aEndItem, bool aForceFinis
         return true;
     }
 
-    VECTOR2I p_pre_last = l.CPoint( -1 );
-    const VECTOR2I p_last = l.CPoint( -1 );
+    VECTOR2I p_pre_last = l.CLastPoint();
+    const VECTOR2I p_last = l.CLastPoint();
 
     if( l.PointCount() > 2 )
-        p_pre_last = l.CPoint( -2 );
+        p_pre_last = l.CPoints()[ l.PointCount() - 2 ];
 
     if( aEndItem && m_currentNet && m_currentNet == aEndItem->Net() )
         realEnd = true;
@@ -1684,7 +1702,7 @@ bool LINE_PLACER::FixRoute( const VECTOR2I& aP, ITEM* aEndItem, bool aForceFinis
     }
 
 
-    if( realEnd && lastItem )
+    if( lastItem )
         simplifyNewLine( m_lastNode, lastItem );
 
     if( !realEnd )
@@ -1805,7 +1823,7 @@ void LINE_PLACER::removeLoops( NODE* aNode, LINE& aLatest )
     if( !aLatest.SegmentCount() )
         return;
 
-    if( aLatest.CLine().CPoint( 0 ) == aLatest.CLine().CPoint( -1 ) )
+    if( aLatest.CLine().CPoint( 0 ) == aLatest.CLine().CLastPoint() )
         return;
 
     std::set<LINKED_ITEM *> toErase;
@@ -1835,10 +1853,24 @@ void LINE_PLACER::removeLoops( NODE* aNode, LINE& aLatest )
 
             if( !( line.ContainsLink( seg ) ) && line.SegmentCount() )
             {
+                // Don't remove locked tracks
+                bool hasLockedSegment = false;
                 for( LINKED_ITEM* ss : line.Links() )
-                    toErase.insert( ss );
+                {
+                    if( ss->IsLocked() )
+                    {
+                        hasLockedSegment = true;
+                        break;
+                    }
+                }
 
-                removedCount++;
+                if( !hasLockedSegment )
+                {
+                    for( LINKED_ITEM* ss : line.Links() )
+                        toErase.insert( ss );
+
+                    removedCount++;
+                }
             }
         }
 
@@ -1900,6 +1932,18 @@ void LINE_PLACER::simplifyNewLine( NODE* aNode, LINKED_ITEM* aLatest )
                             ( nB == aJoint && nA->LinkCount() == 1 ) )
                         {
                             cleanup.insert( neighbor );
+                        }
+                    }
+                    else if( testSeg.Contains( refSeg ) )
+                    {
+                        const JOINT* aA = aNode->FindJoint( aItem->Anchor( 0 ), aItem );
+                        const JOINT* aB = aNode->FindJoint( aItem->Anchor( 1 ), aItem );
+
+                        if( ( aA == aJoint && aB->LinkCount() == 1 ) ||
+                            ( aB == aJoint && aA->LinkCount() == 1 ) )
+                        {
+                            cleanup.insert( aItem );
+                            return;
                         }
                     }
                 }
@@ -2020,7 +2064,7 @@ bool LINE_PLACER::buildInitialLine( const VECTOR2I& aP, LINE& aHead, PNS::PNS_MO
 
         if( l.SegmentCount() > 1 && m_orthoMode )
         {
-            VECTOR2I newLast = l.CSegment( 0 ).LineProject( l.CPoint( -1 ) );
+            VECTOR2I newLast = l.CSegment( 0 ).LineProject( l.CLastPoint() );
 
             l.Remove( -1, -1 );
             l.SetPoint( 1, newLast );
@@ -2121,7 +2165,7 @@ void FIXED_TAIL::AddStage( const VECTOR2I& aStart, int aLayer, bool placingVias,
     st.pts.push_back(pt);
     st.commit = aNode;
 
-    m_stages.push_back( st );
+    m_stages.push_back( std::move( st ) );
 }
 
 
@@ -2145,4 +2189,3 @@ int FIXED_TAIL::StageCount() const
 }
 
 }
-

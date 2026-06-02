@@ -27,7 +27,6 @@
 #include <schematic.h>
 #include <sch_sheet.h>
 #include <sch_screen.h>
-#include <symbol_lib_table.h>
 #include <kiplatform/environment.h>
 
 /**
@@ -51,13 +50,13 @@ SCH_SHEET* SCH_IO_LTSPICE::LoadSchematicFile( const wxString& aFileName, SCHEMAT
     if( aAppendToMe )
     {
         wxCHECK_MSG( aSchematic->IsValid(), nullptr, "Can't append to a schematic with no root!" );
-        rootSheet = &aSchematic->Root();
+        rootSheet = aAppendToMe;
     }
     else
     {
         rootSheet = new SCH_SHEET( aSchematic );
         rootSheet->SetFileName( aFileName );
-        aSchematic->SetRoot( rootSheet );
+        aSchematic->SetTopLevelSheets( { rootSheet } );
     }
 
     if( !rootSheet->GetScreen() )
@@ -70,10 +69,6 @@ SCH_SHEET* SCH_IO_LTSPICE::LoadSchematicFile( const wxString& aFileName, SCHEMAT
         // Virtual root sheet UUID must be the same as the schematic file UUID.
         const_cast<KIID&>( rootSheet->m_Uuid ) = screen->GetUuid();
     }
-
-    SYMBOL_LIB_TABLE* libTable = PROJECT_SCH::SchSymbolLibTable( &aSchematic->Prj() );
-
-    wxCHECK_MSG( libTable, nullptr, "Could not load symbol lib table." );
 
     // Windows path: C:\Users\USERNAME\AppData\Local\LTspice\lib
     wxFileName ltspiceDataDir( KIPLATFORM::ENV::GetUserLocalDataPath(), wxEmptyString );

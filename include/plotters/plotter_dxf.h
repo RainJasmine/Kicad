@@ -21,6 +21,262 @@
 
 #include "plotter.h"
 
+/**
+ * Legacy colors for DXF file.
+ */
+enum class DXF_COLOR_T
+{
+    BLACK = 0,
+    RED,
+    YELLOW,
+    GREEN,
+    CYAN,
+    BLUE,
+    MAGENTA,
+    WHITE,
+    BROWN,
+    ORANGE,
+    LIGHTRED,
+    LIGHTYELLOW,
+    LIGHTGREEN,
+    LIGHTCYAN,
+    LIGHTBLUE,
+    LIGHTMAGENTA,
+    LIGHTORANGE,
+    LIGHTGRAY,
+    DARKRED,
+    DARKYELLOW,
+    DARKGREEN,
+    DARKCYAN,
+    DARKBLUE,
+    DARKMAGENTA,
+    DARKBROWN,
+    DARKORANGE,
+    DARKGRAY,
+    PURERED,
+    PUREYELLOW,
+    PUREGREEN,
+    PURECYAN,
+    PUREBLUE,
+    PUREMAGENTA,
+    PUREORANGE,
+    PUREGRAY,
+    REDONE,
+    REDTWO,
+    REDTHREE,
+    REDFOUR,
+    REDFIVE,
+    REDSIX,
+    ORANGEONE,
+    ORANGETWO,
+    ORANGETHREE,
+    ORANGEFOUR,
+    ORANGEFIVE,
+    REDSEVEN,
+    REDEIGHT,
+    ORANGESIX,
+    REDNINE,
+    ORANGESEVEN,
+    ORANGEEIGHT,
+    ORANGENINE,
+    ORANGETEN,
+    ORANGEELEVEN,
+    ORANGETWELVE,
+    ORANGETHIRTEEN,
+    ORANGEFOURTEEN,
+    YELLOWONE,
+    YELLOWTWO,
+    YELLOWTHREE,
+    YELLOWFOUR,
+    YELLOWFIVE,
+    YELLOWSIX,
+    YELLOWSEVEN,
+    YELLOWEIGHT,
+    YELLOWNINE,
+    YELLOWTEN,
+    YELLOWELEVEN,
+    YELLOWTWELVE,
+    YELLOWTHIRTEEN,
+    YELLOWFOURTEEN,
+    GREENONE,
+    GREENTWO,
+    GREENTHREE,
+    GREENFOUR,
+    GREENFIVE,
+    GREENSIX,
+    GREENSEVEN,
+    GREENEIGHT,
+    GREENNINE,
+    GREENTEN,
+    GREENELEVEN,
+    GREENTWELVE,
+    GREENTHIRTEEN,
+    GREENFOURTEEN,
+    GREENFIFTEEN,
+    GREENSIXTEEN,
+    GREENSEVENTEEN,
+    GREENEIGHTEEN,
+    GREENNINETEEN,
+    GREENTWENTY,
+    GREENTWENTYONE,
+    GREENTWENTYTWO,
+    GREENTWENTYTHREE,
+    GREENTWENTYFOUR,
+    GREENTWENTYFIVE,
+    GREENTWENTYSIX,
+    GREENTWENTYSEVEN,
+    GREENTWENTYEIGHT,
+    GREENTWENTYNINE,
+    GREENTHIRTY,
+    GREENTHIRTYONE,
+    GREENTHIRTYTWO,
+    GREENTHIRTYTHREE,
+    GREENTHIRTYFOUR,
+    GREENTHIRTYFIVE,
+    GREENTHIRTYSIX,
+    GREENTHIRTYSEVEN,
+    GREENTHIRTYEIGHT,
+    GREENTHIRTYNINE,
+    GREENFORTY,
+    GREENFORTYONE,
+    GREENFORTYTWO,
+    GREENFORTYTHREE,
+    GREENFORTYFOUR,
+    GREENFORTYFIVE,
+    GREENFORTYSIX,
+    GREENFORTYSEVEN,
+    GREENFORTYEIGHT,
+    GREENFORTYNINE,
+    GREENFIFTY,
+    GREENFIFTYONE,
+    GREENFIFTYTWO,
+    GREENFIFTYTHREE,
+    GREENFIFTYFOUR,
+    GREENFIFTYFIVE,
+    GREENFIFTYSIX,
+    GREENFIFTYSEVEN,
+    GREENFIFTYEIGHT,
+    GREENFIFTYNINE,
+    GREENSIXTY,
+    GREENSIXTYONE,
+    GREENSIXTYTWO,
+    GREENSIXTYTHREE,
+    GREENSIXTYFOUR,
+    GREENSIXTYFIVE,
+    CYANONE,
+    CYANTWO,
+    CYANTHREE,
+    CYANFOUR,
+    CYANFIVE,
+    CYANSIX,
+    CYANSEVEN,
+    BLUEONE,
+    BLUETWO,
+    BLUETHREE,
+    BLUEFOUR,
+    BLUEFIVE,
+    BLUESIX,
+    BLUESEVEN,
+    BLUEEIGHT,
+    BLUENINE,
+    BLUETEN,
+    BLUEELEVEN,
+    BLUETWELVE,
+    BLUETHIRTEEN,
+    BLUEFOURTEEN,
+    BLUEFIFTEEN,
+    BLUESIXTEEN,
+    BLUESEVENTEEN,
+    BLUEEIGHTEEN,
+    BLUENINETEEN,
+    BLUETWENTY,
+    BLUETWENTYONE,
+    BLUETWENTYTWO,
+    BLUETWENTYTHREE,
+    BLUETWENTYFOUR,
+    BLUETWENTYFIVE,
+    BLUETWENTYSIX,
+    BLUETWENTYSEVEN,
+    BLUETWENTYEIGHT,
+    BLUETWENTYNINE,
+    BLUETHIRTY,
+    BLUETHIRTYONE,
+    BLUETHIRTYTWO,
+    BLUETHIRTYETHREE,
+    BLUETHIRTYFOUR,
+    VIOLETONE,
+    VIOLETTWO,
+    VIOLETTHREE,
+    VIOLETFOUR,
+    VIOLETFIVE,
+    VIOLETSIX,
+    VIOLETSEVEN,
+    VIOLETEIGHT,
+    VIOLETNINE,
+    VIOLETTEN,
+    VIOLETELEVEN,
+    VIOLETTWELVE,
+    VIOLETTHIRTEEN,
+    VIOLETFOURTEEN,
+    VIOLETFIFTEEN,
+    VIOLETSIXTEEN,
+    VIOLETSEVENTEEN,
+    VIOLETEIGHTEEN,
+    VIOLETNINETEEN,
+    VIOLETTWENTY,
+    VIOLETTWENTYONE,
+    VIOLETTWENTYTWO,
+    VIOLETTWENTYTHREE,
+    VIOLETTWENTYFOUR,
+    VIOLETTWENTYFIVE,
+    VIOLETTWENTYSIX,
+    VIOLETTWENTYSEVEN,
+    VIOLETTWENTYEIGHT,
+    VIOLETTWENTYNINE,
+    VIOLETTHIRTY,
+    MAGENTAONE,
+    MAGENTATWO,
+    MAGENTATHREE,
+    MAGENTAFOUR,
+    MAGENTAFIVE,
+    MAGENTASIX,
+    MAGENTASEVEN,
+    MAGENTAEIGHT,
+    MAGENTANINE,
+    MAGENTATEN,
+    MAGENTAELEVEN,
+    MAGENTATWELVE,
+    MAGENTATHIRTEEN,
+    MAGENTAFOURTEEN,
+    REDTEN,
+    REDELEVEN,
+    VIOLETTHIRTYONE,
+    REDTWELVE,
+    REDTHIRTEEN,
+    REDFOURTEEN,
+    REDFIFTEEN,
+    REDSIXTEEN,
+    REDSEVENTEEN,
+    REDEIGHTEEN,
+    REDNINETEEN,
+    REDTWENTY,
+    REDTWENTYONE,
+    REDTWENTYTWO,
+    REDTWENTYTHREE,
+    REDTWENTYFOUR,
+    REDTWENTYFIVE,
+    REDTWENTYSIX,
+    REDTWENTYSEVEN,
+    REDTWENTYEIGHT,
+    REDTWENTYNINE,
+    REDTHIRTY,
+    REDTHIRTYONE,
+    GRAYONE,
+    GRAYTWO,
+    GRAYTHREE,
+    GRAYFOUR,
+    NBCOLORS  ///< Number of colors
+};
 
 class DXF_PLOTTER : public PLOTTER
 {
@@ -84,7 +340,8 @@ public:
     /**
      * DXF rectangle: fill not supported.
      */
-    virtual void Rect( const VECTOR2I& p1, const VECTOR2I& p2, FILL_T fill, int width ) override;
+    virtual void Rect( const VECTOR2I& p1, const VECTOR2I& p2, FILL_T fill, int width,
+                       int aCornerRadius = 0 ) override;
 
     /**
      * DXF circle: full functionality; it even does 'fills' drawing a
@@ -104,18 +361,19 @@ public:
      * It does not know thick segments, therefore filled polygons with thick outline
      * are converted to inflated polygon by aWidth/2.
      */
-    virtual void PlotPoly( const std::vector<VECTOR2I>& aCornerList, FILL_T aFill,
-                           int aWidth, void* aData = nullptr ) override;
+    virtual void PlotPoly( const std::vector<VECTOR2I>& aCornerList, FILL_T aFill, int aWidth,
+                           void* aData = nullptr ) override;
+
+    virtual void PlotPoly( const SHAPE_LINE_CHAIN& aLineChain, FILL_T aFill, int aWidth,
+                           void* aData = nullptr ) override;
 
     virtual void ThickSegment( const VECTOR2I& start, const VECTOR2I& end, int width,
                                void* aData ) override;
 
-    virtual void ThickArc( const VECTOR2D& aCentre, const EDA_ANGLE& aStAngle,
-                           const EDA_ANGLE& aAngle, double aRadius, int aWidth,
-                           void* aData ) override;
+    virtual void ThickArc( const VECTOR2D& aCentre, const EDA_ANGLE& aStAngle, const EDA_ANGLE& aAngle,
+                           double aRadius, int aWidth, void* aData ) override;
 
-    virtual void ThickRect( const VECTOR2I& p1, const VECTOR2I& p2, int width,
-                            void* aData ) override;
+    virtual void ThickRect( const VECTOR2I& p1, const VECTOR2I& p2, int width, void* aData ) override;
 
     virtual void ThickCircle( const VECTOR2I& pos, int diametre, int width, void* aData ) override;
 
@@ -218,6 +476,22 @@ public:
         return m_measurementDirective;
     }
 
+    /**
+     * Get the correct value for the $INSUNITS header variable given the current units.
+     *
+     * @return the $INSUNITS value (1 = inches, 4 = millimeters)
+     */
+    unsigned int GetInsUnits() const
+    {
+        return m_insUnits;
+    }
+
+    // Finds the nearest legacy color to the given RGB values (aR, aG, aB).
+    int FindNearestLegacyColor( int aR, int aG, int aB );
+
+    // Retrieves the current layer name based on the output mode and optional layer ID.
+    wxString GetCurrentLayerName( DXF_LAYER_OUTPUT_MODE aMode, std::optional<PCB_LAYER_ID> aLayerId = std::nullopt );
+
 protected:
     void plotOneLineOfText( const VECTOR2I& aPos, const COLOR4D& aColor, const wxString& aText,
                             const TEXT_ATTRIBUTES& aAttrs );
@@ -229,4 +503,5 @@ protected:
     DXF_UNITS    m_plotUnits;
     double       m_unitScalingFactor;
     unsigned int m_measurementDirective;
+    unsigned int m_insUnits;
 };

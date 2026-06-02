@@ -32,7 +32,6 @@
 #include <sch_validators.h>
 #include <validators.h>
 #include <sch_edit_frame.h>
-#include <symbol_library.h>
 #include <schematic.h>
 #include <template_fieldnames.h>
 #include <widgets/grid_text_button_helpers.h>
@@ -79,12 +78,29 @@ static wxString netList( SCH_SYMBOL* aSymbol, SCH_SHEET_PATH& aSheetPath )
 
     if( lib_symbol )
     {
-        for( SCH_PIN* pin : lib_symbol->GetPins( 0 /* all units */, 1 /* single bodyStyle */ ) )
-            pins.push_back( pin->GetNumber() + ' ' + pin->GetShownName() );
+        for( SCH_PIN* pin : lib_symbol->GetGraphicalPins( 0 /* all units */, 1 /* single bodyStyle */ ) )
+        {
+            bool                  valid = false;
+            std::vector<wxString> expanded = pin->GetStackedPinNumbers( &valid );
+
+            if( valid && !expanded.empty() )
+            {
+                for( const wxString& num : expanded )
+                    pins.push_back( num + ' ' + pin->GetShownName() );
+            }
+            else
+            {
+                pins.push_back( pin->GetNumber() + ' ' + pin->GetShownName() );
+            }
+        }
     }
 
     if( !pins.IsEmpty() )
-        netlist << EscapeString( wxJoin( pins, '\t' ), CTX_LINE );
+    {
+        wxString dbg = wxJoin( pins, '\t' );
+        wxLogTrace( "FOOTPRINT_CHOOSER", wxS( "Chooser payload pins: %s" ), dbg );
+        netlist << EscapeString( dbg, CTX_LINE );
+    }
 
     netlist << wxS( "\r" );
 
@@ -112,11 +128,28 @@ static wxString netList( LIB_SYMBOL* aSymbol )
     wxString      netlist;
     wxArrayString pins;
 
-    for( SCH_PIN* pin : aSymbol->GetPins( 0 /* all units */, 1 /* single bodyStyle */ ) )
-        pins.push_back( pin->GetNumber() + ' ' + pin->GetShownName() );
+    for( SCH_PIN* pin : aSymbol->GetGraphicalPins( 0 /* all units */, 1 /* single bodyStyle */ ) )
+    {
+        bool valid = false;
+        std::vector<wxString> expanded = pin->GetStackedPinNumbers( &valid );
+
+        if( valid && !expanded.empty() )
+        {
+            for( const wxString& num : expanded )
+                pins.push_back( num + ' ' + pin->GetShownName() );
+        }
+        else
+        {
+            pins.push_back( pin->GetNumber() + ' ' + pin->GetShownName() );
+        }
+    }
 
     if( !pins.IsEmpty() )
-        netlist << EscapeString( wxJoin( pins, '\t' ), CTX_LINE );
+    {
+        wxString dbg = wxJoin( pins, '\t' );
+        wxLogTrace( "FOOTPRINT_CHOOSER", wxS( "Chooser payload pins: %s" ), dbg );
+        netlist << EscapeString( dbg, CTX_LINE );
+    }
 
     netlist << wxS( "\r" );
 
@@ -222,6 +255,15 @@ int FIELDS_GRID_TABLE::GetMandatoryRowCount() const
     }
 
     return mandatoryRows;
+}
+
+
+void FIELDS_GRID_TABLE::push_back( const SCH_FIELD& aField )
+{
+    std::vector<SCH_FIELD>::push_back( aField );
+
+    m_isInherited.resize( size() );
+    m_parentFields.resize( size() );
 }
 
 
@@ -377,6 +419,8 @@ void FIELDS_GRID_TABLE::initGrid( WX_GRID* aGrid )
 
     m_eval = std::make_unique<NUMERIC_EVALUATOR>( m_frame->GetUserUnits() );
 
+    aGrid->SetupColumnAutosizer( FDC_VALUE );
+
     m_frame->Bind( EDA_EVT_UNITS_CHANGED, &FIELDS_GRID_TABLE::onUnitsChanged, this );
 }
 
@@ -398,6 +442,9 @@ FIELDS_GRID_TABLE::~FIELDS_GRID_TABLE()
     m_netclassAttr->DecRef();
     m_fontAttr->DecRef();
     m_colorAttr->DecRef();
+
+    for( SCH_FIELD& field : m_parentFields )
+        field.SetParent( nullptr );
 
     m_frame->Unbind( EDA_EVT_UNITS_CHANGED, &FIELDS_GRID_TABLE::onUnitsChanged, this );
 }
@@ -538,33 +585,34 @@ wxGridCellAttr* FIELDS_GRID_TABLE::GetAttr( int aRow, int aCol, wxGridCellAttr::
     wxCHECK( aRow < GetNumberRows(), nullptr );
 
     const SCH_FIELD& field = getField( aRow );
-    wxGridCellAttr*  tmp;
+    wxGridCellAttr*  attr = nullptr;
 
     switch( aCol )
     {
     case FDC_NAME:
         if( field.IsMandatory() )
         {
-            tmp = m_fieldNameAttr->Clone();
-            tmp->SetReadOnly( true );
-            return enhanceAttr( tmp, aRow, aCol, aKind );
+            attr = m_fieldNameAttr->Clone();
+            attr->SetReadOnly( true );
         }
         else
         {
             m_fieldNameAttr->IncRef();
-            return enhanceAttr( m_fieldNameAttr, aRow, aCol, aKind );
+            attr = m_fieldNameAttr;
         }
+
+        break;
 
     case FDC_VALUE:
         if( field.GetId() == FIELD_T::REFERENCE )
         {
             m_referenceAttr->IncRef();
-            return enhanceAttr( m_referenceAttr, aRow, aCol, aKind );
+            attr = m_referenceAttr;
         }
         else if( field.GetId() == FIELD_T::VALUE )
         {
             m_valueAttr->IncRef();
-            return enhanceAttr( m_valueAttr, aRow, aCol, aKind );
+            attr = m_valueAttr;
         }
         else if( field.GetId() == FIELD_T::FOOTPRINT )
         {
@@ -574,34 +622,34 @@ wxGridCellAttr* FIELDS_GRID_TABLE::GetAttr( int aRow, int aCol, wxGridCellAttr::
             if( m_part && m_part->IsPower() )
             {
                 m_readOnlyAttr->IncRef();
-                return enhanceAttr( m_readOnlyAttr, aRow, aCol, aKind );
+                attr = m_readOnlyAttr;
             }
             else
             {
                 m_footprintAttr->IncRef();
-                return enhanceAttr( m_footprintAttr, aRow, aCol, aKind );
+                attr = m_footprintAttr;
             }
         }
         else if( field.GetId() == FIELD_T::DATASHEET )
         {
             m_urlAttr->IncRef();
-            return enhanceAttr( m_urlAttr, aRow, aCol, aKind );
+            attr = m_urlAttr;
         }
         else if( field.GetId() == FIELD_T::SHEET_NAME )
         {
             m_referenceAttr->IncRef();
-            return enhanceAttr( m_referenceAttr, aRow, aCol, aKind );
+            attr = m_referenceAttr;
         }
         else if( field.GetId() == FIELD_T::SHEET_FILENAME )
         {
             m_filepathAttr->IncRef();
-            return enhanceAttr( m_filepathAttr, aRow, aCol, aKind );
+            attr = m_filepathAttr;
         }
         else if( ( m_parentType == SCH_LABEL_LOCATE_ANY_T )
                 && field.GetCanonicalName() == wxT( "Netclass" ) )
         {
             m_netclassAttr->IncRef();
-            return enhanceAttr( m_netclassAttr, aRow, aCol, aKind );
+            attr = m_netclassAttr;
         }
         else
         {
@@ -612,34 +660,39 @@ wxGridCellAttr* FIELDS_GRID_TABLE::GetAttr( int aRow, int aCol, wxGridCellAttr::
             const TEMPLATE_FIELDNAME* templateFn =
                     settings ? settings->m_TemplateFieldNames.GetFieldName( fn ) : nullptr;
 
-            if( ( templateFn && templateFn->m_URL ) || field.IsHypertext() )
+            if( ( templateFn && templateFn->m_URL ) || field.HasHypertext() )
             {
                 m_urlAttr->IncRef();
-                return enhanceAttr( m_urlAttr, aRow, aCol, aKind );
+                attr = m_urlAttr;
             }
             else
             {
                 m_nonUrlAttr->IncRef();
-                return enhanceAttr( m_nonUrlAttr, aRow, aCol, aKind );
+                attr = m_nonUrlAttr;
             }
         }
+
+        break;
 
     case FDC_TEXT_SIZE:
     case FDC_POSX:
     case FDC_POSY:
-        return enhanceAttr( nullptr, aRow, aCol, aKind );
+        break;
 
     case FDC_H_ALIGN:
         m_hAlignAttr->IncRef();
-        return enhanceAttr( m_hAlignAttr, aRow, aCol, aKind );
+        attr = m_hAlignAttr;
+        break;
 
     case FDC_V_ALIGN:
         m_vAlignAttr->IncRef();
-        return enhanceAttr( m_vAlignAttr, aRow, aCol, aKind );
+        attr = m_vAlignAttr;
+        break;
 
     case FDC_ORIENTATION:
         m_orientationAttr->IncRef();
-        return enhanceAttr( m_orientationAttr, aRow, aCol, aKind );
+        attr = m_orientationAttr;
+        break;
 
     case FDC_SHOWN:
     case FDC_SHOW_NAME:
@@ -648,20 +701,50 @@ wxGridCellAttr* FIELDS_GRID_TABLE::GetAttr( int aRow, int aCol, wxGridCellAttr::
     case FDC_ALLOW_AUTOPLACE:
     case FDC_PRIVATE:
         m_boolAttr->IncRef();
-        return enhanceAttr( m_boolAttr, aRow, aCol, aKind );
+        attr = m_boolAttr;
+        break;
 
     case FDC_FONT:
         m_fontAttr->IncRef();
-        return enhanceAttr( m_fontAttr, aRow, aCol, aKind );
+        attr = m_fontAttr;
+        break;
 
     case FDC_COLOR:
         m_colorAttr->IncRef();
-        return enhanceAttr( m_colorAttr, aRow, aCol, aKind );
+        attr = m_colorAttr;
+        break;
 
     default:
-        wxFAIL;
-        return enhanceAttr( nullptr, aRow, aCol, aKind );
+        attr = nullptr;
+        break;
     }
+
+    if( !attr )
+        return nullptr;
+
+    attr = enhanceAttr( attr, aRow, aCol, aKind );
+
+    if( IsInherited( aRow ) )
+    {
+        wxGridCellAttr* text_attr = attr ? attr->Clone() : new wxGridCellAttr;
+        wxFont font;
+
+        if( !text_attr->HasFont() )
+            font = wxSystemSettings::GetFont( wxSYS_DEFAULT_GUI_FONT );
+        else
+            font = text_attr->GetFont();
+
+        font.MakeItalic();
+        text_attr->SetFont( font );
+        text_attr->SetTextColour( wxSystemSettings::GetColour( wxSYS_COLOUR_GRAYTEXT ) );
+
+        if( attr )
+            attr->DecRef();
+
+        attr = text_attr;
+    }
+
+    return attr;
 }
 
 
@@ -802,11 +885,11 @@ void FIELDS_GRID_TABLE::SetValue( int aRow, int aCol, const wxString &aValue )
     VECTOR2I   pos;
     wxString   value = aValue;
 
-    switch( aCol )
+    if( aCol != FDC_VALUE )
+        value.Trim( true ).Trim( false );
+
+    if( aCol == FDC_TEXT_SIZE || aCol == FDC_POSX || aCol == FDC_POSY )
     {
-    case FDC_TEXT_SIZE:
-    case FDC_POSX:
-    case FDC_POSY:
         m_eval->SetDefaultUnits( m_frame->GetUserUnits() );
 
         if( m_eval->Process( value ) )
@@ -814,11 +897,6 @@ void FIELDS_GRID_TABLE::SetValue( int aRow, int aCol, const wxString &aValue )
             m_evalOriginal[ { aRow, aCol } ] = value;
             value = m_eval->Result();
         }
-
-        break;
-
-    default:
-        break;
     }
 
     switch( aCol )
@@ -828,7 +906,6 @@ void FIELDS_GRID_TABLE::SetValue( int aRow, int aCol, const wxString &aValue )
         break;
 
     case FDC_VALUE:
-    {
         if( m_parentType == SCH_SHEET_T && field.GetId() == FIELD_T::SHEET_FILENAME )
         {
             value = EnsureFileExtension( value, FILEEXT::KiCadSchematicFileExtension );
@@ -838,9 +915,11 @@ void FIELDS_GRID_TABLE::SetValue( int aRow, int aCol, const wxString &aValue )
             value = EscapeString( value, CTX_LIBID );
         }
 
+        if( m_frame )
+            value = ConvertPathToFileUri( value, &m_frame->Prj() );
+
         field.SetText( UnescapeString( value ) );
         break;
-    }
 
     case FDC_SHOWN:
         field.SetVisible( BoolFromString( value ) );
@@ -903,8 +982,7 @@ void FIELDS_GRID_TABLE::SetValue( int aRow, int aCol, const wxString &aValue )
         break;
 
     case FDC_TEXT_SIZE:
-        field.SetTextSize( VECTOR2I( m_frame->ValueFromString( value ),
-                                     m_frame->ValueFromString( value ) ) );
+        field.SetTextSize( VECTOR2I( m_frame->ValueFromString( value ), m_frame->ValueFromString( value ) ) );
         break;
 
     case FDC_ORIENTATION:
@@ -933,8 +1011,7 @@ void FIELDS_GRID_TABLE::SetValue( int aRow, int aCol, const wxString &aValue )
         if( value == DEFAULT_FONT_NAME )
             field.SetFont( nullptr );
         else if( value == KICAD_FONT_NAME )
-            field.SetFont( KIFONT::FONT::GetFont( wxEmptyString, field.IsBold(),
-                                                  field.IsItalic() ) );
+            field.SetFont( KIFONT::FONT::GetFont( wxEmptyString, field.IsBold(), field.IsItalic() ) );
         else
             field.SetFont( KIFONT::FONT::GetFont( aValue, field.IsBold(), field.IsItalic() ) );
 
@@ -1054,10 +1131,55 @@ int FIELDS_GRID_TABLE::GetFieldRow( FIELD_T aFieldId )
     return -1;
 }
 
+void FIELDS_GRID_TABLE::AddInheritedField( const SCH_FIELD& aParent )
+{
+    push_back( aParent );
+    back().SetParent( m_part );
+    m_isInherited.back() = true;
+    m_parentFields.back() = aParent;
+}
+
+bool FIELDS_GRID_TABLE::EraseRow( size_t aRow )
+{
+    if( m_isInherited.size() > aRow )
+    {
+        // You can't erase inherited fields, but you can reset them to the parent value.
+        if( m_isInherited[aRow] )
+        {
+            at( aRow ) = m_parentFields[aRow];
+            return false;
+        }
+
+        m_isInherited.erase( m_isInherited.begin() + aRow );
+    }
+
+    if( m_parentFields.size() > aRow )
+        m_parentFields.erase( m_parentFields.begin() + aRow );
+
+    std::vector<SCH_FIELD>::erase( begin() + aRow );
+    return true;
+}
+
+void FIELDS_GRID_TABLE::SwapRows( size_t a, size_t b )
+{
+    wxCHECK( a < this->size() && b < this->size(), /*void*/ );
+
+    std::swap( at( a ), at( b ) );
+
+    bool tmpInherited = m_isInherited[a];
+    m_isInherited[a] = m_isInherited[b];
+    m_isInherited[b] = tmpInherited;
+
+    std::swap( m_parentFields[a], m_parentFields[b] );
+}
+
 
 void FIELDS_GRID_TABLE::DetachFields()
 {
     for( SCH_FIELD& field : *this )
+        field.SetParent( nullptr );
+
+    for( SCH_FIELD& field : m_parentFields )
         field.SetParent( nullptr );
 }
 
@@ -1074,16 +1196,14 @@ void FIELDS_GRID_TRICKS::showPopupMenu( wxMenu& menu, wxGridEvent& aEvent )
         && m_grid->GetGridCursorCol() == FDC_VALUE
         && !m_grid->IsReadOnly( getFieldRow( FIELD_T::FOOTPRINT ), FDC_VALUE ) )
     {
-        menu.Append( MYID_SELECT_FOOTPRINT, _( "Select Footprint..." ),
-                     _( "Browse for footprint" ) );
+        menu.Append( MYID_SELECT_FOOTPRINT, _( "Select Footprint..." ), _( "Browse for footprint" ) );
         menu.AppendSeparator();
     }
     else if( m_grid->GetGridCursorRow() == getFieldRow( FIELD_T::DATASHEET )
            && m_grid->GetGridCursorCol() == FDC_VALUE
            && !m_grid->IsReadOnly( getFieldRow( FIELD_T::DATASHEET ), FDC_VALUE ) )
     {
-        menu.Append( MYID_SHOW_DATASHEET, _( "Show Datasheet" ),
-                     _( "Show datasheet in browser" ) );
+        menu.Append( MYID_SHOW_DATASHEET, _( "Show Datasheet" ), _( "Show datasheet in browser" ) );
         menu.AppendSeparator();
     }
 

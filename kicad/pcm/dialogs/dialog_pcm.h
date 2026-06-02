@@ -83,6 +83,8 @@ public:
         return m_changed_package_types;
     };
 
+    void SetActivePackageType( PCM_PACKAGE_TYPE aType );
+
 private:
     /**
      * @brief Gets package data from PCM and displays it on repository tab
@@ -106,6 +108,7 @@ private:
     ///< Discards specified pending action
     void discardAction( int aIndex );
 
+private:
     EDA_BASE_FRAME*                                            m_parentFrame;
     std::shared_ptr<PLUGIN_CONTENT_MANAGER>                    m_pcm;
     ActionCallback                                             m_actionCallback;

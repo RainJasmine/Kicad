@@ -21,17 +21,22 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include "pcbexpr_evaluator.h"
+
+#include <inspectable_impl.h>
 
 #include <cstdio>
 #include <memory>
 #include <mutex>
+
 #include <board.h>
 #include <footprint.h>
 #include <lset.h>
 #include <board_connected_item.h>
-#include <pcbexpr_evaluator.h>
 #include <drc/drc_engine.h>
 #include <component_classes/component_class.h>
+#include <string_utils.h>
+
 
 /* --------------------------------------------------------------------------------------------
  * Specialized Expression References
@@ -379,6 +384,13 @@ protected:
 };
 
 
+KICAD_T PCBEXPR_CONTEXT::GetEffectiveType( const BOARD_ITEM* aItem ) const
+{
+    auto it = m_typeOverrides.find( aItem );
+    return it != m_typeOverrides.end() ? it->second : aItem->Type();
+}
+
+
 LIBEVAL::VALUE* PCBEXPR_VAR_REF::GetValue( LIBEVAL::CONTEXT* aCtx )
 {
     PCBEXPR_CONTEXT* context = static_cast<PCBEXPR_CONTEXT*>( aCtx );
@@ -395,6 +407,23 @@ LIBEVAL::VALUE* PCBEXPR_VAR_REF::GetValue( LIBEVAL::CONTEXT* aCtx )
         return new LIBEVAL::VALUE();
 
     auto it = m_matchingTypes.find( TYPE_HASH( *item ) );
+
+    if( it == m_matchingTypes.end() )
+    {
+        // If the property isn't defined on the item itself but is defined on its parent
+        // footprint (e.g. Reference, Value), resolve against the parent so that conditions
+        // like "A.Reference == 'J1'" match pads and graphics belonging to J1.
+        if( FOOTPRINT* parentFp = item->GetParentFootprint() )
+        {
+            auto parentIt = m_matchingTypes.find( TYPE_HASH( *parentFp ) );
+
+            if( parentIt != m_matchingTypes.end() )
+            {
+                item = parentFp;
+                it = parentIt;
+            }
+        }
+    }
 
     if( it == m_matchingTypes.end() )
     {
@@ -444,28 +473,33 @@ LIBEVAL::VALUE* PCBEXPR_VAR_REF::GetValue( LIBEVAL::CONTEXT* aCtx )
 
                 if( it->second->Name() == wxT( "Pin Type" ) )
                     return new PCBEXPR_PINTYPE_VALUE( str );
-                else
-                    return new LIBEVAL::VALUE( str );
+
+                // If it quacks like a duck, it is a duck
+                double doubleVal;
+
+                if( EDA_UNIT_UTILS::UI::DoubleValueFromString( pcbIUScale, str, doubleVal ) )
+                    return new LIBEVAL::VALUE( doubleVal );
+
+                return new LIBEVAL::VALUE( str );
             }
-            else
+            else if( it->second->Name() == wxT( "Layer" )
+                        || it->second->Name() == wxT( "Layer Top" )
+                        || it->second->Name() == wxT( "Layer Bottom" ) )
             {
                 const wxAny& any = item->Get( it->second );
                 PCB_LAYER_ID layer;
 
-                if( it->second->Name() == wxT( "Layer" )
-                        || it->second->Name() == wxT( "Layer Top" )
-                        || it->second->Name() == wxT( "Layer Bottom" ) )
-                {
-                    if( any.GetAs<PCB_LAYER_ID>( &layer ) )
-                        return new PCBEXPR_LAYER_VALUE( layer );
-                    else if( any.GetAs<wxString>( &str ) )
-                        return new PCBEXPR_LAYER_VALUE( context->GetBoard()->GetLayerID( str ) );
-                }
-                else
-                {
-                    if( any.GetAs<wxString>( &str ) )
-                        return new LIBEVAL::VALUE( str );
-                }
+                if( any.GetAs<PCB_LAYER_ID>( &layer ) )
+                    return new PCBEXPR_LAYER_VALUE( layer );
+                else if( any.GetAs<wxString>( &str ) )
+                    return new PCBEXPR_LAYER_VALUE( context->GetBoard()->GetLayerID( str ) );
+            }
+            else
+            {
+                const wxAny& any = item->Get( it->second );
+
+                if( any.GetAs<wxString>( &str ) )
+                    return new LIBEVAL::VALUE( str );
             }
 
             return new LIBEVAL::VALUE();
@@ -489,7 +523,15 @@ LIBEVAL::VALUE* PCBEXPR_COMPONENT_CLASS_REF::GetValue( LIBEVAL::CONTEXT* aCtx )
 {
     BOARD_ITEM* item = dynamic_cast<BOARD_ITEM*>( GetObject( aCtx ) );
 
-    if( !item || item->Type() != PCB_FOOTPRINT_T )
+    if( !item )
+        return new LIBEVAL::VALUE();
+
+    // Resolve component class via the parent footprint so that conditions like
+    // "A.ComponentClass == 'X'" match pads and graphics inside the footprint.
+    if( item->Type() != PCB_FOOTPRINT_T )
+        item = item->GetParentFootprint();
+
+    if( !item )
         return new LIBEVAL::VALUE();
 
     return new PCBEXPR_COMPONENT_CLASS_VALUE( item );
@@ -514,15 +556,23 @@ LIBEVAL::VALUE* PCBEXPR_TYPE_REF::GetValue( LIBEVAL::CONTEXT* aCtx )
     if( !item )
         return new LIBEVAL::VALUE();
 
-    return new LIBEVAL::VALUE( ENUM_MAP<KICAD_T>::Instance().ToString( item->Type() ) );
+    PCBEXPR_CONTEXT* ctx = static_cast<PCBEXPR_CONTEXT*>( aCtx );
+    KICAD_T          type = ctx->GetEffectiveType( item );
+
+    return new LIBEVAL::VALUE( ENUM_MAP<KICAD_T>::Instance().ToString( type ) );
 }
 
 
 LIBEVAL::FUNC_CALL_REF PCBEXPR_UCODE::CreateFuncCall( const wxString& aName )
 {
+    wxString nameLower = aName.Lower();
+
     PCBEXPR_BUILTIN_FUNCTIONS& registry = PCBEXPR_BUILTIN_FUNCTIONS::Instance();
 
-    return registry.Get( aName.Lower() );
+    if( registry.IsGeometryDependent( nameLower ) )
+        m_hasGeometryDependentFunctions = true;
+
+    return registry.Get( nameLower );
 }
 
 
@@ -774,4 +824,3 @@ bool PCBEXPR_EVALUATOR::Evaluate( const wxString& aExpr )
 
     return true;
 }
-

@@ -26,7 +26,6 @@
 #include <dialog_gen_footprint_position_file_base.h>
 
 class PCB_EDIT_FRAME;
-class REPORTER;
 class JOB_EXPORT_PCB_POS;
 
 /**
@@ -40,21 +39,17 @@ public:
     DIALOG_GEN_FOOTPRINT_POSITION( JOB_EXPORT_PCB_POS* aJob, PCB_EDIT_FRAME* aEditFrame,
                                    wxWindow* aParent );
 
+    bool TransferDataToWindow() override;
+
 private:
-    void initDialog();
     void onOutputDirectoryBrowseClicked( wxCommandEvent& event ) override;
     void onGenerate( wxCommandEvent& event ) override;
 
     void onUpdateUIUnits( wxUpdateUIEvent& event ) override;
-
     void onUpdateUIFileOpt( wxUpdateUIEvent& event ) override;
-
     void onUpdateUIOnlySMD( wxUpdateUIEvent& event ) override;
-
     void onUpdateUInegXcoord( wxUpdateUIEvent& event ) override;
-
     void onUpdateUIExcludeTH( wxUpdateUIEvent& event ) override;
-
     void onUpdateUIincludeBoardEdge( wxUpdateUIEvent& event ) override;
 
     /**
@@ -68,18 +63,17 @@ private:
     bool CreateGerberFiles();
 
     // accessors to options:
-    bool UnitsMM();
+    bool UnitsMM()      { return m_unitsCtrl->GetSelection() == 1; }
+    bool OneFileOnly()  { return m_singleFile->GetValue(); }
+    bool OnlySMD()      { return m_onlySMD->GetValue(); }
+    bool ExcludeAllTH() { return m_excludeTH->GetValue(); }
+    bool ExcludeDNP()   { return m_excludeDNP->GetValue(); }
+    bool ExcludeBOM()   { return m_excludeBOM->GetValue(); }
 
-    bool OneFileOnly();
-
-    bool OnlySMD();
-
-    bool ExcludeAllTH();
-
-    bool ExcludeDNP();
+    wxString getSelectedVariant() const;
 
 private:
-    PCB_EDIT_FRAME* m_editFrame;
-    REPORTER*       m_reporter;
+    PCB_EDIT_FRAME*     m_editFrame;
     JOB_EXPORT_PCB_POS* m_job;
+    wxString            m_outputDirectory;
 };

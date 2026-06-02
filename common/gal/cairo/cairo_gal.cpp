@@ -29,6 +29,7 @@
 
 #include <wx/image.h>
 #include <wx/log.h>
+#include <wx/dcclient.h>
 
 #include <gal/cairo/cairo_gal.h>
 #include <gal/cairo/cairo_compositor.h>
@@ -322,6 +323,12 @@ void CAIRO_GAL_BASE::DrawSegment( const VECTOR2D& aStartPoint, const VECTOR2D& a
 }
 
 
+void CAIRO_GAL_BASE::DrawHoleWall( const VECTOR2D& aCenterPoint, double aRadius, double aWallWidth )
+{
+    DrawCircle( aCenterPoint, aRadius + aWallWidth );
+}
+
+
 void CAIRO_GAL_BASE::DrawCircle( const VECTOR2D& aCenterPoint, double aRadius )
 {
     syncLineWidth();
@@ -593,9 +600,12 @@ void CAIRO_GAL_BASE::Flush()
 
 void CAIRO_GAL_BASE::ClearScreen()
 {
-    cairo_set_source_rgb( m_currentContext, m_clearColor.r, m_clearColor.g, m_clearColor.b );
+    cairo_operator_t oldOp = cairo_get_operator( m_currentContext );
+    cairo_set_source_rgba( m_currentContext, m_clearColor.r, m_clearColor.g, m_clearColor.b, m_clearColor.a );
+    cairo_set_operator( m_currentContext, CAIRO_OPERATOR_SOURCE );
     cairo_rectangle( m_currentContext, 0.0, 0.0, m_screenSize.x, m_screenSize.y );
     cairo_fill( m_currentContext );
+    cairo_set_operator( m_currentContext, oldOp );
 }
 
 
@@ -985,7 +995,7 @@ void CAIRO_GAL::StartDiffLayer()
 
 void CAIRO_GAL::EndDiffLayer()
 {
-    m_compositor->DrawBuffer( m_tempBuffer, m_mainBuffer, CAIRO_OPERATOR_ADD );
+    m_compositor->DrawBuffer( m_tempBuffer, m_mainBuffer, CAIRO_OPERATOR_DIFFERENCE );
 }
 
 
@@ -1198,13 +1208,31 @@ void CAIRO_GAL_BASE::blitCursor( wxMemoryDC& clientDC )
 
     VECTOR2D      p = ToScreen( m_cursorPosition );
     const COLOR4D cColor = getCursorColor();
-    const int     cursorSize = m_fullscreenCursor ? 8000 : 80;
 
     wxColour color( cColor.r * cColor.a * 255, cColor.g * cColor.a * 255, cColor.b * cColor.a * 255,
                     255 );
     clientDC.SetPen( wxPen( color ) );
-    clientDC.DrawLine( p.x - cursorSize / 2, p.y, p.x + cursorSize / 2, p.y );
-    clientDC.DrawLine( p.x, p.y - cursorSize / 2, p.x, p.y + cursorSize / 2 );
+
+    if( m_crossHairMode == CROSS_HAIR_MODE::FULLSCREEN_CROSS )
+    {
+        clientDC.DrawLine( 0, p.y, m_screenSize.x, p.y );
+        clientDC.DrawLine( p.x, 0, p.x, m_screenSize.y );
+    }
+    else if( m_crossHairMode == CROSS_HAIR_MODE::FULLSCREEN_DIAGONAL )
+    {
+        // Oversized but that's ok
+        int diagonalSize = m_screenSize.x + m_screenSize.y;
+        clientDC.DrawLine( p.x - diagonalSize, p.y - diagonalSize,
+                           p.x + diagonalSize, p.y + diagonalSize );
+        clientDC.DrawLine( p.x - diagonalSize, p.y + diagonalSize,
+                           p.x + diagonalSize, p.y - diagonalSize );
+    }
+    else
+    {
+        const int cursorSize = 80;
+        clientDC.DrawLine( p.x - cursorSize / 2, p.y, p.x + cursorSize / 2, p.y );
+        clientDC.DrawLine( p.x, p.y - cursorSize / 2, p.x, p.y + cursorSize / 2 );
+    }
 }
 
 
@@ -1339,6 +1367,11 @@ CAIRO_GAL::CAIRO_GAL( GAL_DISPLAY_OPTIONS& aDisplayOptions, wxWindow* aParent,
     m_validCompositor = false;
     m_currentTarget = TARGET_NONCACHED;
     SetTarget( TARGET_NONCACHED );
+
+#ifdef _WIN32
+    // need to fix broken cairo rendering on Windows with wx 3.3
+    SetDoubleBuffered( false );
+#endif
 
     m_bitmapBuffer = nullptr;
     m_wxOutput = nullptr;
@@ -1631,7 +1664,7 @@ void CAIRO_GAL::setCompositor()
     // Recreate the compositor with the new Cairo context
     m_compositor.reset( new CAIRO_COMPOSITOR( &m_currentContext ) );
     m_compositor->Resize( m_screenSize.x, m_screenSize.y );
-    m_compositor->SetAntialiasingMode( m_options.cairo_antialiasing_mode );
+    m_compositor->SetAntialiasingMode( m_options.antialiasing_mode );
 
     // Prepare buffers
     m_mainBuffer = m_compositor->CreateBuffer();
@@ -1644,6 +1677,10 @@ void CAIRO_GAL::setCompositor()
 
 void CAIRO_GAL::onPaint( wxPaintEvent& aEvent )
 {
+    // A wxPaintDC must be created in wxEVT_PAINT handlers. Without this, the system keeps
+    // sending paint events because it thinks the window still needs to be painted, causing
+    // high CPU usage in fallback mode (Cairo).
+    wxPaintDC dc( this );
     PostPaint( aEvent );
 }
 
@@ -1669,9 +1706,9 @@ bool CAIRO_GAL::updatedGalDisplayOptions( const GAL_DISPLAY_OPTIONS& aOptions )
     bool refresh = false;
 
     if( m_validCompositor &&
-        aOptions.cairo_antialiasing_mode != m_compositor->GetAntialiasingMode() )
+        aOptions.antialiasing_mode != m_compositor->GetAntialiasingMode() )
     {
-        m_compositor->SetAntialiasingMode( m_options.cairo_antialiasing_mode );
+        m_compositor->SetAntialiasingMode( m_options.antialiasing_mode );
         m_validCompositor = false;
         deinitSurface();
 

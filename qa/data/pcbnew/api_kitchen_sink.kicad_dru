@@ -1,0 +1,8 @@
+(version 1)
+
+(rule myrule
+ # just something to see what happens
+ (layer inner)
+ (condition "A.Name == 'test'")
+ (constraint annular_width (min 3mm))
+ (constraint disallow track))

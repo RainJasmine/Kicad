@@ -74,6 +74,7 @@ public:
             m_excludedFromSim( false ),
             m_excludedFromBOM( false ),
             m_excludedFromBoard( false ),
+            m_excludedFromPosFiles( false ),
             m_DNP( false )
     { }
 
@@ -85,6 +86,7 @@ public:
             m_excludedFromSim( base.m_excludedFromSim ),
             m_excludedFromBOM( base.m_excludedFromBOM ),
             m_excludedFromBoard( base.m_excludedFromBoard ),
+            m_excludedFromPosFiles( base.m_excludedFromPosFiles ),
             m_DNP( base.m_DNP )
     { }
 
@@ -92,14 +94,15 @@ public:
     {
         SCH_ITEM::operator=( aItem );
 
-        m_pinNameOffset     = aItem.m_pinNameOffset;
-        m_showPinNames      = aItem.m_showPinNames;
-        m_showPinNumbers    = aItem.m_showPinNumbers;
+        m_pinNameOffset       = aItem.m_pinNameOffset;
+        m_showPinNames        = aItem.m_showPinNames;
+        m_showPinNumbers      = aItem.m_showPinNumbers;
 
-        m_excludedFromSim   = aItem.m_excludedFromSim;
-        m_excludedFromBOM   = aItem.m_excludedFromBOM;
-        m_excludedFromBoard = aItem.m_excludedFromBoard;
-        m_DNP               = aItem.m_DNP;
+        m_excludedFromSim     = aItem.m_excludedFromSim;
+        m_excludedFromBOM     = aItem.m_excludedFromBOM;
+        m_excludedFromBoard   = aItem.m_excludedFromBoard;
+        m_excludedFromPosFiles = aItem.m_excludedFromPosFiles;
+        m_DNP                 = aItem.m_DNP;
 
         return *this;
     };
@@ -108,7 +111,9 @@ public:
 
     virtual const LIB_ID& GetLibId() const = 0;
     virtual wxString GetDescription() const = 0;
+    virtual wxString GetShownDescription( int aDepth = 0 ) const = 0;
     virtual wxString GetKeyWords() const = 0;
+    virtual wxString GetShownKeyWords( int aDepth = 0 ) const = 0;
 
     virtual bool IsGlobalPower() const = 0;
     virtual bool IsLocalPower() const = 0;
@@ -116,27 +121,32 @@ public:
     virtual bool IsNormal() const = 0;
 
     /**
-     * Test if symbol has more than one body conversion type (DeMorgan).
-     *
-     * @return True if symbol has more than one conversion.
-     */
-    virtual bool HasAlternateBodyStyle() const = 0;
-
-    /**
      * @return true if the symbol has multiple units per symbol.
      */
-    virtual bool IsMulti() const = 0;
+    virtual bool IsMultiUnit() const = 0;
 
     /**
      * @return the number of units defined for the symbol.
      */
     virtual int GetUnitCount() const = 0;
 
+    /**
+     * @return true if the symbol has multiple body styles available.
+     */
+    virtual bool IsMultiBodyStyle() const = 0;
+
+    /**
+     * @return the number of body styles defined for the symbol.
+     */
+    virtual int GetBodyStyleCount() const = 0;
+
+    virtual bool HasDeMorganBodyStyles() const = 0;
+
     virtual const wxString GetRef( const SCH_SHEET_PATH* aSheet,
                                    bool aIncludeUnit = false ) const = 0;
 
     virtual const wxString GetValue( bool aResolve, const SCH_SHEET_PATH* aPath,
-                                     bool aAllowExtraText ) const = 0;
+                                     bool aAllowExtraText, const wxString& aVaraintName = wxEmptyString ) const = 0;
 
     virtual void GetFields( std::vector<SCH_FIELD*>& aVector, bool aVisibleOnly ) const = 0;
 
@@ -167,30 +177,70 @@ public:
     /**
      * Set or clear the exclude from simulation flag.
      */
-    void SetExcludedFromSim( bool aExcludeFromSim ) override
+    virtual void SetExcludedFromSim( bool aExcludeFromSim, const SCH_SHEET_PATH* aInstance = nullptr,
+                                     const wxString& aVariantName = wxEmptyString ) override
     {
         m_excludedFromSim = aExcludeFromSim;
     }
 
-    bool GetExcludedFromSim() const override { return m_excludedFromSim; }
+    virtual bool GetExcludedFromSim( const SCH_SHEET_PATH* aInstance = nullptr,
+                                     const wxString& aVariantName = wxEmptyString ) const override
+    {
+        return m_excludedFromSim;
+    }
 
     /**
      * Set or clear the exclude from schematic bill of materials flag.
      */
-    void SetExcludedFromBOM( bool aExcludeFromBOM ) override { m_excludedFromBOM = aExcludeFromBOM; }
-    bool GetExcludedFromBOM() const override { return m_excludedFromBOM; }
+    virtual void SetExcludedFromBOM( bool aExcludeFromBOM, const SCH_SHEET_PATH* aInstance = nullptr,
+                                     const wxString& aVariantName = wxEmptyString ) override
+    {
+        m_excludedFromBOM = aExcludeFromBOM;
+    }
+
+    virtual bool GetExcludedFromBOM( const SCH_SHEET_PATH* aInstance = nullptr,
+                                     const wxString& aVariantName = wxEmptyString ) const override
+    {
+        return m_excludedFromBOM;
+    }
 
     /**
      * Set or clear exclude from board netlist flag.
      */
-    void SetExcludedFromBoard( bool aExcludeFromBoard ) override { m_excludedFromBoard = aExcludeFromBoard; }
-    bool GetExcludedFromBoard() const override { return m_excludedFromBoard; }
+    void SetExcludedFromBoard( bool aExclude, const SCH_SHEET_PATH* aInstance = nullptr,
+                               const wxString& aVariantName = wxEmptyString ) override
+    {
+        m_excludedFromBoard = aExclude;
+    }
+
+    bool GetExcludedFromBoard( const SCH_SHEET_PATH* aInstance = nullptr,
+                               const wxString& aVariantName = wxEmptyString ) const override
+    {
+        return m_excludedFromBoard;
+    }
+
+    /**
+     * Set or clear exclude from position files flag.
+     */
+    void SetExcludedFromPosFiles( bool aExclude, const SCH_SHEET_PATH* aInstance = nullptr,
+                                  const wxString& aVariantName = wxEmptyString ) override
+    {
+        m_excludedFromPosFiles = aExclude;
+    }
+
+    bool GetExcludedFromPosFiles( const SCH_SHEET_PATH* aInstance = nullptr,
+                                  const wxString& aVariantName = wxEmptyString ) const override
+    {
+        return m_excludedFromPosFiles;
+    }
 
     /**
      * Set or clear the 'Do Not Populate' flag.
      */
-    bool GetDNP() const override { return m_DNP; }
-    void SetDNP( bool aDNP ) override { m_DNP = aDNP; }
+    virtual bool GetDNP( const SCH_SHEET_PATH* aInstance = nullptr,
+                         const wxString& aVariantName = wxEmptyString ) const override { return m_DNP; }
+    virtual void SetDNP( bool aDNP, const SCH_SHEET_PATH* aInstance = nullptr,
+                         const wxString& aVariantName = wxEmptyString ) override { m_DNP = aDNP; }
 
     virtual int GetOrientation() const { return SYM_NORMAL; }
 
@@ -224,6 +274,7 @@ protected:
     bool          m_excludedFromSim;
     bool          m_excludedFromBOM;
     bool          m_excludedFromBoard;
+    bool          m_excludedFromPosFiles;
     bool          m_DNP;                   ///< True if symbol is set to 'Do Not Populate'.
 
     int           m_previewUnit = 1;

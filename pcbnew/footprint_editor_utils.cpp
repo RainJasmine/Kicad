@@ -25,13 +25,15 @@
 #include <confirm.h>
 #include <dialog_footprint_properties_fp_editor.h>
 #include <footprint_edit_frame.h>
+#include <footprint_info.h>
 #include <footprint_tree_pane.h>
-#include <fp_lib_table.h>
+#include <footprint_library_adapter.h>
 #include <functional>
-#include <kiway_express.h>
+#include <kiway_mail.h>
 #include <pcb_group.h>
 #include <pcb_marker.h>
 #include <pcb_textbox.h>
+#include <pcb_barcode.h>
 #include <pcb_table.h>
 #include <pcb_shape.h>
 #include <pad.h>
@@ -150,12 +152,16 @@ void FOOTPRINT_EDIT_FRAME::editFootprintProperties( FOOTPRINT* aFootprint )
     DIALOG_FOOTPRINT_PROPERTIES_FP_EDITOR dialog( this, aFootprint );
     dialog.ShowQuasiModal();
 
+    // Update design settings for footprint layers
+    updateEnabledLayers();
+
     // Update library tree and title in case of a name change
     wxDataViewItem treeItem = m_adapter->FindItem( oldFPID );
     UpdateLibraryTree( treeItem, aFootprint );
     UpdateTitle();
 
     UpdateMsgPanel();
+    UpdateUserInterface();
 }
 
 
@@ -165,6 +171,10 @@ void FOOTPRINT_EDIT_FRAME::OnEditItemRequest( BOARD_ITEM* aItem )
     {
     case PCB_REFERENCE_IMAGE_T:
         ShowReferenceImagePropertiesDialog( aItem );
+        break;
+
+    case PCB_BARCODE_T:
+        ShowBarcodePropertiesDialog( static_cast<PCB_BARCODE*>( aItem ) );
         break;
 
     case PCB_PAD_T:
@@ -206,8 +216,7 @@ void FOOTPRINT_EDIT_FRAME::OnEditItemRequest( BOARD_ITEM* aItem )
     {
         DIALOG_DIMENSION_PROPERTIES dlg( this, static_cast<PCB_DIMENSION_BASE*>( aItem ) );
 
-        // TODO: why is this QuasiModal?
-        dlg.ShowQuasiModal();
+        dlg.ShowModal();
         break;
     }
 
@@ -220,17 +229,11 @@ void FOOTPRINT_EDIT_FRAME::OnEditItemRequest( BOARD_ITEM* aItem )
         zoneSettings << *static_cast<ZONE*>( aItem );
 
         if( zone->GetIsRuleArea() )
-        {
             success = InvokeRuleAreaEditor( this, &zoneSettings ) == wxID_OK;
-        }
         else if( zone->IsOnCopperLayer() )
-        {
-            success = InvokeCopperZonesEditor( this, &zoneSettings ) == wxID_OK;
-        }
+            success = InvokeCopperZonesEditor( this, zone, &zoneSettings ) == wxID_OK;
         else
-        {
             success = InvokeNonCopperZonesEditor( this, &zoneSettings ) == wxID_OK;
-        }
 
         if( success )
         {
@@ -250,6 +253,9 @@ void FOOTPRINT_EDIT_FRAME::OnEditItemRequest( BOARD_ITEM* aItem )
 
     case PCB_MARKER_T:
         m_toolManager->GetTool<FOOTPRINT_EDITOR_CONTROL>()->CrossProbe( static_cast<PCB_MARKER*>( aItem ) );
+        break;
+
+    case PCB_POINT_T:
         break;
 
     default:
@@ -321,7 +327,7 @@ bool FOOTPRINT_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileS
 }
 
 
-void FOOTPRINT_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
+void FOOTPRINT_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
 {
     const std::string& payload = mail.GetPayload();
 
@@ -334,10 +340,10 @@ void FOOTPRINT_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
             wxString   libNickname;
             wxString   msg;
 
-            FP_LIB_TABLE*        libTable = PROJECT_PCB::PcbFootprintLibs( &Prj() );
-            const LIB_TABLE_ROW* libTableRow = libTable->FindRowByURI( fpFileName.GetPath() );
+            FOOTPRINT_LIBRARY_ADAPTER* adapter = PROJECT_PCB::FootprintLibAdapter( &Prj() );
+            std::optional<LIBRARY_TABLE_ROW*> optRow = adapter->FindRowByURI( fpFileName.GetPath() );
 
-            if( !libTableRow )
+            if( !optRow )
             {
                 msg.Printf( _( "The current configuration does not include the footprint library '%s'." ),
                             fpFileName.GetPath() );
@@ -347,9 +353,9 @@ void FOOTPRINT_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
                 break;
             }
 
-            libNickname = libTableRow->GetNickName();
+            libNickname = ( *optRow )->Nickname();
 
-            if( !libTable->HasLibrary( libNickname, true ) )
+            if( !adapter->HasLibrary( libNickname, true ) )
             {
                 msg.Printf( _( "The footprint library '%s' is not enabled in the current configuration." ),
                             libNickname );

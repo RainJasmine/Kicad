@@ -47,6 +47,7 @@ PROJECT_LOCAL_SETTINGS::PROJECT_LOCAL_SETTINGS( PROJECT* aProject, const wxStrin
         m_ShapeOpacity( 1.0 ),
         m_ImageOpacity( 0.6 ),
         m_PcbSelectionFilter(),
+        m_GitIntegrationDisabled( false ),
         m_project( aProject ),
         m_wasMigrated( false )
 // clang-format on: suggestion is less readable.
@@ -204,14 +205,15 @@ PROJECT_LOCAL_SETTINGS::PROJECT_LOCAL_SETTINGS( PROJECT* aProject, const wxStrin
                            ZONE_DISPLAY_MODE::SHOW_FILLED, ZONE_DISPLAY_MODE::SHOW_FILLED,
                            ZONE_DISPLAY_MODE::SHOW_TRIANGULATION ) );
 
-    m_params.emplace_back(
-            new PARAM<bool>( "board.prototype_zone_fills", &m_PrototypeZoneFill, false ) );
+    m_params.emplace_back( new PARAM<bool>( "board.prototype_zone_fills", &m_PrototypeZoneFill, false ) );
 
     m_params.emplace_back( new PARAM<wxString>( "git.repo_username", &m_GitRepoUsername, "" ) );
 
     m_params.emplace_back( new PARAM<wxString>( "git.repo_type", &m_GitRepoType, "" ) );
 
     m_params.emplace_back( new PARAM<wxString>( "git.ssh_key", &m_GitSSHKey, "" ) );
+
+    m_params.emplace_back( new PARAM<bool>( "git.integration_disabled", &m_GitIntegrationDisabled, false ) );
 
     m_params.emplace_back( new PARAM<wxString>( "net_inspector_panel.filter_text",
                                                 &m_NetInspectorPanel.filter_text, "" ) );
@@ -320,6 +322,7 @@ PROJECT_LOCAL_SETTINGS::PROJECT_LOCAL_SETTINGS( PROJECT* aProject, const wxStrin
                 ret["pins"]        = m_SchSelectionFilter.pins;
                 ret["graphics"]    = m_SchSelectionFilter.graphics;
                 ret["images"]      = m_SchSelectionFilter.images;
+                ret["ruleAreas"]   = m_SchSelectionFilter.ruleAreas;
                 ret["otherItems"]  = m_SchSelectionFilter.otherItems;
 
                 return ret;
@@ -337,6 +340,7 @@ PROJECT_LOCAL_SETTINGS::PROJECT_LOCAL_SETTINGS( PROJECT* aProject, const wxStrin
                 SetIfPresent( aVal, "pins", m_SchSelectionFilter.pins );
                 SetIfPresent( aVal, "graphics", m_SchSelectionFilter.graphics );
                 SetIfPresent( aVal, "images", m_SchSelectionFilter.images );
+                SetIfPresent( aVal, "ruleAreas", m_SchSelectionFilter.ruleAreas );
                 SetIfPresent( aVal, "otherItems", m_SchSelectionFilter.otherItems );
             },
             {
@@ -348,8 +352,12 @@ PROJECT_LOCAL_SETTINGS::PROJECT_LOCAL_SETTINGS( PROJECT* aProject, const wxStrin
                 { "pins", true },
                 { "graphics", true },
                 { "images", true },
+                { "ruleAreas", true },
                 { "otherItems", true }
             } ) );
+
+    m_params.emplace_back( new PARAM_LIST<wxString>( "schematic.hierarchy_collapsed",
+                                                    &m_SchHierarchyCollapsed, {} ) );
 
     registerMigration( 1, 2,
             [&]()

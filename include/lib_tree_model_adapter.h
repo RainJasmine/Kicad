@@ -23,7 +23,6 @@
 #ifndef LIB_TREE_MODEL_ADAPTER_H
 #define LIB_TREE_MODEL_ADAPTER_H
 
-#include <eda_base_frame.h>
 #include <lib_id.h>
 #include <lib_tree_model.h>
 #include <settings/app_settings.h>
@@ -96,6 +95,7 @@
 #include <project.h>
 
 ;
+class TOOL_DISPATCHER;
 class TOOL_INTERACTIVE;
 class EDA_BASE_FRAME;
 
@@ -193,7 +193,13 @@ public:
     std::vector<wxString> GetShownColumns() const { return m_shownColumns; }
 
     std::vector<wxString> GetOpenLibs() const;
-    void                  OpenLibs( const std::vector<wxString>& aLibs );
+    void OpenLibs( const std::vector<wxString>& aLibs );
+
+    /// Registers a function to be called whenever new lazy-loaded library content is available
+    void RegisterLazyLoadHandler( std::function<void()>&& aHandler )
+    {
+        m_lazyLoadHandler = aHandler;
+    }
 
     /**
      * Sets which columns are shown in the widget.  Invalid column names are discarded.
@@ -204,7 +210,13 @@ public:
     /**
      * Sort the tree and assign ranks after adding libraries.
      */
-    void AssignIntrinsicRanks() { m_tree.AssignIntrinsicRanks(); }
+    void AssignIntrinsicRanks()
+    {
+        m_tree.AssignIntrinsicRanks( m_shownColumns );
+
+        for( const std::unique_ptr<LIB_TREE_NODE>& child : m_tree.m_Children )
+            child->AssignIntrinsicRanks( m_shownColumns );
+    }
 
     /**
      * Set the search string provided by the user.
@@ -267,7 +279,7 @@ public:
     virtual void ShowPreview( wxWindow* aParent, const wxDataViewItem& aItem ) {}
     virtual void ShutdownPreview( wxWindow* aParent ) {}
 
-    TOOL_DISPATCHER* GetToolDispatcher() const { return m_parent->GetToolDispatcher(); }
+    TOOL_DISPATCHER* GetToolDispatcher() const;
 
     /**
      * Return the number of symbols loaded in the tree.
@@ -279,7 +291,7 @@ public:
      */
     virtual int GetLibrariesCount() const
     {
-        return m_tree.m_Children.size();
+        return (int) m_tree.m_Children.size();
     }
 
     /**
@@ -297,8 +309,7 @@ public:
      *
      * @return number of children
      */
-    unsigned int GetChildren( const wxDataViewItem& aItem,
-                              wxDataViewItemArray& aChildren ) const override;
+    unsigned int GetChildren( const wxDataViewItem& aItem, wxDataViewItemArray& aChildren ) const override;
 
     // Freezing/Thawing.  Used when updating the table model so that we don't try and fetch
     // values during updating.  Primarily a problem on OSX which doesn't pay attention to the
@@ -341,6 +352,8 @@ protected:
     LIB_TREE_NODE_LIBRARY& DoAddLibraryNode( const wxString& aNodeName, const wxString& aDesc,
                                              bool pinned );
 
+    virtual void loadColumnConfig();
+
     /**
      * Check whether a container has columns too
      */
@@ -372,17 +385,15 @@ protected:
      * @param aItem     item whose data will be placed into aVariant
      * @param aCol      column number of the data
      */
-    void GetValue( wxVariant&              aVariant,
-                   const wxDataViewItem&   aItem,
-                   unsigned int            aCol ) const override;
+    void GetValue( wxVariant& aVariant, const wxDataViewItem& aItem, unsigned int aCol ) const override;
 
     /**
-     * Set the value of an item. Does nothing - this model doesn't support
-     * editing.
+     * Set the value of an item. Does nothing - this model doesn't support editing.
      */
-    bool SetValue( const wxVariant&        aVariant,
-                   const wxDataViewItem&   aItem,
-                   unsigned int            aCol ) override { return false; }
+    bool SetValue( const wxVariant& aVariant, const wxDataViewItem& aItem, unsigned int aCol ) override
+    {
+        return false;
+    }
 
     /**
      * Get any formatting for an item.
@@ -392,9 +403,7 @@ protected:
      * @param aAttr     receiver for attributes
      * @return          true if the item has non-default attributes
      */
-    bool GetAttr( const wxDataViewItem&   aItem,
-                  unsigned int            aCol,
-                  wxDataViewItemAttr&     aAttr ) const override;
+    bool GetAttr( const wxDataViewItem& aItem, unsigned int aCol, wxDataViewItemAttr& aAttr ) const override;
 
     virtual PROJECT::LIB_TYPE_T getLibType() = 0;
 
@@ -404,7 +413,7 @@ private:
     /**
      * Find and expand successful search results.  Return the best match (if any).
      */
-    const LIB_TREE_NODE* ShowResults();
+    const LIB_TREE_NODE* showResults();
 
     wxDataViewColumn* doAddColumn( const wxString& aHeader, bool aTranslate = true );
 
@@ -412,17 +421,21 @@ protected:
     void addColumnIfNecessary( const wxString& aHeader );
 
     void recreateColumns();
+    void createMissingColumns();
+
+protected:
+    EDA_BASE_FRAME*              m_parent;
+    APP_SETTINGS_BASE::LIB_TREE& m_cfg;
 
     LIB_TREE_NODE_ROOT           m_tree;
     std::map<unsigned, wxString> m_colIdxMap;
     std::vector<wxString>        m_availableColumns;
-
+    std::map<wxString, int>      m_colWidths;
+    std::vector<wxString>        m_shownColumns;   // Stored in display order
     wxDataViewCtrl*              m_widget;
+    std::function<void()>        m_lazyLoadHandler;
 
 private:
-    EDA_BASE_FRAME*              m_parent;
-    APP_SETTINGS_BASE::LIB_TREE& m_cfg;
-
     SORT_MODE                    m_sort_mode;
     bool                         m_show_units;
     LIB_ID                       m_preselect_lib_id;
@@ -433,8 +446,6 @@ private:
 
     std::vector<wxDataViewColumn*>               m_columns;
     std::map<wxString, wxDataViewColumn*>        m_colNameMap;
-    std::map<wxString, int>                      m_colWidths;
-    std::vector<wxString>                        m_shownColumns;   // Stored in display order
 };
 
 #endif // LIB_TREE_MODEL_ADAPTER_H

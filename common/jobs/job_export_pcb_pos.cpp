@@ -50,6 +50,7 @@ JOB_EXPORT_PCB_POS::JOB_EXPORT_PCB_POS() :
         m_smdOnly( false ),
         m_excludeFootprintsWithTh( false ),
         m_excludeDNP( false ),
+        m_excludeBOM( false ),
         m_negateBottomX( false ),
         m_singleFile( false ),
         m_nakedFilename( false ),
@@ -74,6 +75,10 @@ JOB_EXPORT_PCB_POS::JOB_EXPORT_PCB_POS() :
                                                 &m_excludeDNP,
                                                 m_excludeDNP ) );
 
+    m_params.emplace_back( new JOB_PARAM<bool>( "exclude_bom",
+                                                &m_excludeBOM,
+                                                m_excludeBOM ) );
+
     m_params.emplace_back( new JOB_PARAM<bool>( "negate_bottom_x",
                                                 &m_negateBottomX,
                                                 m_negateBottomX ) );
@@ -89,6 +94,7 @@ JOB_EXPORT_PCB_POS::JOB_EXPORT_PCB_POS() :
     m_params.emplace_back( new JOB_PARAM<SIDE>( "side", &m_side, m_side ) );
     m_params.emplace_back( new JOB_PARAM<UNITS>( "units", &m_units, m_units ) );
     m_params.emplace_back( new JOB_PARAM<FORMAT>( "format", &m_format, m_format ) );
+    m_params.emplace_back( new JOB_PARAM<wxString>( "variant", &m_variant, m_variant ) );
 }
 
 

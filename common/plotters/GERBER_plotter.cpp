@@ -25,6 +25,7 @@
 
 #include <string_utils.h>
 #include <convert_basic_shapes_to_polygon.h>
+#include <geometry/shape_rect.h>
 #include <macros.h>
 #include <math/util.h>      // for KiROUND
 #include <trigo.h>
@@ -846,8 +847,12 @@ void GERBER_PLOTTER::PenTo( const VECTOR2I& aPos, char plume )
 }
 
 
-void GERBER_PLOTTER::Rect( const VECTOR2I& p1, const VECTOR2I& p2, FILL_T fill, int width )
+void GERBER_PLOTTER::Rect( const VECTOR2I& p1, const VECTOR2I& p2, FILL_T fill, int width,
+                           int aCornerRadius )
 {
+    if( aCornerRadius > 0 )
+        wxFAIL_MSG( wxT( "GERBER_PLOTTER must use PlotPolyAsRegion() for rounded-corner rectangles!" ) );
+
     std::vector<VECTOR2I> cornerList;
 
     cornerList.reserve( 5 );
@@ -1090,7 +1095,7 @@ void GERBER_PLOTTER::PlotPoly( const SHAPE_LINE_CHAIN& aPoly, FILL_T aFill, int 
         }
 
         // If the polygon is not closed, close it:
-        if( aPoly.CPoint( 0 ) != aPoly.CPoint( -1 ) )
+        if( aPoly.CPoint( 0 ) != aPoly.CLastPoint() )
             FinishTo( VECTOR2I( aPoly.CPoint( 0 ) ) );
 
         fmt::println( m_outputFile, "G37*" );
@@ -1124,7 +1129,7 @@ void GERBER_PLOTTER::PlotPoly( const SHAPE_LINE_CHAIN& aPoly, FILL_T aFill, int 
 
         // Ensure the thick outline is closed for filled polygons
         // (if not filled, could be only a polyline)
-        if( ( aPoly.CPoint( 0 ) != aPoly.CPoint( -1 ) ) && ( aPoly.IsClosed() || aFill != FILL_T::NO_FILL ) )
+        if( ( aPoly.CPoint( 0 ) != aPoly.CLastPoint() ) && ( aPoly.IsClosed() || aFill != FILL_T::NO_FILL ) )
             LineTo( VECTOR2I( aPoly.CPoint( 0 ) ) );
 
         PenFinish();
@@ -1188,6 +1193,17 @@ void GERBER_PLOTTER::ThickSegment( const VECTOR2I& start, const VECTOR2I& end, i
         formatNetAttribute( &gbr_metadata->m_NetlistMetadata );
 
     SetCurrentLineWidth( width, aData );
+
+    // A zero-length segment is plotted as a single flash of the segment's aperture.
+    // Falling through to PLOTTER::ThickSegment would emit a filled circle stroked with
+    // the (now sentinel) DO_NOT_SET_LINE_WIDTH width, creating a spurious 0-size aperture.
+    if( start == end )
+    {
+        MoveTo( start );
+        FinishTo( end );
+        return;
+    }
+
     PLOTTER::ThickSegment( start, end, DO_NOT_SET_LINE_WIDTH, aData );
 }
 

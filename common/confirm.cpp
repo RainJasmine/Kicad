@@ -95,22 +95,41 @@ int UnsavedChangesDialog( wxWindow* parent, const wxString& aMessage )
     // wxRichMessageDialog.
     return UnsavedChangesDialog( parent, aMessage, nullptr );
 #else
-    #ifdef _WIN32
-    // wxMessageDialog on windows invokes TaskDialogIndirect which is a native function for a dialog
-    // As a result it skips wxWidgets for modal management...and we don't parent frames properly
-    // among other things for Windows to do the right thing by default
-    // Disable all the windows manually to avoid being able to hit this dialog from the tool frame
-    // and kicad frame at the same time.
-    wxWindowDisabler disable( true );
-    #endif
+    int ret = wxID_CANCEL;
 
-    KICAD_MESSAGE_DIALOG_BASE dlg( parent, aMessage, _( "Save Changes?" ),
-                         wxYES_NO | wxCANCEL | wxYES_DEFAULT | wxICON_WARNING | wxCENTER );
-    dlg.SetExtendedMessage( _( "If you don't save, all your changes will be permanently lost." ) );
-    dlg.SetYesNoLabels( _( "&Save" ), _( "&Discard Changes" ) );
+    {
+        // Scoped so wxWindowDisabler and dlg are destroyed before we re-raise the parent
+#ifdef _WIN32
+        // wxMessageDialog on windows invokes TaskDialogIndirect which is a native function for a
+        // dialog. As a result it skips wxWidgets for modal management...and we don't parent frames
+        // properly among other things for Windows to do the right thing by default.
+        // Disable all the windows manually to avoid being able to hit this dialog from the tool
+        // frame and kicad frame at the same time.
+        wxWindowDisabler disable( true );
+#endif
 
-    // Returns wxID_YES, wxID_NO, or wxID_CANCEL
-    return dlg.ShowModal();
+        KICAD_MESSAGE_DIALOG_BASE dlg( parent, aMessage, _( "Save Changes?" ),
+                             wxYES_NO | wxCANCEL | wxYES_DEFAULT | wxICON_WARNING | wxCENTER );
+        dlg.SetExtendedMessage( _( "If you don't save, all your changes will be permanently lost." ) );
+        dlg.SetYesNoLabels( _( "&Save" ), _( "&Discard Changes" ) );
+
+        // Returns wxID_YES, wxID_NO, or wxID_CANCEL
+        ret = dlg.ShowModal();
+    }
+
+#ifdef _WIN32
+    // Counterpart to wxWindowDisabler above. After it re-enables all windows, the OS must
+    // choose which to activate and may pick an unrelated application. Raise and focus the
+    // parent explicitly so the user isn't left in another window.
+    if( parent )
+    {
+        parent->Raise();
+        wxSafeYield();
+        parent->SetFocus();
+    }
+#endif
+
+    return ret;
 #endif
 }
 
@@ -126,16 +145,24 @@ bool ConfirmRevertDialog( wxWindow* parent, const wxString& aMessage )
 }
 
 
+static int g_lastUnsavedChangesResult = -1;
+
 bool HandleUnsavedChanges( wxWindow* aParent, const wxString& aMessage,
                            const std::function<bool()>& aSaveFunction )
 {
-    switch( UnsavedChangesDialog( aParent, aMessage ) )
+    g_lastUnsavedChangesResult = UnsavedChangesDialog( aParent, aMessage );
+    switch( g_lastUnsavedChangesResult )
     {
     case wxID_YES:    return aSaveFunction();
-    case wxID_NO:     return true;
+    case wxID_NO:     return true; // proceed without saving
     default:
     case wxID_CANCEL: return false;
     }
+}
+
+int GetLastUnsavedChangesResponse()
+{
+    return g_lastUnsavedChangesResult;
 }
 
 
@@ -263,14 +290,9 @@ bool IsOK( wxWindow* aParent, const wxString& aMessage )
     int icon = wxICON_QUESTION;
 #endif
 
-#if !defined( __WXGTK__ )
-    KICAD_RICH_MESSAGE_DIALOG_BASE dlg( aParent, aMessage, _( "Confirmation" ),
-                                        wxOK | wxCANCEL | wxOK_DEFAULT |
-                                        wxCENTRE | icon | wxSTAY_ON_TOP );
-#else
-    wxMessageDialog dlg( aParent, aMessage, _( "Confirmation" ),
-                         wxOK | wxCANCEL | wxOK_DEFAULT | wxCENTRE | icon | wxSTAY_ON_TOP );
-#endif
+    KICAD_MESSAGE_DIALOG dlg( aParent, aMessage, _( "Confirmation" ),
+                              wxOK | wxCANCEL | wxOK_DEFAULT |
+                              wxCENTRE | icon | wxSTAY_ON_TOP );
 
     dlg.SetOKCancelLabels( _( "&Yes" ), _( "&No" ) );
 

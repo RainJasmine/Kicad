@@ -24,6 +24,8 @@
 #include <cmath>
 #include <limits>
 
+#include <algorithm>
+
 #include <geometry/shape_rect.h>
 
 #include "pns_diff_pair.h"
@@ -213,7 +215,6 @@ bool DIFF_PAIR::BuildInitial( const DP_GATEWAY& aEntry, const DP_GATEWAY &aTarge
 
     int mask = aEntry.AllowedAngles() | DIRECTION_45::ANG_STRAIGHT | DIRECTION_45::ANG_OBTUSE;
 
-    SHAPE_LINE_CHAIN sum_n, sum_p;
     m_p = p;
     m_n = n;
 
@@ -222,21 +223,18 @@ bool DIFF_PAIR::BuildInitial( const DP_GATEWAY& aEntry, const DP_GATEWAY &aTarge
         if( !aEntry.Entry().CheckConnectionAngle( *this, mask ) )
             return false;
 
-        sum_p = aEntry.Entry().CP();
-        sum_n = aEntry.Entry().CN();
-        sum_p.Append( p );
-        sum_n.Append( n );
+        m_p = aEntry.Entry().CP();
+        m_n = aEntry.Entry().CN();
+        m_p.Append( p );
+        m_n.Append( n );
     }
     else
     {
-        sum_p = p;
-        sum_n = n;
+        m_p = p;
+        m_n = n;
     }
 
     mask = aTarget.AllowedAngles() | DIRECTION_45::ANG_STRAIGHT | DIRECTION_45::ANG_OBTUSE;
-
-    m_p = sum_p;
-    m_n = sum_n;
 
     if( aTarget.HasEntryLines() )
     {
@@ -246,12 +244,9 @@ bool DIFF_PAIR::BuildInitial( const DP_GATEWAY& aEntry, const DP_GATEWAY &aTarge
         if( !CheckConnectionAngle( t.Entry(), mask ) )
             return false;
 
-        sum_p.Append( t.Entry().CP() );
-        sum_n.Append( t.Entry().CN() );
+        m_p.Append( t.Entry().CP() );
+        m_n.Append( t.Entry().CN() );
     }
-
-    m_p = sum_p;
-    m_n = sum_n;
 
     if( !checkGap( p, n, m_gapConstraint ) )
         return false;
@@ -395,7 +390,7 @@ bool DP_GATEWAYS::checkDiagonalAlignment( const VECTOR2I& a, const VECTOR2I& b )
 
 void DP_GATEWAYS::FilterByOrientation( int aAngleMask, DIRECTION_45 aRefOrientation )
 {
-    alg::delete_if( m_gateways,
+    std::erase_if( m_gateways,
                     [aAngleMask, aRefOrientation]( const DP_GATEWAY& dp )
                     {
                         DIRECTION_45 orient( dp.AnchorP() - dp.AnchorN() );
@@ -838,16 +833,20 @@ double DIFF_PAIR::Skew() const
 
 void DIFF_PAIR::CoupledSegmentPairs( COUPLED_SEGMENTS_VEC& aPairs ) const
 {
-    SHAPE_LINE_CHAIN p( m_p );
-    SHAPE_LINE_CHAIN n( m_n );
-
-    p.Simplify();
-    n.Simplify();
+    const SHAPE_LINE_CHAIN& p = m_p;
+    const SHAPE_LINE_CHAIN& n = m_n;
+    // Do not simplify the line chains here, otherwise the indices will be invalid
 
     for( int i = 0; i < p.SegmentCount(); i++ )
     {
+        if( p.IsArcSegment( i ) )
+            continue;
+
         for( int j = 0; j < n.SegmentCount(); j++ )
         {
+            if( n.IsArcSegment( j ) )
+                continue;
+            
             SEG sp = p.Segment( i );
             SEG sn = n.Segment( j );
 

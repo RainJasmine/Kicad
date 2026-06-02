@@ -24,6 +24,7 @@
 #include <utility>
 #include <sstream>
 
+#include <kiplatform/io.h>
 #include <locale_io.h>
 #include <gal/color4d.h>
 #include <settings/json_settings.h>
@@ -360,18 +361,27 @@ bool JSON_SETTINGS::LoadFromFile( const wxString& aDirectory )
 
     m_modified = false;
 
-    // If we migrated, clean up the legacy file (with no extension)
+    // If we migrated, clean up the legacy file (with no extension). Save the migrated
+    // contents FIRST so that if the save fails we still have the legacy file on disk to
+    // fall back to -- otherwise a crash mid-migration leaves the user with neither copy.
     if( m_writeFile && ( legacy_migrated || migrated ) )
     {
-        if( legacy_migrated && m_deleteLegacyAfterMigration && !wxRemoveFile( path.GetFullPath() ) )
-        {
-            wxLogTrace( traceSettings, wxT( "Warning: could not remove legacy file %s" ),
-                        path.GetFullPath() );
-        }
-
-        // And write-out immediately so that we don't lose data if the program later crashes.
         if( m_deleteLegacyAfterMigration )
-            SaveToFile( aDirectory, true );
+        {
+            bool savedMigrated = SaveToFile( aDirectory, true );
+
+            if( savedMigrated && legacy_migrated && !wxRemoveFile( path.GetFullPath() ) )
+            {
+                wxLogTrace( traceSettings, wxT( "Warning: could not remove legacy file %s" ),
+                            path.GetFullPath() );
+            }
+            else if( !savedMigrated )
+            {
+                wxLogTrace( traceSettings,
+                            wxT( "Migrated save of %s failed; leaving legacy file intact" ),
+                            GetFullFilename() );
+            }
+        }
     }
 
     return success;
@@ -382,8 +392,16 @@ bool JSON_SETTINGS::Store()
 {
     for( PARAM_BASE* param : m_params )
     {
-        m_modified |= !param->MatchesFile( *this );
-        param->Store( this );
+        try
+        {
+            m_modified |= !param->MatchesFile( *this );
+            param->Store( this );
+        }
+        catch( const std::exception& e )
+        {
+            wxLogTrace( traceSettings, wxT( "param '%s' store err: %s" ),
+                        param->GetJsonPath().c_str(), e.what() );
+        }
     }
 
     return m_modified;
@@ -394,6 +412,20 @@ void JSON_SETTINGS::ResetToDefaults()
 {
     for( PARAM_BASE* param : m_params )
         param->SetDefault();
+}
+
+
+std::map<std::string, nlohmann::json> JSON_SETTINGS::GetFileHistories()
+{
+    std::map<std::string, nlohmann::json> histories;
+
+    for( const std::string& candidate : { std::string( "system.file_history" ) } )
+    {
+        if( Contains( candidate ) )
+            histories[candidate] = GetJson( candidate ).value();
+    }
+
+    return histories;
 }
 
 
@@ -480,8 +512,7 @@ bool JSON_SETTINGS::SaveToFile( const wxString& aDirectory, bool aForce )
     {
         if( param->ClearUnknownKeys() )
         {
-            nlohmann::json_pointer p
-                    = JSON_SETTINGS_INTERNALS::PointerFromString( param->GetJsonPath() );
+            nlohmann::json_pointer p = JSON_SETTINGS_INTERNALS::PointerFromString( param->GetJsonPath() );
 
             toSave[p] = nlohmann::json( {} );
         }
@@ -494,12 +525,14 @@ bool JSON_SETTINGS::SaveToFile( const wxString& aDirectory, bool aForce )
         std::stringstream buffer;
         buffer << std::setw( 2 ) << toSave << std::endl;
 
-        wxFFileOutputStream fileStream( path.GetFullPath(), "wb" );
+        std::string  payload = buffer.str();
+        wxString     writeError;
 
-        if( !fileStream.IsOk()
-                || !fileStream.WriteAll( buffer.str().c_str(), buffer.str().size() ) )
+        if( !KIPLATFORM::IO::AtomicWriteFile( path.GetFullPath(), payload.data(), payload.size(),
+                                              &writeError ) )
         {
-            wxLogTrace( traceSettings, wxT( "Warning: could not save %s" ), GetFullFilename() );
+            wxLogTrace( traceSettings, wxT( "Warning: could not save %s: %s" ), GetFullFilename(),
+                        writeError );
             success = false;
         }
     }
@@ -638,6 +671,8 @@ template KICOMMON_API std::optional<wxRect>
                       JSON_SETTINGS::Get<wxRect>( const std::string& aPath ) const;
 template KICOMMON_API std::optional<wxAuiPaneInfo>
                       JSON_SETTINGS::Get<wxAuiPaneInfo>( const std::string& aPath ) const;
+template KICOMMON_API std::optional<KIGFX::CROSS_HAIR_MODE>
+                      JSON_SETTINGS::Get<KIGFX::CROSS_HAIR_MODE>( const std::string& aPath ) const;
 
 template<typename ValueType>
 void JSON_SETTINGS::Set( const std::string& aPath, ValueType aVal )
@@ -675,6 +710,8 @@ template KICOMMON_API void JSON_SETTINGS::Set<wxSize>( const std::string& aPath,
 template KICOMMON_API void JSON_SETTINGS::Set<wxRect>( const std::string& aPath, wxRect aValue );
 template KICOMMON_API void JSON_SETTINGS::Set<wxAuiPaneInfo>( const std::string& aPath,
                                                               wxAuiPaneInfo      aValue );
+template KICOMMON_API void JSON_SETTINGS::Set<KIGFX::CROSS_HAIR_MODE>( const std::string& aPath,
+                                                                        KIGFX::CROSS_HAIR_MODE aValue );
 
 
 void JSON_SETTINGS::registerMigration( int aOldSchemaVersion, int aNewSchemaVersion,

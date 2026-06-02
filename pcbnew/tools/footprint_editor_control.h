@@ -70,6 +70,7 @@ public:
     int ToggleLayersManager( const TOOL_EVENT& aEvent );
     int ToggleProperties( const TOOL_EVENT& aEvent );
     int Properties( const TOOL_EVENT& aEvent );
+    void editFootprintPropertiesFromLibrary( const LIB_ID& aLibId );
 
     int EditTextAndGraphics( const TOOL_EVENT& aEvent );
 
@@ -93,6 +94,10 @@ private:
      * Try to save the footprint in the library, if it is valid and writable.
      */
     void tryToSaveFootprintInLibrary( FOOTPRINT& aFootprint, const LIB_ID& aLibId );
+
+    // Line-mode handlers
+    int ChangeLineMode( const TOOL_EVENT& aEvent );
+    int OnAngleSnapModeChanged( const TOOL_EVENT& aEvent );
 
     FOOTPRINT_EDIT_FRAME*      m_frame;
     DIALOG_FOOTPRINT_CHECKER*  m_checkerDialog;

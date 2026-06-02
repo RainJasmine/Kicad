@@ -86,6 +86,32 @@ public:
         if( remaining > 0 )
         {
             memcpy( blocks, data, remaining );
+            memset( reinterpret_cast<uint8_t*>( blocks ) + remaining, 0, 16 - remaining );
+            len += remaining;
+        }
+    }
+
+    // Reproduces the pre-fix addData tail handling for reading files saved
+    // before the correction. The old code rounded remaining bytes to 4-byte
+    // alignment, counted padding in len, and only zeroed the padding bytes
+    // (not the full block remainder). This produced wrong hashes but files
+    // were saved with them, so we need to verify against them on load.
+    FORCE_INLINE void addDataV1( const uint8_t* data, size_t length )
+    {
+        size_t remaining = length;
+
+        while( remaining >= 16 )
+        {
+            memcpy( blocks, data, 16 );
+            hashBlock();
+            data += 16;
+            remaining -= 16;
+            len += 16;
+        }
+
+        if( remaining > 0 )
+        {
+            memcpy( blocks, data, remaining );
             size_t padding = 4 - ( remaining + 4 ) % 4;
             memset( reinterpret_cast<uint8_t*>( blocks ) + remaining, 0, padding );
             len += remaining + padding;

@@ -56,6 +56,7 @@ public:
             m_FuseShapes( false ),
             m_FillAllVias( false ),
             m_OptimizeStep( true ),
+            m_ExtraPadThickness( true ),
             m_Format( FORMAT::STEP ),
             m_OutputFile()
     {};
@@ -68,7 +69,9 @@ public:
         XAO,
         GLB,
         PLY,
-        STL
+        STL,
+        U3D,
+        PDF
     };
 
     wxString m_NetFilter;
@@ -98,6 +101,7 @@ public:
     bool     m_FuseShapes;
     bool     m_FillAllVias;
     bool     m_OptimizeStep;
+    bool     m_ExtraPadThickness;
     FORMAT   m_Format;
     wxString m_OutputFile;
 
@@ -125,7 +129,9 @@ public:
         GLB,
         VRML,
         PLY,
-        STL
+        STL,
+        U3D,
+        PDF
     };
 
     enum class VRML_UNITS
@@ -139,6 +145,7 @@ public:
 public:
     bool                      m_hasUserOrigin;
     wxString                  m_filename;
+    wxString                  m_variant;
 
     JOB_EXPORT_PCB_3D::FORMAT m_format;
 

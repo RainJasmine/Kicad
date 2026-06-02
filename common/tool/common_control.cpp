@@ -37,6 +37,8 @@
 #include <gal/graphics_abstraction_layer.h>
 #include <base_screen.h>
 #include <tool/common_control.h>
+
+#include <api/api_plugin_manager.h>
 #include <id.h>
 #include <kiface_base.h>
 #include <dialogs/dialog_configure_paths.h>
@@ -45,6 +47,9 @@
 #include <executable_names.h>
 #include <gestfich.h>
 #include <tools/kicad_manager_actions.h>
+#include <confirm.h>
+#include <reporter.h>
+#include <widgets/kistatusbar.h>
 
 #define URL_GET_INVOLVED wxS( "https://go.kicad.org/contribute/" )
 #define URL_DONATE wxS( "https://go.kicad.org/app-donate" )
@@ -140,8 +145,7 @@ int COMMON_CONTROL::ShowLibraryTable( const TOOL_EVENT& aEvent )
         try     // Kicad frame was not available, try to start it
         {
             if( KIFACE* kiface = m_frame->Kiway().KiFACE( KIWAY::FACE_SCH ) )
-                kiface->CreateKiWindow( m_frame, DIALOG_DESIGN_BLOCK_LIBRARY_TABLE,
-                                        &m_frame->Kiway() );
+                kiface->CreateKiWindow( m_frame, DIALOG_DESIGN_BLOCK_LIBRARY_TABLE, &m_frame->Kiway() );
         }
         catch( ... )
         {
@@ -191,6 +195,18 @@ int COMMON_CONTROL::ShowPlayer( const TOOL_EVENT& aEvent )
 }
 
 
+int COMMON_CONTROL::Quit( const TOOL_EVENT& aEvent )
+{
+    m_frame->CallAfter(
+            [this]()
+            {
+                m_frame->Kiway().OnKiCadExit();
+            } );
+
+    return 0;
+}
+
+
 class TERMINATE_HANDLER : public wxProcess
 {
 public:
@@ -208,7 +224,16 @@ int COMMON_CONTROL::Execute( const wxString& aExecutible, const wxString& aParam
 {
     TERMINATE_HANDLER* callback = new TERMINATE_HANDLER( aExecutible );
 
-    long pid = ExecuteFile( aExecutible, aParam, callback );
+    bool isKicadBinary = false;
+
+    if( aExecutible == GERBVIEW_EXE || aExecutible == BITMAPCONVERTER_EXE
+        || aExecutible == PCB_CALCULATOR_EXE || aExecutible == PL_EDITOR_EXE
+        || aExecutible == EESCHEMA_EXE || aExecutible == PCBNEW_EXE )
+    {
+        isKicadBinary = true;
+    }
+
+    long pid = ExecuteFile( aExecutible, aParam, callback, isKicadBinary );
 
     if( pid > 0 )
     {
@@ -247,9 +272,6 @@ int COMMON_CONTROL::Execute( const TOOL_EVENT& aEvent )
     if( execFile.IsEmpty() )
         return 0;
 
-    if( aEvent.Parameter<wxString*>() )
-        param = *aEvent.Parameter<wxString*>();
-
     return Execute( execFile, param );
 }
 
@@ -261,13 +283,9 @@ int COMMON_CONTROL::ShowProjectManager( const TOOL_EVENT& aEvent )
     EDA_BASE_FRAME* top = static_cast<EDA_BASE_FRAME*>( m_frame->Kiway().GetTop() );
 
     if( top && top->GetFrameType() == KICAD_MAIN_FRAME_T )
-    {
         showFrame( top );
-    }
     else
-    {
-        wxMessageDialog( m_frame, _( "Can not switch to project manager in stand-alone mode." ) );
-    }
+        KICAD_MESSAGE_DIALOG( m_frame, _( "Can not switch to project manager in stand-alone mode." ) );
 
     return 0;
 }
@@ -311,8 +329,8 @@ int COMMON_CONTROL::ShowHelp( const TOOL_EVENT& aEvent )
             msg = wxString::Format( _( "Help file '%s' or\n'%s' could not be found.\n"
                                        "Do you want to access the KiCad online help?" ),
                                     names[0], names[1] );
-            wxMessageDialog dlg( nullptr, msg, _( "File Not Found" ),
-                                 wxYES_NO | wxNO_DEFAULT | wxCANCEL );
+            KICAD_MESSAGE_DIALOG dlg( nullptr, msg, _( "File Not Found" ),
+                                      wxYES_NO | wxNO_DEFAULT | wxCANCEL );
 
             if( dlg.ShowModal() != wxID_YES )
                 return -1;
@@ -331,8 +349,8 @@ int COMMON_CONTROL::ShowHelp( const TOOL_EVENT& aEvent )
             msg = wxString::Format( _( "Help file '%s' could not be found.\n"
                                        "Do you want to access the KiCad online help?" ),
                                     base_name );
-            wxMessageDialog dlg( nullptr, msg, _( "File Not Found" ),
-                                 wxYES_NO | wxNO_DEFAULT | wxCANCEL );
+            KICAD_MESSAGE_DIALOG dlg( nullptr, msg, _( "File Not Found" ),
+                                      wxYES_NO | wxNO_DEFAULT | wxCANCEL );
 
             if( dlg.ShowModal() != wxID_YES )
                 return -1;
@@ -411,8 +429,27 @@ int COMMON_CONTROL::ReportBug( const TOOL_EVENT& aEvent )
 }
 
 
+int COMMON_CONTROL::ReloadPlugins( const TOOL_EVENT& aEvent )
+{
+#ifdef KICAD_IPC_API
+    if( Pgm().GetCommonSettings()->m_Api.enable_server )
+    {
+        std::shared_ptr<REPORTER> reporter;
+
+        if( KISTATUSBAR* statusBar = dynamic_cast<KISTATUSBAR*>( m_frame->GetStatusBar() ) )
+            reporter = std::make_shared<STATUSBAR_WARNING_REPORTER>( statusBar, wxS( "plugin" ) );
+
+        Pgm().GetPluginManager().ReloadPlugins( std::nullopt, reporter );
+    }
+#endif
+    return 0;
+}
+
+
 void COMMON_CONTROL::setTransitions()
 {
+    Go( &COMMON_CONTROL::Quit,               ACTIONS::quit.MakeEvent() );
+
     Go( &COMMON_CONTROL::OpenPreferences,    ACTIONS::openPreferences.MakeEvent() );
     Go( &COMMON_CONTROL::ConfigurePaths,     ACTIONS::configurePaths.MakeEvent() );
     Go( &COMMON_CONTROL::ShowLibraryTable,   ACTIONS::showSymbolLibTable.MakeEvent() );
@@ -422,7 +459,7 @@ void COMMON_CONTROL::setTransitions()
     Go( &COMMON_CONTROL::ShowPlayer,         ACTIONS::showSymbolEditor.MakeEvent() );
     Go( &COMMON_CONTROL::ShowPlayer,         ACTIONS::showFootprintBrowser.MakeEvent() );
     Go( &COMMON_CONTROL::ShowPlayer,         ACTIONS::showFootprintEditor.MakeEvent() );
-    Go( &COMMON_CONTROL::Execute,         ACTIONS::showCalculatorTools.MakeEvent() );
+    Go( &COMMON_CONTROL::Execute,            ACTIONS::showCalculatorTools.MakeEvent() );
     Go( &COMMON_CONTROL::ShowProjectManager, ACTIONS::showProjectManager.MakeEvent() );
 
     Go( &COMMON_CONTROL::ShowHelp,           ACTIONS::gettingStarted.MakeEvent() );
@@ -432,6 +469,7 @@ void COMMON_CONTROL::setTransitions()
     Go( &COMMON_CONTROL::Donate,             ACTIONS::donate.MakeEvent() );
     Go( &COMMON_CONTROL::ReportBug,          ACTIONS::reportBug.MakeEvent() );
     Go( &COMMON_CONTROL::About,              ACTIONS::about.MakeEvent() );
+    Go( &COMMON_CONTROL::ReloadPlugins,      ACTIONS::pluginsReload.MakeEvent() );
 }
 
 

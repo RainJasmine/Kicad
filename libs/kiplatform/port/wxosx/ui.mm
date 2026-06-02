@@ -22,6 +22,7 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include <wx/dialog.h>
 #include <wx/nonownedwnd.h>
 #include <wx/toplevel.h>
 #include <wx/button.h>
@@ -88,24 +89,36 @@ bool KIPLATFORM::UI::IsWindowActive( wxWindow* aWindow )
 }
 
 
-void KIPLATFORM::UI::ReparentModal( wxNonOwnedWindow* aWindow )
+void KIPLATFORM::UI::EnsureVisible( wxWindow* aWindow )
 {
-    wxTopLevelWindow* parent =
-            static_cast<wxTopLevelWindow*>( wxGetTopLevelParent( aWindow->GetParent() ) );
-
-    // Quietly return if no parent is found
-    if( !parent )
+    NSView* view = (NSView*)aWindow->GetHandle();
+    if( view )
     {
-        return;
+        NSWindow* nsWindow = [view window];
+        if( nsWindow )
+        {
+            [nsWindow setCollectionBehavior:
+                NSWindowCollectionBehaviorCanJoinAllSpaces];
+        }
     }
+}
 
-    NSWindow* parentWindow = parent->GetWXWindow();
+
+void KIPLATFORM::UI::ReparentWindow( wxNonOwnedWindow* aWindow, wxTopLevelWindow* aParent )
+{
+    NSWindow* parentWindow = aParent->GetWXWindow();
     NSWindow* theWindow    = aWindow->GetWXWindow();
 
     if( parentWindow && theWindow )
-    {
         [parentWindow addChildWindow:theWindow ordered:NSWindowAbove];
-    }
+}
+
+
+void KIPLATFORM::UI::ReparentModal( wxNonOwnedWindow* aWindow )
+{
+    // Quietly return if no parent is found
+    if( wxTopLevelWindow* parent = static_cast<wxTopLevelWindow*>( wxGetTopLevelParent( aWindow->GetParent() ) ) )
+        ReparentWindow( aWindow, parent );
 }
 
 
@@ -224,4 +237,26 @@ void KIPLATFORM::UI::SetFloatLevel( wxWindow* aWindow )
 {
     // On OSX we need to forcefully give the focus to the window
     [[aWindow->GetHandle() window] setLevel:NSFloatingWindowLevel];
+}
+
+void KIPLATFORM::UI::ReleaseChildWindow( wxNonOwnedWindow* aWindow )
+{
+    if( wxTopLevelWindow* parent = static_cast<wxTopLevelWindow*>(
+            wxGetTopLevelParent( aWindow->GetParent() ) ) )
+    {
+        NSWindow* parentWindow = parent->GetWXWindow();
+        NSWindow* theWindow = aWindow->GetWXWindow();
+
+        if( parentWindow && theWindow )
+        {
+            [parentWindow removeChildWindow:theWindow];
+            [theWindow setLevel:NSFloatingWindowLevel];
+        }
+    }
+}
+
+
+void KIPLATFORM::UI::AllowNetworkFileSystems( wxDialog* aDialog )
+{
+    // Not needed on macOS - file dialogs show network filesystems by default
 }

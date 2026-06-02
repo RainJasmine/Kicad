@@ -201,7 +201,6 @@ bool DIFF_PAIR_PLACER::attemptWalk( NODE* aNode, DIFF_PAIR* aCurrent, DIFF_PAIR&
                                     bool aPFirst, bool aWindCw, bool aSolidsOnly )
 {
     WALKAROUND walkaround( aNode, Router() );
-    WALKAROUND::STATUS wf1;
 
     walkaround.SetSolidsOnly( aSolidsOnly );
     walkaround.SetIterationLimit( Settings().WalkaroundIterationLimit() );
@@ -292,7 +291,6 @@ bool DIFF_PAIR_PLACER::tryWalkDp( NODE* aNode, DIFF_PAIR &aPair, bool aSolidsOnl
 
         if( attemptWalk( tmp, &aPair, p, pfirst, wind_cw, aSolidsOnly ) )
         {
-        //    double len = p.TotalLength();
             double cl   = 1 + p.CoupledLength();
             double skew = p.Skew();
 
@@ -301,7 +299,7 @@ bool DIFF_PAIR_PLACER::tryWalkDp( NODE* aNode, DIFF_PAIR &aPair, bool aSolidsOnl
             if( score < bestScore )
             {
                 bestScore = score;
-                best = p;
+                best = std::move( p );
             }
         }
 
@@ -387,8 +385,11 @@ bool DIFF_PAIR_PLACER::rhShoveOnly( const VECTOR2I& aP )
         if( m_shove->HeadsModified( 1 ))
             nLine = m_shove->GetModifiedHead(1);
 
-        if( !m_currentNode->CheckColliding( &m_currentTrace.PLine() ) &&
-            !m_currentNode->CheckColliding( &m_currentTrace.NLine() ) )
+        // Update m_currentTrace with the shoved shapes so FixRoute() commits correct geometry
+        m_currentTrace.SetShape( pLine.CLine(), nLine.CLine() );
+
+        if( !m_currentNode->CheckColliding( &pLine ) &&
+            !m_currentNode->CheckColliding( &nLine ) )
         {
             m_fitOk = true;
         }
@@ -641,6 +642,7 @@ bool DIFF_PAIR_PLACER::Start( const VECTOR2I& aP, ITEM* aStartItem )
     m_currentEnd = p;
     m_placingVia = false;
     m_chainedPlacement = false;
+    m_hasFixedAnything = false;
     m_currentTraceOk = false;
     m_currentTrace = DIFF_PAIR();
     m_currentTrace.SetNets( m_netP, m_netN );
@@ -741,8 +743,8 @@ bool DIFF_PAIR_PLACER::routeHead( const VECTOR2I& aP )
 
         if( m_placingVia )
         {
-            m_currentTrace.AppendVias ( makeVia( m_currentTrace.CP().CPoint( -1 ), m_netP ),
-                                        makeVia( m_currentTrace.CN().CPoint( -1 ), m_netN ) );
+            m_currentTrace.AppendVias ( makeVia( m_currentTrace.CP().CLastPoint(), m_netP ),
+                                        makeVia( m_currentTrace.CN().CLastPoint(), m_netN ) );
         }
         else
         {
@@ -780,10 +782,18 @@ bool DIFF_PAIR_PLACER::Move( const VECTOR2I& aP , ITEM* aEndItem )
 
 void DIFF_PAIR_PLACER::UpdateSizes( const SIZES_SETTINGS& aSizes )
 {
+    int prevDiffPairWidth = m_sizes.DiffPairWidth();
+
     m_sizes = aSizes;
 
     if( !m_idle )
     {
+        // When continuing from an existing track in connected-track-width mode, preserve the
+        // inherited diff pair width rather than reverting to the netclass default. This matches
+        // the guard in LINE_PLACER::UpdateSizes() for single tracks.
+        if( !m_sizes.TrackWidthIsExplicit() && m_hasFixedAnything )
+            m_sizes.SetDiffPairWidth( prevDiffPairWidth );
+
         m_currentTrace.SetWidth( m_sizes.DiffPairWidth() );
         m_currentTrace.SetGap( m_sizes.DiffPairGap() );
 
@@ -862,6 +872,7 @@ bool DIFF_PAIR_PLACER::FixRoute( const VECTOR2I& aP, ITEM* aEndItem, bool aForce
     }
     else
     {
+        m_hasFixedAnything = true;
         initPlacement();
         return false;
     }

@@ -29,7 +29,6 @@
 
 #include <build_version.h>
 #include <confirm.h>
-#include <dialogs/dialog_migrate_settings.h>
 #include <gestfich.h>
 #include <kiplatform/environment.h>
 #include <kiplatform/io.h>
@@ -38,6 +37,9 @@
 #include <macros.h>
 #include <pgm_base.h>
 #include <paths.h>
+#include <picosha2.h>
+
+#include <algorithm>
 #include <project.h>
 #include <project/project_archiver.h>
 #include <project/project_file.h>
@@ -46,22 +48,32 @@
 #include <settings/common_settings.h>
 #include <settings/json_settings_internals.h>
 #include <settings/settings_manager.h>
+#include <text_eval/text_eval_vcs.h>
 #include <wildcards_and_files_ext.h>
 #include <env_vars.h>
+#include <libraries/library_manager.h>
 
 
-SETTINGS_MANAGER::SETTINGS_MANAGER( bool aHeadless ) :
-        m_headless( aHeadless ),
+SETTINGS_MANAGER::SETTINGS_MANAGER() :
         m_kiway( nullptr ),
         m_common_settings( nullptr ),
-        m_migration_source(),
         m_migrateLibraryTables( true )
 {
-    // Check if the settings directory already exists, and if not, perform a migration if possible
-    if( !MigrateIfNeeded() )
+    wxFileName path( PATHS::GetUserSettingsPath(), wxS( "" ) );
+    wxLogTrace( traceSettings, wxT( "Using settings path %s" ), path.GetFullPath() );
+
+    if( !path.DirExists() )
     {
-        m_ok = false;
-        return;
+        wxLogTrace( traceSettings, wxT( "Path didn't exist; creating it" ) );
+        path.Mkdir( wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL );
+    }
+
+    if( !SettingsDirectoryValid() )
+    {
+        // This will be picked up by the first-run wizard later in application start,
+        // but we allow it for now because many things rely on being able to access the
+        // settings manager.  For now, default settings in memory will be used.
+        wxLogTrace( traceSettings, wxT( "Note: no valid settings directory on disk" ) );
     }
 
     m_ok = true;
@@ -72,15 +84,6 @@ SETTINGS_MANAGER::SETTINGS_MANAGER( bool aHeadless ) :
     // Create the built-in color settings
     // Here to allow the Python API to access the built-in colors
     registerBuiltinColorSettings();
-
-    wxFileName commonSettings( GetPathForSettingsFile( m_common_settings ),
-                               m_common_settings->GetFullFilename() );
-
-    if( !wxFileExists( commonSettings.GetFullPath() ) )
-    {
-        m_common_settings->Load();
-        Save( m_common_settings );
-    }
 }
 
 
@@ -97,6 +100,41 @@ SETTINGS_MANAGER::~SETTINGS_MANAGER()
     m_settings.clear();
 
     m_color_settings.clear();
+}
+
+
+void SETTINGS_MANAGER::ResetToDefaults()
+{
+    for( std::unique_ptr<JSON_SETTINGS>& settings : m_settings )
+    {
+        if( settings->GetLocation() == SETTINGS_LOC::USER || settings->GetLocation() == SETTINGS_LOC::COLORS )
+        {
+            std::map<std::string, nlohmann::json> fileHistories = settings->GetFileHistories();
+
+            settings->Internals()->clear();
+            settings->Load();   // load from nothing (ie: load defaults)
+
+            for( const auto& [path, history] : fileHistories )
+                settings->Set( path, history );
+
+            settings->SaveToFile( GetPathForSettingsFile( settings.get() ) );
+        }
+    }
+}
+
+
+void SETTINGS_MANAGER::ClearFileHistory()
+{
+    for( std::unique_ptr<JSON_SETTINGS>& settings : m_settings )
+    {
+        if( settings->GetLocation() == SETTINGS_LOC::USER )
+        {
+            for( const auto& [path, history] : settings->GetFileHistories() )
+                settings->Set( path, nlohmann::json::array() );
+
+            settings->SaveToFile( GetPathForSettingsFile( settings.get() ) );
+        }
+    }
 }
 
 
@@ -156,9 +194,10 @@ void SETTINGS_MANAGER::Save()
         if( dynamic_cast<COLOR_SETTINGS*>( settings.get() ) )
             continue;
 
-        // Never automatically save project settings, caller should use SaveProject or UnloadProject
-        if( dynamic_cast<PROJECT_FILE*>( settings.get() )
-            || dynamic_cast<PROJECT_LOCAL_SETTINGS*>( settings.get() ) )
+        // Never automatically save project file, caller should use SaveProject or UnloadProject
+        // We do want to save the project local settings, though because they are generally view
+        // settings that should persist even if the project is not saved
+        if( dynamic_cast<PROJECT_FILE*>( settings.get() ) )
         {
             continue;
         }
@@ -246,6 +285,20 @@ COLOR_SETTINGS* SETTINGS_MANAGER::GetColorSettings( const wxString& aName )
 
     // This had better work
     return m_color_settings.at( COLOR_SETTINGS::COLOR_BUILTIN_DEFAULT );
+}
+
+
+std::vector<COLOR_SETTINGS*> SETTINGS_MANAGER::GetColorSettingsList()
+{
+    std::vector<COLOR_SETTINGS*> ret;
+
+    for( const std::pair<const wxString, COLOR_SETTINGS*>& entry : m_color_settings )
+        ret.push_back( entry.second );
+
+    std::sort( ret.begin(), ret.end(), []( COLOR_SETTINGS* a, COLOR_SETTINGS* b )
+                                       { return a->GetName() < b->GetName(); } );
+
+    return ret;
 }
 
 
@@ -536,7 +589,8 @@ public:
             path.Replace( m_src, m_dest, false );
             dir.SetPath( path );
 
-            wxMkdir( dir.GetFullPath() );
+            if( !wxDirExists( dir.GetPath() ) )
+                wxMkdir( dir.GetPath() );
 
             return wxDIR_CONTINUE;
         }
@@ -548,26 +602,9 @@ public:
 };
 
 
-bool SETTINGS_MANAGER::MigrateIfNeeded()
+bool SETTINGS_MANAGER::SettingsDirectoryValid() const
 {
     wxFileName path( PATHS::GetUserSettingsPath(), wxS( "" ) );
-    wxLogTrace( traceSettings, wxT( "Using settings path %s" ), path.GetFullPath() );
-
-    if( m_headless )
-    {
-        // Special case namely for cli
-        // Ensure the settings directory at least exists to prevent additional loading errors
-        // from subdirectories.
-        // TODO review headless (unit tests) vs cli needs, this should be fine for unit tests though
-        if( !path.DirExists() )
-        {
-            wxLogTrace( traceSettings, wxT( "Path didn't exist; creating it" ) );
-            path.Mkdir( wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL );
-        }
-
-        wxLogTrace( traceSettings, wxT( "Settings migration not checked; running headless" ) );
-        return true;
-    }
 
     if( path.DirExists() )
     {
@@ -582,31 +619,22 @@ bool SETTINGS_MANAGER::MigrateIfNeeded()
         }
     }
 
-    // Now we have an empty path, let's figure out what to put in it
-    DIALOG_MIGRATE_SETTINGS dlg( this );
+    return false;
+}
 
-    if( dlg.ShowModal() != wxID_OK )
-    {
-        wxLogTrace( traceSettings, wxT( "Migration dialog canceled; exiting" ) );
+
+bool SETTINGS_MANAGER::MigrateFromPreviousVersion( const wxString& aSourcePath )
+{
+    wxFileName path( PATHS::GetUserSettingsPath(), wxS( "" ) );
+
+    if( aSourcePath.IsEmpty() )
         return false;
-    }
 
-    if( !path.DirExists() )
-    {
-        wxLogTrace( traceSettings, wxT( "Path didn't exist; creating it" ) );
-        path.Mkdir( wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL );
-    }
+    wxLogTrace( traceSettings, wxT( "Migrating from path %s" ), aSourcePath );
 
-    if( m_migration_source.IsEmpty() )
-    {
-        wxLogTrace( traceSettings, wxT( "No migration source given; starting with defaults" ) );
-        return true;
-    }
-
-    wxLogTrace( traceSettings, wxT( "Migrating from path %s" ), m_migration_source );
-
-    MIGRATION_TRAVERSER traverser( m_migration_source, path.GetFullPath(), m_migrateLibraryTables );
-    wxDir source_dir( m_migration_source );
+    // TODO(JE) library tables - move library table migration out of here probably
+    MIGRATION_TRAVERSER traverser( aSourcePath, path.GetFullPath(), m_migrateLibraryTables );
+    wxDir source_dir( aSourcePath );
 
     source_dir.Traverse( traverser );
 
@@ -644,7 +672,7 @@ bool SETTINGS_MANAGER::MigrateIfNeeded()
         for( const wxString& key : libKeys )
             common.m_Env.vars.erase( key );
 
-        common.SaveToFile( commonPath  );
+        common.SaveToFile( commonPath );
     }
 
     return true;
@@ -689,20 +717,21 @@ bool SETTINGS_MANAGER::GetPreviousVersionPaths( std::vector<wxString>* aPaths )
     wxString subdir;
     std::string mine = GetSettingsVersion();
 
-    auto check_dir = [&] ( const wxString& aSubDir )
-    {
-        // Only older versions are valid for migration
-        if( compareVersions( aSubDir.ToStdString(), mine ) <= 0 )
-        {
-            wxString sub_path = dir.GetNameWithSep() + aSubDir;
-
-            if( IsSettingsPathValid( sub_path ) )
+    auto check_dir =
+            [&] ( const wxString& aSubDir )
             {
-                aPaths->push_back( sub_path );
-                wxLogTrace( traceSettings, wxT( "GetPreviousVersionName: %s is valid" ), sub_path );
-            }
-        }
-    };
+                // Only older versions are valid for migration
+                if( compareVersions( aSubDir.ToStdString(), mine ) <= 0 )
+                {
+                    wxString sub_path = dir.GetNameWithSep() + aSubDir;
+
+                    if( IsSettingsPathValid( sub_path ) )
+                    {
+                        aPaths->push_back( sub_path );
+                        wxLogTrace( traceSettings, wxT( "GetPreviousVersionName: %s is valid" ), sub_path );
+                    }
+                }
+            };
 
     std::set<wxString> checkedPaths;
 
@@ -744,21 +773,22 @@ bool SETTINGS_MANAGER::GetPreviousVersionPaths( std::vector<wxString>* aPaths )
         }
     }
 
-    alg::delete_if( *aPaths, []( const wxString& aPath ) -> bool
-    {
-        wxFileName fulldir = wxFileName::DirName( aPath );
-        const wxArrayString& dirs = fulldir.GetDirs();
+    std::erase_if( *aPaths,
+                   []( const wxString& aPath ) -> bool
+                   {
+                       wxFileName fulldir = wxFileName::DirName( aPath );
+                       const wxArrayString& dirs = fulldir.GetDirs();
 
-        if( dirs.empty() || !fulldir.IsDirReadable() )
-            return true;
+                       if( dirs.empty() || !fulldir.IsDirReadable() )
+                           return true;
 
-        std::string ver = dirs.back().ToStdString();
+                       std::string ver = dirs.back().ToStdString();
 
-        if( !extractVersion( ver ) )
-            return true;
+                       if( !extractVersion( ver ) )
+                           return true;
 
-        return false;
-    } );
+                       return false;
+                    } );
 
     std::sort( aPaths->begin(), aPaths->end(),
                [&]( const wxString& a, const wxString& b ) -> bool
@@ -784,7 +814,7 @@ bool SETTINGS_MANAGER::GetPreviousVersionPaths( std::vector<wxString>* aPaths )
                    if( !extractVersion( verB ) )
                        return true;
 
-                   return compareVersions( verA, verB ) >= 0;
+                   return compareVersions( verA, verB ) > 0;
                } );
 
     return aPaths->size() > 0;
@@ -925,10 +955,11 @@ bool SETTINGS_MANAGER::extractVersion( const std::string& aVersionString, int* a
 
 bool SETTINGS_MANAGER::LoadProject( const wxString& aFullPath, bool aSetActive )
 {
-    // Normalize path to new format even if migrating from a legacy file
+    // Normalize path to current project extension. Users may open legacy .pro files,
+    // or the OS may hand us a .kicad_sch/.kicad_pcb via file association or drag-and-drop.
     wxFileName path( aFullPath );
 
-    if( path.GetExt() == FILEEXT::LegacyProjectFileExtension )
+    if( path.HasName() && path.GetExt() != FILEEXT::ProjectFileExtension )
         path.SetExt( FILEEXT::ProjectFileExtension );
 
     wxString fullPath = path.GetFullPath();
@@ -949,6 +980,20 @@ bool SETTINGS_MANAGER::LoadProject( const wxString& aFullPath, bool aSetActive )
     // No MDI yet
     if( aSetActive && !m_projects.empty() )
     {
+        // Cancel any in-progress library preloads and wait for them to finish before
+        // modifying m_projects_list. Background preload threads access Prj() which becomes
+        // invalid when the project list is modified.
+        if( m_kiway )
+        {
+            if( KIFACE* pcbFace = m_kiway->KiFACE( KIWAY::FACE_PCB, false ) )
+                pcbFace->CancelPreload( true );
+        }
+
+        // Abort any async library loads before modifying m_projects_list to prevent race
+        // conditions where background threads try to access Prj() while the list is empty.
+        if( PgmOrNull() )
+            Pgm().GetLibraryManager().AbortAsyncLoads();
+
         PROJECT* oldProject = m_projects.begin()->second;
         unloadProjectFile( oldProject, false );
         m_projects.erase( m_projects.begin() );
@@ -978,6 +1023,24 @@ bool SETTINGS_MANAGER::LoadProject( const wxString& aFullPath, bool aSetActive )
         // set the cwd but don't impact kicad-cli
         if( !projectPath.GetPath().IsEmpty() && wxTheApp && wxTheApp->IsGUI() )
             wxSetWorkingDirectory( projectPath.GetPath() );
+
+        // Anchor text_eval VCS lookups to the project directory. The GUI relies on cwd,
+        // which is deliberately left untouched for kicad-cli; an explicit context is
+        // required so repo-scoped queries resolve correctly from either entry point.
+        // Force an absolute path because libgit2 resolves relative paths against the
+        // process cwd, which is what we are working around. Clear the context for an
+        // empty/null project load so VCS queries fall back to cwd rather than locking
+        // onto whatever directory happens to be current.
+        if( projectPath.GetPath().IsEmpty() )
+        {
+            TEXT_EVAL_VCS::SetContextPath( wxString() );
+        }
+        else
+        {
+            wxFileName vcsContext( projectPath );
+            vcsContext.MakeAbsolute();
+            TEXT_EVAL_VCS::SetContextPath( vcsContext.GetPath() );
+        }
     }
 
     bool success = loadProjectFile( *project );
@@ -1004,6 +1067,11 @@ bool SETTINGS_MANAGER::LoadProject( const wxString& aFullPath, bool aSetActive )
 
     m_projects[fullPath]->setLocalSettings( settings );
 
+    // If not running from SWIG; notify the library manager of the new project
+    // TODO(JE) this maybe could be handled through kiway (below) in the future
+    if( aSetActive && PgmOrNull() )
+        Pgm().GetLibraryManager().ProjectChanged();
+
     if( aSetActive && m_kiway )
         m_kiway->ProjectChanged();
 
@@ -1016,14 +1084,28 @@ bool SETTINGS_MANAGER::UnloadProject( PROJECT* aProject, bool aSave )
     if( !aProject || !m_projects.count( aProject->GetProjectFullName() ) )
         return false;
 
-    if( !unloadProjectFile( aProject, aSave ) )
-        return false;
-
     wxString projectPath = aProject->GetProjectFullName();
     wxLogTrace( traceSettings, wxT( "Unload project %s" ), projectPath );
 
     PROJECT* toRemove = m_projects.at( projectPath );
     bool wasActiveProject = m_projects_list.begin()->get() == toRemove;
+
+    // Cancel any in-progress library preloads and wait for them to finish before
+    // modifying m_projects_list. Background preload threads access Prj() which becomes
+    // invalid when the project list is modified.
+    if( wasActiveProject && m_kiway )
+    {
+        if( KIFACE* pcbFace = m_kiway->KiFACE( KIWAY::FACE_PCB, false ) )
+            pcbFace->CancelPreload( true );
+    }
+
+    // Abort any async library loads before modifying m_projects_list to prevent race
+    // conditions where background threads try to access Prj() while the list is empty.
+    if( wasActiveProject && PgmOrNull() )
+        Pgm().GetLibraryManager().AbortAsyncLoads();
+
+    if( !unloadProjectFile( aProject, aSave ) )
+        return false;
 
     auto it = std::find_if( m_projects_list.begin(), m_projects_list.end(),
                             [&]( const std::unique_ptr<PROJECT>& ptr )
@@ -1046,6 +1128,17 @@ bool SETTINGS_MANAGER::UnloadProject( PROJECT* aProject, bool aSave )
         // Remove the reference in the environment to the previous project
         wxSetEnv( PROJECT_VAR_NAME, wxS( "" ) );
 
+        // Drop the VCS context so lingering text_eval queries don't probe a stale project dir.
+        TEXT_EVAL_VCS::SetContextPath( wxString() );
+
+#ifdef _WIN32
+        // On Windows, processes hold a handle to their current working directory, preventing
+        // it from being deleted. Reset to the user settings path to release the project
+        // directory. This mirrors the wxSetWorkingDirectory call in LoadProject.
+        if( wxTheApp && wxTheApp->IsGUI() )
+            wxSetWorkingDirectory( PATHS::GetUserSettingsPath() );
+#endif
+
         if( m_kiway )
             m_kiway->ProjectChanged();
     }
@@ -1057,7 +1150,14 @@ bool SETTINGS_MANAGER::UnloadProject( PROJECT* aProject, bool aSave )
 PROJECT& SETTINGS_MANAGER::Prj() const
 {
     // No MDI yet:  First project in the list is the active project
-    wxASSERT_MSG( m_projects_list.size(), wxT( "no project in list" ) );
+    if( m_projects_list.empty() )
+    {
+        wxLogTrace( traceSettings, wxT( "Prj() called with no project loaded" ) );
+
+        static PROJECT s_emptyProject;
+        return s_emptyProject;
+    }
+
     return *m_projects_list.begin()->get();
 }
 
@@ -1071,7 +1171,7 @@ bool SETTINGS_MANAGER::IsProjectOpen() const
 bool SETTINGS_MANAGER::IsProjectOpenNotDummy() const
 {
     return m_projects.size() > 1 || ( m_projects.size() == 1
-        && !m_projects.begin()->second->GetProjectFullName().IsEmpty() );
+                                          && !m_projects.begin()->second->GetProjectFullName().IsEmpty() );
 }
 
 
@@ -1250,9 +1350,124 @@ bool SETTINGS_MANAGER::unloadProjectFile( PROJECT* aProject, bool aSave )
 }
 
 
+wxString SETTINGS_MANAGER::projectKeySuffix( const PROJECT* aProject )
+{
+    if( !aProject )
+        return wxEmptyString;
+
+    wxString fullName = aProject->GetProjectFullName();
+
+    if( fullName.IsEmpty() )
+        return wxEmptyString;
+
+    std::string hashHex;
+    picosha2::hash256_hex_string( fullName.ToStdString( wxConvUTF8 ), hashHex );
+
+    return wxString::Format( wxS( "%s-%s" ), aProject->GetProjectName(),
+                             wxString::FromUTF8( hashHex.substr( 0, 12 ).c_str() ) );
+}
+
+
+const PROJECT& SETTINGS_MANAGER::resolveProject( const PROJECT* aProject ) const
+{
+    return aProject ? *aProject : Prj();
+}
+
+
+PROJECT* SETTINGS_MANAGER::GetProjectForPath( const wxString& aProjectPath ) const
+{
+    if( !IsProjectOpen() )
+        return nullptr;
+
+    wxString activePath = Prj().GetProjectPath();
+
+    if( activePath.IsSameAs( aProjectPath ) || activePath.IsSameAs( aProjectPath + wxFILE_SEP_PATH ) )
+        return &Prj();
+
+    return nullptr;
+}
+
+
 wxString SETTINGS_MANAGER::GetProjectBackupsPath() const
 {
-    return Prj().GetProjectPath() + Prj().GetProjectName() + PROJECT_BACKUPS_DIR_SUFFIX;
+    return GetBackupRootForProject( nullptr );
+}
+
+
+wxString SETTINGS_MANAGER::GetBackupRootForProject( const PROJECT* aProject ) const
+{
+    const PROJECT& project = resolveProject( aProject );
+    BACKUP_LOCATION location = GetCommonSettings()->m_Backup.location;
+
+    if( location == BACKUP_LOCATION::PROJECT_DIR )
+        return project.GetProjectPath() + project.GetProjectName() + PROJECT_BACKUPS_DIR_SUFFIX;
+
+    wxFileName root( PATHS::GetUserSettingsPath(), wxEmptyString );
+    root.AppendDir( wxS( "backups" ) );
+
+    wxString key = projectKeySuffix( &project );
+
+    if( !key.IsEmpty() )
+        root.AppendDir( key );
+
+    return root.GetPathWithSep();
+}
+
+
+wxString SETTINGS_MANAGER::GetLocalHistoryDirForProject( const PROJECT* aProject ) const
+{
+    const PROJECT& project = resolveProject( aProject );
+    BACKUP_LOCATION location = GetCommonSettings()->m_Backup.location;
+
+    if( location == BACKUP_LOCATION::PROJECT_DIR )
+    {
+        wxFileName p( project.GetProjectPath(), wxEmptyString );
+        p.AppendDir( wxS( ".history" ) );
+        return p.GetPath();
+    }
+
+    wxFileName root( PATHS::GetUserSettingsPath(), wxEmptyString );
+    root.AppendDir( wxS( "local_history" ) );
+
+    wxString key = projectKeySuffix( &project );
+
+    if( !key.IsEmpty() )
+        root.AppendDir( key );
+
+    return root.GetPath();
+}
+
+
+wxString SETTINGS_MANAGER::GetLocalHistoryDirForPath( const wxString& aProjectPath ) const
+{
+    if( GetCommonSettings()->m_Backup.location == BACKUP_LOCATION::PROJECT_DIR )
+    {
+        wxFileName p( aProjectPath, wxEmptyString );
+        p.AppendDir( wxS( ".history" ) );
+        return p.GetPath();
+    }
+
+    return GetLocalHistoryDirForProject( GetProjectForPath( aProjectPath ) );
+}
+
+
+wxString SETTINGS_MANAGER::GetAutosaveRootForProject( const PROJECT* aProject ) const
+{
+    const PROJECT& project = resolveProject( aProject );
+    BACKUP_LOCATION location = GetCommonSettings()->m_Backup.location;
+
+    if( location == BACKUP_LOCATION::PROJECT_DIR )
+        return project.GetProjectPath();
+
+    wxFileName root( PATHS::GetUserSettingsPath(), wxEmptyString );
+    root.AppendDir( wxS( "autosave" ) );
+
+    wxString key = projectKeySuffix( &project );
+
+    if( !key.IsEmpty() )
+        root.AppendDir( key );
+
+    return root.GetPathWithSep();
 }
 
 
@@ -1273,7 +1488,7 @@ bool SETTINGS_MANAGER::BackupProject( REPORTER& aReporter, wxFileName& aTarget )
         aTarget.SetExt( FILEEXT::ArchiveFileExtension );
     }
 
-    if( !aTarget.DirExists() && !wxMkdir( aTarget.GetPath() ) )
+    if( !aTarget.DirExists() && !PATHS::EnsurePathExists( aTarget.GetPath() ) )
     {
         wxLogTrace( traceSettings, wxT( "Could not create project backup path %s" ),
                     aTarget.GetPath() );
@@ -1330,6 +1545,12 @@ bool SETTINGS_MANAGER::TriggerBackupIfNeeded( REPORTER& aReporter ) const
     if( !settings.enabled )
         return true;
 
+    // The Format radio is exclusive: in INCREMENTAL mode the user has opted out of
+    // timestamped zip archives entirely.  Skip backup creation here so we do not
+    // produce a zip on every eligible save in addition to the git history snapshot.
+    if( settings.format != BACKUP_FORMAT::ZIP )
+        return true;
+
     wxString prefix = Prj().GetProjectName() + '-';
 
     auto modTime =
@@ -1342,23 +1563,29 @@ bool SETTINGS_MANAGER::TriggerBackupIfNeeded( REPORTER& aReporter ) const
                 return dt;
             };
 
-    wxFileName projectPath( Prj().GetProjectPath(), wxEmptyString, wxEmptyString );
-
-    // Skip backup if project path isn't valid or writable
-    if( !projectPath.IsOk() || !projectPath.Exists() || !projectPath.IsDirWritable() )
+    if( Prj().GetProjectFullName().IsEmpty() )
         return true;
 
     wxString backupPath = GetProjectBackupsPath();
 
-    if( !wxDirExists( backupPath ) )
+    // Ensure the backup root exists; this also covers user-dir mode where the parent
+    // directories may not yet have been created.
+    if( !PATHS::EnsurePathExists( backupPath ) )
     {
-        wxLogTrace( traceSettings, wxT( "Backup path %s doesn't exist, creating it" ), backupPath );
+        wxLogTrace( traceSettings, wxT( "Could not create backups path %s!  Skipping backup" ),
+                    backupPath );
+        return false;
+    }
 
-        if( !wxMkdir( backupPath ) )
-        {
-            wxLogTrace( traceSettings, wxT( "Could not create backups path!  Skipping backup" ) );
-            return false;
-        }
+    wxFileName backupRoot( backupPath, wxEmptyString, wxEmptyString );
+
+    // Skip backup if the resolved backup root isn't writable.  In USER_DIR mode this gates
+    // on the user data path; in PROJECT_DIR mode it gates on the project tree.
+    if( !backupRoot.IsDirWritable() )
+    {
+        wxLogTrace( traceSettings, wxT( "Backup directory %s is not writable!  Skipping backup" ),
+                    backupPath );
+        return true;
     }
 
     wxDir dir( backupPath );

@@ -21,6 +21,9 @@
 #ifndef REPORT_SEVERITY_H
 #define REPORT_SEVERITY_H
 
+#include <kicommon.h>
+#include <wx/string.h>
+
 // Note: On windows, SEVERITY_ERROR collides with a system declaration,
 // so we used RPT_SEVERITY_xxx instead of SEVERITY_xxx
 enum SEVERITY {
@@ -33,5 +36,12 @@ enum SEVERITY {
     RPT_SEVERITY_IGNORE    = 0x40,
     RPT_SEVERITY_DEBUG     = 0x80,
 };
+
+/**
+ * Convert a severity mask to a human-readable comma-separated string.
+ * @param aSeverities A bitmask of SEVERITY values
+ * @return A translated string like "Errors, Warnings"
+ */
+KICOMMON_API wxString formatSeverities( int aSeverities );
 
 #endif // REPORT_SEVERITY_H

@@ -50,7 +50,7 @@ public:
         SetLayer( LAYER_RULE_AREAS );
     }
 
-    virtual ~SCH_RULE_AREA() {}
+    virtual ~SCH_RULE_AREA();
 
     wxString GetClass() const override;
 
@@ -61,26 +61,70 @@ public:
     /**
      * Set or clear the exclude from simulation flag.
      */
-    void SetExcludedFromSim( bool aExcludeFromSim ) override { m_excludedFromSim = aExcludeFromSim; }
-    bool GetExcludedFromSim() const override { return m_excludedFromSim; }
+    void SetExcludedFromSim( bool aExcludeFromSim, const SCH_SHEET_PATH* aInstance = nullptr,
+                             const wxString& aVariantName = wxEmptyString ) override
+    {
+        m_excludedFromSim = aExcludeFromSim;
+    }
+
+    bool GetExcludedFromSim( const SCH_SHEET_PATH* aInstance = nullptr,
+                             const wxString& aVariantName = wxEmptyString ) const override
+    {
+        return m_excludedFromSim;
+    }
+
+    bool GetExcludedFromSimProp() const { return GetExcludedFromSim(); }
+
+    void SetExcludedFromSimProp( bool aExcludeFromSim ) { SetExcludedFromSim( aExcludeFromSim ); }
 
     /**
      * Set or clear the exclude from schematic bill of materials flag.
      */
-    void SetExcludedFromBOM( bool aExcludeFromBOM ) override { m_excludedFromBOM = aExcludeFromBOM; }
-    bool GetExcludedFromBOM() const override { return m_excludedFromBOM; }
+    void SetExcludedFromBOM( bool aExcludeFromBOM, const SCH_SHEET_PATH* aInstance = nullptr,
+                             const wxString& aVariantName = wxEmptyString ) override
+    {
+        m_excludedFromBOM = aExcludeFromBOM;
+    }
+
+    bool GetExcludedFromBOM( const SCH_SHEET_PATH* aInstance = nullptr,
+                             const wxString& aVariantName = wxEmptyString ) const override
+    {
+        return m_excludedFromBOM;
+    }
+
+    bool GetExcludedFromBOMProp() const { return GetExcludedFromBOM(); }
+
+    void SetExcludedFromBOMProp( bool aExcludeFromBOM ) { SetExcludedFromBOM( aExcludeFromBOM ); }
 
     /**
      * Set or clear exclude from board netlist flag.
      */
-    void SetExcludedFromBoard( bool aExcludeFromBoard ) override { m_excludedFromBoard = aExcludeFromBoard; }
-    bool GetExcludedFromBoard() const override { return m_excludedFromBoard; }
+    void SetExcludedFromBoard( bool aExclude, const SCH_SHEET_PATH* aInstance = nullptr,
+                               const wxString& aVariantName = wxEmptyString ) override
+    {
+        m_excludedFromBoard = aExclude;
+    }
+
+    bool GetExcludedFromBoard( const SCH_SHEET_PATH* aInstance = nullptr,
+                               const wxString& aVariantName = wxEmptyString ) const override
+    {
+        return m_excludedFromBoard;
+    }
+
+    bool GetExcludedFromBoardProp() const { return GetExcludedFromBoard(); }
+    void SetExcludedFromBoardProp( bool aExclude ) { SetExcludedFromBoard( aExclude ); }
 
     /**
      * Set or clear the 'Do Not Populate' flag.
      */
-    bool GetDNP() const override { return m_DNP; }
-    void SetDNP( bool aDNP ) override { m_DNP = aDNP; }
+    bool GetDNP( const SCH_SHEET_PATH* aInstance = nullptr,
+                 const wxString& aVariantName = wxEmptyString ) const override { return m_DNP; }
+    void SetDNP( bool aDNP, const SCH_SHEET_PATH* aInstance = nullptr,
+                 const wxString& aVariantName = wxEmptyString ) override { m_DNP = aDNP; }
+
+    bool GetDNPProp() const { return GetDNP(); }
+
+    void SetDNPProp( bool aDNP ) { SetDNP( aDNP ); }
 
     std::vector<int> ViewGetLayers() const override;
 
@@ -116,7 +160,7 @@ public:
     /// Resolve the netclass of this rule area from connected directive labels.
     ///
     /// @return The resolved netclass (if any), and the SCH_ITEM providing the declaration.
-    const std::vector<std::pair<wxString, SCH_ITEM*>> GetResolvedNetclasses() const;
+    const std::vector<std::pair<wxString, SCH_ITEM*>> GetResolvedNetclasses( const SCH_SHEET_PATH* aSheetPath ) const;
 
     /// Get the message panel info for the rule area.
     void GetMsgPanelInfo( EDA_DRAW_FRAME* aFrame, std::vector<MSG_PANEL_ITEM>& aList ) override;
@@ -137,11 +181,18 @@ protected:
     bool          m_excludedFromBoard;
     bool          m_DNP;                   ///< True if symbol is set to 'Do Not Populate'.
 
-    /// All #SCH_ITEM objects currently contained or intersecting the rule area.
+public:
+    /// Remove an item from this rule area's caches (called when the item is deleted).
+    void RemoveItem( SCH_ITEM* aItem );
+
+    /// Remove a directive label from this rule area's caches (called when the label is deleted).
+    void RemoveDirective( SCH_DIRECTIVE_LABEL* aLabel );
+
+    /// All #SCH_ITEM objects currently contained or intersecting the rule area.  No ownership.
     std::unordered_set<SCH_ITEM*>            m_items;
     std::unordered_set<KIID>                 m_itemIDs;
 
-    /// All #SCH_DIRECTIVE_LABEL objectss attached to the rule area border.
+    /// All #SCH_DIRECTIVE_LABEL objects attached to the rule area border.  No ownership.
     std::unordered_set<SCH_DIRECTIVE_LABEL*> m_directives;
     std::unordered_set<KIID>                 m_directiveIDs;
 

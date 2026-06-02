@@ -22,9 +22,13 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#include <gal/opengl/kiglew.h>    // Must be included first
-#include <gal/opengl/gl_utils.h>
+#include <kicad_gl/kiglu.h> // Must be included first
+#include <kicad_gl/gl_utils.h>
+#include <kicad_gl/gl_context_mgr.h>
+
 #include <wx/tokenzr.h>
+
+#include <fmt/format.h>
 
 #include "../common_ogl/ogl_utils.h"
 #include "eda_3d_canvas.h"
@@ -34,17 +38,27 @@
 #include <3d_viewer_id.h>
 #include <advanced_config.h>
 #include <build_version.h>
+#include <settings/color_settings.h>
 #include <board.h>
+#include <footprint.h>
+#include <pad.h>
+#include <pcb_field.h>
+#include <pcb_track.h>
 #include <reporter.h>
-#include <gal/opengl/gl_context_mgr.h>
+#include <widgets/wx_infobar.h>
 #include <core/profile.h>        // To use GetRunningMicroSecs or another profiling utility
 #include <bitmaps.h>
+#include <kiway_holder.h>
+#include <kiway.h>
 #include <macros.h>
 #include <pgm_base.h>
 #include <settings/settings_manager.h>
 #include <tool/tool_dispatcher.h>
-
+#include <string_utils.h>
+#include <mail_type.h>
+#include <kiway_mail.h>
 #include <widgets/wx_busy_indicator.h>
+#include <zone.h>
 
 
 /**
@@ -69,6 +83,8 @@ BEGIN_EVENT_TABLE( EDA_3D_CANVAS, HIDPI_GL_3D_CANVAS )
     EVT_LEFT_UP( EDA_3D_CANVAS::OnLeftUp )
     EVT_MIDDLE_UP( EDA_3D_CANVAS::OnMiddleUp )
     EVT_MIDDLE_DOWN( EDA_3D_CANVAS::OnMiddleDown)
+    EVT_RIGHT_DOWN( EDA_3D_CANVAS::OnRightDown )
+    EVT_RIGHT_UP( EDA_3D_CANVAS::OnRightUp )
     EVT_MOUSEWHEEL( EDA_3D_CANVAS::OnMouseWheel )
     EVT_MOTION( EDA_3D_CANVAS::OnMouseMove )
     EVT_MAGNIFY( EDA_3D_CANVAS::OnMagnify )
@@ -90,28 +106,12 @@ END_EVENT_TABLE()
 EDA_3D_CANVAS::EDA_3D_CANVAS( wxWindow* aParent, const wxGLAttributes& aGLAttribs,
                               BOARD_ADAPTER& aBoardAdapter, CAMERA& aCamera,
                               S3D_CACHE* a3DCachePointer ) :
-        HIDPI_GL_3D_CANVAS( EDA_DRAW_PANEL_GAL::GetVcSettings(), aCamera, aParent, aGLAttribs,
-                            EDA_3D_CANVAS_ID, wxDefaultPosition,
-                            wxDefaultSize, wxFULL_REPAINT_ON_RESIZE ),
-        m_eventDispatcher( nullptr ),
-        m_parentStatusBar( nullptr ),
-        m_parentInfoBar( nullptr ),
-        m_glRC( nullptr ),
-        m_is_opengl_initialized( false ),
-        m_is_opengl_version_supported( true ),
-        m_editing_timeout_timer( this, wxID_HIGHEST + 1 ),
-        m_redraw_trigger_timer( this, wxID_HIGHEST + 2 ),
-        m_render_pivot( false ),
-        m_camera_moving_speed( 1.0f ),
-        m_strtime_camera_movement( 0 ),
-        m_animation_enabled( true ),
-        m_moving_speed_multiplier( 3 ),
-        m_boardAdapter( aBoardAdapter ),
-        m_3d_render( nullptr ),
-        m_opengl_supports_raytracing( true ),
-        m_render_raytracing_was_requested( false ),
-        m_accelerator3DShapes( nullptr ),
-        m_currentRollOverItem( nullptr )
+    HIDPI_GL_3D_CANVAS( EDA_DRAW_PANEL_GAL::GetVcSettings(), aCamera, aParent, aGLAttribs,
+                EDA_3D_CANVAS_ID, wxDefaultPosition,
+                wxDefaultSize, wxFULL_REPAINT_ON_RESIZE ),
+    m_editing_timeout_timer( this, wxID_HIGHEST + 1 ),
+    m_redraw_trigger_timer( this, wxID_HIGHEST + 2 ),
+    m_boardAdapter( aBoardAdapter )
 {
     wxLogTrace( m_logTrace, wxT( "EDA_3D_CANVAS::EDA_3D_CANVAS" ) );
 
@@ -190,19 +190,25 @@ void EDA_3D_CANVAS::releaseOpenGL()
     if( m_glRC )
     {
         GL_CONTEXT_MANAGER* gl_mgr = Pgm().GetGLContextManager();
-        gl_mgr->LockCtx( m_glRC, this );
+        wxASSERT( gl_mgr );
 
-        delete m_3d_render_raytracing;
-        m_3d_render_raytracing = nullptr;
+        if( gl_mgr )
+        {
+            gl_mgr->LockCtx( m_glRC, this );
 
-        delete m_3d_render_opengl;
-        m_3d_render_opengl = nullptr;
+            delete m_3d_render_raytracing;
+            m_3d_render_raytracing = nullptr;
 
-        // This is just a copy of a pointer, can safely be set to NULL.
-        m_3d_render = nullptr;
+            delete m_3d_render_opengl;
+            m_3d_render_opengl = nullptr;
 
-        gl_mgr->UnlockCtx( m_glRC );
-        gl_mgr->DestroyCtx( m_glRC );
+            // This is just a copy of a pointer, can safely be set to NULL.
+            m_3d_render = nullptr;
+
+            gl_mgr->UnlockCtx( m_glRC );
+            gl_mgr->DestroyCtx( m_glRC );
+        }
+
         m_glRC = nullptr;
     }
 }
@@ -226,20 +232,20 @@ bool  EDA_3D_CANVAS::initializeOpenGL()
 {
     wxLogTrace( m_logTrace, wxT( "EDA_3D_CANVAS::initializeOpenGL" ) );
 
-    const GLenum err = glewInit();
+    SetOpenGLBackendInfo( GL_UTILS::DetectGLBackend( this ) );
 
-    if( GLEW_OK != err )
+    const int glVersion = gladLoaderLoadGL();
+
+    if( glVersion == 0 )
     {
-        const wxString msgError = (const char*) glewGetErrorString( err );
-
-        wxLogMessage( msgError );
+        wxLogMessage( wxT( "Failed to load OpenGL via loader" ) );
 
         return false;
     }
     else
     {
-        wxLogTrace( m_logTrace, wxT( "EDA_3D_CANVAS::initializeOpenGL Using GLEW version %s" ),
-                    From_UTF8( (char*) glewGetString( GLEW_VERSION ) ) );
+        wxLogTrace( m_logTrace, wxT( "EDA_3D_CANVAS::initializeOpenGL Using OpenGL version %s" ),
+                    From_UTF8( (char*) glGetString( GL_VERSION ) ) );
     }
 
     SetOpenGLInfo( (const char*) glGetString( GL_VENDOR ), (const char*) glGetString( GL_RENDERER ),
@@ -254,7 +260,7 @@ bool  EDA_3D_CANVAS::initializeOpenGL()
     // getting the OpenGL major and minor version as integers didn't exist.
     wxString tmp;
 
-    wxStringTokenizer tokenizer( version );
+    wxStringTokenizer tokenizer( version, " \t\r\n" );
 
     if( tokenizer.HasMoreTokens() )
     {
@@ -294,7 +300,12 @@ bool  EDA_3D_CANVAS::initializeOpenGL()
         }
     }
 
-    GL_UTILS::SetSwapInterval( -1 );
+#if wxCHECK_VERSION( 3, 3, 3 )
+    wxGLCanvas::SetSwapInterval( -1 );
+#else
+    GL_UTILS::SetSwapInterval( this, -1 );
+#endif
+
     m_is_opengl_initialized = true;
 
     return true;
@@ -389,6 +400,12 @@ void EDA_3D_CANVAS::DoRePaint()
     int64_t             start_time = GetRunningMicroSecs();
     GL_CONTEXT_MANAGER* gl_mgr = Pgm().GetGLContextManager();
 
+    if( !gl_mgr )
+    {
+        m_is_currently_painting.clear();
+        return;
+    }
+
     // "Makes the OpenGL state that is represented by the OpenGL rendering
     //  context context current, i.e. it will be used by all subsequent OpenGL calls.
     //  This function may only be called when the window is shown on screen"
@@ -479,8 +496,10 @@ void EDA_3D_CANVAS::DoRePaint()
 
     if( m_camera_is_moving )
     {
-        const int64_t curtime_delta = GetRunningMicroSecs() - m_strtime_camera_movement;
-        curtime_delta_s = ( curtime_delta / 1e6 ) * m_camera_moving_speed;
+    const int64_t curtime_delta = GetRunningMicroSecs() - m_strtime_camera_movement;
+    // Convert microseconds to seconds as float and apply speed multiplier
+    curtime_delta_s = static_cast<float>( static_cast<double>( curtime_delta ) / 1e6 )
+              * m_camera_moving_speed;
         m_camera.Interpolate( curtime_delta_s );
 
         if( curtime_delta_s > 1.0f )
@@ -600,6 +619,225 @@ void EDA_3D_CANVAS::DoRePaint()
 }
 
 
+void EDA_3D_CANVAS::RenderToFrameBuffer( unsigned char* buffer, int width, int height )
+{
+    if( m_is_currently_painting.test_and_set() )
+        return;
+
+    // Validate input parameters
+    if( !buffer || width <= 0 || height <= 0 )
+    {
+        m_is_currently_painting.clear();
+        return;
+    }
+
+    // Because the board to draw is handled by the parent viewer frame,
+    // ensure this parent is still alive
+    if( !GetParent() || !GetParent()->GetParent() || !GetParent()->GetParent()->IsShownOnScreen() )
+    {
+        m_is_currently_painting.clear();
+        return;
+    }
+
+    wxString            err_messages;
+    int64_t             start_time = GetRunningMicroSecs();
+    GL_CONTEXT_MANAGER* gl_mgr = Pgm().GetGLContextManager();
+
+    if( !gl_mgr )
+    {
+        m_is_currently_painting.clear();
+        return;
+    }
+
+    // Create OpenGL context if needed
+    if( m_glRC == nullptr )
+        m_glRC = gl_mgr->CreateCtx( this );
+
+    if( m_glRC == nullptr )
+    {
+        wxLogError( _( "OpenGL context creation error" ) );
+        m_is_currently_painting.clear();
+        return;
+    }
+
+    gl_mgr->LockCtx( m_glRC, this );
+
+    // Set up framebuffer objects for off-screen rendering
+    GLuint framebuffer = 0;
+    GLuint colorTexture = 0;
+    GLuint depthStencilBuffer = 0;
+    GLint  oldFramebuffer = 0;
+    GLint  oldViewport[4];
+
+    // Save current state
+    glGetIntegerv( GL_FRAMEBUFFER_BINDING, &oldFramebuffer );
+    glGetIntegerv( GL_VIEWPORT, oldViewport );
+
+    // Create and bind framebuffer
+    glGenFramebuffers( 1, &framebuffer );
+    glBindFramebuffer( GL_FRAMEBUFFER, framebuffer );
+
+    // Create color texture attachment
+    glGenTextures( 1, &colorTexture );
+    glBindTexture( GL_TEXTURE_2D, colorTexture );
+    glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr );
+    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+    glFramebufferTexture2D( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorTexture, 0 );
+
+    // Create combined depth+stencil renderbuffer attachment.  The stencil buffer is required
+    // because the OpenGL renderer uses stencil operations to cut holes in copper layers and
+    // the board body (see OPENGL_RENDER_LIST::DrawCulled).
+    glGenRenderbuffers( 1, &depthStencilBuffer );
+    glBindRenderbuffer( GL_RENDERBUFFER, depthStencilBuffer );
+    glRenderbufferStorage( GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height );
+    glFramebufferRenderbuffer( GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER,
+                               depthStencilBuffer );
+
+    auto resetState = std::unique_ptr<void, std::function<void(void*)>>(
+        reinterpret_cast<void*>(1),
+        [&](void*) {
+            glBindFramebuffer( GL_FRAMEBUFFER, oldFramebuffer );
+            glViewport( oldViewport[0], oldViewport[1], oldViewport[2], oldViewport[3] );
+            glDeleteFramebuffers( 1, &framebuffer );
+            glDeleteTextures( 1, &colorTexture );
+            glDeleteRenderbuffers( 1, &depthStencilBuffer );
+            gl_mgr->UnlockCtx( m_glRC );
+            m_is_currently_painting.clear();
+        }
+    );
+
+    // Check framebuffer completeness
+    GLenum framebufferStatus = glCheckFramebufferStatus( GL_FRAMEBUFFER );
+
+    if( framebufferStatus != GL_FRAMEBUFFER_COMPLETE )
+    {
+        wxLogTrace( m_logTrace, wxT( "EDA_3D_CANVAS::RenderToFrameBuffer Framebuffer incomplete: 0x%04X" ),
+                    framebufferStatus );
+
+        return;
+    }
+
+    // Set viewport for off-screen rendering
+    glViewport( 0, 0, width, height );
+
+    // Set window size for camera and rendering
+    wxSize     clientSize( width, height );
+    const bool windows_size_changed = m_camera.SetCurWindowSize( clientSize );
+
+    // Initialize OpenGL if needed
+    if( !m_is_opengl_initialized )
+    {
+        if( !initializeOpenGL() )
+        {
+            wxLogTrace( m_logTrace, wxT( "EDA_3D_CANVAS::RenderToFrameBuffer OpenGL initialization failed." ) );
+            return;
+        }
+
+        if( !m_is_opengl_version_supported )
+        {
+            wxLogTrace( m_logTrace, wxT( "EDA_3D_CANVAS::RenderToFrameBuffer OpenGL version not supported." ) );
+        }
+    }
+
+    if( !m_is_opengl_version_supported )
+    {
+        glClearColor( 0.0f, 0.0f, 0.0f, 1.0f );
+        glClear( GL_COLOR_BUFFER_BIT );
+
+        // Read black screen to buffer
+        glReadPixels( 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, buffer );
+        return;
+    }
+
+    // Handle raytracing/OpenGL renderer selection
+    if( !m_opengl_supports_raytracing )
+    {
+        m_3d_render = m_3d_render_opengl;
+        m_render_raytracing_was_requested = false;
+        m_boardAdapter.m_Cfg->m_Render.engine = RENDER_ENGINE::OPENGL;
+    }
+
+    if( m_boardAdapter.m_Cfg->m_Render.engine == RENDER_ENGINE::OPENGL )
+    {
+        const bool was_camera_changed = m_camera.ParametersChanged();
+
+        if( ( m_mouse_is_moving || m_camera_is_moving || was_camera_changed || windows_size_changed )
+            && m_render_raytracing_was_requested )
+        {
+            m_render_raytracing_was_requested = false;
+            m_3d_render = m_3d_render_opengl;
+        }
+    }
+
+    // Handle camera animation (simplified for off-screen rendering)
+    float curtime_delta_s = 0.0f;
+    if( m_camera_is_moving )
+    {
+        const int64_t curtime_delta = GetRunningMicroSecs() - m_strtime_camera_movement;
+        curtime_delta_s = static_cast<float>( static_cast<double>( curtime_delta ) / 1e6 )
+                          * m_camera_moving_speed;
+        m_camera.Interpolate( curtime_delta_s );
+
+        if( curtime_delta_s > 1.0f )
+        {
+            m_render_pivot = false;
+            m_camera_is_moving = false;
+            m_mouse_was_moved = true;
+        }
+    }
+
+    // Perform the actual rendering
+    bool requested_redraw = false;
+    if( m_3d_render )
+    {
+        try
+        {
+            m_3d_render->SetCurWindowSize( clientSize );
+
+            bool reloadRaytracingForCalculations = false;
+            if( m_boardAdapter.m_Cfg->m_Render.engine == RENDER_ENGINE::OPENGL
+                && m_3d_render_opengl->IsReloadRequestPending() )
+            {
+                reloadRaytracingForCalculations = true;
+            }
+
+            requested_redraw = m_3d_render->Redraw( false, nullptr, nullptr );
+
+            if( reloadRaytracingForCalculations )
+                m_3d_render_raytracing->Reload( nullptr, nullptr, true );
+        }
+        catch( std::runtime_error& )
+        {
+            m_is_opengl_version_supported = false;
+            m_opengl_supports_raytracing = false;
+            m_is_opengl_initialized = false;
+            return;
+        }
+    }
+
+    // Read pixels from framebuffer to the provided buffer
+    // Note: This reads RGB format. Adjust format as needed.
+    glReadPixels( 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, buffer );
+
+    // Check for OpenGL errors
+    GLenum error = glGetError();
+    if( error != GL_NO_ERROR )
+    {
+        wxLogTrace( m_logTrace, wxT( "EDA_3D_CANVAS::RenderToFrameBuffer OpenGL error: 0x%04X" ), error );
+        err_messages += wxString::Format( _( "OpenGL error during off-screen rendering: 0x%04X\n" ), error );
+    }
+
+    // Reset camera parameters changed flag
+    m_camera.ParametersChanged();
+
+    if( !err_messages.IsEmpty() )
+        wxLogMessage( err_messages );
+}
+
+
 void EDA_3D_CANVAS::SetEventDispatcher( TOOL_DISPATCHER* aEventDispatcher )
 {
     m_eventDispatcher = aEventDispatcher;
@@ -676,7 +914,7 @@ void EDA_3D_CANVAS::OnZoomGesture( wxZoomGestureEvent& aEvent )
     m_camera.Pan( aEvent.GetPosition() );
     m_camera.SetCurMousePosition( aEvent.GetPosition() );
 
-    m_camera.Zoom( aEvent.GetZoomFactor() / m_gestureLastZoomFactor );
+    m_camera.Zoom( static_cast<float>( aEvent.GetZoomFactor() / m_gestureLastZoomFactor ) );
 
     m_gestureLastZoomFactor = aEvent.GetZoomFactor();
 
@@ -719,7 +957,7 @@ void EDA_3D_CANVAS::OnRotateGesture( wxRotateGestureEvent& aEvent )
     if( m_camera_is_moving )
         return;
 
-    m_camera.RotateScreen( m_gestureLastAngle - aEvent.GetRotationAngle() );
+    m_camera.RotateScreen( static_cast<float>( m_gestureLastAngle - aEvent.GetRotationAngle() ) );
     m_gestureLastAngle = aEvent.GetRotationAngle();
 
     DisplayStatus();
@@ -751,11 +989,12 @@ void EDA_3D_CANVAS::OnMouseMove( wxMouseEvent& event )
         RAY                mouseRay = getRayAtCurrentMousePosition();
         BOARD_ITEM*        rollOverItem = m_3d_render_raytracing->IntersectBoardItem( mouseRay );
 
-        auto printNetInfo = []( BOARD_CONNECTED_ITEM* aItem )
-        {
-            return wxString::Format( _( "Net %s\tNet class %s" ), aItem->GetNet()->GetNetname(),
-                                     aItem->GetNet()->GetNetClass()->GetHumanReadableName() );
-        };
+        auto printNetInfo =
+                []( BOARD_CONNECTED_ITEM* aItem )
+                {
+                    return wxString::Format( _( "Net %s\tNet class %s" ), aItem->GetNet()->GetNetname(),
+                                             aItem->GetNet()->GetNetClass()->GetHumanReadableName() );
+                };
 
         if( rollOverItem )
         {
@@ -787,7 +1026,7 @@ void EDA_3D_CANVAS::OnMouseMove( wxMouseEvent& event )
             case PCB_FOOTPRINT_T:
             {
                 FOOTPRINT* footprint = static_cast<FOOTPRINT*>( rollOverItem );
-                msg += footprint->GetReference();
+                msg += footprint->GetReference() + wxT( "  " ) + footprint->GetValue();
                 break;
             }
 
@@ -855,9 +1094,47 @@ void EDA_3D_CANVAS::OnLeftDown( wxMouseEvent& event )
     {
         RAY mouseRay = getRayAtCurrentMousePosition();
 
-        BOARD_ITEM *intersectedBoardItem = m_3d_render_raytracing->IntersectBoardItem( mouseRay );
+        BOARD_ITEM* intersectedBoardItem = m_3d_render_raytracing->IntersectBoardItem( mouseRay );
 
-        // !TODO: send a selection item to pcbnew, eg: via kiway?
+        if( intersectedBoardItem )
+        {
+            FOOTPRINT* footprint = nullptr;
+
+            switch( intersectedBoardItem->Type() )
+            {
+            case PCB_FOOTPRINT_T:
+                footprint = static_cast<FOOTPRINT*>( intersectedBoardItem );
+                break;
+
+            case PCB_PAD_T:
+                footprint = static_cast<PAD*>( intersectedBoardItem )->GetParentFootprint();
+                break;
+
+            case PCB_FIELD_T:
+                footprint = static_cast<PCB_FIELD*>( intersectedBoardItem )->GetParentFootprint();
+                break;
+
+            default:
+                break;
+            }
+
+            if( footprint )
+            {
+                // We send a message (by ExpressMail) to the board and schematic editor, but only
+                // if the manager of this canvas is a EDA_3D_VIEWER_FRAME, because only this
+                // kind of frame has ExpressMail stuff
+                EDA_3D_VIEWER_FRAME* frame = dynamic_cast<EDA_3D_VIEWER_FRAME*>( GetParent() );
+
+                if( frame )
+                {
+                    std::string command = fmt::format( "$SELECT: 0,F{}",
+                                        EscapeString( footprint->GetReference(), CTX_IPC ).ToStdString() );
+
+                    frame->Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_SELECTION, command, frame );
+                    frame->Kiway().ExpressMail( FRAME_SCH, MAIL_SELECTION, command, frame );
+                }
+            }
+        }
     }
 }
 
@@ -877,17 +1154,41 @@ void EDA_3D_CANVAS::OnLeftUp( wxMouseEvent& event )
     int    logicalW = logicalSize.GetWidth();
     int    logicalH = logicalSize.GetHeight();
 
-    int gizmo_x, gizmo_y, gizmo_width, gizmo_height;
+    int gizmo_x = 0, gizmo_y = 0, gizmo_width = 0, gizmo_height = 0;
     std::tie( gizmo_x, gizmo_y, gizmo_width, gizmo_height ) = m_3d_render_opengl->getGizmoViewport();
 
-    float scaleX = static_cast<float>( gizmo_width ) / logicalW;
-    float scaleY = static_cast<float>( gizmo_height ) / logicalH;
+    float scaleX = static_cast<float>( static_cast<double>( gizmo_width ) / static_cast<double>( logicalW ) );
+    float scaleY = static_cast<float>( static_cast<double>( gizmo_height ) / static_cast<double>( logicalH ) );
 
-    int scaledMouseX = static_cast<int>( event.GetX() * scaleX );
-    int scaledMouseY = static_cast<int>( ( logicalH - event.GetY() ) * scaleY );
+    int scaledMouseX = static_cast<int>( static_cast<float>( event.GetX() ) * scaleX );
+    int scaledMouseY = static_cast<int>( static_cast<float>( logicalH - event.GetY() ) * scaleY );
 
     m_3d_render_opengl->handleGizmoMouseInput( scaledMouseX, scaledMouseY );
+    m_3d_render_opengl->updateGizmoSelection( m_camera.GetRotationMatrix() );
     Refresh();
+}
+
+
+void EDA_3D_CANVAS::OnRightDown( wxMouseEvent& event )
+{
+    SetFocus();
+    stop_editingTimeOut_Timer();
+
+    // Ensure m_camera.m_lastPosition is up to date for future drag events.
+    OnMouseMoveCamera( event );
+}
+
+
+void EDA_3D_CANVAS::OnRightUp( wxMouseEvent& event )
+{
+    if( m_camera_is_moving )
+        return;
+
+    if( m_mouse_is_moving )
+    {
+        m_mouse_is_moving = false;
+        restart_editingTimeOut_Timer();
+    }
 }
 
 
@@ -995,7 +1296,7 @@ void EDA_3D_CANVAS::request_start_moving_camera( float aMovingSpeed, bool aRende
 
     // Map speed multiplier option to actual multiplier value
     // [1,2,3,4,5] -> [0.25, 0.5, 1, 2, 4]
-    aMovingSpeed *= ( 1 << m_moving_speed_multiplier ) / 8.0f;
+    aMovingSpeed *= static_cast<float>( ( 1 << m_moving_speed_multiplier ) ) / 8.0f;
 
     m_render_pivot = aRenderPivot;
     m_camera_moving_speed = aMovingSpeed;
@@ -1015,7 +1316,7 @@ void EDA_3D_CANVAS::move_pivot_based_on_cur_mouse_position()
 {
     RAY mouseRay = getRayAtCurrentMousePosition();
 
-    float hit_t;
+    float hit_t = 0.0f;
 
     // Test it with the board bounding box
     if( m_boardAdapter.GetBBox().Intersect( mouseRay, &hit_t ) )

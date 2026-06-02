@@ -56,7 +56,9 @@ class PCB_FIELD;
 class PCB_TEXTBOX;
 class PCB_TABLE;
 class PCB_DIMENSION_BASE;
+class PCB_BARCODE;
 class PCB_TARGET;
+class PCB_POINT;
 class PCB_MARKER;
 class NET_SETTINGS;
 class NETINFO_LIST;
@@ -209,7 +211,9 @@ protected:
     void draw( const FOOTPRINT* aFootprint, int aLayer );
     void draw( const PCB_GROUP* aGroup, int aLayer );
     void draw( const ZONE* aZone, int aLayer );
+    void draw( const PCB_BARCODE* aBarcode, int aLayer );
     void draw( const PCB_DIMENSION_BASE* aDimension, int aLayer );
+    void draw( const PCB_POINT* aPoint, int aLayer );
     void draw( const PCB_TARGET* aTarget );
     void draw( const PCB_MARKER* aMarker, int aLayer );
     void draw( const PCB_BOARD_OUTLINE* aBoardOutline, int aLayer );
@@ -241,6 +245,28 @@ protected:
                      const TEXT_ATTRIBUTES& aAttrs, const KIFONT::METRICS& aFontMetrics );
 
     void renderNetNameForSegment( const SHAPE_SEGMENT& aSeg, const COLOR4D& aColor, const wxString& aNetName ) const;
+
+    /**
+     * Draw backdrill indicator (two semi-circles) at the given center point.
+     *
+     * @param aItem the board item (for color lookup)
+     * @param aCenter center point of the indicator
+     * @param aDrillSize diameter of the backdrill
+     * @param aStartLayer layer where backdrill starts
+     * @param aEndLayer layer where backdrill ends
+     */
+    void drawBackdrillIndicator( const BOARD_ITEM* aItem, const VECTOR2D& aCenter,
+                                 int aDrillSize, PCB_LAYER_ID aStartLayer,
+                                 PCB_LAYER_ID aEndLayer );
+
+    /**
+     * Draw post-machining indicator (dashed circle) at the given center point.
+     *
+     * @param aItem the board item (for color lookup)
+     * @param aCenter center point of the indicator
+     * @param aLayer layer to use for color
+     */
+    void drawPostMachiningIndicator( const BOARD_ITEM* aItem, const VECTOR2D& aCenter, PCB_LAYER_ID aLayer );
 
 protected:
     PCB_RENDER_SETTINGS m_pcbSettings;

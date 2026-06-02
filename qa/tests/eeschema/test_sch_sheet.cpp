@@ -31,6 +31,7 @@
 // Code under test
 #include <sch_sheet.h>
 #include <sch_sheet_pin.h>
+#include <sch_screen.h>
 #include <schematic.h>
 
 #include <qa_utils/uuid_test_utils.h>
@@ -95,11 +96,19 @@ BOOST_AUTO_TEST_CASE( SchematicParent )
 {
     m_sheet.SetParent( &m_schematic );
 
-    BOOST_CHECK_EQUAL( m_sheet.IsRootSheet(), false );
+    BOOST_CHECK_EQUAL( m_sheet.IsVirtualRootSheet(), false );
+    BOOST_CHECK_EQUAL( m_sheet.IsTopLevelSheet(), false );  // Not yet a top-level sheet
 
-    m_schematic.SetRoot( &m_sheet );
+    SCH_SCREEN* screen = new SCH_SCREEN( &m_schematic );
+    m_sheet.SetScreen( screen );
+    m_schematic.AddTopLevelSheet( &m_sheet );
 
-    BOOST_CHECK_EQUAL( m_sheet.IsRootSheet(), true );
+    // After AddTopLevelSheet, the sheet becomes a top-level sheet under the virtual root
+    BOOST_CHECK_EQUAL( m_sheet.IsVirtualRootSheet(), false );  // Sheet is not the virtual root
+    BOOST_CHECK_EQUAL( m_sheet.IsTopLevelSheet(), true );      // Sheet is now a top-level sheet
+    BOOST_CHECK_EQUAL( m_schematic.Root().IsVirtualRootSheet(), true );  // The root is virtual
+
+    m_schematic.RemoveTopLevelSheet( &m_sheet );
 }
 
 /**

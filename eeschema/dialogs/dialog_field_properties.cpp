@@ -30,7 +30,7 @@
 #include <settings/color_settings.h>
 #include <bitmaps.h>
 #include <kiway.h>
-#include <kiway_express.h>
+#include <kiway_mail.h>
 #include <confirm.h>
 #include <common.h>
 #include <string_utils.h>
@@ -38,7 +38,6 @@
 #include <sch_collectors.h>
 #include <sch_symbol.h>
 #include <template_fieldnames.h>
-#include <symbol_library.h>
 #include <sch_validators.h>
 #include <schematic.h>
 #include <sch_commit.h>
@@ -145,9 +144,16 @@ DIALOG_FIELD_PROPERTIES::DIALOG_FIELD_PROPERTIES( SCH_BASE_FRAME* aParent, const
 
     // show text variable cross-references in a human-readable format
     if( aField->Schematic() )
-        m_text = aField->Schematic()->ConvertKIIDsToRefs( aField->GetText() );
+    {
+        const SCH_SHEET_PATH& sheetPath = aField->Schematic()->CurrentSheet();
+        wxString variant = aField->Schematic()->GetCurrentVariant();
+
+        m_text = aField->Schematic()->ConvertKIIDsToRefs( aField->GetText( &sheetPath, variant ) );
+    }
     else
+    {
         m_text = aField->GetText();
+    }
 
     m_font = m_field->GetFont();
     m_isItalic = aField->IsItalic();
@@ -175,11 +181,28 @@ DIALOG_FIELD_PROPERTIES::DIALOG_FIELD_PROPERTIES( SCH_BASE_FRAME* aParent, const
         wxString      netlist;
         wxArrayString pins;
 
-        for( SCH_PIN* pin : symbol->GetPins( 0 /* all units */, 1 /* single bodyStyle */ ) )
-            pins.push_back( pin->GetNumber() + ' ' + pin->GetShownName() );
+        for( const SCH_PIN* pin : symbol->GetGraphicalPins( 0 /* all units */, 1 /* single bodyStyle */ ) )
+        {
+            bool valid = false;
+            auto expanded = pin->GetStackedPinNumbers( &valid );
+
+            if( valid && !expanded.empty() )
+            {
+                for( const wxString& num : expanded )
+                    pins.push_back( num + ' ' + pin->GetShownName() );
+            }
+            else
+            {
+                pins.push_back( pin->GetNumber() + ' ' + pin->GetShownName() );
+            }
+        }
 
         if( !pins.IsEmpty() )
-            netlist << EscapeString( wxJoin( pins, '\t' ), CTX_LINE );
+        {
+            wxString dbg = wxJoin( pins, '\t' );
+            wxLogTrace( "FOOTPRINT_CHOOSER", wxS( "Chooser payload pins (LIB_SYMBOL): %s" ), dbg );
+            netlist << EscapeString( dbg, CTX_LINE );
+        }
 
         netlist << wxS( "\r" );
 
@@ -213,12 +236,28 @@ DIALOG_FIELD_PROPERTIES::DIALOG_FIELD_PROPERTIES( SCH_BASE_FRAME* aParent, const
 
         if( lib_symbol )
         {
-            for( SCH_PIN* pin : lib_symbol->GetPins( 0 /* all units */, 1 /* single bodyStyle */ ) )
-                pins.push_back( pin->GetNumber() + ' ' + pin->GetShownName() );
+            for( SCH_PIN* pin : lib_symbol->GetGraphicalPins( 0 /* all units */, 1 /* single bodyStyle */ ) )
+            {
+                bool valid = false;
+                auto expanded = pin->GetStackedPinNumbers( &valid );
+                if( valid && !expanded.empty() )
+                {
+                    for( const wxString& num : expanded )
+                        pins.push_back( num + ' ' + pin->GetShownName() );
+                }
+                else
+                {
+                    pins.push_back( pin->GetNumber() + ' ' + pin->GetShownName() );
+                }
+            }
         }
 
         if( !pins.IsEmpty() )
-            netlist << EscapeString( wxJoin( pins, '\t' ), CTX_LINE );
+        {
+            wxString dbg = wxJoin( pins, '\t' );
+            wxLogTrace( "FOOTPRINT_CHOOSER", wxS( "Chooser payload pins (SCH_SYMBOL): %s" ), dbg );
+            netlist << EscapeString( dbg, CTX_LINE );
+        }
 
         netlist << wxS( "\r" );
 
@@ -272,6 +311,7 @@ DIALOG_FIELD_PROPERTIES::DIALOG_FIELD_PROPERTIES( SCH_BASE_FRAME* aParent, const
 DIALOG_FIELD_PROPERTIES::~DIALOG_FIELD_PROPERTIES()
 {
     delete m_scintillaTricks;
+    m_scintillaTricks = nullptr;
 }
 
 
@@ -306,7 +346,7 @@ void DIALOG_FIELD_PROPERTIES::init()
     bool showUnitSelector = m_fieldId == FIELD_T::REFERENCE
                             && m_field->GetParentSymbol()
                             && m_field->GetParentSymbol()->Type() == SCH_SYMBOL_T
-                            && m_field->GetParentSymbol()->IsMulti();
+                            && m_field->GetParentSymbol()->IsMultiUnit();
 
     m_unitLabel->Show( showUnitSelector );
     m_unitChoice->Show( showUnitSelector );
@@ -350,7 +390,7 @@ void DIALOG_FIELD_PROPERTIES::OnTextValueSelectButtonClick( wxCommandEvent& aEve
 
     if( KIWAY_PLAYER* frame = Kiway().Player( FRAME_FOOTPRINT_CHOOSER, true, this ) )
     {
-        KIWAY_EXPRESS event( FRAME_FOOTPRINT_CHOOSER, MAIL_SYMBOL_NETLIST, m_netlist );
+        KIWAY_MAIL_EVENT event( FRAME_FOOTPRINT_CHOOSER, MAIL_SYMBOL_NETLIST, m_netlist );
         frame->KiwayMailIn( event );
 
         if( frame->ShowModal( &fpid, this ) )
@@ -445,12 +485,7 @@ bool DIALOG_FIELD_PROPERTIES::TransferDataToWindow()
         const SCH_SYMBOL* symbol = static_cast<const SCH_SYMBOL*>( parent );
 
         for( int ii = 1; ii <= symbol->GetUnitCount(); ii++ )
-        {
-            if( symbol->HasUnitDisplayName( ii ) )
-                m_unitChoice->Append( symbol->GetUnitDisplayName( ii ) );
-            else
-                m_unitChoice->Append( symbol->SubReference( ii, false ) );
-        }
+            m_unitChoice->Append( symbol->GetUnitDisplayName( ii, false ) );
 
         if( symbol->GetUnit() <= (int) m_unitChoice->GetCount() )
             m_unitChoice->SetSelection( symbol->GetUnit() - 1 );
@@ -554,7 +589,17 @@ void DIALOG_FIELD_PROPERTIES::updateText( SCH_FIELD* aField )
 
 void DIALOG_FIELD_PROPERTIES::UpdateField( SCH_FIELD* aField )
 {
-    aField->SetText( m_text );
+    if( aField->Schematic() )
+    {
+        const SCH_SHEET_PATH& sheetPath = aField->Schematic()->CurrentSheet();
+        wxString variant = aField->Schematic()->GetCurrentVariant();
+
+        aField->SetText( m_text, &sheetPath, variant );
+    }
+    else
+    {
+        aField->SetText( m_text );
+    }
 
     updateText( aField );
 
@@ -578,6 +623,25 @@ void DIALOG_FIELD_PROPERTIES::UpdateField( SCH_COMMIT* aCommit, SCH_FIELD* aFiel
 {
     SCH_EDIT_FRAME* editFrame = dynamic_cast<SCH_EDIT_FRAME*>( GetParent() );
     SCH_ITEM*       parent = dynamic_cast<SCH_ITEM*>( aField->GetParent() );
+    bool            fieldTextSet = false;
+    SCH_SHEET_PATH  sheetPath;
+    wxString        variantName;
+
+    // convert any text variable cross-references to their UUIDs
+    m_text = aField->Schematic()->ConvertRefsToKIIDs( m_text );
+
+    {
+        SCH_BASE_FRAME* parentFrame = GetParent();
+
+        if( parentFrame )
+            m_text = ConvertPathToFileUri( m_text, &parentFrame->Prj() );
+    }
+
+    if( aField->Schematic() )
+    {
+        sheetPath = aField->Schematic()->CurrentSheet();
+        variantName = aField->Schematic()->GetCurrentVariant();
+    }
 
     if( parent && parent->Type() == SCH_SYMBOL_T )
     {
@@ -585,6 +649,10 @@ void DIALOG_FIELD_PROPERTIES::UpdateField( SCH_COMMIT* aCommit, SCH_FIELD* aFiel
 
         if( m_fieldId == FIELD_T::REFERENCE )
             symbol->SetRef( aSheetPath, m_text );
+        else
+            symbol->SetFieldText( aField->GetName(), m_text, &sheetPath, variantName );
+
+        fieldTextSet = true;
 
         // Set the unit selection in multiple units per package
         if( m_unitChoice->IsShown() )
@@ -592,6 +660,16 @@ void DIALOG_FIELD_PROPERTIES::UpdateField( SCH_COMMIT* aCommit, SCH_FIELD* aFiel
             int unit_selection = m_unitChoice->IsEnabled() ? m_unitChoice->GetSelection() + 1 : 1;
             symbol->SetUnitSelection( aSheetPath, unit_selection );
             symbol->SetUnit( unit_selection );
+        }
+    }
+    else if( parent && parent->Type() == SCH_SHEET_T )
+    {
+        SCH_SHEET* sheet = static_cast<SCH_SHEET*>( parent );
+
+        if( !aField->IsMandatory() )
+        {
+            sheet->SetFieldText( aField->GetName(), m_text, &sheetPath, variantName );
+            fieldTextSet = true;
         }
     }
     else if( parent && parent->Type() == SCH_GLOBAL_LABEL_T )
@@ -621,16 +699,15 @@ void DIALOG_FIELD_PROPERTIES::UpdateField( SCH_COMMIT* aCommit, SCH_FIELD* aFiel
     if( aField->GetEffectiveVertJustify() != m_verticalJustification )
         positioningModified = true;
 
-    // convert any text variable cross-references to their UUIDs
-    m_text = aField->Schematic()->ConvertRefsToKIIDs( m_text );
-
     // Changing a sheetname need to update the hierarchy navigator
     bool needUpdateHierNav = false;
 
     if( m_fieldId == FIELD_T::SHEET_NAME )
         needUpdateHierNav = m_text != aField->GetText();
 
-    aField->SetText( m_text );
+    if( !fieldTextSet )
+        aField->SetText( m_text );
+
     updateText( aField );
     aField->SetPosition( m_position );
 

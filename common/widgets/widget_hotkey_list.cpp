@@ -106,15 +106,13 @@ public:
 
         mainSizer->Add( new wxStaticLine( this ), 0, wxALL | wxEXPAND, 2 );
 
-        wxPanel* panelDisplayCurrent = new wxPanel( this, wxID_ANY, wxDefaultPosition,
-                                                    wxDefaultSize );
+        wxPanel* panelDisplayCurrent = new wxPanel( this, wxID_ANY, wxDefaultPosition, wxDefaultSize );
         mainSizer->Add( panelDisplayCurrent, 0, wxALL | wxEXPAND, 5 );
 
         wxFlexGridSizer* fgsizer = new wxFlexGridSizer( 2 );
         panelDisplayCurrent->SetSizer( fgsizer );
 
-        wxStaticText* cmd_label_0 = new wxStaticText( panelDisplayCurrent, wxID_ANY,
-                                                      _( "Command:" ) );
+        wxStaticText* cmd_label_0 = new wxStaticText( panelDisplayCurrent, wxID_ANY, _( "Command:" ) );
         fgsizer->Add( cmd_label_0, 0, wxALL | wxALIGN_CENTRE_VERTICAL, 5 );
 
         wxStaticText* cmd_label_1 = new wxStaticText( panelDisplayCurrent, wxID_ANY, wxEmptyString );
@@ -122,8 +120,7 @@ public:
         cmd_label_1->SetLabel( aName );
         fgsizer->Add( cmd_label_1, 0, wxALL | wxALIGN_CENTRE_VERTICAL, 5 );
 
-        wxStaticText* key_label_0 = new wxStaticText( panelDisplayCurrent, wxID_ANY,
-                                                      _( "Current key:" ) );
+        wxStaticText* key_label_0 = new wxStaticText( panelDisplayCurrent, wxID_ANY, _( "Current key:" ) );
         fgsizer->Add( key_label_0, 0, wxALL | wxALIGN_CENTRE_VERTICAL, 5 );
 
         wxStaticText* key_label_1 = new wxStaticText( panelDisplayCurrent, wxID_ANY, wxEmptyString );
@@ -133,8 +130,7 @@ public:
 
         fgsizer->AddStretchSpacer();
 
-        wxButton* resetButton = new wxButton( this, wxID_ANY, _( "Clear assigned hotkey" ),
-                                              wxDefaultPosition, wxDefaultSize, 0 );
+        wxButton* resetButton = new wxButton( this, wxID_ANY, _( "Clear assigned hotkey" ) );
 
         mainSizer->Add( resetButton, 0, wxALL | wxALIGN_CENTRE_HORIZONTAL, 5 );
 
@@ -483,6 +479,24 @@ void WIDGET_HOTKEY_LIST::onMenu( wxCommandEvent& aEvent )
 }
 
 
+void WIDGET_HOTKEY_LIST::onCharHook( wxKeyEvent& aEvent )
+{
+    // On macOS with international keyboards, "dead keys" (like backtick or circumflex on
+    // French keyboards) are used for composing accented characters. When pressed on a
+    // wxTreeListCtrl, these can trigger IME composition handling that the control doesn't
+    // support, causing a crash.
+    //
+    // Per wxWidgets documentation: if both GetUnicodeKey() and GetKeyCode() return WXK_NONE,
+    // the key has no WXK_xxx mapping (e.g., dead keys). We filter these out to prevent crashes.
+    // Navigation keys (arrows, function keys, etc.) have valid GetKeyCode() values even when
+    // GetUnicodeKey() returns WXK_NONE, so they pass through correctly.
+    if( aEvent.GetUnicodeKey() == WXK_NONE && aEvent.GetKeyCode() == WXK_NONE )
+        return;
+
+    aEvent.Skip();
+}
+
+
 bool WIDGET_HOTKEY_LIST::resolveKeyConflicts( TOOL_ACTION* aAction, long aKey )
 {
     HOTKEY* conflictingHotKey = nullptr;
@@ -499,7 +513,7 @@ bool WIDGET_HOTKEY_LIST::resolveKeyConflicts( TOOL_ACTION* aAction, long aKey )
                                      conflictingAction->GetFriendlyName(),
                                      HOTKEY_STORE::GetSectionName( conflictingAction ) );
 
-    wxMessageDialog dlg( GetParent(), msg, _( "Confirm change" ), wxYES_NO | wxNO_DEFAULT );
+    KICAD_MESSAGE_DIALOG dlg( GetParent(), msg, _( "Confirm change" ), wxYES_NO | wxNO_DEFAULT );
 
     if( dlg.ShowModal() == wxID_YES )
     {
@@ -513,16 +527,16 @@ bool WIDGET_HOTKEY_LIST::resolveKeyConflicts( TOOL_ACTION* aAction, long aKey )
 }
 
 
-WIDGET_HOTKEY_LIST::WIDGET_HOTKEY_LIST( wxWindow* aParent, HOTKEY_STORE& aHotkeyStore,
-                                        bool aReadOnly ) :
+WIDGET_HOTKEY_LIST::WIDGET_HOTKEY_LIST( wxWindow* aParent, HOTKEY_STORE& aHotkeyStore, bool readOnly ) :
         wxTreeListCtrl( aParent, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTL_SINGLE ),
-        m_hk_store( aHotkeyStore ),
-        m_readOnly( aReadOnly )
+        m_hk_store( aHotkeyStore )
 {
-    wxString command_header = _( "Command" );
+    wxString command_header;
 
-    if( !m_readOnly )
-        command_header << wxS( " " ) << _( "(double-click to edit)" );
+    if( readOnly )
+        command_header = _( "Command" );
+    else
+        command_header = _( "Command (double-click to edit)" );
 
     AppendColumn( command_header, 450, wxALIGN_LEFT, wxCOL_RESIZABLE | wxCOL_SORTABLE );
     AppendColumn( _( "Hotkey" ), 120, wxALIGN_LEFT, wxCOL_RESIZABLE | wxCOL_SORTABLE );
@@ -568,13 +582,16 @@ WIDGET_HOTKEY_LIST::WIDGET_HOTKEY_LIST( wxWindow* aParent, HOTKEY_STORE& aHotkey
 
     GetDataView()->SetIndent( 10 );
 
-    if( !m_readOnly )
+    // The event only apply if the widget is in editable mode
+    if( !readOnly )
     {
-        // The event only apply if the widget is in editable mode
         Bind( wxEVT_TREELIST_ITEM_ACTIVATED, &WIDGET_HOTKEY_LIST::onActivated, this );
         Bind( wxEVT_TREELIST_ITEM_CONTEXT_MENU, &WIDGET_HOTKEY_LIST::onContextMenu, this );
         Bind( wxEVT_MENU, &WIDGET_HOTKEY_LIST::onMenu, this );
     }
+
+    // Filter out dead keys that can crash on macOS with international keyboards
+    Bind( wxEVT_CHAR_HOOK, &WIDGET_HOTKEY_LIST::onCharHook, this );
 }
 
 
@@ -693,14 +710,35 @@ long WIDGET_HOTKEY_LIST::MapKeypressToKeycode( const wxKeyEvent& aEvent )
          */
         bool keyIsLetter = key >= 'A' && key <= 'Z';
 
-        if( aEvent.ShiftDown() && ( keyIsLetter || key > 256 || key == 9 || key == 32 ) )
+        int mods = aEvent.GetModifiers();
+
+        if( ( mods & wxMOD_SHIFT ) && ( keyIsLetter || key > 256 || key == 9 || key == 32 ) )
             key |= MD_SHIFT;
 
-        if( aEvent.ControlDown() )
-            key |= MD_CTRL;
+        // the flag wxMOD_ALTGR is defined in wxWidgets as wxMOD_CONTROL|wxMOD_ALT
+        // So AltGr key cannot used as modifier key because it is the same as Alt key + Ctrl key.
+    #if CAN_USE_ALTGR_KEY
+        if( wxmods & wxMOD_ALTGR )
+            mods |= MD_ALTGR;
+        else
+    #endif
+        {
+            if( mods & wxMOD_CONTROL )
+                key |= MD_CTRL;
 
-        if( aEvent.AltDown() )
-            key |= MD_ALT;
+            if( mods & wxMOD_ALT )
+                key |= MD_ALT;
+        }
+
+#ifdef wxMOD_META
+        if( mods & wxMOD_META )
+            key |= MD_META;
+#endif
+
+#ifdef wxMOD_WIN
+        if( mods & wxMOD_WIN )
+            key |= MD_SUPER;
+#endif
 
         return key;
     }

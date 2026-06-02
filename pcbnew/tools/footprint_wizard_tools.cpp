@@ -53,19 +53,6 @@ int FOOTPRINT_WIZARD_TOOLS::ResetWizardPrms( const TOOL_EVENT& aEvent )
 }
 
 
-int FOOTPRINT_WIZARD_TOOLS::SelectPreviousWizardPage( const TOOL_EVENT& aEvent )
-{
-    frame()->SelectWizardPreviousPage();
-    return 0;
-}
-
-
-int FOOTPRINT_WIZARD_TOOLS::SelectNextWizardPage( const TOOL_EVENT& aEvent )
-{
-    frame()->SelectWizardNextPage();
-    return 0;
-}
-
 
 int FOOTPRINT_WIZARD_TOOLS::ExportFpToEditor( const TOOL_EVENT& aEvent )
 {
@@ -79,8 +66,6 @@ void FOOTPRINT_WIZARD_TOOLS::setTransitions()
     // clang-format off
     Go( &FOOTPRINT_WIZARD_TOOLS::ShowWizards,  PCB_ACTIONS::showWizards.MakeEvent() );
     Go( &FOOTPRINT_WIZARD_TOOLS::ResetWizardPrms,  PCB_ACTIONS::resetWizardPrms.MakeEvent() );
-    Go( &FOOTPRINT_WIZARD_TOOLS::SelectPreviousWizardPage,  PCB_ACTIONS::selectPreviousWizardPage.MakeEvent() );
-    Go( &FOOTPRINT_WIZARD_TOOLS::SelectNextWizardPage,  PCB_ACTIONS::selectNextWizardPage.MakeEvent() );
     Go( &FOOTPRINT_WIZARD_TOOLS::ExportFpToEditor,  PCB_ACTIONS::exportFpToEditor.MakeEvent() );
     // clang-format on
 }

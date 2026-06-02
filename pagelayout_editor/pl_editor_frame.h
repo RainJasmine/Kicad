@@ -38,8 +38,12 @@ class PL_DRAW_PANEL_GAL;
 class PROPERTIES_FRAME;
 class DS_DATA_ITEM;
 class wxChoice;
-class NL_PL_EDITOR_PLUGIN;
 
+#if defined(__linux__) || defined(__FreeBSD__)
+class SPNAV_2D_PLUGIN;
+#else
+class NL_PL_EDITOR_PLUGIN;
+#endif
 
 /**
  * The main window used in the drawing sheet editor.
@@ -236,6 +240,8 @@ public:
 
     void ClearUndoORRedoList( UNDO_REDO_LIST whichList, int aItemCount = -1 ) override;
 
+    void ClearToolbarControl( int aId ) override;
+
 protected:
     bool saveCurrentPageLayout();
 
@@ -270,7 +276,11 @@ private:
                                               // only on page 1, not on page 1
     VECTOR2I          m_grid_origin;
 
+#if defined(__linux__) || defined(__FreeBSD__)
+    std::unique_ptr<SPNAV_2D_PLUGIN> m_spaceMouse;
+#else
     std::unique_ptr<NL_PL_EDITOR_PLUGIN> m_spaceMouse;
+#endif
 
     wxString m_originChoiceList[5] =
         {

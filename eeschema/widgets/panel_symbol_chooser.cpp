@@ -25,9 +25,11 @@
 #include "panel_symbol_chooser.h"
 
 #include <pgm_base.h>
+#include <settings/common_settings.h>
 #include <kiface_base.h>
 #include <sch_base_frame.h>
 #include <project_sch.h>
+#include <libraries/symbol_library_adapter.h>
 #include <widgets/lib_tree.h>
 #include <widgets/symbol_preview_widget.h>
 #include <widgets/footprint_preview_widget.h>
@@ -36,8 +38,8 @@
 #include <project/project_file.h>
 #include <eeschema_settings.h>
 #include <symbol_editor_settings.h>
-#include <symbol_library.h>         // For SYMBOL_LIBRARY_FILTER
-#include <symbol_lib_table.h>
+#include <symbol_library_common.h>         // For SYMBOL_LIBRARY_FILTER
+#include <algorithm>
 #include <wx/button.h>
 #include <wx/clipbrd.h>
 #include <wx/panel.h>
@@ -50,7 +52,7 @@
 
 wxString PANEL_SYMBOL_CHOOSER::g_symbolSearchString;
 wxString PANEL_SYMBOL_CHOOSER::g_powerSearchString;
-
+SCH_BASE_FRAME* PANEL_SYMBOL_CHOOSER::m_frame = nullptr;
 
 PANEL_SYMBOL_CHOOSER::PANEL_SYMBOL_CHOOSER( SCH_BASE_FRAME* aFrame, wxWindow* aParent,
                                             const SYMBOL_LIBRARY_FILTER* aFilter,
@@ -67,14 +69,15 @@ PANEL_SYMBOL_CHOOSER::PANEL_SYMBOL_CHOOSER( SCH_BASE_FRAME* aFrame, wxWindow* aP
         m_fp_preview( nullptr ),
         m_tree( nullptr ),
         m_details( nullptr ),
-        m_frame( aFrame ),
         m_acceptHandler( std::move( aAcceptHandler ) ),
         m_escapeHandler( std::move( aEscapeHandler ) ),
         m_showPower( false ),
         m_allow_field_edits( aAllowFieldEdits ),
         m_show_footprints( aShowFootprints )
 {
-    SYMBOL_LIB_TABLE*         libs = PROJECT_SCH::SchSymbolLibTable( &m_frame->Prj() );
+    m_frame = aFrame;
+
+    SYMBOL_LIBRARY_ADAPTER*   libmgr = PROJECT_SCH::SymbolLibAdapter( &m_frame->Prj() );
     COMMON_SETTINGS::SESSION& session = Pgm().GetCommonSettings()->m_Session;
     PROJECT_FILE&             project = m_frame->Prj().GetProjectFile();
 
@@ -82,9 +85,8 @@ PANEL_SYMBOL_CHOOSER::PANEL_SYMBOL_CHOOSER( SCH_BASE_FRAME* aFrame, wxWindow* aP
     GetAppSettings<EESCHEMA_SETTINGS>( "eeschema" );
     GetAppSettings<SYMBOL_EDITOR_SETTINGS>( "symbol_editor" );
 
-    m_adapter = SYMBOL_TREE_MODEL_ADAPTER::Create( m_frame, libs );
+    m_adapter = SYMBOL_TREE_MODEL_ADAPTER::Create( m_frame, libmgr );
     SYMBOL_TREE_MODEL_ADAPTER* adapter = static_cast<SYMBOL_TREE_MODEL_ADAPTER*>( m_adapter.get() );
-    bool loaded = false;
 
     if( aFilter )
     {
@@ -92,16 +94,14 @@ PANEL_SYMBOL_CHOOSER::PANEL_SYMBOL_CHOOSER( SCH_BASE_FRAME* aFrame, wxWindow* aP
 
         for( const wxString& nickname : liblist )
         {
-            if( libs->HasLibrary( nickname, true ) )
+            if( libmgr->HasLibrary( nickname, true ) )
             {
-                loaded = true;
-
                 bool pinned = alg::contains( session.pinned_symbol_libs, nickname )
                                 || alg::contains( project.m_PinnedSymbolLibs, nickname );
 
-                SYMBOL_LIB_TABLE_ROW* row = libs->FindRow( nickname );
+                std::optional<LIBRARY_TABLE_ROW*> row = libmgr->GetRow( nickname );
 
-                if( row && row->GetIsVisible() )
+                if( row.has_value() && !row.value()->Hidden()  )
                     adapter->AddLibrary( nickname, pinned );
             }
         }
@@ -110,12 +110,10 @@ PANEL_SYMBOL_CHOOSER::PANEL_SYMBOL_CHOOSER( SCH_BASE_FRAME* aFrame, wxWindow* aP
 
         if( aFilter->GetFilterPowerSymbols() )
         {
-            // HACK ALERT: when loading symbols we presume that *any* filter is a power symbol
-            // filter.  So the filter only needs to return true for libraries.
             static std::function<bool( LIB_TREE_NODE& )> powerFilter =
                     []( LIB_TREE_NODE& aNode ) -> bool
                     {
-                        return true;
+                        return aNode.m_IsPower;
                     };
 
             adapter->SetFilter( &powerFilter );
@@ -181,16 +179,7 @@ PANEL_SYMBOL_CHOOSER::PANEL_SYMBOL_CHOOSER( SCH_BASE_FRAME* aFrame, wxWindow* aP
                            already_placed, false, true )
             .m_IsAlreadyPlacedGroup = true;
 
-    const std::vector< wxString > libNicknames = libs->GetLogicalLibs();
-
-    if( !loaded )
-    {
-        if( !adapter->AddLibraries( libNicknames, m_frame ) )
-        {
-            // loading cancelled by user
-            aCancelled = true;
-        }
-    }
+    adapter->AddLibraries( m_frame );
 
     // -------------------------------------------------------------------------------------
     // Construct the actual panel
@@ -242,8 +231,8 @@ PANEL_SYMBOL_CHOOSER::PANEL_SYMBOL_CHOOSER( SCH_BASE_FRAME* aFrame, wxWindow* aP
     wxBoxSizer* treeSizer = new wxBoxSizer( wxVERTICAL );
     treePanel->SetSizer( treeSizer );
 
-    m_tree = new LIB_TREE( treePanel, m_showPower ? wxT( "power" ) : wxT( "symbols" ),
-                           libs, m_adapter, LIB_TREE::FLAGS::ALL_WIDGETS, m_details );
+    m_tree = new LIB_TREE( treePanel, m_showPower ? wxT( "power" ) : wxT( "symbols" ), m_adapter,
+                           LIB_TREE::FLAGS::ALL_WIDGETS, m_details );
 
     treeSizer->Add( m_tree, 1, wxALL | wxEXPAND, 5 );
     treePanel->Layout();
@@ -275,17 +264,10 @@ PANEL_SYMBOL_CHOOSER::PANEL_SYMBOL_CHOOSER( SCH_BASE_FRAME* aFrame, wxWindow* aP
     aFrame->Bind( wxEVT_MENU_CLOSE, &PANEL_SYMBOL_CHOOSER::onMenuClose, this );
 
     if( m_fp_sel_ctrl )
-    {
-        m_fp_sel_ctrl->Bind( EVT_FOOTPRINT_SELECTED, &PANEL_SYMBOL_CHOOSER::onFootprintSelected,
-                             this );
-    }
+        m_fp_sel_ctrl->Bind( EVT_FOOTPRINT_SELECTED, &PANEL_SYMBOL_CHOOSER::onFootprintSelected, this );
 
     if( m_details )
-    {
-        m_details->Connect( wxEVT_CHAR_HOOK,
-                            wxKeyEventHandler( PANEL_SYMBOL_CHOOSER::OnDetailsCharHook ),
-                            nullptr, this );
-    }
+        m_details->Bind( wxEVT_CHAR_HOOK, &PANEL_SYMBOL_CHOOSER::OnDetailsCharHook, this );
 
     // Open the user's previously opened libraries on timer expiration.
     // This is done on a timer because we need a gross hack to keep GTK from garbling the
@@ -314,17 +296,10 @@ PANEL_SYMBOL_CHOOSER::~PANEL_SYMBOL_CHOOSER()
         g_symbolSearchString = m_tree->GetSearchString();
 
     if( m_fp_sel_ctrl )
-    {
-        m_fp_sel_ctrl->Unbind( EVT_FOOTPRINT_SELECTED, &PANEL_SYMBOL_CHOOSER::onFootprintSelected,
-                               this );
-    }
+        m_fp_sel_ctrl->Unbind( EVT_FOOTPRINT_SELECTED, &PANEL_SYMBOL_CHOOSER::onFootprintSelected, this );
 
     if( m_details )
-    {
-        m_details->Disconnect( wxEVT_CHAR_HOOK,
-                               wxKeyEventHandler( PANEL_SYMBOL_CHOOSER::OnDetailsCharHook ),
-                               nullptr, this );
-    }
+        m_details->Unbind( wxEVT_CHAR_HOOK, &PANEL_SYMBOL_CHOOSER::OnDetailsCharHook, this );
 
     if( EESCHEMA_SETTINGS* cfg = dynamic_cast<EESCHEMA_SETTINGS*>( Kiface().KifaceSettings() ) )
     {
@@ -341,6 +316,8 @@ PANEL_SYMBOL_CHOOSER::~PANEL_SYMBOL_CHOOSER()
 
         cfg->m_SymChooserPanel.sort_mode = m_tree->GetSortMode();
     }
+
+    m_frame = nullptr;
 }
 
 
@@ -390,8 +367,8 @@ wxPanel* PANEL_SYMBOL_CHOOSER::constructRightPanel( wxWindow* aParent )
 
     if( m_frame->GetCanvas() )
         backend = m_frame->GetCanvas()->GetBackend();
-    else if( EESCHEMA_SETTINGS* cfg = GetAppSettings<EESCHEMA_SETTINGS>( "eeschema" ) )
-        backend = (EDA_DRAW_PANEL_GAL::GAL_TYPE) cfg->m_Graphics.canvas_type;
+    else if( COMMON_SETTINGS* cfg = Pgm().GetCommonSettings() )
+        backend = static_cast<EDA_DRAW_PANEL_GAL::GAL_TYPE>( cfg->m_Graphics.canvas_type );
 
     wxPanel*    panel = new wxPanel( aParent );
     wxBoxSizer* sizer = new wxBoxSizer( wxVERTICAL );
@@ -401,21 +378,13 @@ wxPanel* PANEL_SYMBOL_CHOOSER::constructRightPanel( wxWindow* aParent )
 
     if( m_show_footprints )
     {
-        FOOTPRINT_LIST* fp_list = FOOTPRINT_LIST::GetInstance( m_frame->Kiway() );
-
         sizer->Add( m_symbol_preview, 11, wxEXPAND | wxALL, 5 );
 
-        if ( fp_list )
-        {
-            if( m_allow_field_edits )
-                m_fp_sel_ctrl = new FOOTPRINT_SELECT_WIDGET( m_frame, panel, fp_list, true );
+        m_fp_sel_ctrl = new FOOTPRINT_SELECT_WIDGET( m_frame, panel );
+        sizer->Add( m_fp_sel_ctrl, 0, wxEXPAND | wxLEFT | wxRIGHT, 5 );
 
-            m_fp_preview = new FOOTPRINT_PREVIEW_WIDGET( panel, m_frame->Kiway() );
-            m_fp_preview->SetUserUnits( m_frame->GetUserUnits() );
-        }
-
-        if( m_fp_sel_ctrl )
-            sizer->Add( m_fp_sel_ctrl, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 5 );
+        m_fp_preview = new FOOTPRINT_PREVIEW_WIDGET( panel, m_frame->Kiway() );
+        m_fp_preview->SetUserUnits( m_frame->GetUserUnits() );
 
         if( m_fp_preview )
             sizer->Add( m_fp_preview, 10, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 5 );
@@ -505,6 +474,9 @@ void PANEL_SYMBOL_CHOOSER::OnDetailsCharHook( wxKeyEvent& e )
 void PANEL_SYMBOL_CHOOSER::SetPreselect( const LIB_ID& aPreselect )
 {
     m_adapter->SetPreselectNode( aPreselect, 0 );
+
+    if( m_tree && aPreselect.IsValid() )
+        m_tree->SelectLibId( aPreselect );
 }
 
 
@@ -563,7 +535,7 @@ void PANEL_SYMBOL_CHOOSER::showFootprintFor( LIB_ID const& aLibId )
 
     try
     {
-        symbol = PROJECT_SCH::SchSymbolLibTable( &m_frame->Prj() )->LoadSymbol( aLibId );
+        symbol = PROJECT_SCH::SymbolLibAdapter( &m_frame->Prj() )->LoadSymbol( aLibId );
     }
     catch( const IO_ERROR& ioe )
     {
@@ -622,7 +594,7 @@ void PANEL_SYMBOL_CHOOSER::populateFootprintSelector( LIB_ID const& aLibId )
     {
         try
         {
-            symbol = PROJECT_SCH::SchSymbolLibTable( &m_frame->Prj() )->LoadSymbol( aLibId );
+            symbol = PROJECT_SCH::SymbolLibAdapter( &m_frame->Prj() )->LoadSymbol( aLibId );
         }
         catch( const IO_ERROR& ioe )
         {
@@ -635,7 +607,7 @@ void PANEL_SYMBOL_CHOOSER::populateFootprintSelector( LIB_ID const& aLibId )
 
     if( symbol != nullptr )
     {
-        int        pinCount = symbol->GetPins( 0 /* all units */, 1 /* single bodyStyle */ ).size();
+    int        pinCount = symbol->GetGraphicalPins( 0 /* all units */, 1 /* single bodyStyle */ ).size();
         SCH_FIELD* fp_field = symbol->GetField( FIELD_T::FOOTPRINT );
         wxString   fp_name = fp_field ? fp_field->GetFullText() : wxString( "" );
 
@@ -657,7 +629,7 @@ void PANEL_SYMBOL_CHOOSER::onFootprintSelected( wxCommandEvent& aEvent )
 {
     m_fp_override = aEvent.GetString();
 
-    alg::delete_if( m_field_edits, []( std::pair<FIELD_T, wxString> const& i )
+    std::erase_if( m_field_edits, []( std::pair<FIELD_T, wxString> const& i )
                                    {
                                        return i.first == FIELD_T::FOOTPRINT;
                                    } );
@@ -710,4 +682,14 @@ void PANEL_SYMBOL_CHOOSER::onSymbolChosen( wxCommandEvent& aEvent )
         // See PANEL_SYMBOL_CHOOSER::onCloseTimer for the other end of this spaghetti noodle.
         m_dbl_click_timer->StartOnce( PANEL_SYMBOL_CHOOSER::DBLCLICK_DELAY );
     }
+}
+
+
+void PANEL_SYMBOL_CHOOSER::Regenerate()
+{
+    LIB_ID savedSelection = m_tree->GetSelectedLibId();
+    m_tree->Regenerate( true );
+
+    if( savedSelection.IsValid() )
+        m_tree->CenterLibId( savedSelection );
 }

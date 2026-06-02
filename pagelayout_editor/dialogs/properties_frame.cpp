@@ -150,6 +150,7 @@ PROPERTIES_FRAME::PROPERTIES_FRAME( PL_EDITOR_FRAME* aParent ) :
 PROPERTIES_FRAME::~PROPERTIES_FRAME()
 {
     delete m_scintillaTricks;
+    m_scintillaTricks = nullptr;
 }
 
 
@@ -227,6 +228,7 @@ void PROPERTIES_FRAME::CopyPrmsFromItemToPanel( DS_DATA_ITEM* aItem )
     if( !aItem )
     {
         m_SizerItemProperties->Show( false );
+        m_propertiesDirty = false;
         return;
     }
 

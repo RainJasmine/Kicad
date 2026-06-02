@@ -250,6 +250,26 @@ public:
 
     SHAPE_LINE_CHAIN& operator=( const SHAPE_LINE_CHAIN& ) = default;
 
+    // Move assignment operator
+    SHAPE_LINE_CHAIN& operator=( SHAPE_LINE_CHAIN&& aOther ) noexcept
+    {
+        if (this != &aOther)
+        {
+            SHAPE_LINE_CHAIN_BASE::operator=( aOther );
+
+            m_points = std::move( aOther.m_points );
+            m_shapes = std::move( aOther.m_shapes );
+            m_arcs = std::move( aOther.m_arcs );
+
+            m_accuracy = aOther.m_accuracy;
+            m_closed = aOther.m_closed;
+            m_width = aOther.m_width;
+            m_bbox = aOther.m_bbox;
+        }
+
+        return *this;
+    }
+
     SHAPE* Clone() const override;
 
     /**
@@ -288,7 +308,7 @@ public:
      *
      * @param aWidth is the width in internal units.
      */
-    void SetWidth( int aWidth )
+    void SetWidth( int aWidth ) override
     {
         m_width = aWidth;
     }
@@ -489,6 +509,7 @@ public:
     void ReservePoints( size_t aSize )
     {
         m_points.reserve( aSize );
+        m_shapes.reserve( aSize );
     }
 
     /**
@@ -519,7 +540,7 @@ public:
         if( m_points.size() == 0 )
             m_bbox = BOX2I( aP, VECTOR2I( 0, 0 ) );
 
-        if( m_points.size() == 0 || aAllowDuplication || CPoint( -1 ) != aP )
+        if( m_points.size() == 0 || aAllowDuplication || CLastPoint() != aP )
         {
             m_points.push_back( aP );
             m_shapes.push_back( SHAPES_ARE_PT );
@@ -639,6 +660,7 @@ public:
         VECTOR2I m_origin;
     };
 
+    bool Intersects( const SEG& aSeg) const;
     bool Intersects( const SHAPE_LINE_CHAIN& aChain ) const;
 
     /**
@@ -742,7 +764,16 @@ public:
         return false;
     }
 
-    bool CompareGeometry( const SHAPE_LINE_CHAIN& aOther ) const;
+    /**
+     * Compare this line chain with another one.
+     *
+     * @param aOther is the other line chain to compare with.
+     * @param aCyclicalCompare if true, will consider line chains equal even if they start at different points
+     * @param aEpsilon tolerance for point difference
+     *
+     * @return true if both line chains have the same points
+     */
+    bool CompareGeometry( const SHAPE_LINE_CHAIN& aOther, bool aCyclicalCompare = false, int aEpsilon = 0 ) const;
 
     void Move( const VECTOR2I& aVector ) override
     {
@@ -865,6 +896,9 @@ public:
     virtual const SEG GetSegment( int aIndex ) const override { return CSegment(aIndex); }
     virtual size_t GetPointCount() const override { return PointCount(); }
     virtual size_t GetSegmentCount() const override { return SegmentCount(); }
+
+    bool PointInside( const VECTOR2I& aPt, int aAccuracy = 0,
+                      bool aUseBBoxCache = false ) const override;
 
     void TransformToPolygon( SHAPE_POLY_SET& aBuffer, int aError,
                              ERROR_LOC aErrorLoc ) const override;

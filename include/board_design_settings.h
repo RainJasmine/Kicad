@@ -22,15 +22,14 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#ifndef BOARD_DESIGN_SETTINGS_H_
-#define BOARD_DESIGN_SETTINGS_H_
+#pragma once
 
 #include <memory>
+#include <optional>
+#include <vector>
 
-#include <netclass.h>
-#include <project/net_settings.h>
 #include <board_stackup_manager/board_stackup.h>
-#include <drc/drc_engine.h>
+#include <eda_units.h>
 #include <lset.h>
 #include <settings/nested_settings.h>
 #include <widgets/ui_common.h>
@@ -82,7 +81,7 @@
 
 #define DEFAULT_MINCLEARANCE          0.0     // overall min clearance
 #define DEFAULT_MINCONNECTION         0.0     // overall min connection width
-#define DEFAULT_TRACKMINWIDTH         0.0     // track width min value
+#define DEFAULT_TRACKMINWIDTH         0.2     // track width min value (mm)
 #define DEFAULT_VIASMINSIZE           0.5     // vias (not micro vias) min diameter
 #define DEFAULT_MINTHROUGHDRILL       0.3     // through holes (not micro vias) min drill diameter
 #define DEFAULT_MICROVIASMINSIZE      0.2     // micro vias (not vias) min diameter
@@ -101,6 +100,10 @@
 #define MINIMUM_ERROR_SIZE_MM         0.001   // For arc approximation
 #define MAXIMUM_ERROR_SIZE_MM         0.1     // For arc approximation
 
+class DRC_ENGINE;
+class NET_SETTINGS;
+class NETCLASS;
+
 #define MAXIMUM_CLEARANCE             pcbIUScale.mmToIU( 500 )  // to prevent int-overflows
 
 // Min/max values used in dialogs to validate settings
@@ -108,10 +111,10 @@
 #define MAXIMUM_LINE_WIDTH_MM         100.0   // max line width entered in a dialog
 
 // Default pad properties
-#define DEFAULT_PAD_WIDTH_MM 2.54         // master pad width
-#define DEFAULT_PAD_HEIGTH_MM 1.27        // master pad height
-#define DEFAULT_PAD_DRILL_DIAMETER_MM 0.8 // master pad drill diameter for PTH
-#define DEFAULT_PAD_RR_RADIUS_RATIO 0.15  // master pad corner radius ratio
+#define DEFAULT_PAD_WIDTH_MM          2.54
+#define DEFAULT_PAD_HEIGTH_MM         1.27
+#define DEFAULT_PAD_DRILL_DIAMETER_MM 0.8
+#define DEFAULT_PAD_RR_RADIUS_RATIO   0.15
 
 /**
  * Container to handle a stock of specific vias each with unique diameter and drill sizes
@@ -253,6 +256,12 @@ public:
 
     virtual ~BOARD_DESIGN_SETTINGS();
 
+    struct VALIDATION_ERROR
+    {
+        wxString setting_name;
+        wxString error_message;
+    };
+
     bool operator==( const BOARD_DESIGN_SETTINGS& aOther ) const;
     bool operator!=( const BOARD_DESIGN_SETTINGS& aOther ) const
     {
@@ -280,6 +289,14 @@ public:
      */
     bool Ignore( int aDRCErrorCode );
 
+    /**
+     * Validate design settings values and return per-field errors.
+     *
+     * @return empty vector if valid, otherwise one or more validation errors.
+     */
+        std::vector<VALIDATION_ERROR> ValidateDesignRules(
+            std::optional<EDA_UNITS> aUnits = std::nullopt ) const;
+
     ZONE_SETTINGS& GetDefaultZoneSettings()
     {
         return m_defaultZoneSettings;
@@ -301,18 +318,12 @@ public:
     /**
      * Return true if netclass values should be used to obtain appropriate track width.
      */
-    inline bool UseNetClassTrack() const
-    {
-        return ( m_trackWidthIndex == 0 && !m_useCustomTrackVia );
-    }
+    inline bool UseNetClassTrack() const { return ( m_trackWidthIndex <= 0 && !m_useCustomTrackVia ); }
 
     /**
      * Return true if netclass values should be used to obtain appropriate via size.
      */
-    inline bool UseNetClassVia() const
-    {
-        return ( m_viaSizeIndex == 0 && !m_useCustomTrackVia );
-    }
+    inline bool UseNetClassVia() const { return ( m_viaSizeIndex <= 0 && !m_useCustomTrackVia ); }
 
     /**
      * Return true if netclass values should be used to obtain appropriate diff pair dimensions.
@@ -335,14 +346,14 @@ public:
     /**
      * @return the current track width list index.
      */
-    inline unsigned GetTrackWidthIndex() const { return m_trackWidthIndex; }
+    inline int GetTrackWidthIndex() const { return m_trackWidthIndex; }
 
     /**
      * Set the current track width list index to \a aIndex.
      *
      * @param aIndex is the track width list index.
      */
-    void SetTrackWidthIndex( unsigned aIndex );
+    void SetTrackWidthIndex( int aIndex );
 
     /**
      * @return the current track width according to the selected options
@@ -359,33 +370,20 @@ public:
      *
      * @param aWidth is the new track width.
      */
-    inline void SetCustomTrackWidth( int aWidth )
-    {
-        m_customTrackWidth = aWidth;
-    }
-
-    /**
-     * @return Current custom width for a track.
-     */
-    inline int GetCustomTrackWidth() const
-    {
-        return m_customTrackWidth;
-    }
+    inline void SetCustomTrackWidth( int aWidth ) { m_customTrackWidth = aWidth; }
+    inline int GetCustomTrackWidth() const { return m_customTrackWidth; }
 
     /**
      * @return the current via size list index.
      */
-    inline unsigned GetViaSizeIndex() const
-    {
-        return m_viaSizeIndex;
-    }
+    inline int GetViaSizeIndex() const { return m_viaSizeIndex; }
 
     /**
      * Set the current via size list index to \a aIndex.
      *
      * @param aIndex is the via size list index.
      */
-    void SetViaSizeIndex( unsigned aIndex );
+    void SetViaSizeIndex( int aIndex );
 
     /**
      * @return the current via size, according to the selected options
@@ -467,12 +465,12 @@ public:
     /**
      * @return the current diff pair dimension list index.
      */
-    inline unsigned GetDiffPairIndex() const { return m_diffPairIndex; }
+    inline int GetDiffPairIndex() const { return m_diffPairIndex; }
 
     /**
      * @param aIndex is the diff pair dimensions list index to set.
      */
-    void SetDiffPairIndex( unsigned aIndex );
+    void SetDiffPairIndex( int aIndex );
 
     /**
      * Sets custom track width for differential pairs (i.e. not available in netclasses or
@@ -772,6 +770,9 @@ public:
     // Map between user layer default names and custom names
     std::map<std::string, wxString>  m_UserLayerNames;
 
+    // Default zone hatching offsets
+    std::map<PCB_LAYER_ID, ZONE_LAYER_PROPERTIES> m_ZoneLayerProperties;
+
     // Arrays of default values for the various layer classes.
     int        m_LineThickness[ LAYER_CLASS_COUNT ];
     VECTOR2I   m_TextSize[LAYER_CLASS_COUNT];
@@ -792,6 +793,8 @@ public:
     bool              m_StyleFPFields;
     bool              m_StyleFPText;
     bool              m_StyleFPShapes;
+    bool              m_StyleFPDimensions;
+    bool              m_StyleFPBarcodes;
 
     // Miscellaneous
     std::unique_ptr<PAD> m_Pad_Master; // A dummy pad to store all default parameters
@@ -806,14 +809,14 @@ public:
     bool       m_UseHeightForLengthCalcs;
 
 private:
-    VECTOR2I m_auxOrigin;  ///< origin for plot exports
-    VECTOR2I m_gridOrigin; ///< origin for grid offsets
+    VECTOR2I   m_auxOrigin;  ///< origin for plot exports
+    VECTOR2I   m_gridOrigin; ///< origin for grid offsets
 
     // Indices into the trackWidth, viaSizes and diffPairDimensions lists.
     // The 0 index is always the current netclass value(s)
-    unsigned   m_trackWidthIndex;
-    unsigned   m_viaSizeIndex;
-    unsigned   m_diffPairIndex;
+    int        m_trackWidthIndex;
+    int        m_viaSizeIndex;
+    int        m_diffPairIndex;
 
     // Custom values for track/via sizes (specified via dialog instead of netclass or lists)
     bool       m_useCustomTrackVia;
@@ -825,9 +828,7 @@ private:
     DIFF_PAIR_DIMENSION m_customDiffPair;
 
     int        m_copperLayerCount; ///< Number of copper layers for this design
-
     int        m_userDefinedLayerCount; ///< Number of user defined layers for this design
-
     LSET       m_enabledLayers;    ///< Bit-mask for layer enabling
 
     int        m_boardThickness;   ///< Board thickness for 3D viewer
@@ -847,5 +848,3 @@ private:
     /// The default settings that will be used for new zones.
     ZONE_SETTINGS m_defaultZoneSettings;
 };
-
-#endif  // BOARD_DESIGN_SETTINGS_H_

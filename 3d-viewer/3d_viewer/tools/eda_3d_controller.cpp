@@ -22,6 +22,8 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include <3d_rendering/opengl/render_3d_opengl.h> // Must be included before any GL header
+
 #include <tool/actions.h>
 #include <tool/tool_manager.h>
 #include <eda_3d_canvas.h>
@@ -30,13 +32,37 @@
 #include <kiface_base.h>
 #include <tools/eda_3d_controller.h>
 #include <tools/eda_3d_actions.h>
+#include <dialogs/dialog_export_3d_image.h>
 #include <dialogs/panel_preview_3d_model.h>
 #include <dialogs/appearance_controls_3D.h>
-#include <3d_rendering/opengl/render_3d_opengl.h>
 
 
 bool EDA_3D_CONTROLLER::Init()
 {
+    std::shared_ptr<ACTION_MENU> rotateSubmenu = std::make_shared<ACTION_MENU>( true, this );
+    rotateSubmenu->SetUntranslatedTitle( _HKI( "Rotate Board" ) );
+    rotateSubmenu->SetIcon( BITMAPS::rotate_cw );
+    m_menu->RegisterSubMenu( rotateSubmenu );
+
+    rotateSubmenu->Add( EDA_3D_ACTIONS::rotateXCW );
+    rotateSubmenu->Add( EDA_3D_ACTIONS::rotateXCCW );
+    rotateSubmenu->AppendSeparator();
+    rotateSubmenu->Add( EDA_3D_ACTIONS::rotateYCW );
+    rotateSubmenu->Add( EDA_3D_ACTIONS::rotateYCCW );
+    rotateSubmenu->AppendSeparator();
+    rotateSubmenu->Add( EDA_3D_ACTIONS::rotateZCW );
+    rotateSubmenu->Add( EDA_3D_ACTIONS::rotateZCCW );
+
+    std::shared_ptr<ACTION_MENU> moveSubmenu = std::make_shared<ACTION_MENU>( true, this );
+    moveSubmenu->SetUntranslatedTitle( _HKI( "Move Board" ) );
+    moveSubmenu->SetIcon( BITMAPS::move );
+    m_menu->RegisterSubMenu( moveSubmenu );
+
+    moveSubmenu->Add( EDA_3D_ACTIONS::moveLeft );
+    moveSubmenu->Add( EDA_3D_ACTIONS::moveRight );
+    moveSubmenu->Add( EDA_3D_ACTIONS::moveUp );
+    moveSubmenu->Add( EDA_3D_ACTIONS::moveDown );
+
     CONDITIONAL_MENU& ctxMenu = m_menu->GetMenu();
 
     ctxMenu.AddItem( ACTIONS::zoomInCenter,       SELECTION_CONDITIONS::ShowAlways );
@@ -45,23 +71,15 @@ bool EDA_3D_CONTROLLER::Init()
     ctxMenu.AddSeparator();
     ctxMenu.AddItem( EDA_3D_ACTIONS::viewTop,     SELECTION_CONDITIONS::ShowAlways );
     ctxMenu.AddItem( EDA_3D_ACTIONS::viewBottom,  SELECTION_CONDITIONS::ShowAlways );
-
-    ctxMenu.AddSeparator();
     ctxMenu.AddItem( EDA_3D_ACTIONS::viewRight,   SELECTION_CONDITIONS::ShowAlways );
     ctxMenu.AddItem( EDA_3D_ACTIONS::viewLeft,    SELECTION_CONDITIONS::ShowAlways );
-
-    ctxMenu.AddSeparator();
     ctxMenu.AddItem( EDA_3D_ACTIONS::viewFront,   SELECTION_CONDITIONS::ShowAlways );
     ctxMenu.AddItem( EDA_3D_ACTIONS::viewBack,    SELECTION_CONDITIONS::ShowAlways );
 
     ctxMenu.AddSeparator();
+    ctxMenu.AddMenu( rotateSubmenu.get(),         SELECTION_CONDITIONS::ShowAlways );
     ctxMenu.AddItem( EDA_3D_ACTIONS::flipView,    SELECTION_CONDITIONS::ShowAlways );
-
-    ctxMenu.AddSeparator();
-    ctxMenu.AddItem( EDA_3D_ACTIONS::moveLeft,    SELECTION_CONDITIONS::ShowAlways );
-    ctxMenu.AddItem( EDA_3D_ACTIONS::moveRight,   SELECTION_CONDITIONS::ShowAlways );
-    ctxMenu.AddItem( EDA_3D_ACTIONS::moveUp,      SELECTION_CONDITIONS::ShowAlways );
-    ctxMenu.AddItem( EDA_3D_ACTIONS::moveDown,    SELECTION_CONDITIONS::ShowAlways );
+    ctxMenu.AddMenu( moveSubmenu.get(),           SELECTION_CONDITIONS::ShowAlways );
 
     return true;
 }
@@ -137,9 +155,14 @@ int EDA_3D_CONTROLLER::Main( const TOOL_EVENT& aEvent )
                 evt->SetPassEvent();
             }
         }
-        else if( evt->IsClick( BUT_RIGHT ) )
+        else if( evt->IsMouseDown() )
         {
-            m_menu->ShowContextMenu();
+        }
+        else if( evt->IsClick() && ( evt->Buttons() & BUT_RIGHT ) )
+        {
+
+            if( !m_canvas->m_mouse_was_moved )
+                m_menu->ShowContextMenu();
         }
         else
         {
@@ -235,8 +258,7 @@ int EDA_3D_CONTROLLER::ToggleVisibility( const TOOL_EVENT& aEvent )
     auto flipLayer =
             [&]( int layer )
             {
-                appearanceManager->OnLayerVisibilityChanged( layer,
-                                                             !visibilityFlags.test( layer ) );
+                appearanceManager->OnLayerVisibilityChanged( layer, !visibilityFlags.test( layer ) );
             };
 
     EDA_BASE_FRAME* frame = dynamic_cast<EDA_BASE_FRAME*>( m_toolMgr->GetToolHolder() );
@@ -246,20 +268,13 @@ int EDA_3D_CONTROLLER::ToggleVisibility( const TOOL_EVENT& aEvent )
 
     if( appearanceManager )
     {
-        if( aEvent.IsAction( &EDA_3D_ACTIONS::showTHT ) )
-            flipLayer( LAYER_3D_TH_MODELS );
-        else if( aEvent.IsAction( &EDA_3D_ACTIONS::showSMD ) )
-            flipLayer( LAYER_3D_SMD_MODELS );
-        else if( aEvent.IsAction( &EDA_3D_ACTIONS::showVirtual ) )
-            flipLayer( LAYER_3D_VIRTUAL_MODELS );
-        else if( aEvent.IsAction( &EDA_3D_ACTIONS::showNotInPosFile ) )
-            flipLayer( LAYER_3D_MODELS_NOT_IN_POS );
-        else if( aEvent.IsAction( &EDA_3D_ACTIONS::showDNP ) )
-            flipLayer( LAYER_3D_MODELS_MARKED_DNP );
-        else if( aEvent.IsAction( &EDA_3D_ACTIONS::showNavigator ) )
-            flipLayer( LAYER_3D_NAVIGATOR );
-        else if( aEvent.IsAction( &EDA_3D_ACTIONS::showBBoxes ) )
-            flipLayer( LAYER_3D_BOUNDING_BOXES );
+        if(      aEvent.IsAction( &EDA_3D_ACTIONS::showTHT ) )          flipLayer( LAYER_3D_TH_MODELS );
+        else if( aEvent.IsAction( &EDA_3D_ACTIONS::showSMD ) )          flipLayer( LAYER_3D_SMD_MODELS );
+        else if( aEvent.IsAction( &EDA_3D_ACTIONS::showVirtual ) )      flipLayer( LAYER_3D_VIRTUAL_MODELS );
+        else if( aEvent.IsAction( &EDA_3D_ACTIONS::showNotInPosFile ) ) flipLayer( LAYER_3D_MODELS_NOT_IN_POS );
+        else if( aEvent.IsAction( &EDA_3D_ACTIONS::showDNP ) )          flipLayer( LAYER_3D_MODELS_MARKED_DNP );
+        else if( aEvent.IsAction( &EDA_3D_ACTIONS::showNavigator ) )    flipLayer( LAYER_3D_NAVIGATOR );
+        else if( aEvent.IsAction( &EDA_3D_ACTIONS::showBBoxes ) )       flipLayer( LAYER_3D_BOUNDING_BOXES );
     }
 
     return 0;
@@ -313,8 +328,7 @@ int EDA_3D_CONTROLLER::doZoomInOut( bool aDirection, bool aCenterOnCursor )
 {
     if( m_canvas )
     {
-        m_canvas->SetView3D( aDirection ? VIEW3D_TYPE::VIEW3D_ZOOM_IN
-                                        : VIEW3D_TYPE::VIEW3D_ZOOM_OUT );
+        m_canvas->SetView3D( aDirection ? VIEW3D_TYPE::VIEW3D_ZOOM_IN : VIEW3D_TYPE::VIEW3D_ZOOM_OUT );
         m_canvas->DisplayStatus();
     }
 
@@ -370,12 +384,39 @@ int EDA_3D_CONTROLLER::ToggleRaytracing( const TOOL_EVENT& aEvent )
 }
 
 
+int EDA_3D_CONTROLLER::ToggleShowMissingModels( const TOOL_EVENT& aEvent )
+{
+    m_boardAdapter->m_Cfg->m_Render.show_missing_models = !m_boardAdapter->m_Cfg->m_Render.show_missing_models;
+    m_canvas->ReloadRequest();
+    m_canvas->Request_refresh();
+    return 0;
+}
+
+
 int EDA_3D_CONTROLLER::ExportImage( const TOOL_EVENT& aEvent )
 {
     EDA_BASE_FRAME* frame = dynamic_cast<EDA_BASE_FRAME*>( m_toolMgr->GetToolHolder() );
 
-    if( frame && frame->GetFrameType() == FRAME_PCB_DISPLAY3D )
-        static_cast<EDA_3D_VIEWER_FRAME*>( frame )->TakeScreenshot( aEvent.Parameter<EDA_3D_VIEWER_EXPORT_FORMAT>() );
+    if( !frame || frame->GetFrameType() != FRAME_PCB_DISPLAY3D )
+        return 0;
+
+    EDA_3D_VIEWER_FRAME* viewer = static_cast<EDA_3D_VIEWER_FRAME*>( frame );
+    EDA_3D_VIEWER_EXPORT_FORMAT fmt = aEvent.Parameter<EDA_3D_VIEWER_EXPORT_FORMAT>();
+
+    wxSize currentSize = viewer->GetCanvas()->GetClientSize();
+
+    if( fmt == EDA_3D_VIEWER_EXPORT_FORMAT::CLIPBOARD )
+    {
+        viewer->ExportImage( fmt, currentSize );
+        return 0;
+    }
+
+    static wxSize lastSize( viewer->GetCanvas()->GetClientSize() );
+    static EDA_3D_VIEWER_EXPORT_FORMAT lastFormat = EDA_3D_VIEWER_EXPORT_FORMAT::PNG;
+    DIALOG_EXPORT_3D_IMAGE dlg( viewer, currentSize );
+
+    if( dlg.ShowModal() == wxID_OK )
+        viewer->ExportImage( lastFormat, dlg.GetSize() );
 
     return 0;
 }
@@ -389,9 +430,9 @@ void EDA_3D_CONTROLLER::setTransitions()
     // Miscellaneous control
     Go( &EDA_3D_CONTROLLER::ReloadBoard,        EDA_3D_ACTIONS::reloadBoard.MakeEvent() );
     Go( &EDA_3D_CONTROLLER::ToggleRaytracing,   EDA_3D_ACTIONS::toggleRaytacing.MakeEvent() );
+    Go( &EDA_3D_CONTROLLER::ToggleShowMissingModels, EDA_3D_ACTIONS::toggleShowMissingModels.MakeEvent() );
     Go( &EDA_3D_CONTROLLER::ExportImage,        EDA_3D_ACTIONS::copyToClipboard.MakeEvent() );
-    Go( &EDA_3D_CONTROLLER::ExportImage,        EDA_3D_ACTIONS::exportAsPNG.MakeEvent() );
-    Go( &EDA_3D_CONTROLLER::ExportImage,        EDA_3D_ACTIONS::exportAsJPEG.MakeEvent() );
+    Go( &EDA_3D_CONTROLLER::ExportImage,        EDA_3D_ACTIONS::exportImage.MakeEvent() );
 
     // Pan control
     Go( &EDA_3D_CONTROLLER::PanControl,         ACTIONS::panUp.MakeEvent() );
@@ -451,6 +492,7 @@ void EDA_3D_CONTROLLER::setTransitions()
     Go( &EDA_3D_CONTROLLER::ToggleVisibility,   EDA_3D_ACTIONS::showNotInPosFile.MakeEvent() );
     Go( &EDA_3D_CONTROLLER::ToggleVisibility,   EDA_3D_ACTIONS::showDNP.MakeEvent() );
     Go( &EDA_3D_CONTROLLER::ToggleLayersManager,EDA_3D_ACTIONS::showLayersManager.MakeEvent() );
+    Go( &EDA_3D_CONTROLLER::ToggleVisibility, EDA_3D_ACTIONS::showNavigator.MakeEvent() );
 }
 
 

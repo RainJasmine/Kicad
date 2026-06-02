@@ -45,7 +45,6 @@ class PROJECT_TREE : public wxTreeCtrl
 
 private:
     PROJECT_TREE_PANE*            m_projectTreePane;
-    wxImageList*                  m_imageList;
     wxImageList*                  m_statusImageList;
     std::unique_ptr<KIGIT_COMMON> m_gitCommon;
 
@@ -63,6 +62,13 @@ public:
     git_repository* GetGitRepo() const          { return m_gitCommon->GetRepo(); }
 
     KIGIT_COMMON* GitCommon() const             { return m_gitCommon.get(); }
+
+    std::unique_ptr<KIGIT_COMMON> TakeGitCommon()
+    {
+        auto old = std::move( m_gitCommon );
+        m_gitCommon = std::make_unique<KIGIT_COMMON>( nullptr );
+        return old;
+    }
 
 private:
     /* overridden sort function */

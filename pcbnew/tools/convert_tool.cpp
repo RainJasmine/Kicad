@@ -21,13 +21,17 @@
  * or you may write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
+#include "convert_tool.h"
 
-#include <bitmaps.h>
-#include <dialog_shim.h>
+#include <ranges>
+
 #include <wx/statline.h>
 #include <wx/checkbox.h>
 #include <wx/button.h>
 #include <wx/radiobut.h>
+
+#include <bitmaps.h>
+#include <dialog_shim.h>
 #include <widgets/unit_binder.h>
 #include <board.h>
 #include <board_commit.h>
@@ -38,11 +42,14 @@
 #include <dialogs/dialog_outset_items.h>
 #include <footprint.h>
 #include <footprint_edit_frame.h>
+#include <geometry/roundrect.h>
 #include <geometry/shape_compound.h>
 #include <pcb_edit_frame.h>
 #include <pcb_shape.h>
 #include <pcb_track.h>
+#include <pcb_barcode.h>
 #include <pad.h>
+#include <string_utils.h>
 #include <tool/tool_manager.h>
 #include <tools/edit_tool.h>
 #include <tools/pcb_actions.h>
@@ -51,10 +58,6 @@
 #include <trigo.h>
 #include <macros.h>
 #include <zone.h>
-
-#include <ranges>
-
-#include "convert_tool.h"
 
 
 class CONVERT_SETTINGS_DIALOG : public DIALOG_SHIM
@@ -156,14 +159,11 @@ public:
         SetupStandardButtons();
 
         m_rbMimicLineWidth->Connect( wxEVT_COMMAND_RADIOBUTTON_SELECTED,
-                                     wxCommandEventHandler( CONVERT_SETTINGS_DIALOG::onRadioButton ),
-                                     nullptr, this );
+                                     wxCommandEventHandler( CONVERT_SETTINGS_DIALOG::onRadioButton ), nullptr, this );
         m_rbCenterline->Connect( wxEVT_COMMAND_RADIOBUTTON_SELECTED,
-                                 wxCommandEventHandler( CONVERT_SETTINGS_DIALOG::onRadioButton ),
-                                 nullptr, this );
+                                 wxCommandEventHandler( CONVERT_SETTINGS_DIALOG::onRadioButton ), nullptr, this );
         m_rbBoundingHull->Connect( wxEVT_COMMAND_RADIOBUTTON_SELECTED,
-                                   wxCommandEventHandler( CONVERT_SETTINGS_DIALOG::onRadioButton ),
-                                   nullptr, this );
+                                   wxCommandEventHandler( CONVERT_SETTINGS_DIALOG::onRadioButton ), nullptr, this );
 
         finishDialogSettings();
     }
@@ -234,10 +234,10 @@ private:
 
 
 CONVERT_TOOL::CONVERT_TOOL() :
-    PCB_TOOL_BASE( "pcbnew.Convert" ),
-    m_selectionTool( nullptr ),
-    m_menu( nullptr ),
-    m_frame( nullptr )
+        PCB_TOOL_BASE( "pcbnew.Convert" ),
+        m_selectionTool( nullptr ),
+        m_menu( nullptr ),
+        m_frame( nullptr )
 {
     initUserSettings();
 }
@@ -261,7 +261,7 @@ bool CONVERT_TOOL::Init()
     // Create a context menu and make it available through selection tool
     m_menu = new CONDITIONAL_MENU( this );
     m_menu->SetIcon( BITMAPS::convert );
-    m_menu->SetTitle( _( "Create from Selection" ) );
+    m_menu->SetUntranslatedTitle( _HKI( "Create from Selection" ) );
 
     static const std::vector<KICAD_T> padTypes =     { PCB_PAD_T };
     static const std::vector<KICAD_T> toArcTypes =   { PCB_ARC_T,
@@ -273,7 +273,8 @@ bool CONVERT_TOOL::Init()
                                                        PCB_SHAPE_LOCATE_ARC_T,
                                                        PCB_SHAPE_LOCATE_BEZIER_T,
                                                        PCB_FIELD_T,
-                                                       PCB_TEXT_T };
+                                                       PCB_TEXT_T,
+                                                       PCB_BARCODE_T };
     static const std::vector<KICAD_T> trackTypes =   { PCB_TRACE_T,
                                                        PCB_ARC_T,
                                                        PCB_VIA_T };
@@ -379,8 +380,7 @@ int CONVERT_TOOL::CreatePolys( const TOOL_EVENT& aEvent )
                     polySet.Simplify();
 
                     // Now inflate the bounding hull by cfg.m_Gap
-                    polySet.Inflate( cfg.m_Gap, CORNER_STRATEGY::ROUND_ALL_CORNERS, bds.m_MaxError,
-                                     ERROR_OUTSIDE );
+                    polySet.Inflate( cfg.m_Gap, CORNER_STRATEGY::ROUND_ALL_CORNERS, bds.m_MaxError, ERROR_OUTSIDE );
                 }
                 else
                 {
@@ -445,7 +445,7 @@ int CONVERT_TOOL::CreatePolys( const TOOL_EVENT& aEvent )
         if( resolvedSettings.m_Strategy == BOUNDING_HULL )
         {
             if( resolvedSettings.m_Gap > 0 )
-                resolvedSettings.m_Gap += KiROUND( (double) resolvedSettings.m_LineWidth / 2 );
+                resolvedSettings.m_Gap += KiROUND( (double) resolvedSettings.m_LineWidth / 2.0 );
         }
 
         if( !getPolys( resolvedSettings ) )
@@ -535,7 +535,7 @@ int CONVERT_TOOL::CreatePolys( const TOOL_EVENT& aEvent )
         else
         {
             zoneInfo.SetIsRuleArea( false );
-            ret = InvokeCopperZonesEditor( frame, &zoneInfo, &m_userSettings );
+            ret = InvokeCopperZonesEditor( frame, nullptr, &zoneInfo, &m_userSettings );
         }
 
         if( ret == wxID_CANCEL )
@@ -898,6 +898,19 @@ SHAPE_POLY_SET CONVERT_TOOL::makePolysFromClosedGraphics( const std::deque<EDA_I
             break;
         }
 
+        case PCB_BARCODE_T:
+        {
+            PCB_BARCODE* barcode = static_cast<PCB_BARCODE*>( item );
+
+            if( aStrategy == BOUNDING_HULL )
+                barcode->GetBoundingHull( poly, UNDEFINED_LAYER, 0, barcode->GetMaxError(), ERROR_INSIDE );
+            else
+                barcode->TransformShapeToPolySet( poly, UNDEFINED_LAYER, 0, barcode->GetMaxError(), ERROR_INSIDE );
+
+            barcode->SetFlags( SKIP_STRUCT );
+            break;
+        }
+
         case PCB_PAD_T:
         {
             PAD* pad = static_cast<PAD*>( item );
@@ -962,70 +975,6 @@ int CONVERT_TOOL::CreateLines( const TOOL_EVENT& aEvent )
     if( selection.Empty() )
         return 0;
 
-    auto getPolySet =
-            []( EDA_ITEM* aItem )
-            {
-                SHAPE_POLY_SET set;
-
-                switch( aItem->Type() )
-                {
-                case PCB_ZONE_T:
-                    set = *static_cast<ZONE*>( aItem )->Outline();
-                    break;
-
-                case PCB_SHAPE_T:
-                {
-                    PCB_SHAPE* graphic = static_cast<PCB_SHAPE*>( aItem );
-
-                    if( graphic->GetShape() == SHAPE_T::POLY )
-                    {
-                        set = graphic->GetPolyShape();
-                    }
-                    else if( graphic->GetShape() == SHAPE_T::RECTANGLE )
-                    {
-                        SHAPE_LINE_CHAIN outline;
-                        VECTOR2I start( graphic->GetStart() );
-                        VECTOR2I end( graphic->GetEnd() );
-
-                        outline.Append( start );
-                        outline.Append( VECTOR2I( end.x, start.y ) );
-                        outline.Append( end );
-                        outline.Append( VECTOR2I( start.x, end.y ) );
-                        outline.SetClosed( true );
-
-                        set.AddOutline( outline );
-                    }
-                    else
-                    {
-                        wxFAIL_MSG( wxT( "Unhandled graphic shape type in PolyToLines - getPolySet" ) );
-                    }
-                    break;
-                }
-
-                default:
-                    wxFAIL_MSG( wxT( "Unhandled type in PolyToLines - getPolySet" ) );
-                    break;
-                }
-
-                return set;
-            };
-
-    auto getSegList =
-            []( SHAPE_POLY_SET& aPoly )
-            {
-                std::vector<SEG> segs;
-
-                // Our input should be valid polys, so OK to assert here
-                wxASSERT( aPoly.VertexCount() >= 2 );
-
-                for( int i = 1; i < aPoly.VertexCount(); i++ )
-                    segs.emplace_back( SEG( aPoly.CVertex( i - 1 ), aPoly.CVertex( i ) ) );
-
-                segs.emplace_back( SEG( aPoly.CVertex( aPoly.VertexCount() - 1 ), aPoly.CVertex( 0 ) ) );
-
-                return segs;
-            };
-
     BOARD_COMMIT          commit( m_frame );
     PCB_BASE_EDIT_FRAME*  frame       = getEditFrame<PCB_BASE_EDIT_FRAME>();
     FOOTPRINT_EDIT_FRAME* fpEditor    = dynamic_cast<FOOTPRINT_EDIT_FRAME*>( m_frame );
@@ -1073,6 +1022,129 @@ int CONVERT_TOOL::CreateLines( const TOOL_EVENT& aEvent )
                 return false;
             };
 
+    auto addGraphicChain =
+            [&]( const SHAPE_LINE_CHAIN& aChain, std::optional<int> aWidth )
+            {
+                for( size_t si = 0; si < aChain.GetSegmentCount(); ++si )
+                {
+                    const SEG seg = aChain.GetSegment( si );
+
+                    if( seg.Length() == 0 )
+                        continue;
+
+                    if( aChain.IsArcSegment( si ) )
+                        continue;
+
+                    PCB_SHAPE* graphic = new PCB_SHAPE( footprint, SHAPE_T::SEGMENT );
+
+                    graphic->SetLayer( targetLayer );
+                    graphic->SetStart( seg.A );
+                    graphic->SetEnd( seg.B );
+
+                    if( aWidth && *aWidth > 0 )
+                        graphic->SetWidth( *aWidth );
+
+                    commit.Add( graphic );
+                }
+
+                for( size_t ai = 0; ai < aChain.ArcCount(); ++ai )
+                {
+                    const SHAPE_ARC& arc = aChain.Arc( ai );
+
+                    if( arc.GetP0() == arc.GetP1() )
+                        continue;
+
+                    PCB_SHAPE* graphic = new PCB_SHAPE( footprint, SHAPE_T::ARC );
+
+                    graphic->SetLayer( targetLayer );
+                    graphic->SetFilled( false );
+                    graphic->SetArcGeometry( arc.GetP0(), arc.GetArcMid(), arc.GetP1() );
+
+                    if( aWidth && *aWidth > 0 )
+                        graphic->SetWidth( *aWidth );
+
+                    commit.Add( graphic );
+                }
+            };
+
+    auto addTrackChain =
+            [&]( const SHAPE_LINE_CHAIN& aChain, std::optional<int> aWidth )
+            {
+                for( size_t si = 0; si < aChain.GetSegmentCount(); ++si )
+                {
+                    const SEG seg = aChain.GetSegment( si );
+
+                    if( seg.Length() == 0 )
+                        continue;
+
+                    if( aChain.IsArcSegment( si ) )
+                        continue;
+
+                    PCB_TRACK* track = new PCB_TRACK( parent );
+
+                    track->SetLayer( targetLayer );
+                    track->SetStart( seg.A );
+                    track->SetEnd( seg.B );
+
+                    if( aWidth && *aWidth > 0 )
+                        track->SetWidth( *aWidth );
+
+                    commit.Add( track );
+                }
+
+                for( size_t ai = 0; ai < aChain.ArcCount(); ++ai )
+                {
+                    const SHAPE_ARC& arc = aChain.Arc( ai );
+
+                    if( arc.GetP0() == arc.GetP1() )
+                        continue;
+
+                    PCB_ARC* trackArc = new PCB_ARC( parent );
+
+                    trackArc->SetLayer( targetLayer );
+                    trackArc->SetStart( arc.GetP0() );
+                    trackArc->SetEnd( arc.GetP1() );
+                    trackArc->SetMid( arc.GetArcMid() );
+
+                    if( aWidth && *aWidth > 0 )
+                        trackArc->SetWidth( *aWidth );
+
+                    commit.Add( trackArc );
+                }
+            };
+
+    auto processChain =
+            [&]( const SHAPE_LINE_CHAIN& aChain, std::optional<int> aWidth )
+            {
+                if( aChain.GetSegmentCount() == 0 && aChain.ArcCount() == 0 )
+                    return;
+
+                if( aEvent.IsAction( &PCB_ACTIONS::convertToLines ) )
+                {
+                    addGraphicChain( aChain, aWidth );
+                }
+                else if( fpEditor )
+                {
+                    addGraphicChain( aChain, aWidth );
+                }
+                else
+                {
+                    addTrackChain( aChain, aWidth );
+                }
+            };
+
+    auto processPolySet =
+            [&]( const SHAPE_POLY_SET& aPoly, std::optional<int> aWidth )
+            {
+                for( int oi = 0; oi < aPoly.OutlineCount(); ++oi )
+                {
+                    processChain( aPoly.COutline( oi ), aWidth );
+
+                    for( int hi = 0; hi < aPoly.HoleCount( oi ); ++hi )
+                        processChain( aPoly.CHole( oi, hi ), aWidth );
+                }
+            };
+
     if( aEvent.IsAction( &PCB_ACTIONS::convertToTracks ) )
     {
         if( !IsCopperLayer( targetLayer ) )
@@ -1099,62 +1171,43 @@ int CONVERT_TOOL::CreateLines( const TOOL_EVENT& aEvent )
         if( handleGraphicSeg( item ) )
             continue;
 
-        BOARD_ITEM&      boardItem = static_cast<BOARD_ITEM&>( *item );
-        SHAPE_POLY_SET   polySet = getPolySet( item );
-        std::vector<SEG> segs    = getSegList( polySet );
-
+        BOARD_ITEM& boardItem = static_cast<BOARD_ITEM&>( *item );
         std::optional<int> itemWidth = GetBoardItemWidth( boardItem );
 
-        if( aEvent.IsAction( &PCB_ACTIONS::convertToLines ) )
+        if( boardItem.Type() == PCB_SHAPE_T )
         {
-            for( SEG& seg : segs )
+            PCB_SHAPE* graphic = static_cast<PCB_SHAPE*>( item );
+
+            switch( graphic->GetShape() )
             {
-                PCB_SHAPE* graphic = new PCB_SHAPE( footprint, SHAPE_T::SEGMENT );
+            case SHAPE_T::RECTANGLE:
+            {
+                SHAPE_RECT rect( graphic->GetStart(), graphic->GetEnd() );
+                ROUNDRECT  rrect( rect, graphic->GetCornerRadius(), true );
+                SHAPE_POLY_SET poly;
 
-                graphic->SetLayer( targetLayer );
-                graphic->SetStart( VECTOR2I( seg.A ) );
-                graphic->SetEnd( VECTOR2I( seg.B ) );
-
-                // The width can exist but be 0 for filled, unstroked shapes
-                if( itemWidth && *itemWidth > 0 )
-                    graphic->SetWidth( *itemWidth );
-
-                commit.Add( graphic );
+                rrect.TransformToPolygon( poly, graphic->GetMaxError() );
+                processPolySet( poly, itemWidth );
+                break;
             }
+
+            case SHAPE_T::POLY:
+                processPolySet( graphic->GetPolyShape(), itemWidth );
+                break;
+
+            default:
+                wxFAIL_MSG( wxT( "Unhandled graphic shape type in PolyToLines" ) );
+                break;
+            }
+        }
+        else if( boardItem.Type() == PCB_ZONE_T )
+        {
+            ZONE* zone = static_cast<ZONE*>( item );
+            processPolySet( *zone->Outline(), itemWidth );
         }
         else
         {
-            // I am really unsure converting a polygon to "tracks" (i.e. segments on
-            // copper layers) make sense for footprints, but anyway this code exists
-            if( fpEditor )
-            {
-                // Creating segments on copper layer
-                for( SEG& seg : segs )
-                {
-                    PCB_SHAPE* graphic = new PCB_SHAPE( footprint, SHAPE_T::SEGMENT );
-                    graphic->SetLayer( targetLayer );
-                    graphic->SetStart( VECTOR2I( seg.A ) );
-                    graphic->SetEnd( VECTOR2I( seg.B ) );
-
-                    if( itemWidth )
-                        graphic->SetWidth( *itemWidth );
-
-                    commit.Add( graphic );
-                }
-            }
-            else
-            {
-                // Creating tracks
-                for( SEG& seg : segs )
-                {
-                    PCB_TRACK* track = new PCB_TRACK( parent );
-
-                    track->SetLayer( targetLayer );
-                    track->SetStart( VECTOR2I( seg.A ) );
-                    track->SetEnd( VECTOR2I( seg.B ) );
-                    commit.Add( track );
-                }
-            }
+            wxFAIL_MSG( wxT( "Unhandled type in PolyToLines" ) );
         }
     }
 
@@ -1334,8 +1387,9 @@ int CONVERT_TOOL::OutsetItems( const TOOL_EVENT& aEvent )
                     if( !item->IsType( { PCB_PAD_T, PCB_SHAPE_T } ) )
                         aCollector.Remove( item );
                 }
-            },
-            true /* prompt user regarding locked items */ );
+
+                sTool->FilterCollectorForLockedItems( aCollector );
+            } );
 
     BOARD_COMMIT commit( this );
 
@@ -1382,7 +1436,8 @@ int CONVERT_TOOL::OutsetItems( const TOOL_EVENT& aEvent )
 
     // Persistent settings between dialog invocations
     // Init with some sensible defaults
-    static OUTSET_ROUTINE::PARAMETERS outset_params_fp_edit{
+    static OUTSET_ROUTINE::PARAMETERS outset_params_fp_edit
+    {
         pcbIUScale.mmToIU( 0.25 ), // A common outset value
         false,
         false,
@@ -1393,7 +1448,8 @@ int CONVERT_TOOL::OutsetItems( const TOOL_EVENT& aEvent )
         false,
     };
 
-    static OUTSET_ROUTINE::PARAMETERS outset_params_pcb_edit{
+    static OUTSET_ROUTINE::PARAMETERS outset_params_pcb_edit
+    {
         pcbIUScale.mmToIU( 1 ),
         true,
         true,

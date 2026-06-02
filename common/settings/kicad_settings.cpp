@@ -38,30 +38,26 @@ const nlohmann::json PCM_DEFAULT_REPOSITORIES = nlohmann::json::array( {
 
 
 KICAD_SETTINGS::KICAD_SETTINGS() :
-        APP_SETTINGS_BASE( "kicad", kicadSchemaVersion ), m_LeftWinWidth( 200 )
+        APP_SETTINGS_BASE( "kicad", kicadSchemaVersion ), m_LeftWinWidth( 200 ),
+        m_ShowHistoryPanel( false )
 {
     m_params.emplace_back( new PARAM<int>( "appearance.left_frame_width", &m_LeftWinWidth, 200 ) );
+    m_params.emplace_back( new PARAM<bool>( "aui.show_history_panel", &m_ShowHistoryPanel, false ) );
 
-    m_params.emplace_back(
-            new PARAM_LIST<wxString>( "system.open_projects", &m_OpenProjects, {} ) );
+    m_params.emplace_back( new PARAM_LIST<wxString>( "system.open_projects", &m_OpenProjects, {} ) );
 
-    m_params.emplace_back( new PARAM<wxString>( "system.last_design_block_lib_dir",
-                                                &m_lastDesignBlockLibDir, "" ) );
+    m_params.emplace_back( new PARAM<wxString>( "system.last_design_block_lib_dir", &m_lastDesignBlockLibDir, "" ) );
 
-    m_params.emplace_back(
-            new PARAM<wxString>( "system.last_update_check_time", &m_lastUpdateCheckTime, "" ) );
+    m_params.emplace_back( new PARAM<wxString>( "system.last_update_check_time", &m_lastUpdateCheckTime, "" ) );
+    m_params.emplace_back( new PARAM<wxString>( "system.last_received_update", &m_lastReceivedUpdate, "" ) );
+    m_params.emplace_back( new PARAM<bool>( "system.check_for_kicad_updates", &m_KiCadUpdateCheck, true ) );
 
-    m_params.emplace_back(
-            new PARAM<wxString>( "system.last_received_update", &m_lastReceivedUpdate, "" ) );
+    m_params.emplace_back( new PARAM<wxPoint>( "template.window.pos", &m_TemplateWindowPos, wxDefaultPosition ) );
+    m_params.emplace_back( new PARAM<wxSize>( "template.window.size", &m_TemplateWindowSize, wxDefaultSize ) );
+    m_params.emplace_back( new PARAM<wxString>( "template.last_used", &m_LastUsedTemplate, "" ) );
+    m_params.emplace_back( new PARAM_LIST<wxString>( "template.recent_templates", &m_RecentTemplates, {} ) );
 
-    m_params.emplace_back( new PARAM<bool>( "system.check_for_kicad_updates", &m_KiCadUpdateCheck,
-                                            true ) );
-
-    m_params.emplace_back( new PARAM<wxPoint>( "template.window.pos", &m_TemplateWindowPos,
-                                               wxDefaultPosition ) );
-
-    m_params.emplace_back( new PARAM<wxSize>( "template.window.size", &m_TemplateWindowSize,
-                                              wxDefaultSize ) );
+    m_params.emplace_back( new PARAM<int>( "template.filter", &m_TemplateFilterChoice, 0 ) );
 
     m_params.emplace_back( new PARAM_LAMBDA<nlohmann::json>(
             "pcm.repositories",
@@ -107,6 +103,8 @@ KICAD_SETTINGS::KICAD_SETTINGS() :
 
     m_params.emplace_back( new PARAM<wxString>( "pcm.lib_prefix", &m_PcmLibPrefix,
                                                 wxS( "PCM_" ) ) );
+
+    m_params.emplace_back( new PARAM<wxString>( "pcm.last_selected_repo_id", &m_PcmLastSelectedRepoId, "" ) );
 }
 
 

@@ -162,7 +162,9 @@ bool GERBER_FILE_IMAGE::TestFileIsRS274( const wxString& aFullFileName )
                 continue;
 
             // Check that file is not binary (non-printing chars)
-            for( size_t i = 0; i < strlen( line ); i++ )
+            size_t len = strlen( line );
+
+            for( size_t i = 0; i < len; i++ )
             {
                 if( !isascii( line[i] ) )
                     return false;
@@ -320,8 +322,18 @@ bool GERBER_FILE_IMAGE::LoadGerberFile( const wxString& aFullFileName )
                 break;
 
             default:
-                msg.Printf( wxT( "Unexpected char 0x%2.2X (%c)" ), *text, *text );
-                AddMessageToList( msg );
+                char    charBuf[2] = { *text, 0 };
+                wchar_t wcharBuf[2] = { 0 };
+
+                wxWhateverWorksConv().ToWChar( wcharBuf, 1, charBuf, 1 );
+
+                if( wcharBuf[0] < 32 ) // Don't render control characters
+                    wcharBuf[0] = '?';
+
+                msg.Printf( wxT( "Unexpected char 0x%2.2X (%c)" ), (unsigned char) *text,
+                            wcharBuf[0] );
+
+                AddMessageToList( EscapeHTML( msg ) );
                 text++;
                 break;
             }

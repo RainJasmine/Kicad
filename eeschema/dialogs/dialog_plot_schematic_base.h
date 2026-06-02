@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////
-// C++ code generated with wxFormBuilder (version 4.2.1-0-g80c4cb6)
+// C++ code generated with wxFormBuilder (version 4.2.1-0-g80c4cb6a-dirty)
 // http://www.wxformbuilder.org/
 //
 // PLEASE DO *NOT* EDIT THIS FILE!
@@ -26,12 +26,13 @@ class WX_HTML_REPORT_PANEL;
 #include <wx/image.h>
 #include <wx/icon.h>
 #include <wx/button.h>
+#include <wx/choice.h>
 #include <wx/sizer.h>
 #include <wx/radiobox.h>
-#include <wx/choice.h>
 #include <wx/checkbox.h>
 #include <wx/gbsizer.h>
 #include <wx/statbox.h>
+#include <wx/spinctrl.h>
 #include <wx/panel.h>
 #include <wx/dialog.h>
 
@@ -48,13 +49,15 @@ class DIALOG_PLOT_SCHEMATIC_BASE : public DIALOG_SHIM
 		wxStaticText* m_outputPathLabel;
 		wxTextCtrl* m_outputPath;
 		STD_BITMAP_BUTTON* m_browseButton;
+		wxStaticText* m_variantLabel;
+		wxChoice* m_variantChoiceCtrl;
 		wxBoxSizer* m_optionsSizer;
 		wxRadioBox* m_plotFormatOpt;
 		wxStaticText* m_staticText4;
 		wxChoice* m_paperSizeOption;
 		wxCheckBox* m_plotDrawingSheet;
 		wxChoice* m_ModeColorOption;
-		wxStaticText* m_staticText9;
+		wxStaticText* m_colorThemeLabel;
 		wxChoice* m_colorTheme;
 		wxCheckBox* m_plotBackgroundColor;
 		wxStaticText* m_lineWidthLabel;
@@ -63,6 +66,13 @@ class DIALOG_PLOT_SCHEMATIC_BASE : public DIALOG_SHIM
 		wxCheckBox* m_plotPDFPropertyPopups;
 		wxCheckBox* m_plotPDFHierarchicalLinks;
 		wxCheckBox* m_plotPDFMetadata;
+		wxStaticBoxSizer* m_SizerDxfOption;
+		wxStaticText* m_staticTextDXF;
+		wxChoice* m_DXF_plotUnits;
+		wxStaticBoxSizer* m_sizerPNGOptions;
+		wxStaticText* pngDPILabel;
+		wxSpinCtrl* m_pngDPI;
+		wxCheckBox* m_pngAntialias;
 		wxStaticBoxSizer* m_otherOptions;
 		wxCheckBox* m_openFileAfterPlot;
 		WX_HTML_REPORT_PANEL* m_MessagesBox;
@@ -73,10 +83,9 @@ class DIALOG_PLOT_SCHEMATIC_BASE : public DIALOG_SHIM
 
 		// Virtual event handlers, override them in your derived class
 		virtual void OnCloseWindow( wxCloseEvent& event ) { event.Skip(); }
-		virtual void OnUpdateUI( wxUpdateUIEvent& event ) { event.Skip(); }
 		virtual void onOutputDirectoryBrowseClicked( wxCommandEvent& event ) { event.Skip(); }
-		virtual void OnPlotFormatSelection( wxCommandEvent& event ) { event.Skip(); }
-		virtual void OnPageSizeSelected( wxCommandEvent& event ) { event.Skip(); }
+		virtual void onPlotFormatSelection( wxCommandEvent& event ) { event.Skip(); }
+		virtual void onColorMode( wxCommandEvent& event ) { event.Skip(); }
 		virtual void OnPlotCurrent( wxCommandEvent& event ) { event.Skip(); }
 		virtual void OnPlotAll( wxCommandEvent& event ) { event.Skip(); }
 

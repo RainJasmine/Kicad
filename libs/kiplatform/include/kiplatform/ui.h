@@ -24,7 +24,9 @@
 #include <wx/cursor.h>
 
 class wxChoice;
+class wxDialog;
 class wxNonOwnedWindow;
+class wxTopLevelWindow;
 class wxWindow;
 
 namespace KIPLATFORM
@@ -70,6 +72,8 @@ namespace KIPLATFORM
          * @param aWindow is the window to reparent
          */
         void ReparentModal( wxNonOwnedWindow* aWindow );
+
+        void ReparentWindow( wxNonOwnedWindow* aWindow, wxTopLevelWindow* aParent );
 
         /*
          * An ugly hack to fix an issue on OSX: cmd+c closes the dialog instead of copying the
@@ -184,9 +188,46 @@ namespace KIPLATFORM
         void InfiniteDragReleaseWindow();
 
         /**
+         * Ensure that a window is visible on the screen.  On MacOS, this will make it visible
+         * in all Spaces.  Other platforms are nops.
+         *
+         * @param aWindow window to make visible
+         */
+        void EnsureVisible( wxWindow* aWindow );
+
+        /**
          * Intended to set the floating window level in macOS on a window
          */
         void SetFloatLevel( wxWindow* aWindow );
+
+        /**
+         * Release a modal window's parent-child relationship with its parent window.
+         * This only has an effect on macOS, it is a NOP for GTK and MSW.
+         *
+         * On macOS, modal dialogs are attached as child windows using addChildWindow,
+         * which causes them to disappear when dragged to a different monitor. This
+         * function removes that child relationship and sets the window to a floating
+         * level, allowing it to be freely moved across monitors while still staying
+         * above other windows.
+         */
+        void ReleaseChildWindow( wxNonOwnedWindow* aWindow );
+
+        /**
+         * Configure a file dialog to show network and virtual file systems.
+         *
+         * On GTK, file dialogs default to showing only local files, which excludes
+         * GVFS-mounted filesystems like Google Drive, SMB shares, SFTP connections,
+         * and removable media mounted through GVFS. This function configures the
+         * dialog to also show these non-local filesystems.
+         *
+         * This function must be called after creating the dialog but before calling
+         * ShowModal().
+         *
+         * This is a NOP on Windows and macOS where network filesystems are shown by default.
+         *
+         * @param aDialog is the file dialog to configure
+         */
+        void AllowNetworkFileSystems( wxDialog* aDialog );
     }
 }
 

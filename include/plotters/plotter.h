@@ -70,7 +70,8 @@ enum class PLOT_FORMAT
     DXF,
     PDF,
     SVG,
-    LAST_FORMAT = SVG
+    PNG,
+    LAST_FORMAT = PNG
 };
 
 /**
@@ -110,6 +111,21 @@ public:
     virtual PLOT_TEXT_MODE GetTextMode() const { return PLOT_TEXT_MODE::DEFAULT; }
 };
 
+
+/**
+ * @enum DXF_LAYER_OUTPUT_MODE
+ * @brief Specifies the output mode for the DXF layer.
+ *
+ * This enumeration is used to define the mode of output for the DXF layer.
+ * It allows the user to choose between retrieving the layer name or the color name.
+ */
+enum class DXF_LAYER_OUTPUT_MODE
+{
+    Layer_Name,
+    Layer_Color_Name,
+    Current_Layer_Name,
+    Current_Layer_Color_Name
+};
 
 /**
  * Base plotter engine class. General rule: all the interface with the caller
@@ -207,7 +223,38 @@ public:
                               double aScale, bool aMirror ) = 0;
 
     /**
+     * Sets the list of layers to export to the specified vector.
+     *
+     * This function updates the member variable m_layersToExport with the
+     * vector provided in aLayersToExport.
+     *
+     * @param aLayersToExport The vector containing the names of layers to export.
+     *                        This updates the internal list of layers that will
+     *                        be processed for export.
+     */
+    void SetLayersToExport( const std::vector<std::pair<PCB_LAYER_ID, wxString>>& aLayersToExport ) { m_layersToExport = aLayersToExport; }
+
+    /**
+     * @brief Gets the ID of the current layer.
+     *
+     * This function returns the ID of the layer that the current item is on.
+     *
+     * @return PCB_LAYER_ID The ID of the current layer.
+     */
+    PCB_LAYER_ID GetLayer() const { return m_layer; }
+
+    /**
+     * @brief Sets the ID of the current layer.
+     *
+     * This function sets the ID of the layer for the current item.
+     *
+     * @param aLayer The ID of the layer to be set.
+     */
+    void SetLayer( PCB_LAYER_ID aLayer ) { m_layer = aLayer; }
+
+    /**
      * Open or create the plot file \a aFullFilename.
+     * .
      *
      * @param aFullFilename is the full file name of the file to create.
      * @return true if success, false if the file cannot be created/opened.
@@ -228,7 +275,8 @@ public:
     int GetPlotterArcHighDef() const { return m_IUsPerDecimil * 2; }
 
     // Low level primitives
-    virtual void Rect( const VECTOR2I& p1, const VECTOR2I& p2, FILL_T fill, int width ) = 0;
+    virtual void Rect( const VECTOR2I& p1, const VECTOR2I& p2, FILL_T fill, int width,
+                       int aCornerRadius = 0 ) = 0;
     virtual void Circle( const VECTOR2I& pos, int diametre, FILL_T fill, int width ) = 0;
 
     virtual void Arc( const VECTOR2D& aStart, const VECTOR2D& aMid, const VECTOR2D& aEnd,
@@ -294,14 +342,13 @@ public:
     /**
      * Draw a polygon ( filled or not ).
      *
-     * @param aCornerList is the corners list (a SHAPE_LINE_CHAIN).
-     *        must be closed (IsClosed() == true) for a polygon. Otherwise this is a polyline.
+     * @param aLineChain is a list of segments and arcs.  Must be closed (IsClosed() == true) for
+     *                   a polygon. Otherwise this is a polyline.
      * @param aFill is the type of fill.
      * @param aWidth is the line width.
      * @param aData is an auxiliary info (mainly for gerber format).
      */
-    virtual void PlotPoly( const SHAPE_LINE_CHAIN& aCornerList, FILL_T aFill, int aWidth,
-                           void* aData );
+    virtual void PlotPoly( const SHAPE_LINE_CHAIN& aLineChain, FILL_T aFill, int aWidth, void* aData );
 
     /**
      * Only PostScript plotters can plot bitmaps.
@@ -646,7 +693,7 @@ protected:      // variables used in most of plotters:
      * because in Eeschema there are 0.1 IUs in a decimil (Eeschema
      * always works in mils internally) while PcbNew can work in decimil
      * or nanometers, so this value would be >= 1 */
-    double           m_IUsPerDecimil;
+     double           m_IUsPerDecimil;
 
     double           m_iuPerDeviceUnit;     // Device scale (from IUs to plotter device units;
                                             // usually decimils)
@@ -679,16 +726,20 @@ protected:      // variables used in most of plotters:
     RENDER_SETTINGS* m_renderSettings;
 
     const PROJECT*   m_project;
+    std::vector<std::pair<PCB_LAYER_ID, wxString>> m_layersToExport;
+
+    PCB_LAYER_ID m_layer;
 };
 
 
 class TITLE_BLOCK;
 
 void PlotDrawingSheet( PLOTTER* plotter, const PROJECT* aProject, const TITLE_BLOCK& aTitleBlock,
-                       const PAGE_INFO& aPageInfo, const std::map<wxString, wxString>*aProperties,
+                       const PAGE_INFO& aPageInfo, const std::map<wxString, wxString>* aProperties,
                        const wxString& aSheetNumber, int aSheetCount, const wxString& aSheetName,
-                       const wxString& aSheetPath, const wxString& aFilename,
-                       COLOR4D aColor = COLOR4D::UNSPECIFIED, bool aIsFirstPage = true );
+                       const wxString& aSheetPath, const wxString& aFilename, COLOR4D aColor = COLOR4D::UNSPECIFIED,
+                       bool aIsFirstPage = true, const wxString& aVariantName = wxEmptyString,
+                       const wxString& aVariantDesc = wxEmptyString );
 
 /**
  * Return the default plot extension for a format.

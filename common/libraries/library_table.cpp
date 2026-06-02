@@ -1,0 +1,452 @@
+/*
+ * This program source code file is part of KiCad, a free EDA CAD application.
+ *
+ * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
+ * @author Jon Evans <jon@craftyjon.com>
+ *
+ * This program is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the
+ * Free Software Foundation, either version 3 of the License, or (at your
+ * option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#include <boost/lexical_cast.hpp>
+
+#include <cstdint>
+#include <limits>
+
+#include <kiplatform/io.h>
+#include <libraries/library_table.h>
+#include <libraries/library_table_parser.h>
+#include <richio.h>
+#include <string_utils.h>
+#include <trace_helpers.h>
+#include <wx_filename.h>
+#include <xnode.h>
+#include <ki_exception.h>
+#include <libraries/library_manager.h>
+
+#include <wx/buffer.h>
+#include <wx/ffile.h>
+
+
+const wxString LIBRARY_TABLE_ROW::TABLE_TYPE_NAME = wxT( "Table" );
+
+
+bool LIBRARY_TABLE_ROW::operator==( const LIBRARY_TABLE_ROW& aOther ) const
+{
+    return m_scope == aOther.m_scope
+            && m_nickname == aOther.m_nickname
+            && m_uri == aOther.m_uri
+            && m_type == aOther.m_type
+            && m_options == aOther.m_options
+            && m_description == aOther.m_description
+            && m_disabled == aOther.m_disabled
+            && m_hidden == aOther.m_hidden;
+}
+
+
+std::map<std::string, UTF8> LIBRARY_TABLE_ROW::GetOptionsMap() const
+{
+    return LIBRARY_TABLE::ParseOptions( TO_UTF8( m_options ) );
+}
+
+
+LIBRARY_TABLE::LIBRARY_TABLE( const wxFileName &aPath, LIBRARY_TABLE_SCOPE aScope, LIBRARY_TABLE_TYPE aExpectedType ) :
+        m_scope( aScope )
+{
+    LIBRARY_TABLE_PARSER parser;
+
+    wxFileName fn( aPath );
+    WX_FILENAME::ResolvePossibleSymlinks( fn );
+    m_path = fn.GetAbsolutePath();
+
+    if( !fn.FileExists() )
+    {
+        m_ok = false;
+        m_errorDescription = wxString::Format( _( "The library table path '%s' does not exist" ),
+                                               fn.GetFullPath() );
+        return;
+    }
+
+    if( fn.GetSize() <= 1 ) // test for an empty file, 1 byte allowed for BOM
+    {
+        m_ok = true;
+        m_type = aExpectedType;
+        return;
+    }
+
+    tl::expected<LIBRARY_TABLE_IR, LIBRARY_PARSE_ERROR> ir = parser.Parse( m_path.ToStdString() );
+
+    if( ir.has_value() )
+    {
+        if( aExpectedType != LIBRARY_TABLE_TYPE::UNINITIALIZED && ir->type != aExpectedType )
+        {
+            m_ok = false;
+            m_errorDescription = _( "The library table is of wrong type" );
+            return;
+        }
+
+        m_ok = initFromIR( *ir );
+    }
+    else
+    {
+        m_ok = false;
+        m_errorDescription = ir.error().description;
+    }
+}
+
+
+/**
+ * Note: @param aFromClipboard isn't actually used, but might keep people from calling this with a string
+ *                             filepath, which isn't going to do what they expected.
+ */
+LIBRARY_TABLE::LIBRARY_TABLE( bool aFromClipboard, const wxString &aBuffer, LIBRARY_TABLE_SCOPE aScope ) :
+        m_path( wxEmptyString ),
+        m_scope( aScope )
+{
+    LIBRARY_TABLE_PARSER parser;
+
+    tl::expected<LIBRARY_TABLE_IR, LIBRARY_PARSE_ERROR> ir = parser.ParseBuffer( aBuffer.ToStdString() );
+
+    if( ir.has_value() )
+    {
+        m_ok = initFromIR( *ir );
+    }
+    else
+    {
+        m_ok = false;
+        m_errorDescription = ir.error().description;
+    }
+}
+
+
+bool LIBRARY_TABLE::operator==( const LIBRARY_TABLE& aOther ) const
+{
+    return m_path == aOther.m_path
+            && m_scope == aOther.m_scope
+            && m_type == aOther.m_type
+            && m_version == aOther.m_version
+            && m_rows == aOther.m_rows;
+}
+
+
+bool LIBRARY_TABLE::initFromIR( const LIBRARY_TABLE_IR& aIR )
+{
+    m_type = aIR.type;
+
+    try
+    {
+        m_version = boost::lexical_cast<int>( aIR.version );
+    }
+    catch( const boost::bad_lexical_cast & )
+    {
+        m_version = std::nullopt;
+    }
+
+    for( const LIBRARY_TABLE_ROW_IR& row : aIR.rows )
+        addRowFromIR( row );
+
+    return true;
+}
+
+
+bool LIBRARY_TABLE::addRowFromIR( const LIBRARY_TABLE_ROW_IR& aIR )
+{
+    LIBRARY_TABLE_ROW row;
+
+    row.m_nickname = wxString::FromUTF8( aIR.nickname );
+    row.m_uri = wxString::FromUTF8( aIR.uri );
+    row.m_type = wxString::FromUTF8( aIR.type );
+    row.m_options = wxString::FromUTF8( aIR.options );
+    row.m_description = wxString::FromUTF8( aIR.description );
+    row.m_hidden = aIR.hidden;
+    row.m_disabled = aIR.disabled;
+    row.m_ok = true;
+    row.m_scope = m_scope;
+
+    m_rows.emplace_back( row );
+    return true;
+}
+
+
+void LIBRARY_TABLE::Format( OUTPUTFORMATTER* aOutput ) const
+{
+    static const std::map<LIBRARY_TABLE_TYPE, wxString> types = {
+        { LIBRARY_TABLE_TYPE::SYMBOL, "sym_lib_table" },
+        { LIBRARY_TABLE_TYPE::FOOTPRINT, "fp_lib_table" },
+        { LIBRARY_TABLE_TYPE::DESIGN_BLOCK, "design_block_lib_table" }
+    };
+
+    if( !types.contains( Type() ) )
+    {
+        THROW_IO_ERROR( "Unknown library table type: " + std::to_string( static_cast<int>( Type() ) ) );
+    }
+
+    XNODE self( wxXML_ELEMENT_NODE, types.at( Type() ) );
+
+    // TODO(JE) library tables - version management?
+    self.AddAttribute( "version", 7 );
+
+    for( const LIBRARY_TABLE_ROW& row : Rows() )
+    {
+        wxString uri = row.URI();
+        uri.Replace( '\\', '/' );
+
+        XNODE* rowNode = new XNODE( wxXML_ELEMENT_NODE, "lib" );
+        rowNode->AddAttribute( "name", row.Nickname() );
+        rowNode->AddAttribute( "type", row.Type() );
+        rowNode->AddAttribute( "uri", uri );
+        rowNode->AddAttribute( "options", row.Options() );
+        rowNode->AddAttribute( "descr", row.Description() );
+
+        if( row.Disabled() )
+            rowNode->AddChild( new XNODE( wxXML_ELEMENT_NODE, "disabled" ) );
+
+        if( row.Hidden() )
+            rowNode->AddChild( new XNODE( wxXML_ELEMENT_NODE, "hidden" ) );
+
+        self.AddChild( rowNode );
+    }
+
+    self.Format( aOutput );
+}
+
+
+LIBRARY_TABLE_ROW LIBRARY_TABLE::MakeRow() const
+{
+    LIBRARY_TABLE_ROW row = {};
+
+    row.SetScope( m_scope );
+    row.SetOk();
+
+    return row;
+}
+
+
+LIBRARY_TABLE_ROW& LIBRARY_TABLE::InsertRow()
+{
+    return Rows().emplace_back( MakeRow() );
+}
+
+
+bool LIBRARY_TABLE::HasRow( const wxString& aNickname ) const
+{
+    for( const LIBRARY_TABLE_ROW& row : m_rows )
+    {
+        if( row.Nickname() == aNickname )
+            return true;
+    }
+
+    return false;
+}
+
+
+bool LIBRARY_TABLE::HasRowWithURI( const wxString& aUri, const PROJECT& aProject,
+                                   bool aSubstituted ) const
+{
+    for( const LIBRARY_TABLE_ROW& row : m_rows )
+    {
+        if( !aSubstituted && row.URI() == aUri )
+            return true;
+
+        if( aSubstituted && LIBRARY_MANAGER::ExpandURI( row.URI(), aProject ) == aUri )
+            return true;
+    }
+
+    return false;
+}
+
+
+std::optional<LIBRARY_TABLE_ROW*> LIBRARY_TABLE::Row( const wxString& aNickname )
+{
+    for( LIBRARY_TABLE_ROW& row : m_rows )
+    {
+        if( row.Nickname() == aNickname )
+            return &row;
+    }
+
+    return std::nullopt;
+}
+
+
+std::optional<const LIBRARY_TABLE_ROW*> LIBRARY_TABLE::Row( const wxString& aNickname ) const
+{
+    for( const LIBRARY_TABLE_ROW& row : m_rows )
+    {
+        if( row.Nickname() == aNickname )
+            return &row;
+    }
+
+    return std::nullopt;
+}
+
+
+LIBRARY_RESULT<void> LIBRARY_TABLE::Save()
+{
+    wxLogTrace( traceLibraries, "Saving %s", Path() );
+    wxFileName fn( Path() );
+    // This should already be normalized, but just in case...
+    fn.Normalize( FN_NORMALIZE_FLAGS | wxPATH_NORM_ENV_VARS );
+
+    // Global user data with no other recovery path: keep a rotating .bak sibling so the
+    // user can recover from logical corruption outside our fsync window.
+    wxFFile existing( fn.GetFullPath(), wxT( "rb" ) );
+
+    if( existing.IsOpened() )
+    {
+        wxFileOffset rawLen = existing.Length();
+
+        if( rawLen >= 0
+            && static_cast<uint64_t>( rawLen ) <= std::numeric_limits<size_t>::max() )
+        {
+            size_t         len = static_cast<size_t>( rawLen );
+            wxMemoryBuffer buf;
+            void*          dst = len > 0 ? buf.GetWriteBuf( len ) : nullptr;
+
+            if( len == 0 || existing.Read( dst, len ) == len )
+            {
+                buf.SetDataLen( len );
+                existing.Close();
+
+                wxString bakPath = fn.GetFullPath() + wxT( ".bak" );
+                wxString bakError;
+
+                if( !KIPLATFORM::IO::AtomicWriteFile( bakPath, buf.GetData(), len, &bakError ) )
+                {
+                    // Non-fatal: the original is still on disk and the atomic save below
+                    // is safe.
+                    wxLogTrace( traceLibraries,
+                                "Could not rotate library table backup to '%s': %s", bakPath,
+                                bakError );
+                }
+            }
+        }
+    }
+
+    try
+    {
+        PRETTIFIED_FILE_OUTPUTFORMATTER formatter( fn.GetFullPath(), KICAD_FORMAT::FORMAT_MODE::LIBRARY_TABLE );
+        Format( &formatter );
+        formatter.Finish();
+    }
+    catch( IO_ERROR& e )
+    {
+        wxLogTrace( traceLibraries, "Exception while saving: %s", e.What() );
+        return tl::unexpected( LIBRARY_ERROR( e.What() ) );
+    }
+
+    return LIBRARY_RESULT<void>();
+}
+
+
+#define OPT_SEP     '|'         ///< options separator character
+
+std::map<std::string, UTF8> LIBRARY_TABLE::ParseOptions( const std::string& aOptionsList )
+{
+    std::map<std::string, UTF8> props;
+
+    if( aOptionsList.size() )
+    {
+        const char* cp  = &aOptionsList[0];
+        const char* end = cp + aOptionsList.size();
+
+        std::string pair;
+
+        // Parse all name=value pairs
+        while( cp < end )
+        {
+            pair.clear();
+
+            // Skip leading white space.
+            while( cp < end && isspace( *cp )  )
+                ++cp;
+
+            // Find the end of pair/field
+            while( cp < end )
+            {
+                if( *cp == '\\'  &&  cp + 1 < end  &&  cp[1] == OPT_SEP  )
+                {
+                    ++cp;           // skip the escape
+                    pair += *cp++;  // add the separator
+                }
+                else if( *cp == OPT_SEP )
+                {
+                    ++cp;           // skip the separator
+                    break;          // process the pair
+                }
+                else
+                {
+                    pair += *cp++;
+                }
+            }
+
+            // stash the pair
+            if( pair.size() )
+            {
+                // first equals sign separates 'name' and 'value'.
+                size_t  eqNdx = pair.find( '=' );
+
+                if( eqNdx != pair.npos )
+                {
+                    std::string name  = pair.substr( 0, eqNdx );
+                    std::string value = pair.substr( eqNdx + 1 );
+                    props[name] = value;
+                }
+                else
+                {
+                    props[pair] = "";       // property is present, but with no value.
+                }
+            }
+        }
+    }
+
+    return props;
+}
+
+
+UTF8 LIBRARY_TABLE::FormatOptions( const std::map<std::string, UTF8>* aProperties )
+{
+    UTF8 ret;
+
+    if( aProperties )
+    {
+        for( std::map<std::string, UTF8>::const_iterator it = aProperties->begin();
+             it != aProperties->end(); ++it )
+        {
+            const std::string& name = it->first;
+
+            const UTF8& value = it->second;
+
+            if( ret.size() )
+                ret += OPT_SEP;
+
+            ret += name;
+
+            // the separation between name and value is '='
+            if( value.size() )
+            {
+                ret += '=';
+
+                for( std::string::const_iterator si = value.begin();  si != value.end();  ++si )
+                {
+                    // escape any separator in the value.
+                    if( *si == OPT_SEP )
+                        ret += '\\';
+
+                    ret += *si;
+                }
+            }
+        }
+    }
+
+    return ret;
+}

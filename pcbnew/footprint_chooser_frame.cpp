@@ -22,14 +22,16 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#include <pgm_base.h>
-#include <kiface_base.h>
-#include <kiway.h>
-#include <kiway_express.h>
-#include <board.h>
 #include <wx/button.h>
 #include <wx/checkbox.h>
 #include <wx/splitter.h>
+
+#include <pgm_base.h>
+#include <kiface_base.h>
+#include <kiway.h>
+#include <kiway_mail.h>
+#include <board.h>
+#include <footprint.h>
 #include <kiplatform/ui.h>
 #include <lset.h>
 #include <widgets/panel_footprint_chooser.h>
@@ -147,6 +149,7 @@ FOOTPRINT_CHOOSER_FRAME::FOOTPRINT_CHOOSER_FRAME( KIWAY* aKiway, wxWindow* aPare
     m_toggleDescription = new BITMAP_BUTTON( m_bottomPanel, wxID_ANY, wxNullBitmap );
     m_toggleDescription->SetIsRadioButton();
     m_toggleDescription->SetBitmap( KiBitmapBundle( BITMAPS::text_visibility_off ) );
+    m_toggleDescription->SetToolTip( _( "Show/hide description panel" ) );
     m_toggleDescription->Check( m_showDescription );
     buttonsSizer->Add( m_toggleDescription, 0, wxRIGHT | wxLEFT | wxALIGN_CENTER_VERTICAL, 1 );
 
@@ -157,12 +160,14 @@ FOOTPRINT_CHOOSER_FRAME::FOOTPRINT_CHOOSER_FRAME( KIWAY* aKiway, wxWindow* aPare
     m_grButton3DView = new BITMAP_BUTTON( m_bottomPanel, wxID_ANY, wxNullBitmap );
     m_grButton3DView->SetIsRadioButton();
     m_grButton3DView->SetBitmap( KiBitmapBundle( BITMAPS::shape_3d ) );
+    m_grButton3DView->SetToolTip( _( "Show/hide 3D view panel" ) );
     m_grButton3DView->Check( m_show3DMode );
     buttonsSizer->Add( m_grButton3DView, 0, wxRIGHT | wxALIGN_CENTER_VERTICAL, 1 );
 
     m_grButtonFpView = new BITMAP_BUTTON( m_bottomPanel, wxID_ANY, wxNullBitmap );
     m_grButtonFpView->SetIsRadioButton();
     m_grButtonFpView->SetBitmap( KiBitmapBundle( BITMAPS::module ) );
+    m_grButtonFpView->SetToolTip( _( "Show/hide footprint view panel" ) );
     m_grButtonFpView->Check( m_showFpMode );
     buttonsSizer->Add( m_grButtonFpView, 0, wxRIGHT | wxALIGN_CENTER_VERTICAL, 1 );
 
@@ -195,6 +200,8 @@ FOOTPRINT_CHOOSER_FRAME::FOOTPRINT_CHOOSER_FRAME( KIWAY* aKiway, wxWindow* aPare
 
     Layout();
     m_chooserPanel->FinishSetup();
+
+    Bind( wxEVT_CHAR_HOOK, &PANEL_FOOTPRINT_CHOOSER::OnChar, m_chooserPanel );
 
     if( !m_showDescription )
     {
@@ -256,6 +263,12 @@ FOOTPRINT_CHOOSER_FRAME::FOOTPRINT_CHOOSER_FRAME( KIWAY* aKiway, wxWindow* aPare
 
 FOOTPRINT_CHOOSER_FRAME::~FOOTPRINT_CHOOSER_FRAME()
 {
+    Unbind( wxEVT_CHAR_HOOK, &PANEL_FOOTPRINT_CHOOSER::OnChar, m_chooserPanel );
+
+    // Shutdown all running tools
+    if( m_toolManager )
+        m_toolManager->ShutdownAllTools();
+
     // Work around assertion firing when we try to LockCtx on a hidden 3D canvas during dtor
     wxCloseEvent dummy;
     m_preview3DCanvas->Show();
@@ -286,6 +299,7 @@ FOOTPRINT_CHOOSER_FRAME::~FOOTPRINT_CHOOSER_FRAME()
 
     Disconnect( FP_SELECTION_EVENT,
                 wxCommandEventHandler( FOOTPRINT_CHOOSER_FRAME::onFpChanged ), nullptr, this );
+
     // clang-format on
 
     if( PCBNEW_SETTINGS* cfg = dynamic_cast<PCBNEW_SETTINGS*>( Kiface().KifaceSettings() ) )
@@ -458,7 +472,7 @@ COLOR_SETTINGS* FOOTPRINT_CHOOSER_FRAME::GetColorSettings( bool aForceRefresh ) 
 static wxRect s_dialogRect( 0, 0, 0, 0 );
 
 
-void FOOTPRINT_CHOOSER_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
+void FOOTPRINT_CHOOSER_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
 {
     const std::string& payload = mail.GetPayload();
 
@@ -466,6 +480,7 @@ void FOOTPRINT_CHOOSER_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
     {
     case MAIL_SYMBOL_NETLIST:
     {
+        wxLogTrace( "FOOTPRINT_CHOOSER", wxS( "MAIL_SYMBOL_NETLIST received: size=%zu" ), payload.size() );
         wxSizer*  filtersSizer = m_chooserPanel->GetFiltersSizer();
         wxWindow* filtersWindow = filtersSizer->GetContainingWindow();
         wxString  msg;
@@ -483,10 +498,26 @@ void FOOTPRINT_CHOOSER_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
 
         if( strings.size() >= 1 && !strings[0].empty() )
         {
-            for( const wxString& pin : wxSplit( strings[0], '\t' ) )
+            wxArrayString tokens = wxSplit( strings[0], '\t' );
+
+            wxLogTrace( "FOOTPRINT_CHOOSER", wxS( "First line entries=%u" ), (unsigned) tokens.size() );
+
+            for( const wxString& pin : tokens )
                 pinNames[ pin.BeforeFirst( ' ' ) ] = pin.AfterFirst( ' ' );
 
             m_pinCount = (int) pinNames.size();
+
+            wxString pinList;
+
+            for( const auto& kv : pinNames )
+            {
+                if( !pinList.IsEmpty() )
+                    pinList << wxS( "," );
+
+                pinList << kv.first;
+            }
+
+            wxLogTrace( "FOOTPRINT_CHOOSER", wxS( "Parsed pins=%d -> [%s]" ), m_pinCount, pinList );
         }
 
         if( strings.size() >= 2 && !strings[1].empty() )
@@ -529,6 +560,7 @@ void FOOTPRINT_CHOOSER_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
         if( m_pinCount > 0 )
         {
             msg.Printf( _( "Filter by pin count (%d)" ), m_pinCount );
+            wxLogTrace( "FOOTPRINT_CHOOSER", wxS( "Pin-count label: %s" ), msg );
 
             if( !m_filterByPinCount )
             {
@@ -555,6 +587,7 @@ void FOOTPRINT_CHOOSER_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
         }
 
         m_chooserPanel->GetViewerPanel()->SetPinFunctions( pinNames );
+        wxLogTrace( "FOOTPRINT_CHOOSER", wxS( "SetPinFunctions called with %zu entries" ), pinNames.size() );
 
         // Save the wxFormBuilder size of the dialog...
         if( s_dialogRect.GetSize().x == 0 || s_dialogRect.GetSize().y == 0 )
@@ -749,6 +782,7 @@ void FOOTPRINT_CHOOSER_FRAME::toggleBottomSplit( wxCommandEvent& event )
     m_chooserPanel->Refresh();
 }
 
+
 void FOOTPRINT_CHOOSER_FRAME::on3DviewReq( wxCommandEvent& event )
 {
     if( m_show3DMode == true )
@@ -770,6 +804,7 @@ void FOOTPRINT_CHOOSER_FRAME::on3DviewReq( wxCommandEvent& event )
         {
             // Close 3D viewer frame, if it is still enabled
             EDA_3D_VIEWER_FRAME* viewer3D = Get3DViewerFrame();
+
             if( viewer3D )
                 viewer3D->Close( true );
         }
@@ -820,6 +855,7 @@ void FOOTPRINT_CHOOSER_FRAME::updateViews()
     m_chooserPanel->m_RightPanel->Refresh();
 }
 
+
 void FOOTPRINT_CHOOSER_FRAME::updatePanelsVisibility()
 {
     FOOTPRINT_PREVIEW_WIDGET* viewFpPanel = m_chooserPanel->GetViewerPanel();
@@ -842,22 +878,16 @@ void FOOTPRINT_CHOOSER_FRAME::setupUIConditions()
     // clang-format off
 #define CHECK( x )  ACTION_CONDITIONS().Check( x )
 
-    mgr->SetConditions( ACTIONS::toggleGrid,           CHECK( cond.GridVisible() ) );
-    mgr->SetConditions( ACTIONS::toggleCursorStyle,    CHECK( cond.FullscreenCursor() ) );
+    mgr->SetConditions( ACTIONS::toggleGrid,            CHECK( cond.GridVisible() ) );
+    mgr->SetConditions( ACTIONS::cursorSmallCrosshairs, CHECK( cond.CursorSmallCrosshairs() ) );
+    mgr->SetConditions( ACTIONS::cursorFullCrosshairs,  CHECK( cond.CursorFullCrosshairs() ) );
+    mgr->SetConditions( ACTIONS::cursor45Crosshairs,    CHECK( cond.Cursor45Crosshairs() ) );
 
-    mgr->SetConditions( ACTIONS::millimetersUnits,     CHECK( cond.Units( EDA_UNITS::MM ) ) );
-    mgr->SetConditions( ACTIONS::inchesUnits,          CHECK( cond.Units( EDA_UNITS::INCH ) ) );
-    mgr->SetConditions( ACTIONS::milsUnits,            CHECK( cond.Units( EDA_UNITS::MILS ) ) );
-
-    mgr->SetConditions( PCB_ACTIONS::toggleHV45Mode,   CHECK( cond.Get45degMode() ) );
-
-    mgr->SetConditions( PCB_ACTIONS::showPadNumbers,   CHECK( cond.PadNumbersDisplay() ) );
-    mgr->SetConditions( PCB_ACTIONS::padDisplayMode,   CHECK( !cond.PadFillDisplay() ) );
-    mgr->SetConditions( PCB_ACTIONS::textOutlines,     CHECK( !cond.TextFillDisplay() ) );
-    mgr->SetConditions( PCB_ACTIONS::graphicsOutlines, CHECK( !cond.GraphicsFillDisplay() ) );
+    mgr->SetConditions( PCB_ACTIONS::showPadNumbers,    CHECK( cond.PadNumbersDisplay() ) );
+    mgr->SetConditions( PCB_ACTIONS::padDisplayMode,    CHECK( !cond.PadFillDisplay() ) );
+    mgr->SetConditions( PCB_ACTIONS::textOutlines,      CHECK( !cond.TextFillDisplay() ) );
+    mgr->SetConditions( PCB_ACTIONS::graphicsOutlines,  CHECK( !cond.GraphicsFillDisplay() ) );
 
 #undef CHECK
     // clang-format on
 }
-
-

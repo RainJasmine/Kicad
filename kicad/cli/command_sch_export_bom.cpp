@@ -34,7 +34,8 @@
 CLI::SCH_EXPORT_BOM_COMMAND::SCH_EXPORT_BOM_COMMAND() : COMMAND( "bom" )
 {
     m_argParser.add_description( UTF8STDSTR( _( "Generate a Bill of Materials (BOM)" ) ) );
-    addCommonArgs( true, true, false, false );
+    addCommonArgs( true, true, IO_TYPE::FILE, IO_TYPE::FILE );
+    addVariantsArg();
 
     // Preset options
     m_argParser.add_argument( ARG_PRESET )
@@ -50,7 +51,7 @@ CLI::SCH_EXPORT_BOM_COMMAND::SCH_EXPORT_BOM_COMMAND() : COMMAND( "bom" )
     // Field output options
     m_argParser.add_argument( ARG_FIELDS )
             .help( UTF8STDSTR( _( ARG_FIELDS_DESC ) ) )
-            .default_value( std::string( "Reference,Value,Footprint,${QUANTITY},${DNP}" ) )
+            .default_value( std::string( "Reference,Value,Footprint,QUANTITY,DNP" ) )
             .metavar( "FIELDS" );
 
     m_argParser.add_argument( ARG_LABELS )
@@ -70,7 +71,6 @@ CLI::SCH_EXPORT_BOM_COMMAND::SCH_EXPORT_BOM_COMMAND() : COMMAND( "bom" )
 
     m_argParser.add_argument( ARG_SORT_ASC )
             .help( UTF8STDSTR( _( ARG_SORT_ASC_DESC ) ) )
-            .implicit_value( true )
             .default_value( true );
 
     m_argParser.add_argument( ARG_FILTER )
@@ -82,8 +82,8 @@ CLI::SCH_EXPORT_BOM_COMMAND::SCH_EXPORT_BOM_COMMAND() : COMMAND( "bom" )
             .help( UTF8STDSTR( _( ARG_EXCLUDE_DNP_DESC ) ) )
             .flag();
 
-    m_argParser.add_argument( ARG_INCLUDE_EXCLUDED_FROM_BOM )
-            .help( UTF8STDSTR( _( ARG_INCLUDE_EXCLUDED_FROM_BOM_DESC ) ) )
+    m_argParser.add_argument( DEPRECATED_ARG_INCLUDE_EXCLUDED_FROM_BOM )
+            .help( UTF8STDSTR( _( DEPRECATED_ARG_INCLUDE_EXCLUDED_FROM_BOM_DESC ) ) )
             .flag();
 
     // Output formatting options
@@ -139,27 +139,22 @@ int CLI::SCH_EXPORT_BOM_COMMAND::doPerform( KIWAY& aKiway )
     // Basic options
     bomJob->m_filename = m_argInput;
     bomJob->SetConfiguredOutputPath( m_argOutput );
+    bomJob->m_variantNames = m_argVariantNames;
 
     bomJob->m_bomPresetName = From_UTF8( m_argParser.get<std::string>( ARG_PRESET ).c_str() );
-    bomJob->m_bomFmtPresetName =
-            From_UTF8( m_argParser.get<std::string>( ARG_FMT_PRESET ).c_str() );
+    bomJob->m_bomFmtPresetName = From_UTF8( m_argParser.get<std::string>( ARG_FMT_PRESET ).c_str() );
 
     // Format options
-    bomJob->m_fieldDelimiter =
-            From_UTF8( m_argParser.get<std::string>( ARG_FIELD_DELIMITER ).c_str() );
-    bomJob->m_stringDelimiter =
-            From_UTF8( m_argParser.get<std::string>( ARG_STRING_DELIMITER ).c_str() );
+    bomJob->m_fieldDelimiter = From_UTF8( m_argParser.get<std::string>( ARG_FIELD_DELIMITER ).c_str() );
+    bomJob->m_stringDelimiter = From_UTF8( m_argParser.get<std::string>( ARG_STRING_DELIMITER ).c_str() );
     bomJob->m_refDelimiter = From_UTF8( m_argParser.get<std::string>( ARG_REF_DELIMITER ).c_str() );
-    bomJob->m_refRangeDelimiter =
-            From_UTF8( m_argParser.get<std::string>( ARG_REF_RANGE_DELIMITER ).c_str() );
+    bomJob->m_refRangeDelimiter = From_UTF8( m_argParser.get<std::string>( ARG_REF_RANGE_DELIMITER ).c_str() );
     bomJob->m_keepTabs = m_argParser.get<bool>( ARG_KEEP_TABS );
     bomJob->m_keepLineBreaks = m_argParser.get<bool>( ARG_KEEP_LINE_BREAKS );
 
     // Output fields options
-    bomJob->m_fieldsOrdered =
-            convertStringList( From_UTF8( m_argParser.get<std::string>( ARG_FIELDS ).c_str() ) );
-    bomJob->m_fieldsLabels =
-            convertStringList( From_UTF8( m_argParser.get<std::string>( ARG_LABELS ).c_str() ) );
+    bomJob->m_fieldsOrdered = convertStringList( From_UTF8( m_argParser.get<std::string>( ARG_FIELDS ).c_str() ) );
+    bomJob->m_fieldsLabels = convertStringList( From_UTF8( m_argParser.get<std::string>( ARG_LABELS ).c_str() ) );
 
     // We only apply the default labels if the default fields are used
     if( m_argParser.is_used( ARG_FIELDS ) && !m_argParser.is_used( ARG_LABELS ) )
@@ -167,13 +162,14 @@ int CLI::SCH_EXPORT_BOM_COMMAND::doPerform( KIWAY& aKiway )
         bomJob->m_fieldsLabels.clear();
     }
 
-    bomJob->m_fieldsGroupBy =
-            convertStringList( From_UTF8( m_argParser.get<std::string>( ARG_GROUP_BY ).c_str() ) );
+    bomJob->m_fieldsGroupBy = convertStringList( From_UTF8( m_argParser.get<std::string>( ARG_GROUP_BY ).c_str() ) );
     bomJob->m_sortField = From_UTF8( m_argParser.get<std::string>( ARG_SORT_FIELD ).c_str() );
     bomJob->m_sortAsc = m_argParser.get<bool>( ARG_SORT_ASC );
     bomJob->m_filterString = From_UTF8( m_argParser.get<std::string>( ARG_FILTER ).c_str() );
     bomJob->m_excludeDNP = m_argParser.get<bool>( ARG_EXCLUDE_DNP );
-    bomJob->m_includeExcludedFromBOM = m_argParser.get<bool>( ARG_INCLUDE_EXCLUDED_FROM_BOM );
+
+    if( m_argParser.get<bool>( DEPRECATED_ARG_INCLUDE_EXCLUDED_FROM_BOM ) )
+        wxFprintf( stdout, DEPRECATED_ARG_INCLUDE_EXCLUDED_FROM_BOM_WARNING );
 
     if( !wxFile::Exists( bomJob->m_filename ) )
     {

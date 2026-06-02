@@ -28,11 +28,11 @@
 
 #include <vector>
 
-#include <pcb_item_containers.h>
 #include <tool/grid_helper.h>
-#include <board.h>
 #include <geometry/intersection.h>
 #include <geometry/nearest.h>
+
+#include <board.h>
 
 
 class LSET;
@@ -43,8 +43,10 @@ struct PCB_SELECTION_FILTER_OPTIONS;
 
 class PCB_GRID_HELPER : public GRID_HELPER, public BOARD_LISTENER
 {
+    friend class PCBGridHelperTestFixture;
 public:
 
+    PCB_GRID_HELPER();
     PCB_GRID_HELPER( TOOL_MANAGER* aToolMgr, MAGNETIC_SETTINGS* aMagneticSettings );
     ~PCB_GRID_HELPER() override;
 
@@ -70,21 +72,9 @@ public:
 
     VECTOR2I SnapToPad( const VECTOR2I& aMousePos, std::deque<PAD*>& aPads );
 
-    virtual void OnBoardItemRemoved( BOARD& aBoard, BOARD_ITEM* aBoardItem ) override
-    {
-        // If the item being removed is involved in the snap, clear the snap item
-        if( m_snapItem )
-        {
-            for( EDA_ITEM* item : m_snapItem->items )
-            {
-                if( item == aBoardItem )
-                {
-                    m_snapItem = std::nullopt;
-                    break;
-                }
-            }
-        }
-    }
+    void OnBoardItemRemoved( BOARD& aBoard, BOARD_ITEM* aRemovedItem ) override;
+
+    void OnBoardItemsRemoved( BOARD& aBoard, std::vector<BOARD_ITEM*>& aBoardItems ) override;
 
     /**
      * Chooses the "best" snap anchor around the given point, optionally taking layers from

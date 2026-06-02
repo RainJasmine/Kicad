@@ -31,12 +31,14 @@
 #include <tool/tool_manager.h>
 #include <board_design_settings.h>
 #include <board_item.h>
+#include <collectors.h>
 #include <footprint.h>
 #include <pcb_shape.h>
 #include <pad.h>
 #include <pcbnew_settings.h>
 #include <board_commit.h>
 #include <dialogs/dialog_push_pad_properties.h>
+#include <dialogs/dialog_fp_edit_pad_table.h>
 #include <tools/pcb_actions.h>
 #include <tools/pcb_grid_helper.h>
 #include <tools/pcb_selection_tool.h>
@@ -53,10 +55,6 @@ PAD_TOOL::PAD_TOOL() :
         PCB_TOOL_BASE( "pcbnew.PadTool" ),
         m_previousHighContrastMode( HIGH_CONTRAST_MODE::NORMAL ),
         m_editPad( niluuid )
-{}
-
-
-PAD_TOOL::~PAD_TOOL()
 {}
 
 
@@ -98,13 +96,13 @@ bool PAD_TOOL::Init()
                                            SELECTION_CONDITIONS::OnlyTypes( padTypes );
 
         auto explodeCondition =
-                [&]( const SELECTION& aSel )
+                [this]( const SELECTION& aSel )
                 {
                     return m_editPad == niluuid && aSel.Size() == 1 && aSel[0]->Type() == PCB_PAD_T;
                 };
 
         auto recombineCondition =
-                [&]( const SELECTION& aSel )
+                [this]( const SELECTION& aSel )
                 {
                     return m_editPad != niluuid;
                 };
@@ -113,6 +111,7 @@ bool PAD_TOOL::Init()
 
         if( m_isFootprintEditor )
         {
+            menu.AddItem( PCB_ACTIONS::padTable,           SELECTION_CONDITIONS::ShowAlways, 400 );
             menu.AddItem( PCB_ACTIONS::enumeratePads,      SELECTION_CONDITIONS::ShowAlways, 400 );
             menu.AddItem( PCB_ACTIONS::recombinePad,       recombineCondition, 400 );
             menu.AddItem( PCB_ACTIONS::explodePad,         explodeCondition, 400 );
@@ -210,7 +209,7 @@ static void doPushPadProperties( BOARD& board, const PAD& aSrcPad, BOARD_COMMIT&
         for( PAD* pad : footprint->Pads() )
         {
             // TODO(JE) padstacks
-            if( aPadShapeFilter && ( pad->GetShape( PADSTACK::ALL_LAYERS ) != aSrcPad.GetShape( PADSTACK::ALL_LAYERS ) ) )
+            if( aPadShapeFilter && pad->GetShape( PADSTACK::ALL_LAYERS ) != aSrcPad.GetShape( PADSTACK::ALL_LAYERS ) )
                 continue;
 
             EDA_ANGLE padAngle = pad->GetOrientation() - footprint->GetOrientation();
@@ -263,11 +262,8 @@ int PAD_TOOL::pushPadSettings( const TOOL_EVENT& aEvent )
 
             BOARD_COMMIT commit( frame() );
 
-            doPushPadProperties( *getModel<BOARD>(), *srcPad, commit, edit_Same_Modules,
-                                 DIALOG_PUSH_PAD_PROPERTIES::m_Pad_Shape_Filter,
-                                 DIALOG_PUSH_PAD_PROPERTIES::m_Pad_Orient_Filter,
-                                 DIALOG_PUSH_PAD_PROPERTIES::m_Pad_Layer_Filter,
-                                 DIALOG_PUSH_PAD_PROPERTIES::m_Pad_Type_Filter );
+            doPushPadProperties( *getModel<BOARD>(), *srcPad, commit, edit_Same_Modules, dlg.GetPadShapeFilter(),
+                                 dlg.GetPadOrientFilter(), dlg.GetPadLayerFilter(), dlg.GetPadTypeFilter() );
 
             commit.Push( _( "Push Pad Settings" ) );
 
@@ -286,8 +282,7 @@ int PAD_TOOL::pushPadSettings( const TOOL_EVENT& aEvent )
  * @param aFrame The parent window for the dialog
  * @return The parameters, or nullopt if no parameters, e.g. user cancelled the dialog
 */
-static std::optional<SEQUENTIAL_PAD_ENUMERATION_PARAMS>
-GetSequentialPadNumberingParams( wxWindow* aFrame )
+static std::optional<SEQUENTIAL_PAD_ENUMERATION_PARAMS> GetSequentialPadNumberingParams( wxWindow* aFrame )
 {
     // Persistent settings for the pad enumeration dialog.
     static SEQUENTIAL_PAD_ENUMERATION_PARAMS s_lastUsedParams;
@@ -465,7 +460,7 @@ int PAD_TOOL::EnumeratePads( const TOOL_EVENT& aEvent )
                 {
                     PAD* pad = static_cast<PAD*>( collector[i] );
 
-                    if( !pad->IsAperturePad() && checkVisibility( pad ) )
+                    if( pad->CanHaveNumber() && checkVisibility( pad ) )
                         selectedPads.push_back( pad );
                 }
             }
@@ -569,10 +564,8 @@ int PAD_TOOL::EnumeratePads( const TOOL_EVENT& aEvent )
 
 int PAD_TOOL::PlacePad( const TOOL_EVENT& aEvent )
 {
-    // When creating a new pad (in FP editor) we can use a new pad number
-    // or the last entered pad number
-    // neednewPadNumber = true to create a new pad number, false to use the last
-    // entered pad number
+    // When creating a new pad (in FP editor) we can use a new pad number or the last entered pad number
+    // neednewPadNumber = true to create a new pad number, false to use the last entered pad number
     static bool neednewPadNumber;
 
     if( !m_isFootprintEditor )
@@ -584,16 +577,14 @@ int PAD_TOOL::PlacePad( const TOOL_EVENT& aEvent )
     struct PAD_PLACER : public INTERACTIVE_PLACER_BASE
     {
         PAD_PLACER( PAD_TOOL* aPadTool, PCB_BASE_EDIT_FRAME* aFrame ) :
-            m_padTool( aPadTool ),
-            m_frame( aFrame ),
-            m_gridHelper( aPadTool->GetManager(), aFrame->GetMagneticItemsSettings() )
+                m_padTool( aPadTool ),
+                m_frame( aFrame ),
+                m_gridHelper( aPadTool->GetManager(), aFrame->GetMagneticItemsSettings() )
         {
             neednewPadNumber = true;    // Use a new pad number when creatin a pad by default
         }
 
-        virtual ~PAD_PLACER()
-        {
-        }
+        virtual ~PAD_PLACER() = default;
 
         std::unique_ptr<BOARD_ITEM> CreateItem() override
         {
@@ -602,36 +593,6 @@ int PAD_TOOL::PlacePad( const TOOL_EVENT& aEvent )
             PAD* master = m_frame->GetDesignSettings().m_Pad_Master.get();
 
             pad->ImportSettingsFrom( *master );
-
-            // If the footprint type and master pad type directly conflict then make some
-            // adjustments.  Otherwise assume the user set what they wanted.
-            // Note also a HEATSINK pad (thermal via) is allowed in SMD footprint
-            if( ( m_board->GetFirstFootprint()->GetAttributes() & FP_SMD )
-                    && master->GetAttribute() == PAD_ATTRIB::PTH )
-            {
-                if( pad->GetProperty() != PAD_PROP::HEATSINK )
-                {
-                    pad->SetAttribute( PAD_ATTRIB::SMD );
-                    pad->SetShape( PADSTACK::ALL_LAYERS, PAD_SHAPE::ROUNDRECT );
-                    pad->SetSizeX( 1.5 * pad->GetSizeY() );
-                    pad->SetLayerSet( PAD::SMDMask() );
-                }
-            }
-            else if( ( m_board->GetFirstFootprint()->GetAttributes() & FP_THROUGH_HOLE )
-                    && master->GetAttribute() == PAD_ATTRIB::SMD )
-            {
-                pad->SetAttribute( PAD_ATTRIB::PTH );
-                pad->SetShape( PADSTACK::ALL_LAYERS, PAD_SHAPE::CIRCLE );
-                pad->SetSize( PADSTACK::ALL_LAYERS, VECTOR2I( pad->GetSizeX(), pad->GetSizeX() ) );
-
-                // Gives an acceptable drill size: it cannot be 0, but from pad master
-                // it is currently 0, therefore change it:
-                pad->SetDrillShape( PAD_DRILL_SHAPE::CIRCLE );
-                int hole_size = pad->GetSizeX() / 2;
-                pad->SetDrillSize( VECTOR2I( hole_size, hole_size ) );
-
-                pad->SetLayerSet( PAD::PTHMask() );
-            }
 
             if( pad->CanHaveNumber() )
             {
@@ -696,7 +657,8 @@ int PAD_TOOL::PlacePad( const TOOL_EVENT& aEvent )
                 ignored_items.insert( ignored_items.end(), graphics.begin(), graphics.end() );
             }
 
-            VECTOR2I cursorPos = m_gridHelper.BestSnapAnchor( position, LSET::AllLayersMask(), GRID_CURRENT, ignored_items );
+            VECTOR2I cursorPos = m_gridHelper.BestSnapAnchor( position, LSET::AllLayersMask(), GRID_CURRENT,
+                                                              ignored_items );
             viewControls->ForceCursorPosition( true, cursorPos );
             aItem->SetPosition( cursorPos );
         }
@@ -913,12 +875,28 @@ void PAD_TOOL::explodePad( PAD* aPad, PCB_LAYER_ID* aLayer, BOARD_COMMIT& aCommi
 
 std::vector<PCB_SHAPE*> PAD_TOOL::RecombinePad( PAD* aPad, bool aIsDryRun )
 {
-    int        maxError = board()->GetDesignSettings().m_MaxError;
+    int maxError = board()->GetDesignSettings().m_MaxError;
 
     // Don't leave an object in the point editor that might no longer exist after recombining.
     m_toolMgr->RunAction( ACTIONS::selectionClear );
 
     return aPad->Recombine( aIsDryRun, maxError );
+}
+
+int PAD_TOOL::PadTable( const TOOL_EVENT& aEvent )
+{
+    if( !m_isFootprintEditor || InPadEditMode() )
+        return 0;
+
+    FOOTPRINT* footprint = board()->GetFirstFootprint();
+
+    if( !footprint )
+        return 0;
+
+    DIALOG_FP_EDIT_PAD_TABLE dlg( frame(), footprint );
+    dlg.ShowQuasiModal();
+
+    return 0;
 }
 
 
@@ -930,6 +908,7 @@ void PAD_TOOL::setTransitions()
 
     Go( &PAD_TOOL::PlacePad,                PCB_ACTIONS::placePad.MakeEvent() );
     Go( &PAD_TOOL::EnumeratePads,           PCB_ACTIONS::enumeratePads.MakeEvent() );
+    Go( &PAD_TOOL::PadTable,                PCB_ACTIONS::padTable.MakeEvent() );
 
     Go( &PAD_TOOL::EditPad,                 PCB_ACTIONS::explodePad.MakeEvent() );
     Go( &PAD_TOOL::EditPad,                 PCB_ACTIONS::recombinePad.MakeEvent() );

@@ -17,16 +17,17 @@
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef PANEL_DESIGN_BLOCK_LIB_TABLE_H
-#define PANEL_DESIGN_BLOCK_LIB_TABLE_H
+#pragma once
 
 #include <dialogs/dialog_edit_library_tables.h>
 #include <dialogs/panel_design_block_lib_table_base.h>
 #include <widgets/wx_grid.h>
 #include <design_block_io.h>
 
+
+class LIBRARY_TABLE;
 class DESIGN_BLOCK_LIB_TABLE;
-class DESIGN_BLOCK_LIB_TABLE_GRID;
+class DESIGN_BLOCK_LIB_TABLE_GRID_DATA_MODEL;
 class PROJECT;
 
 
@@ -36,17 +37,15 @@ class PROJECT;
 class PANEL_DESIGN_BLOCK_LIB_TABLE : public PANEL_DESIGN_BLOCK_LIB_TABLE_BASE
 {
 public:
-    PANEL_DESIGN_BLOCK_LIB_TABLE( DIALOG_EDIT_LIBRARY_TABLES* aParent, PROJECT* aProject,
-                                  DESIGN_BLOCK_LIB_TABLE* aGlobalTable,
-                                  const wxString&         aGlobalTblPath,
-                                  DESIGN_BLOCK_LIB_TABLE* aProjectTable,
-                                  const wxString&         aProjectTblPath,
-                                  const wxString&         aProjectBasePath );
+    PANEL_DESIGN_BLOCK_LIB_TABLE( DIALOG_EDIT_LIBRARY_TABLES* aParent, PROJECT* aProject );
     ~PANEL_DESIGN_BLOCK_LIB_TABLE() override;
 
-private:
     bool TransferDataFromWindow() override;
 
+    void AddTable( LIBRARY_TABLE* table, const wxString& aTitle, bool aClosable );
+    void OpenTable( const std::shared_ptr<LIBRARY_TABLE>& table, const wxString& aTitle );
+
+private:
     /**
      * Trim important fields, removes blank row entries, and checks for duplicates.
      *
@@ -54,7 +53,6 @@ private:
      */
     bool verifyTables();
 
-    void OnUpdateUI( wxUpdateUIEvent& event ) override;
     void appendRowHandler( wxCommandEvent& event ) override;
     void browseLibrariesHandler( wxCommandEvent& event );
     void deleteRowHandler( wxCommandEvent& event ) override;
@@ -63,6 +61,9 @@ private:
     void onMigrateLibraries( wxCommandEvent& event ) override;
     void onSizeGrid( wxSizeEvent& event ) override;
 
+    void onNotebookPageChangeRequest( wxAuiNotebookEvent& aEvent );
+    void onNotebookPageCloseRequest( wxAuiNotebookEvent& aEvent );
+
     void adjustPathSubsGridColumns( int aWidth );
 
     /// Populate the readonly environment variable table with names and values
@@ -70,40 +71,25 @@ private:
     void populateEnvironReadOnlyTable();
     void populatePluginList();
 
-    DESIGN_BLOCK_LIB_TABLE_GRID* global_model() const
-    {
-        return (DESIGN_BLOCK_LIB_TABLE_GRID*) m_global_grid->GetTable();
-    }
+    DESIGN_BLOCK_LIB_TABLE_GRID_DATA_MODEL* get_model( int aPage ) const;
+    DESIGN_BLOCK_LIB_TABLE_GRID_DATA_MODEL* cur_model() const { return get_model( m_notebook->GetSelection() ); }
 
-    DESIGN_BLOCK_LIB_TABLE_GRID* project_model() const
-    {
-        return m_project_grid ? (DESIGN_BLOCK_LIB_TABLE_GRID*) m_project_grid->GetTable() : nullptr;
-    }
+    WX_GRID* get_grid( int aPage ) const;
+    WX_GRID* cur_grid() const { return get_grid( m_notebook->GetSelection() ); }
 
-    DESIGN_BLOCK_LIB_TABLE_GRID* cur_model() const
-    {
-        return (DESIGN_BLOCK_LIB_TABLE_GRID*) m_cur_grid->GetTable();
-    }
-
-    // caller's tables are modified only on OK button and successful verification.
-    DESIGN_BLOCK_LIB_TABLE* m_globalTable;
-    DESIGN_BLOCK_LIB_TABLE* m_projectTable;
-    PROJECT*                m_project;
-    wxString                m_projectBasePath;
-
+private:
+    PROJECT*                    m_project;
     DIALOG_EDIT_LIBRARY_TABLES* m_parent;
+    bool                        m_suppressNotebookPageEvents;
+    wxArrayString               m_pluginChoices;
 
-    WX_GRID*      m_cur_grid; // changed based on tab choice
-    static size_t m_pageNdx;  // Remember last notebook page selected during a session
+    wxString                    m_lastProjectLibDir;   //< Transient (unsaved) last browsed folder when adding a
+                                                       // project level library.
 
-    //< Transient (unsaved) last browsed folder when adding a project level library.
-    wxString m_lastProjectLibDir;
+    std::vector<std::shared_ptr<LIBRARY_TABLE>> m_nestedTables;
 
-    std::map<DESIGN_BLOCK_IO_MGR::DESIGN_BLOCK_FILE_T, IO_BASE::IO_FILE_DESC>
-            m_supportedDesignBlockFiles;
+    std::map<DESIGN_BLOCK_IO_MGR::DESIGN_BLOCK_FILE_T, IO_BASE::IO_FILE_DESC> m_supportedDesignBlockFiles;
 };
 
 
 void InvokeEditDesignBlockLibTable( KIWAY* aKiway, wxWindow *aParent );
-
-#endif // PANEL_DESIGN_BLOCK_LIB_TABLE_H

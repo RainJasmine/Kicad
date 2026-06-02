@@ -77,13 +77,11 @@ void SCH_MARKER::swapData( SCH_ITEM* aItem )
 
     std::swap( m_markerType, item->m_markerType );
     std::swap( m_excluded, item->m_excluded );
+    std::swap( m_comment, item->m_comment );
     std::swap( m_rcItem, item->m_rcItem );
 
     std::swap( m_scalingFactor, item->m_scalingFactor );
     std::swap( m_shapeBoundingBox, item->m_shapeBoundingBox );
-
-    // TODO: isn't this going to swap all the stuff above a second time?
-    std::swap( *((SCH_MARKER*) this), *((SCH_MARKER*) aItem ) );
 }
 
 
@@ -345,7 +343,7 @@ SEVERITY SCH_MARKER::GetSeverity() const
 
 bool SCH_MARKER::Matches( const EDA_SEARCH_DATA& aSearchData, void* aAuxData ) const
 {
-    return SCH_ITEM::Matches( m_rcItem->GetErrorMessage(), aSearchData );
+    return SCH_ITEM::Matches( m_rcItem->GetErrorMessage( true ), aSearchData );
 }
 
 
@@ -358,7 +356,7 @@ const BOX2I SCH_MARKER::GetBoundingBox() const
 void SCH_MARKER::GetMsgPanelInfo( EDA_DRAW_FRAME* aFrame, std::vector<MSG_PANEL_ITEM>& aList )
 {
     aList.emplace_back( _( "Type" ), _( "Marker" ) );
-    aList.emplace_back( _( "Violation" ), m_rcItem->GetErrorMessage() );
+    aList.emplace_back( _( "Violation" ), m_rcItem->GetErrorMessage( true ) );
 
     switch( GetSeverity() )
     {

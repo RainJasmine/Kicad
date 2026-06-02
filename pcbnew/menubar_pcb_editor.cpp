@@ -30,7 +30,6 @@
 #include <kiface_base.h>
 #include <pcb_edit_frame.h>
 #include <pcbnew_id.h>
-#include <python_scripting.h>
 #include <tool/action_manager.h>
 #include <tool/actions.h>
 #include <tool/tool_manager.h>
@@ -133,8 +132,7 @@ void PCB_EDIT_FRAME::doReCreateMenuBar()
         submenuExport->Add( *m_exportNetlistAction );
 
     submenuExport->AppendSeparator();
-    submenuExport->Add( PCB_ACTIONS::exportFootprints );
-    submenuExport->Add( PCB_ACTIONS::exportFootprintsAs );
+    submenuExport->Add( PCB_ACTIONS::exportFootprints,  ACTION_MENU::NORMAL, _( "Footprints..." ) );
 
     fileMenu->Add( submenuExport );
 
@@ -180,11 +178,19 @@ void PCB_EDIT_FRAME::doReCreateMenuBar()
     editMenu->Add( ACTIONS::doDelete );
 
     editMenu->AppendSeparator();
-    editMenu->Add( ACTIONS::selectAll );
-    editMenu->Add( ACTIONS::unselectAll );
+
+    // Select Submenu
+    ACTION_MENU* selectSubMenu = new ACTION_MENU( false, selTool );
+    selectSubMenu->SetTitle( _( "&Select" ) );
+
+    selectSubMenu->Add( ACTIONS::selectAll );
+    selectSubMenu->Add( ACTIONS::unselectAll );
+
+    editMenu->Add( selectSubMenu );
 
     editMenu->AppendSeparator();
     editMenu->Add( ACTIONS::find );
+    editMenu->Add( PCB_ACTIONS::findByProperties );
 
     editMenu->AppendSeparator();
     editMenu->Add( PCB_ACTIONS::editTracksAndVias );
@@ -305,6 +311,8 @@ void PCB_EDIT_FRAME::doReCreateMenuBar()
     placeMenu->Add( PCB_ACTIONS::placeText );
     placeMenu->Add( PCB_ACTIONS::drawTextBox );
     placeMenu->Add( PCB_ACTIONS::drawTable );
+    placeMenu->Add( PCB_ACTIONS::placePoint );
+    placeMenu->Add( PCB_ACTIONS::placeBarcode );
 
     placeMenu->AppendSeparator();
     ACTION_MENU* dimensionSubmenu = new ACTION_MENU( false, selTool );
@@ -389,8 +397,12 @@ void PCB_EDIT_FRAME::doReCreateMenuBar()
     toolsMenu->Add( ACTIONS::showCalculatorTools );
 
     toolsMenu->AppendSeparator();
+    toolsMenu->Add( PCB_ACTIONS::drcRuleEditor );
+
+    toolsMenu->AppendSeparator();
     toolsMenu->Add( ACTIONS::showFootprintEditor );
     toolsMenu->Add( PCB_ACTIONS::updateFootprints );
+    toolsMenu->Add( PCB_ACTIONS::migrate3DModels );
 
     //Zones management
     toolsMenu->AppendSeparator();
@@ -411,14 +423,11 @@ void PCB_EDIT_FRAME::doReCreateMenuBar()
     toolsMenu->Add( PCB_ACTIONS::repairBoard );
 
     toolsMenu->AppendSeparator();
+    toolsMenu->Add( PCB_ACTIONS::collect3DModels );
+
+    toolsMenu->AppendSeparator();
     toolsMenu->Add( PCB_ACTIONS::boardReannotate );
     toolsMenu->Add( ACTIONS::updateSchematicFromPcb )->Enable( !Kiface().IsSingle() );
-
-    if( SCRIPTING::IsWxAvailable() )
-    {
-        toolsMenu->AppendSeparator();
-        toolsMenu->Add( PCB_ACTIONS::showPythonConsole );
-    }
 
     ACTION_MENU* multichannelSubmenu = new ACTION_MENU( false, selTool );
     multichannelSubmenu->SetTitle( _( "Multi-Channel" ) );
@@ -434,11 +443,6 @@ void PCB_EDIT_FRAME::doReCreateMenuBar()
 
     submenuActionPlugins->Add( ACTIONS::pluginsReload );
     submenuActionPlugins->Add( PCB_ACTIONS::pluginsShowFolder );
-
-    // Populate the Action Plugin sub-menu: Must be done before Add
-    // Since the object is cloned by Add
-    submenuActionPlugins->AppendSeparator();
-    buildActionPluginMenus( submenuActionPlugins );
 
     toolsMenu->AppendSeparator();
     toolsMenu->Add( submenuActionPlugins );

@@ -24,7 +24,6 @@
 #include <gal/gal_display_options.h>
 #include <gal/graphics_abstraction_layer.h>
 #include <math/vector2wx.h>
-#include <design_block_lib_table.h>
 #include <design_block.h>
 #include <footprint_preview_panel.h>
 #include <pgm_base.h>
@@ -182,7 +181,7 @@ void PCB_DESIGN_BLOCK_PREVIEW_WIDGET::DisplayDesignBlock( DESIGN_BLOCK* aDesignB
     {
         try
         {
-            IO_RELEASER<PCB_IO>  pi( PCB_IO_MGR::PluginFind( PCB_IO_MGR::KICAD_SEXP ) );
+            IO_RELEASER<PCB_IO>  pi( PCB_IO_MGR::FindPlugin( PCB_IO_MGR::KICAD_SEXP ) );
             WX_PROGRESS_REPORTER progressReporter( this, _( "Load PCB" ), 1, PR_CAN_ABORT );
 
             pi->SetProgressReporter( &progressReporter );

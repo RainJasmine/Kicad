@@ -27,6 +27,8 @@
 
 #include "sch_pin.h"
 
+#include <api/api_enums.h>
+#include <api/api_utils.h>
 #include <base_units.h>
 #include <pgm_base.h>
 #include <pin_layout_cache.h>
@@ -36,38 +38,59 @@
 #include <symbol_edit_frame.h>
 #include <settings/settings_manager.h>
 #include <symbol_editor/symbol_editor_settings.h>
+#include <trace_helpers.h>
 #include <trigo.h>
 #include <string_utils.h>
+#include <properties/property.h>
+#include <properties/property_mgr.h>
+#include <api/schematic/schematic_types.pb.h>
+
+wxString FormatStackedPinForDisplay( const wxString& aPinNumber, int aPinLength, int aTextSize, KIFONT::FONT* aFont,
+                                     const KIFONT::METRICS& aFontMetrics )
+{
+    // Check if this is stacked pin notation: [A,B,C]
+    if( !aPinNumber.StartsWith( "[" ) || !aPinNumber.EndsWith( "]" ) )
+        return aPinNumber;
+
+    const int minPinTextWidth = schIUScale.MilsToIU( 50 );
+    const int maxPinTextWidth = std::max( aPinLength, minPinTextWidth );
+
+    VECTOR2D fontSize( aTextSize, aTextSize );
+    int      penWidth = GetPenSizeForNormal( aTextSize );
+    VECTOR2I textExtents = aFont->StringBoundaryLimits( aPinNumber, fontSize, penWidth, false, false, aFontMetrics );
+
+    if( textExtents.x <= maxPinTextWidth )
+        return aPinNumber; // Fits already
+
+    // Strip brackets and split by comma
+    wxString      inner = aPinNumber.Mid( 1, aPinNumber.Length() - 2 );
+    wxArrayString parts;
+    wxStringSplit( inner, parts, ',' );
+
+    if( parts.empty() )
+        return aPinNumber; // malformed; fallback
+
+    // Build multi-line representation inside braces, each line trimmed
+    wxString result = "[";
+
+    for( size_t i = 0; i < parts.size(); ++i )
+    {
+        wxString line = parts[i];
+        line.Trim( true ).Trim( false );
+
+        if( i > 0 )
+            result += "\n";
+
+        result += line;
+    }
+
+    result += "]";
+    return result;
+}
 
 
 // small margin in internal units between the pin text and the pin line
 #define PIN_TEXT_MARGIN 4
-
-wxString SCH_PIN::GetCanonicalElectricalTypeName( ELECTRICAL_PINTYPE aType )
-{
-    // These strings are the canonical name of the electrictal type
-    // Not translated, no space in name, only ASCII chars.
-    // to use when the string name must be known and well defined
-    // must have same order than enum ELECTRICAL_PINTYPE (see sch_pin.h)
-    static const wxChar* msgPinElectricType[] =
-    {
-        wxT( "input" ),
-        wxT( "output" ),
-        wxT( "bidirectional" ),
-        wxT( "tri_state" ),
-        wxT( "passive" ),
-        wxT( "free" ),
-        wxT( "unspecified" ),
-        wxT( "power_in" ),
-        wxT( "power_out" ),
-        wxT( "open_collector" ),
-        wxT( "open_emitter" ),
-        wxT( "no_connect" )
-    };
-
-    return msgPinElectricType[static_cast<int>( aType )];
-}
-
 
 /// Utility for getting the size of the 'internal' pin decorators (as a radius)
 /// i.e. the clock symbols (falling clock is actually external but is of
@@ -108,8 +131,7 @@ SCH_PIN::SCH_PIN( LIB_SYMBOL* aParentSymbol ) :
         m_hidden( false ),
         m_numTextSize( schIUScale.MilsToIU( DEFAULT_PINNUM_SIZE ) ),
         m_nameTextSize( schIUScale.MilsToIU( DEFAULT_PINNAME_SIZE ) ),
-        m_isDangling( true ),
-        m_layoutCache( std::make_unique<PIN_LAYOUT_CACHE>( *this ) )
+        m_isDangling( true )
 {
     if( SYMBOL_EDITOR_SETTINGS* cfg = GetAppSettings<SYMBOL_EDITOR_SETTINGS>( "symbol_editor" ) )
     {
@@ -136,8 +158,7 @@ SCH_PIN::SCH_PIN( LIB_SYMBOL* aParentSymbol, const wxString& aName, const wxStri
         m_hidden( false ),
         m_numTextSize( aNumTextSize ),
         m_nameTextSize( aNameTextSize ),
-        m_isDangling( true ),
-        m_layoutCache( std::make_unique<PIN_LAYOUT_CACHE>( *this ) )
+        m_isDangling( true )
 {
     SetName( aName );
     SetNumber( aNumber );
@@ -152,8 +173,7 @@ SCH_PIN::SCH_PIN( SCH_SYMBOL* aParentSymbol, SCH_PIN* aLibPin ) :
         m_orientation( PIN_ORIENTATION::INHERIT ),
         m_shape( GRAPHIC_PINSHAPE::INHERIT ),
         m_type( ELECTRICAL_PINTYPE::PT_INHERIT ),
-        m_isDangling( true ),
-        m_layoutCache( std::make_unique<PIN_LAYOUT_CACHE>( *this ) )
+        m_isDangling( true )
 {
     wxASSERT( aParentSymbol );
 
@@ -174,8 +194,7 @@ SCH_PIN::SCH_PIN( SCH_SYMBOL* aParentSymbol, const wxString& aNumber, const wxSt
         m_type( ELECTRICAL_PINTYPE::PT_INHERIT ),
         m_number( aNumber ),
         m_alt( aAlt ),
-        m_isDangling( true ),
-        m_layoutCache( std::make_unique<PIN_LAYOUT_CACHE>( *this ) )
+        m_isDangling( true )
 {
     wxASSERT( aParentSymbol );
 
@@ -197,8 +216,7 @@ SCH_PIN::SCH_PIN( const SCH_PIN& aPin ) :
         m_numTextSize( aPin.m_numTextSize ),
         m_nameTextSize( aPin.m_nameTextSize ),
         m_alt( aPin.m_alt ),
-        m_isDangling( aPin.m_isDangling ),
-        m_layoutCache( std::make_unique<PIN_LAYOUT_CACHE>( *this ) )
+        m_isDangling( aPin.m_isDangling )
 {
     SetName( aPin.m_name );
     SetNumber( aPin.m_number );
@@ -230,8 +248,88 @@ SCH_PIN& SCH_PIN::operator=( const SCH_PIN& aPin )
     m_numTextSize = aPin.m_numTextSize;
     m_nameTextSize = aPin.m_nameTextSize;
     m_isDangling = aPin.m_isDangling;
+    m_layoutCache.reset();
 
     return *this;
+}
+
+
+void SCH_PIN::Serialize( google::protobuf::Any& aContainer ) const
+{
+    using namespace kiapi::common;
+    using namespace kiapi::schematic::types;
+    SchematicPin pin;
+
+    pin.mutable_id()->set_value( m_Uuid.AsStdString() );
+    pin.set_name( GetBaseName().ToUTF8() );
+    pin.set_number( GetNumber().ToUTF8() );
+
+    PackVector2( *pin.mutable_position(), GetPosition(), schIUScale );
+    PackDistance( *pin.mutable_length(), GetLength(), schIUScale );
+    pin.set_orientation( ToProtoEnum<PIN_ORIENTATION, SchematicPinOrientation>( GetOrientation() ) );
+
+    pin.set_electrical_type( ToProtoEnum<ELECTRICAL_PINTYPE, types::ElectricalPinType>( GetType() ) );
+    pin.set_shape( ToProtoEnum<GRAPHIC_PINSHAPE, SchematicPinShape>( GetShape() ) );
+    pin.set_visible( IsVisible() );
+
+    PackDistance( *pin.mutable_name_text_size(), GetNameTextSize(), schIUScale );
+    PackDistance( *pin.mutable_number_text_size(), GetNumberTextSize(), schIUScale );
+
+    for( const ALT& alt : GetAlternates() | std::views::values )
+    {
+        SchematicPinAlternate* altProto = pin.add_alternates();
+        altProto->set_name( alt.m_Name.ToUTF8() );
+        altProto->set_shape( ToProtoEnum<GRAPHIC_PINSHAPE, SchematicPinShape>( alt.m_Shape ) );
+        altProto->set_electrical_type( ToProtoEnum<ELECTRICAL_PINTYPE, types::ElectricalPinType>( alt.m_Type ) );
+    }
+
+    if( !m_alt.IsEmpty() && m_alt != GetBaseName() )
+        pin.set_active_alternate( m_alt.ToUTF8() );
+
+    aContainer.PackFrom( pin );
+}
+
+
+bool SCH_PIN::Deserialize( const google::protobuf::Any& aContainer )
+{
+    using namespace kiapi::common;
+    using namespace kiapi::schematic::types;
+
+    SchematicPin pin;
+
+    if( !aContainer.UnpackTo( &pin ) )
+        return false;
+
+    const_cast<KIID&>( m_Uuid ) = KIID( pin.id().value() );
+    m_name = wxString::FromUTF8( pin.name() );
+    m_number = wxString::FromUTF8( pin.number() );
+
+    SetPosition( UnpackVector2( pin.position(), schIUScale ) );
+    SetLength( UnpackDistance( pin.length(), schIUScale ) );
+    SetOrientation( FromProtoEnum<PIN_ORIENTATION>( pin.orientation() ) );
+
+    m_type = FromProtoEnum<ELECTRICAL_PINTYPE>( pin.electrical_type() );
+    m_shape = FromProtoEnum<GRAPHIC_PINSHAPE>( pin.shape() );
+    SetVisible( pin.visible() );
+
+    m_nameTextSize = UnpackDistance( pin.name_text_size(), schIUScale );
+    m_numTextSize = UnpackDistance( pin.number_text_size(), schIUScale );
+
+    std::map<wxString, ALT>& alts = GetAlternates();
+
+    for( const SchematicPinAlternate& altProto : pin.alternates() )
+    {
+        ALT alt;
+        alt.m_Name = wxString::FromUTF8( altProto.name() );
+        alt.m_Shape = FromProtoEnum<GRAPHIC_PINSHAPE>( altProto.shape() );
+        alt.m_Type = FromProtoEnum<ELECTRICAL_PINTYPE>( altProto.electrical_type() );
+        alts.emplace( alt.m_Name, alt );
+    }
+
+    if( m_layoutCache )
+        m_layoutCache->MarkDirty( PIN_LAYOUT_CACHE::DIRTY_FLAGS::ALL );
+
+    return true;
 }
 
 
@@ -318,42 +416,42 @@ void SCH_PIN::SetType( ELECTRICAL_PINTYPE aType )
         return;
 
     m_type = aType;
-    m_layoutCache->MarkDirty( PIN_LAYOUT_CACHE::DIRTY_FLAGS::ELEC_TYPE );
+
+    if( m_layoutCache )
+        m_layoutCache->MarkDirty( PIN_LAYOUT_CACHE::DIRTY_FLAGS::ELEC_TYPE );
 }
 
 
 wxString SCH_PIN::GetCanonicalElectricalTypeName() const
 {
-    if( m_type == ELECTRICAL_PINTYPE::PT_INHERIT )
-    {
-        if( !m_libPin )
-            return GetCanonicalElectricalTypeName( ELECTRICAL_PINTYPE::PT_UNSPECIFIED );
-
-        return m_libPin->GetCanonicalElectricalTypeName();
-    }
-
-    return GetCanonicalElectricalTypeName( m_type );
+    // Use GetType() which correctly handles alternates
+    return ::GetCanonicalElectricalTypeName( GetType() );
 }
 
 
 wxString SCH_PIN::GetElectricalTypeName() const
 {
-    if( m_type == ELECTRICAL_PINTYPE::PT_INHERIT )
-    {
-        if( !m_libPin )
-            return ElectricalPinTypeGetText( ELECTRICAL_PINTYPE::PT_UNSPECIFIED );
-
-        return m_libPin->GetElectricalTypeName();
-    }
-
-    return ElectricalPinTypeGetText( m_type );
+    // Use GetType() which correctly handles alternates
+    return ElectricalPinTypeGetText( GetType() );
 }
 
 
 bool SCH_PIN::IsGlobalPower() const
 {
-    return GetType() == ELECTRICAL_PINTYPE::PT_POWER_IN
-           && ( !IsVisible() || GetParentSymbol()->IsGlobalPower() );
+    if( GetType() != ELECTRICAL_PINTYPE::PT_POWER_IN )
+        return false;
+
+    const SYMBOL* parent = GetParentSymbol();
+
+    if( parent->IsGlobalPower() )
+        return true;
+
+    // Local power symbols are never global, even with invisible pins
+    if( parent->IsLocalPower() )
+        return false;
+
+    // Legacy support: invisible power-in pins on non-power symbols act as global power
+    return !IsVisible();
 }
 
 
@@ -412,25 +510,35 @@ void SCH_PIN::SetName( const wxString& aName )
     // pin name string does not support spaces
     m_name.Replace( wxT( " " ), wxT( "_" ) );
 
-    m_layoutCache->MarkDirty( PIN_LAYOUT_CACHE::DIRTY_FLAGS::NAME );
+    if( m_layoutCache )
+        m_layoutCache->MarkDirty( PIN_LAYOUT_CACHE::DIRTY_FLAGS::NAME );
 }
 
 
 void SCH_PIN::SetAlt( const wxString& aAlt )
 {
-    wxString alt = aAlt;
-
     // Do not set the alternate pin definition to the default pin name.  This breaks the library
     // symbol comparison for the ERC and the library diff tool.  It also incorrectly causes the
     // schematic symbol pin alternate to be set.
-    if( aAlt.IsEmpty() || ( alt == GetBaseName() ) )
+    if( aAlt.IsEmpty() || aAlt == GetBaseName() )
     {
         m_alt = wxEmptyString;
         return;
     }
 
-    wxCHECK2_MSG( m_libPin && m_libPin->GetAlternates().count( aAlt ), alt = wxEmptyString,
-                  wxString::Format( wxS( "Pin '%s' does not have an alterate '%s'" ), m_number, aAlt ) );
+    if( !m_libPin )
+    {
+        wxFAIL_MSG( wxString::Format( wxS( "Pin '%s' has no corresponding lib_pin" ), m_number ) );
+        m_alt = wxEmptyString;
+        return;
+    }
+
+    if( !m_libPin->GetAlternates().contains( aAlt ) )
+    {
+        wxFAIL_MSG( wxString::Format( wxS( "Pin '%s' has no alterate '%s'" ), m_number, aAlt ) );
+        m_alt = wxEmptyString;
+        return;
+    }
 
     m_alt = aAlt;
 }
@@ -452,15 +560,24 @@ void SCH_PIN::SetIsDangling( bool aIsDangling )
 
 bool SCH_PIN::IsStacked( const SCH_PIN* aPin ) const
 {
-    bool isConnectableType_a = GetType() == ELECTRICAL_PINTYPE::PT_PASSIVE
-                            || GetType() == ELECTRICAL_PINTYPE::PT_NIC;
-    bool isConnectableType_b = aPin->GetType() == ELECTRICAL_PINTYPE::PT_PASSIVE
-                            || aPin->GetType() == ELECTRICAL_PINTYPE::PT_NIC;
+    const auto isPassiveOrNic = []( ELECTRICAL_PINTYPE t )
+    {
+        return t == ELECTRICAL_PINTYPE::PT_PASSIVE || t == ELECTRICAL_PINTYPE::PT_NIC;
+    };
 
-    return m_parent == aPin->GetParent()
-           && GetPosition() == aPin->GetPosition()
-           && GetName() == aPin->GetName()
-           && ( GetType() == aPin->GetType() || isConnectableType_a || isConnectableType_b );
+    const bool sameParent = m_parent == aPin->GetParent();
+    const bool samePos    = GetPosition() == aPin->GetPosition();
+    const bool sameName   = GetName() == aPin->GetName();
+    const bool typeCompat = GetType() == aPin->GetType()
+                             || isPassiveOrNic( GetType() )
+                             || isPassiveOrNic( aPin->GetType() );
+
+    wxLogTrace( traceStackedPins,
+                wxString::Format( "IsStacked: this='%s/%s' other='%s/%s' sameParent=%d samePos=%d sameName=%d typeCompat=%d",
+                                  GetName(), GetNumber(), aPin->GetName(), aPin->GetNumber(), sameParent,
+                                  samePos, sameName, typeCompat ) );
+
+    return sameParent && samePos && sameName && typeCompat;
 }
 
 
@@ -495,10 +612,18 @@ bool SCH_PIN::Replace( const EDA_SEARCH_DATA& aSearchData, void* aAuxData )
 {
     bool isReplaced = false;
 
-    /* TODO: waiting on a way to override pins in the schematic...
-    isReplaced |= EDA_ITEM::Replace( aSearchData, m_name );
-    isReplaced |= EDA_ITEM::Replace( aSearchData, m_number );
-     */
+    if( dynamic_cast<LIB_SYMBOL*>( GetParentSymbol() ) )
+    {
+        isReplaced |= EDA_ITEM::Replace( aSearchData, m_name );
+        isReplaced |= EDA_ITEM::Replace( aSearchData, m_number );
+    }
+    else
+    {
+        /* TODO: waiting on a way to override pins in the schematic...
+        isReplaced |= EDA_ITEM::Replace( aSearchData, m_name );
+        isReplaced |= EDA_ITEM::Replace( aSearchData, m_number );
+         */
+    }
 
     return isReplaced;
 }
@@ -534,7 +659,7 @@ bool SCH_PIN::HitTest( const BOX2I& aRect, bool aContained, int aAccuracy ) cons
 }
 
 
-wxString SCH_PIN::GetShownName() const
+const wxString& SCH_PIN::GetShownName() const
 {
     if( !m_alt.IsEmpty() )
         return m_alt;
@@ -545,9 +670,55 @@ wxString SCH_PIN::GetShownName() const
 }
 
 
-wxString SCH_PIN::GetShownNumber() const
+const wxString& SCH_PIN::GetShownNumber() const
 {
     return m_number;
+}
+
+
+std::vector<wxString> SCH_PIN::GetStackedPinNumbers( bool* aValid ) const
+{
+    const wxString& shown = GetShownNumber();
+    wxLogTrace( traceStackedPins, "GetStackedPinNumbers: shown='%s'", shown );
+
+    std::vector<wxString> numbers = ExpandStackedPinNotation( shown, aValid );
+
+    // Log the expansion for debugging
+    wxLogTrace( traceStackedPins, "Expanded '%s' to %zu pins", shown, numbers.size() );
+    for( const wxString& num : numbers )
+    {
+        wxLogTrace( traceStackedPins, wxString::Format( " -> '%s'", num ) );
+    }
+
+    return numbers;
+}
+
+
+int SCH_PIN::GetStackedPinCount( bool* aValid ) const
+{
+    const wxString& shown = GetShownNumber();
+    return CountStackedPinNotation( shown, aValid );
+}
+
+
+std::optional<wxString> SCH_PIN::GetSmallestLogicalNumber() const
+{
+    bool valid = false;
+    auto numbers = GetStackedPinNumbers( &valid );
+
+    if( valid && !numbers.empty() )
+        return numbers.front();    // Already in ascending order
+
+    return std::nullopt;
+}
+
+
+wxString SCH_PIN::GetEffectivePadNumber() const
+{
+    if( auto smallest = GetSmallestLogicalNumber() )
+        return *smallest;
+
+    return GetShownNumber();
 }
 
 
@@ -560,7 +731,8 @@ void SCH_PIN::SetNumber( const wxString& aNumber )
     // pin number string does not support spaces
     m_number.Replace( wxT( " " ), wxT( "_" ) );
 
-    m_layoutCache->MarkDirty( PIN_LAYOUT_CACHE::DIRTY_FLAGS::NUMBER );
+    if( m_layoutCache )
+        m_layoutCache->MarkDirty( PIN_LAYOUT_CACHE::DIRTY_FLAGS::NUMBER );
 }
 
 
@@ -584,7 +756,9 @@ void SCH_PIN::SetNameTextSize( int aSize )
         return;
 
     m_nameTextSize = aSize;
-    m_layoutCache->MarkDirty( PIN_LAYOUT_CACHE::DIRTY_FLAGS::NAME );
+
+    if( m_layoutCache )
+        m_layoutCache->MarkDirty( PIN_LAYOUT_CACHE::DIRTY_FLAGS::NAME );
 }
 
 
@@ -608,7 +782,9 @@ void SCH_PIN::SetNumberTextSize( int aSize )
         return;
 
     m_numTextSize = aSize;
-    m_layoutCache->MarkDirty( PIN_LAYOUT_CACHE::DIRTY_FLAGS::NUMBER );
+
+    if( m_layoutCache )
+        m_layoutCache->MarkDirty( PIN_LAYOUT_CACHE::DIRTY_FLAGS::NUMBER );
 }
 
 
@@ -647,6 +823,9 @@ void SCH_PIN::PlotPinType( PLOTTER *aPlotter, const VECTOR2I &aPosition,
 
     if( bg == COLOR4D::UNSPECIFIED || !aPlotter->GetColorMode() )
         bg = COLOR4D::WHITE;
+
+    if( color.m_text && Schematic() )
+        color = COLOR4D( ResolveText( *color.m_text, &Schematic()->CurrentSheet() ) );
 
     if( aDimmed )
     {
@@ -708,6 +887,7 @@ void SCH_PIN::PlotPinType( PLOTTER *aPlotter, const VECTOR2I &aPosition,
             || m_shape == GRAPHIC_PINSHAPE::CLOCK_LOW )
     {
         const int deco_size = internalPinDecoSize( aPlotter->RenderSettings(), *this );
+
         if( MapY1 == 0 ) /* MapX1 = +- 1 */
         {
             aPlotter->MoveTo( VECTOR2I( x1, y1 + deco_size ) );
@@ -769,7 +949,7 @@ void SCH_PIN::PlotPinType( PLOTTER *aPlotter, const VECTOR2I &aPosition,
                                       y1 + ( MapY1 + MapX1 ) * deco_size ) );
     }
 
-    if( m_type == ELECTRICAL_PINTYPE::PT_NC ) // Draw a N.C. symbol
+    if( GetType() == ELECTRICAL_PINTYPE::PT_NC ) // Draw a N.C. symbol
     {
         const int deco_size = TARGET_PIN_RADIUS;
         const int ex1 = aPosition.x;
@@ -783,13 +963,19 @@ void SCH_PIN::PlotPinType( PLOTTER *aPlotter, const VECTOR2I &aPosition,
 
 
 void SCH_PIN::PlotPinTexts( PLOTTER *aPlotter, const VECTOR2I &aPinPos, PIN_ORIENTATION aPinOrient,
-                            int aTextInside, bool aDrawPinNum, bool aDrawPinName,
-                            bool aDimmed ) const
+                            int aTextInside, bool aDrawPinNum, bool aDrawPinName, bool aDimmed ) const
 {
     RENDER_SETTINGS* settings = aPlotter->RenderSettings();
     KIFONT::FONT*    font = KIFONT::FONT::GetFont( settings->GetDefaultFont(), false, false );
     wxString         name = GetShownName();
     wxString         number = GetShownNumber();
+
+    // Apply stacked pin display formatting (reuse helper from pin_layout_cache)
+    if( aDrawPinNum && !number.IsEmpty() )
+    {
+        const KIFONT::METRICS& metrics = GetFontMetrics();
+        number = FormatStackedPinForDisplay( number, GetLength(), GetNumberTextSize(), font, metrics );
+    }
 
     if( name.IsEmpty() || m_nameTextSize == 0 )
         aDrawPinName = false;
@@ -805,7 +991,6 @@ void SCH_PIN::PlotPinTexts( PLOTTER *aPlotter, const VECTOR2I &aPinPos, PIN_ORIE
     int name_offset = schIUScale.MilsToIU( PIN_TEXT_MARGIN ) + namePenWidth;
     int num_offset  = schIUScale.MilsToIU( PIN_TEXT_MARGIN ) + numPenWidth;
 
-    /* Get the num and name colors */
     COLOR4D nameColor = settings->GetLayerColor( LAYER_PINNAM );
     COLOR4D numColor  = settings->GetLayerColor( LAYER_PINNUM );
     COLOR4D bg = settings->GetBackgroundColor();
@@ -813,10 +998,16 @@ void SCH_PIN::PlotPinTexts( PLOTTER *aPlotter, const VECTOR2I &aPinPos, PIN_ORIE
     if( bg == COLOR4D::UNSPECIFIED || !aPlotter->GetColorMode() )
         bg = COLOR4D::WHITE;
 
+    if( nameColor.m_text && Schematic() )
+        nameColor = COLOR4D( ResolveText( *nameColor.m_text, &Schematic()->CurrentSheet() ) );
+
+    if( numColor.m_text && Schematic() )
+        numColor = COLOR4D( ResolveText( *numColor.m_text, &Schematic()->CurrentSheet() ) );
+
     if( aDimmed )
     {
-        nameColor.Desaturate( );
-        numColor.Desaturate( );
+        nameColor.Desaturate();
+        numColor.Desaturate();
         nameColor = nameColor.Mix( bg, 0.5f );
         numColor = numColor.Mix( bg, 0.5f );
     }
@@ -826,148 +1017,262 @@ void SCH_PIN::PlotPinTexts( PLOTTER *aPlotter, const VECTOR2I &aPinPos, PIN_ORIE
 
     switch( aPinOrient )
     {
-    case PIN_ORIENTATION::PIN_UP:    y1 -= GetLength();                                   break;
-    case PIN_ORIENTATION::PIN_DOWN:  y1 += GetLength();                                   break;
-    case PIN_ORIENTATION::PIN_LEFT:  x1 -= GetLength();                                   break;
-    case PIN_ORIENTATION::PIN_RIGHT: x1 += GetLength();                                   break;
-    case PIN_ORIENTATION::INHERIT:   wxFAIL_MSG( wxS( "aPinOrient must be resolved!" ) ); break;
+    case PIN_ORIENTATION::PIN_UP:    y1 -= GetLength(); break;
+    case PIN_ORIENTATION::PIN_DOWN:  y1 += GetLength(); break;
+    case PIN_ORIENTATION::PIN_LEFT:  x1 -= GetLength(); break;
+    case PIN_ORIENTATION::PIN_RIGHT: x1 += GetLength(); break;
+    default: break;
     }
 
-    auto plotName =
-            [&]( int x, int y, const EDA_ANGLE& angle, GR_TEXT_H_ALIGN_T hJustify,
-                 GR_TEXT_V_ALIGN_T vJustify )
+    auto plotSimpleText =
+            [&]( int x, int y, const EDA_ANGLE& angle, GR_TEXT_H_ALIGN_T hJustify, GR_TEXT_V_ALIGN_T vJustify,
+                 const wxString& txt, int size, int penWidth, const COLOR4D& col )
             {
                 TEXT_ATTRIBUTES attrs;
-                attrs.m_StrokeWidth = namePenWidth;
+                attrs.m_StrokeWidth = penWidth;
                 attrs.m_Angle = angle;
-                attrs.m_Size = VECTOR2I( GetNameTextSize(), GetNameTextSize() );
+                attrs.m_Size = VECTOR2I( size, size );
                 attrs.m_Halign = hJustify;
                 attrs.m_Valign = vJustify;
-                attrs.m_Multiline = false;
-
-                aPlotter->PlotText( VECTOR2I( x, y ), nameColor, name, attrs, font,
-                                    GetFontMetrics() );
+                attrs.m_Multiline = false; // we'll manage multi-line manually
+                aPlotter->PlotText( VECTOR2I( x, y ), col, txt, attrs, font, GetFontMetrics() );
             };
 
-    auto plotNum =
-            [&]( int x, int y, const EDA_ANGLE& angle, GR_TEXT_H_ALIGN_T hJustify,
-                 GR_TEXT_V_ALIGN_T vJustify )
+    auto plotMultiLineWithBraces =
+            [&]( int anchorX, int anchorY, EDA_ANGLE angle, GR_TEXT_V_ALIGN_T vAlign, bool /*numberBlock*/ )
             {
-                TEXT_ATTRIBUTES attrs;
-                attrs.m_StrokeWidth = numPenWidth;
-                attrs.m_Angle = angle;
-                attrs.m_Size = VECTOR2I( GetNumberTextSize(), GetNumberTextSize() );
-                attrs.m_Halign = hJustify;
-                attrs.m_Valign = vJustify;
-                attrs.m_Multiline = false;
+                // If not multi-line formatted, just plot single line centered.
+                if( !number.StartsWith( "[" ) || !number.EndsWith( "]" ) || !number.Contains( "\n" ) )
+                {
+                    plotSimpleText( anchorX, anchorY, angle, GR_TEXT_H_ALIGN_CENTER, vAlign, number,
+                                    GetNumberTextSize(), numPenWidth, numColor );
+                    return;
+                }
 
-                aPlotter->PlotText( VECTOR2I( x, y ), numColor, number, attrs, font,
-                                    GetFontMetrics() );
+                wxString content = number.Mid( 1, number.Length() - 2 );
+                wxArrayString lines;
+                wxStringSplit( content, lines, '\n' );
+
+                if( lines.size() <= 1 )
+                {
+                    plotSimpleText( anchorX, anchorY, angle, GR_TEXT_H_ALIGN_CENTER, vAlign, content,
+                                    GetNumberTextSize(), numPenWidth, numColor );
+                    return;
+                }
+
+                int textSize = GetNumberTextSize();
+                int lineSpacing = KiROUND( textSize * 1.3 );
+                const KIFONT::METRICS& metrics = GetFontMetrics();
+
+                // Measure line widths for brace spacing
+                int maxLineWidth = 0;
+                for( const wxString& rawLine : lines )
+                {
+                    wxString trimmed = rawLine; trimmed.Trim(true).Trim(false);
+                    VECTOR2I ext = font->StringBoundaryLimits( trimmed, VECTOR2D( textSize, textSize ),
+                                                               GetPenSizeForNormal( textSize ), false, false, metrics );
+                    if( ext.x > maxLineWidth )
+                        maxLineWidth = ext.x;
+                }
+
+                // Determine starting position
+                int startX = anchorX;
+                int startY = anchorY;
+
+                if( angle == ANGLE_VERTICAL )
+                {
+                    int totalWidth = ( (int) lines.size() - 1 ) * lineSpacing;
+                    startX -= totalWidth;
+                }
+                else
+                {
+                    int totalHeight = ( (int) lines.size() - 1 ) * lineSpacing;
+                    startY -= totalHeight;
+                }
+
+                for( size_t i = 0; i < lines.size(); ++i )
+                {
+                    wxString l = lines[i]; l.Trim( true ).Trim( false );
+                    int lx = startX + ( angle == ANGLE_VERTICAL ? (int) i * lineSpacing : 0 );
+                    int ly = startY + ( angle == ANGLE_VERTICAL ? 0 : (int) i * lineSpacing );
+                    plotSimpleText( lx, ly, angle, GR_TEXT_H_ALIGN_CENTER, vAlign, l, textSize, numPenWidth, numColor );
+                }
+
+                // Now draw braces emulating SCH_PAINTER brace geometry
+                auto plotBrace =
+                        [&]( const VECTOR2I& top, const VECTOR2I& bottom, bool leftOrTop, bool isVerticalText )
+                        {
+                            // Build 4 small segments approximating curly brace
+                            VECTOR2I mid = ( top + bottom ) / 2;
+                            int braceWidth = textSize / 3; // same scale as painter
+                            VECTOR2I p1 = top;
+                            VECTOR2I p5 = bottom;
+                            VECTOR2I p2 = top;
+                            VECTOR2I p3 = mid;
+                            VECTOR2I p4 = bottom;
+                            int offset = leftOrTop ? -braceWidth : braceWidth;
+
+                            if( isVerticalText )
+                            {
+                                // Text vertical => brace extends in Y (horizontal brace lines across X axis set)
+                                // For vertical orientation we offset Y for p2/p3/p4
+                                p2.y += offset / 2;
+                                p3.y += offset;
+                                p4.y += offset / 2;
+                            }
+                            else
+                            {
+                                // Horizontal text => brace extends in X
+                                p2.x += offset / 2;
+                                p3.x += offset;
+                                p4.x += offset / 2;
+                            }
+
+                            aPlotter->MoveTo( p1 ); aPlotter->FinishTo( p2 );
+                            aPlotter->MoveTo( p2 ); aPlotter->FinishTo( p3 );
+                            aPlotter->MoveTo( p3 ); aPlotter->FinishTo( p4 );
+                            aPlotter->MoveTo( p4 ); aPlotter->FinishTo( p5 );
+                        };
+
+                aPlotter->SetCurrentLineWidth( numPenWidth );
+                int braceWidth = textSize / 3;
+                int extraHeight = textSize / 3; // extend beyond text block
+
+                if( angle == ANGLE_VERTICAL )
+                {
+                    // Lines spaced horizontally, braces horizontal (above & below)
+                    int totalWidth = ( (int) lines.size() - 1 ) * lineSpacing;
+                    VECTOR2I braceStart( startX - 2 * extraHeight, anchorY );
+                    VECTOR2I braceEnd( startX + totalWidth + extraHeight, anchorY );
+                    int braceSpacing = maxLineWidth / 2 + braceWidth;
+
+                    VECTOR2I topStart = braceStart;     topStart.y -= braceSpacing;
+                    VECTOR2I topEnd   = braceEnd;       topEnd.y   -= braceSpacing;
+                    VECTOR2I bottomStart = braceStart;  bottomStart.y += braceSpacing;
+                    VECTOR2I bottomEnd   = braceEnd;    bottomEnd.y   += braceSpacing;
+
+                    plotBrace( topStart, topEnd, true,  true );  // leftOrTop=true
+                    plotBrace( bottomStart, bottomEnd, false, true );
+                }
+                else
+                {
+                    // Lines spaced vertically, braces vertical (left & right)
+                    int totalHeight = ( (int) lines.size() - 1 ) * lineSpacing;
+                    VECTOR2I braceStart( anchorX, startY - 2 * extraHeight );
+                    VECTOR2I braceEnd( anchorX, startY + totalHeight + extraHeight );
+                    int braceSpacing = maxLineWidth / 2 + braceWidth;
+
+                    VECTOR2I leftTop = braceStart;   leftTop.x  -= braceSpacing;
+                    VECTOR2I leftBot = braceEnd;     leftBot.x  -= braceSpacing;
+                    VECTOR2I rightTop = braceStart;  rightTop.x += braceSpacing;
+                    VECTOR2I rightBot = braceEnd;    rightBot.x += braceSpacing;
+
+                    plotBrace( leftTop, leftBot, true,  false );
+                    plotBrace( rightTop, rightBot, false, false );
+                }
             };
 
-    // Draw the text inside, but the pin numbers outside.
+    // Logic largely mirrors original single-line placement but calls multi-line path for numbers
     if( aTextInside )
     {
-        if( ( aPinOrient == PIN_ORIENTATION::PIN_LEFT )
-          || ( aPinOrient == PIN_ORIENTATION::PIN_RIGHT ) ) // It's a horizontal line.
+        if( ( aPinOrient == PIN_ORIENTATION::PIN_LEFT ) || ( aPinOrient == PIN_ORIENTATION::PIN_RIGHT ) )
         {
             if( aDrawPinName )
             {
                 if( aPinOrient == PIN_ORIENTATION::PIN_RIGHT )
                 {
-                    plotName( x1 + aTextInside, y1, ANGLE_HORIZONTAL,
-                              GR_TEXT_H_ALIGN_LEFT, GR_TEXT_V_ALIGN_CENTER );
+                    plotSimpleText( x1 + aTextInside, y1, ANGLE_HORIZONTAL, GR_TEXT_H_ALIGN_LEFT,
+                                    GR_TEXT_V_ALIGN_CENTER, name, GetNameTextSize(), namePenWidth, nameColor );
                 }
-                else    // orient == PIN_LEFT
+                else
                 {
-                    plotName( x1 - aTextInside, y1, ANGLE_HORIZONTAL,
-                              GR_TEXT_H_ALIGN_RIGHT, GR_TEXT_V_ALIGN_CENTER );
+                    plotSimpleText( x1 - aTextInside, y1, ANGLE_HORIZONTAL, GR_TEXT_H_ALIGN_RIGHT,
+                                    GR_TEXT_V_ALIGN_CENTER, name, GetNameTextSize(), namePenWidth, nameColor );
                 }
             }
 
             if( aDrawPinNum )
             {
-                plotNum( ( x1 + aPinPos.x) / 2, y1 - num_offset, ANGLE_HORIZONTAL,
-                         GR_TEXT_H_ALIGN_CENTER, GR_TEXT_V_ALIGN_BOTTOM );
+                plotMultiLineWithBraces( ( x1 + aPinPos.x ) / 2, y1 - num_offset, ANGLE_HORIZONTAL,
+                                         GR_TEXT_V_ALIGN_BOTTOM, true );
             }
         }
-        else         // It's a vertical line.
+        else
         {
             if( aPinOrient == PIN_ORIENTATION::PIN_DOWN )
             {
                 if( aDrawPinName )
                 {
-                    plotName( x1, y1 + aTextInside, ANGLE_VERTICAL,
-                              GR_TEXT_H_ALIGN_RIGHT, GR_TEXT_V_ALIGN_CENTER );
+                    plotSimpleText( x1, y1 + aTextInside, ANGLE_VERTICAL, GR_TEXT_H_ALIGN_RIGHT,
+                                    GR_TEXT_V_ALIGN_CENTER, name, GetNameTextSize(), namePenWidth, nameColor );
                 }
 
                 if( aDrawPinNum )
                 {
-                    plotNum( x1 - num_offset, ( y1 + aPinPos.y) / 2, ANGLE_VERTICAL,
-                             GR_TEXT_H_ALIGN_CENTER, GR_TEXT_V_ALIGN_BOTTOM );
+                    plotMultiLineWithBraces( x1 - num_offset, ( y1 + aPinPos.y ) / 2, ANGLE_VERTICAL,
+                                             GR_TEXT_V_ALIGN_BOTTOM, true );
                 }
             }
-            else        /* PIN_UP */
+            else // PIN_UP
             {
                 if( aDrawPinName )
                 {
-                    plotName( x1, y1 - aTextInside, ANGLE_VERTICAL,
-                              GR_TEXT_H_ALIGN_LEFT, GR_TEXT_V_ALIGN_CENTER );
+                    plotSimpleText( x1, y1 - aTextInside, ANGLE_VERTICAL, GR_TEXT_H_ALIGN_LEFT,
+                                    GR_TEXT_V_ALIGN_CENTER, name, GetNameTextSize(), namePenWidth, nameColor );
                 }
 
                 if( aDrawPinNum )
                 {
-                    plotNum( x1 - num_offset, ( y1 + aPinPos.y) / 2, ANGLE_VERTICAL,
-                             GR_TEXT_H_ALIGN_CENTER, GR_TEXT_V_ALIGN_BOTTOM );
+                    plotMultiLineWithBraces( x1 - num_offset, ( y1 + aPinPos.y ) / 2, ANGLE_VERTICAL,
+                                             GR_TEXT_V_ALIGN_BOTTOM, true );
                 }
             }
         }
     }
-    else     // Draw num & text pin outside.
+    else
     {
-        if( ( aPinOrient == PIN_ORIENTATION::PIN_LEFT )
-            || ( aPinOrient == PIN_ORIENTATION::PIN_RIGHT ) )
+        if( ( aPinOrient == PIN_ORIENTATION::PIN_LEFT ) || ( aPinOrient == PIN_ORIENTATION::PIN_RIGHT ) )
         {
-            // It's an horizontal line.
             if( aDrawPinName && aDrawPinNum )
             {
-                plotName( ( x1 + aPinPos.x) / 2, y1 - name_offset, ANGLE_HORIZONTAL,
-                          GR_TEXT_H_ALIGN_CENTER, GR_TEXT_V_ALIGN_BOTTOM );
-
-                plotNum( ( x1 + aPinPos.x) / 2, y1 + num_offset, ANGLE_HORIZONTAL,
-                          GR_TEXT_H_ALIGN_CENTER, GR_TEXT_V_ALIGN_TOP );
+                plotSimpleText( ( x1 + aPinPos.x ) / 2, y1 - name_offset, ANGLE_HORIZONTAL,
+                                GR_TEXT_H_ALIGN_CENTER, GR_TEXT_V_ALIGN_BOTTOM, name,
+                                GetNameTextSize(), namePenWidth, nameColor );
+                plotMultiLineWithBraces( ( x1 + aPinPos.x ) / 2, y1 + num_offset, ANGLE_HORIZONTAL,
+                                         GR_TEXT_V_ALIGN_TOP, true );
             }
             else if( aDrawPinName )
             {
-                plotName( ( x1 + aPinPos.x) / 2, y1 - name_offset, ANGLE_HORIZONTAL,
-                          GR_TEXT_H_ALIGN_CENTER, GR_TEXT_V_ALIGN_BOTTOM );
+                plotSimpleText( ( x1 + aPinPos.x ) / 2, y1 - name_offset, ANGLE_HORIZONTAL,
+                                GR_TEXT_H_ALIGN_CENTER, GR_TEXT_V_ALIGN_BOTTOM, name,
+                                GetNameTextSize(), namePenWidth, nameColor );
             }
             else if( aDrawPinNum )
             {
-                plotNum( ( x1 + aPinPos.x) / 2, y1 - name_offset, ANGLE_HORIZONTAL,
-                          GR_TEXT_H_ALIGN_CENTER, GR_TEXT_V_ALIGN_BOTTOM );
+                plotMultiLineWithBraces( ( x1 + aPinPos.x ) / 2, y1 - name_offset, ANGLE_HORIZONTAL,
+                                         GR_TEXT_V_ALIGN_BOTTOM, true );
             }
         }
         else
         {
-            // Its a vertical line.
             if( aDrawPinName && aDrawPinNum )
             {
-                plotName( x1 - name_offset, ( y1 + aPinPos.y ) / 2, ANGLE_VERTICAL,
-                          GR_TEXT_H_ALIGN_CENTER, GR_TEXT_V_ALIGN_BOTTOM );
-
-                plotNum( x1 + num_offset, ( y1 + aPinPos.y ) / 2, ANGLE_VERTICAL,
-                          GR_TEXT_H_ALIGN_CENTER, GR_TEXT_V_ALIGN_TOP );
+                plotSimpleText( x1 - name_offset, ( y1 + aPinPos.y ) / 2, ANGLE_VERTICAL,
+                                GR_TEXT_H_ALIGN_CENTER, GR_TEXT_V_ALIGN_BOTTOM, name,
+                                GetNameTextSize(), namePenWidth, nameColor );
+                plotMultiLineWithBraces( x1 + num_offset, ( y1 + aPinPos.y ) / 2, ANGLE_VERTICAL,
+                                         GR_TEXT_V_ALIGN_TOP, true );
             }
             else if( aDrawPinName )
             {
-                plotName( x1 - name_offset, ( y1 + aPinPos.y ) / 2, ANGLE_VERTICAL,
-                          GR_TEXT_H_ALIGN_CENTER, GR_TEXT_V_ALIGN_BOTTOM );
+                plotSimpleText( x1 - name_offset, ( y1 + aPinPos.y ) / 2, ANGLE_VERTICAL,
+                                GR_TEXT_H_ALIGN_CENTER, GR_TEXT_V_ALIGN_BOTTOM, name,
+                                GetNameTextSize(), namePenWidth, nameColor );
             }
             else if( aDrawPinNum )
             {
-                plotNum( x1 - num_offset, ( y1 + aPinPos.y ) / 2, ANGLE_VERTICAL,
-                          GR_TEXT_H_ALIGN_CENTER, GR_TEXT_V_ALIGN_BOTTOM );
+                plotMultiLineWithBraces( x1 - num_offset, ( y1 + aPinPos.y ) / 2, ANGLE_VERTICAL,
+                                         GR_TEXT_V_ALIGN_BOTTOM, true );
             }
         }
     }
@@ -1024,7 +1329,7 @@ void SCH_PIN::ChangeLength( int aLength )
     int offsetX = 0;
     int offsetY = 0;
 
-    switch( m_orientation )
+    switch( GetOrientation() )
     {
     default:
     case PIN_ORIENTATION::PIN_RIGHT:
@@ -1153,31 +1458,11 @@ void SCH_PIN::Plot( PLOTTER* aPlotter, bool aBackground, const SCH_PLOT_OPTS& aP
 
 void SCH_PIN::GetMsgPanelInfo( EDA_DRAW_FRAME* aFrame, std::vector<MSG_PANEL_ITEM>& aList )
 {
-    wxString msg;
     SYMBOL*  symbol = GetParentSymbol();
 
-    if( dynamic_cast<LIB_SYMBOL*>( symbol ) )
-    {
-        getSymbolEditorMsgPanelInfo( aFrame, aList );
-    }
-    else
-    {
-        aList.emplace_back( _( "Type" ), _( "Pin" ) );
+    aList.emplace_back( _( "Type" ), _( "Pin" ) );
 
-        if( symbol->GetUnitCount() )
-        {
-            msg = m_libPin ? GetUnitDescription( m_libPin->GetUnit() ) :
-                             wxString( "Undefined library pin." );
-            aList.emplace_back( _( "Unit" ), msg );
-        }
-
-        if( symbol->HasAlternateBodyStyle() )
-        {
-            msg = m_libPin ? GetBodyStyleDescription( m_libPin->GetBodyStyle() ) :
-                             wxString( "Undefined library pin." );
-            aList.emplace_back( _( "Body Style" ), msg );
-        }
-    }
+    SCH_ITEM::GetMsgPanelInfo( aFrame, aList );
 
     aList.emplace_back( _( "Name" ), UnescapeString( GetShownName() ) );
     aList.emplace_back( _( "Number" ), GetShownNumber() );
@@ -1237,9 +1522,9 @@ wxString SCH_PIN::GetDefaultNetName( const SCH_SHEET_PATH& aPath, bool aForceNoC
     // with legacy global power pins on non-power symbols
     if( IsGlobalPower() || IsLocalPower() )
     {
-        SYMBOL* parent = GetLibPin()->GetParentSymbol();
+        SYMBOL* parent = GetLibPin() ? GetLibPin()->GetParentSymbol() : nullptr;
 
-        if( parent->IsGlobalPower() || parent->IsLocalPower() )
+        if( parent && ( parent->IsGlobalPower() || parent->IsLocalPower() ) )
         {
             return EscapeString( symbol->GetValue( true, &aPath, false ), CTX_NETNAME );
         }
@@ -1272,10 +1557,10 @@ wxString SCH_PIN::GetDefaultNetName( const SCH_SHEET_PATH& aPath, bool aForceNoC
 
     bool annotated = true;
 
-    std::vector<SCH_PIN*> pins = symbol->GetPins( &aPath );
+    std::vector<const SCH_PIN*> pins = symbol->GetPins( &aPath );
     bool has_multiple = false;
 
-    for( SCH_PIN* pin : pins )
+    for( const SCH_PIN* pin : pins )
     {
         if( pin->GetShownName() == GetShownName()
                 && pin->GetShownNumber() != GetShownNumber()
@@ -1286,8 +1571,16 @@ wxString SCH_PIN::GetDefaultNetName( const SCH_SHEET_PATH& aPath, bool aForceNoC
         }
     }
 
-    wxString libPinShownName = m_libPin ? m_libPin->GetShownName() : wxString( "??" );
+    wxString libPinShownName   = m_libPin ? m_libPin->GetShownName()   : wxString( "??" );
     wxString libPinShownNumber = m_libPin ? m_libPin->GetShownNumber() : wxString( "??" );
+    wxString effectivePadNumber = m_libPin ? m_libPin->GetEffectivePadNumber() : libPinShownNumber;
+
+    if( effectivePadNumber != libPinShownNumber )
+    {
+        wxLogTrace( traceStackedPins,
+                    wxString::Format( "GetDefaultNetName: stacked pin shown='%s' -> using smallest logical='%s'",
+                                      libPinShownNumber, effectivePadNumber ) );
+    }
 
     // Use timestamp for unannotated symbols
     if( symbol->GetRef( &aPath, false ).Last() == '?' )
@@ -1295,6 +1588,10 @@ wxString SCH_PIN::GetDefaultNetName( const SCH_SHEET_PATH& aPath, bool aForceNoC
         name << GetParentSymbol()->m_Uuid.AsString();
 
         wxString libPinNumber = m_libPin ? m_libPin->GetNumber() : wxString( "??" );
+        // Apply same smallest-logical substitution for unannotated symbols
+        if( effectivePadNumber != libPinShownNumber && !effectivePadNumber.IsEmpty() )
+            libPinNumber = effectivePadNumber;
+
         name << "-Pad" << libPinNumber << ")";
         annotated = false;
     }
@@ -1306,7 +1603,10 @@ wxString SCH_PIN::GetDefaultNetName( const SCH_SHEET_PATH& aPath, bool aForceNoC
         name << "-" << EscapeString( libPinShownName, CTX_NETNAME );
 
         if( unconnected || has_multiple )
-            name << "-Pad" << EscapeString( libPinShownNumber, CTX_NETNAME );
+        {
+            // Use effective (possibly de-stacked) pad number in net name
+            name << "-Pad" << EscapeString( effectivePadNumber, CTX_NETNAME );
+        }
 
         name << ")";
     }
@@ -1314,7 +1614,7 @@ wxString SCH_PIN::GetDefaultNetName( const SCH_SHEET_PATH& aPath, bool aForceNoC
     {
         // Pin numbers are unique, so we skip the unit token
         name << symbol->GetRef( &aPath, false );
-        name << "-Pad" << EscapeString( libPinShownNumber, CTX_NETNAME ) << ")";
+        name << "-Pad" << EscapeString( effectivePadNumber, CTX_NETNAME ) << ")";
     }
 
     if( annotated )
@@ -1362,8 +1662,18 @@ BOX2I SCH_PIN::GetBoundingBox( bool aIncludeLabelsOnInvisiblePins, bool aInclude
                                bool aIncludeElectricalType ) const
 {
     // Just defer to the cache
-    return m_layoutCache->GetPinBoundingBox( aIncludeLabelsOnInvisiblePins, aIncludeNameAndNumber,
-                                             aIncludeElectricalType );
+    return GetLayoutCache().GetPinBoundingBox( aIncludeLabelsOnInvisiblePins,
+                                               aIncludeNameAndNumber,
+                                               aIncludeElectricalType );
+}
+
+
+PIN_LAYOUT_CACHE& SCH_PIN::GetLayoutCache() const
+{
+    if( !m_layoutCache )
+        m_layoutCache = std::make_unique<PIN_LAYOUT_CACHE>( *this );
+
+    return *m_layoutCache;
 }
 
 
@@ -1385,17 +1695,37 @@ bool SCH_PIN::HasConnectivityChanges( const SCH_ITEM* aItem,
     if( GetNumber() != pin->GetNumber() )
         return true;
 
-    return GetName() != pin->GetName();
+    if( GetName() != pin->GetName() )
+        return true;
+
+    // For power input pins, visibility changes affect IsGlobalPower() which changes
+    // connectivity semantics. Hidden power pins create implicit global net connections.
+    // Also check if a pin changed type to/from PT_POWER_IN.
+    if( GetType() == ELECTRICAL_PINTYPE::PT_POWER_IN || pin->GetType() == ELECTRICAL_PINTYPE::PT_POWER_IN )
+    {
+        if( IsVisible() != pin->IsVisible() || GetType() != pin->GetType() )
+            return true;
+    }
+
+    return false;
 }
 
 
 bool SCH_PIN::ConnectionPropagatesTo( const EDA_ITEM* aItem ) const
 {
-    if( !m_libPin )
-        return false;
+    return GetType() != ELECTRICAL_PINTYPE::PT_NC;
+}
 
-    // Reciprocal checking is done in CONNECTION_GRAPH anyway
-    return m_libPin->GetType() != ELECTRICAL_PINTYPE::PT_NC;
+
+bool SCH_PIN::IsLocked() const
+{
+    if( const SYMBOL* parentSymbol = GetParentSymbol() )
+    {
+        if( parentSymbol->IsLocked() )
+            return true;
+    }
+
+    return SCH_ITEM::IsLocked();
 }
 
 
@@ -1488,8 +1818,10 @@ wxString SCH_PIN::getItemDescription( ALT* aAlt ) const
 
 int SCH_PIN::compare( const SCH_ITEM& aOther, int aCompareFlags ) const
 {
-    // Ignore the UUID here.
-    int retv = SCH_ITEM::compare( aOther, aCompareFlags | SCH_ITEM::COMPARE_FLAGS::EQUALITY );
+    // Ignore the UUID here
+    // And the position, which we'll do after the number.
+    int retv = SCH_ITEM::compare( aOther, aCompareFlags | SCH_ITEM::COMPARE_FLAGS::EQUALITY
+                                                  | SCH_ITEM::COMPARE_FLAGS::SKIP_TST_POS );
 
     if( retv )
         return retv;
@@ -1499,7 +1831,10 @@ int SCH_PIN::compare( const SCH_ITEM& aOther, int aCompareFlags ) const
     wxCHECK( tmp, -1 );
 
     if( m_number != tmp->m_number )
-        return m_number.Cmp( tmp->m_number );
+    {
+        // StrNumCmp: sort the same as the pads in the footprint file
+        return StrNumCmp( m_number, tmp->m_number );
+    }
 
     if( m_position.x != tmp->m_position.x )
         return m_position.x - tmp->m_position.x;
@@ -1714,10 +2049,10 @@ static struct SCH_PIN_DESC
 
         if( orientationEnum.Choices().GetCount() == 0 )
         {
-            orientationEnum.Map( PIN_ORIENTATION::PIN_RIGHT, _( "Right" ) )
-                           .Map( PIN_ORIENTATION::PIN_LEFT,  _( "Left" ) )
-                           .Map( PIN_ORIENTATION::PIN_UP,    _( "Up" ) )
-                           .Map( PIN_ORIENTATION::PIN_DOWN,  _( "Down" ) );
+            orientationEnum.Map( PIN_ORIENTATION::PIN_RIGHT, _HKI( "Right" ) )
+                           .Map( PIN_ORIENTATION::PIN_LEFT,  _HKI( "Left" ) )
+                           .Map( PIN_ORIENTATION::PIN_UP,    _HKI( "Up" ) )
+                           .Map( PIN_ORIENTATION::PIN_DOWN,  _HKI( "Down" ) );
         }
 
         auto isSymbolEditor =
@@ -1734,6 +2069,9 @@ static struct SCH_PIN_DESC
         propMgr.AddTypeCast( new TYPE_CAST<SCH_PIN, SCH_ITEM> );
         propMgr.InheritsAfter( TYPE_HASH( SCH_PIN ), TYPE_HASH( SCH_ITEM ) );
 
+        // Lock state is inherited from parent symbol (no independent locking of child items)
+        propMgr.Mask( TYPE_HASH( SCH_PIN ), TYPE_HASH( SCH_ITEM ), _HKI( "Locked" ) );
+
         propMgr.AddProperty( new PROPERTY<SCH_PIN, wxString>( _HKI( "Pin Name" ),
                     &SCH_PIN::SetName, &SCH_PIN::GetName ) )
                 .SetWriteableFunc( isSymbolEditor );
@@ -1742,13 +2080,11 @@ static struct SCH_PIN_DESC
                     &SCH_PIN::SetNumber, &SCH_PIN::GetNumber ) )
                 .SetWriteableFunc( isSymbolEditor );
 
-        propMgr.AddProperty( new PROPERTY_ENUM<SCH_PIN, ELECTRICAL_PINTYPE>(
-                    _HKI( "Electrical Type" ),
+        propMgr.AddProperty( new PROPERTY_ENUM<SCH_PIN, ELECTRICAL_PINTYPE>( _HKI( "Electrical Type" ),
                     &SCH_PIN::SetType, &SCH_PIN::GetType ) )
                 .SetWriteableFunc( isSymbolEditor );
 
-        propMgr.AddProperty( new PROPERTY_ENUM<SCH_PIN, GRAPHIC_PINSHAPE>(
-                    _HKI( "Graphic Style" ),
+        propMgr.AddProperty( new PROPERTY_ENUM<SCH_PIN, GRAPHIC_PINSHAPE>( _HKI( "Graphic Style" ),
                     &SCH_PIN::SetShape, &SCH_PIN::GetShape ) )
                 .SetWriteableFunc( isSymbolEditor );
 

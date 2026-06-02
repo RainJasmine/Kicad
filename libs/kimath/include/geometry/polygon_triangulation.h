@@ -47,8 +47,10 @@
 #define __POLYGON_TRIANGULATION_H
 
 #include <algorithm>
+#include <array>
 #include <deque>
 #include <cmath>
+#include <vector>
 
 #include <advanced_config.h>
 #include <geometry/shape_line_chain.h>
@@ -79,6 +81,88 @@ public:
         m_vertices_original_size( 0 ), m_result( aResult )
     {};
 
+    /**
+     * Triangulate a polygon with holes by bridging holes directly into the
+     * outer ring's VERTEX linked list, avoiding the Fracture() intermediate step.
+     */
+    bool TesselatePolygon( const SHAPE_POLY_SET::POLYGON& aPolygon,
+                           SHAPE_POLY_SET::TRIANGULATED_POLYGON* aHintData )
+    {
+        if( aPolygon.empty() )
+            return true;
+
+        if( aPolygon.size() == 1 )
+            return TesselatePolygon( aPolygon[0], aHintData );
+
+        const SHAPE_LINE_CHAIN& outline = aPolygon[0];
+
+        m_bbox = outline.BBox();
+
+        for( size_t i = 1; i < aPolygon.size(); i++ )
+            m_bbox.Merge( aPolygon[i].BBox() );
+
+        m_result.Clear();
+
+        if( !m_bbox.GetWidth() || !m_bbox.GetHeight() )
+            return true;
+
+        for( const SHAPE_LINE_CHAIN& chain : aPolygon )
+        {
+            for( const VECTOR2I& pt : chain.CPoints() )
+                m_result.AddVertex( pt );
+        }
+
+        int baseIndex = 0;
+        VERTEX* outerRing = createRing( outline, baseIndex, true );
+        baseIndex += outline.PointCount();
+
+        if( !outerRing || outerRing->prev == outerRing->next )
+            return true;
+
+        std::vector<VERTEX*> holeRings;
+
+        for( size_t i = 1; i < aPolygon.size(); i++ )
+        {
+            VERTEX* holeRing = createRing( aPolygon[i], baseIndex, false );
+            baseIndex += aPolygon[i].PointCount();
+
+            // Reject rings collapsed below 3 vertices.  Match the outer-ring guard at
+            // line 119 so degenerate holes (single point or two-vertex sliver) cannot
+            // reach eliminateHoles().
+            if( holeRing && holeRing->prev != holeRing->next )
+                holeRings.push_back( holeRing );
+        }
+
+        m_vertices_original_size = m_vertices.size();
+
+        if( !holeRings.empty() )
+        {
+            outerRing = eliminateHoles( outerRing, holeRings );
+
+            if( !outerRing )
+            {
+                wxLogTrace( TRIANGULATE_TRACE, "Hole elimination failed" );
+                return false;
+            }
+        }
+
+        if( VERTEX* simplified = simplifyList( outerRing ) )
+            outerRing = simplified;
+
+        outerRing->updateList();
+
+        auto retval = earcutList( outerRing );
+
+        if( !retval )
+        {
+            wxLogTrace( TRIANGULATE_TRACE, "Tesselation with holes failed, logging remaining vertices" );
+            logRemaining();
+        }
+
+        m_vertices.clear();
+        return retval;
+    }
+
     bool TesselatePolygon( const SHAPE_LINE_CHAIN& aPoly,
                            SHAPE_POLY_SET::TRIANGULATED_POLYGON* aHintData )
     {
@@ -102,13 +186,19 @@ public:
         wxLogTrace( TRIANGULATE_TRACE, "Created list with %f area", firstVertex->area() );
 
         m_vertices_original_size = m_vertices.size();
+
+        if( VERTEX* simplified = simplifyList( firstVertex ) )
+            firstVertex = simplified;
+
         firstVertex->updateList();
 
         /**
-         * If we have a hint data, we can skip the tesselation process as long as the
-         * the hint source did not need to subdivide the polygon.
+         * If we have hint data, we can skip the tesselation process as long as the
+         * hint source did not need to subdivide the polygon.  Hint triangle indices
+         * refer to the original vertex list stored in m_result, not the simplified
+         * working ring used internally during triangulation.
         */
-        if( aHintData && aHintData->Vertices().size() == m_vertices.size() )
+        if( aHintData && aHintData->Vertices().size() == m_result.GetVertexCount() )
         {
             m_result.SetTriangles( aHintData->Triangles() );
             return true;
@@ -128,7 +218,227 @@ public:
         }
     }
 
+    std::vector<double> PartitionAreaFractionsForTesting( const SHAPE_LINE_CHAIN& aPoly,
+                                                          size_t aTargetLeaves ) const
+    {
+        std::vector<SHAPE_LINE_CHAIN> partitions = partitionPolygonBalanced( aPoly, aTargetLeaves );
+        std::vector<double>           fractions;
+        double                        totalArea = std::abs( aPoly.Area() );
+
+        if( totalArea <= 0.0 )
+            return fractions;
+
+        fractions.reserve( partitions.size() );
+
+        for( const SHAPE_LINE_CHAIN& part : partitions )
+            fractions.push_back( std::abs( part.Area() ) / totalArea );
+
+        return fractions;
+    }
 private:
+    friend struct POLYGON_TRIANGULATION_TEST_ACCESS;
+    friend class SHAPE_POLY_SET;
+
+    struct SCANLINE_HIT
+    {
+        int      edgeIndex;
+        VECTOR2I point;
+    };
+
+    bool collectScanlineHits( const SHAPE_LINE_CHAIN& aPoly, bool aVertical, int aCut,
+                              std::array<SCANLINE_HIT, 2>& aHits ) const
+    {
+        int count = 0;
+
+        for( int ii = 0; ii < aPoly.PointCount(); ++ii )
+        {
+            const VECTOR2I& a = aPoly.CPoint( ii );
+            const VECTOR2I& b = aPoly.CPoint( ( ii + 1 ) % aPoly.PointCount() );
+
+            if( aVertical )
+            {
+                if( a.x == b.x || aCut <= std::min( a.x, b.x ) || aCut >= std::max( a.x, b.x ) )
+                    continue;
+
+                if( count >= 2 )
+                    return false;
+
+                double t = static_cast<double>( aCut - a.x ) / static_cast<double>( b.x - a.x );
+                int    y = static_cast<int>( std::lround( a.y + t * ( b.y - a.y ) ) );
+                aHits[count++] = { ii, VECTOR2I( aCut, y ) };
+            }
+            else
+            {
+                if( a.y == b.y || aCut <= std::min( a.y, b.y ) || aCut >= std::max( a.y, b.y ) )
+                    continue;
+
+                if( count >= 2 )
+                    return false;
+
+                double t = static_cast<double>( aCut - a.y ) / static_cast<double>( b.y - a.y );
+                int    x = static_cast<int>( std::lround( a.x + t * ( b.x - a.x ) ) );
+                aHits[count++] = { ii, VECTOR2I( x, aCut ) };
+            }
+        }
+
+        return count == 2;
+    }
+
+    SHAPE_LINE_CHAIN createSplitChild( const SHAPE_LINE_CHAIN& aPoly, int aStart, int aEnd ) const
+    {
+        SHAPE_LINE_CHAIN child;
+        int              idx = aStart;
+        int              guard = 0;
+        const int        count = aPoly.PointCount();
+
+        do
+        {
+            child.Append( aPoly.CPoint( idx ) );
+            idx = ( idx + 1 ) % count;
+            ++guard;
+        } while( idx != ( aEnd + 1 ) % count && guard <= count + 2 );
+
+        child.SetClosed( true );
+        child.Simplify2( true );
+        return child;
+    }
+
+    bool splitPolygonAtCoordinate( const SHAPE_LINE_CHAIN& aPoly, bool aVertical, int aCut,
+                                   std::array<SHAPE_LINE_CHAIN, 2>& aChildren, double& aAreaA,
+                                   double& aAreaB ) const
+    {
+        std::array<SCANLINE_HIT, 2> hits;
+
+        if( !collectScanlineHits( aPoly, aVertical, aCut, hits ) )
+            return false;
+
+        SHAPE_LINE_CHAIN augmented( aPoly );
+        augmented.Split( hits[0].point, true );
+        augmented.Split( hits[1].point, true );
+
+        int idxA = augmented.Find( hits[0].point );
+        int idxB = augmented.Find( hits[1].point );
+
+        if( idxA < 0 || idxB < 0 || idxA == idxB )
+            return false;
+
+        aChildren[0] = createSplitChild( augmented, idxA, idxB );
+        aChildren[1] = createSplitChild( augmented, idxB, idxA );
+
+        if( aChildren[0].PointCount() < 3 || aChildren[1].PointCount() < 3 )
+            return false;
+
+        aAreaA = std::abs( aChildren[0].Area() );
+        aAreaB = std::abs( aChildren[1].Area() );
+        return aAreaA > 0.0 && aAreaB > 0.0;
+    }
+
+    bool splitPolygonBalanced( const SHAPE_LINE_CHAIN& aPoly,
+                               std::array<SHAPE_LINE_CHAIN, 2>& aChildren ) const
+    {
+        const BOX2I  bbox = aPoly.BBox();
+        const bool   verticalFirst = bbox.GetWidth() >= bbox.GetHeight();
+        const double totalArea = std::abs( aPoly.Area() );
+
+        if( totalArea <= 0.0 )
+            return false;
+
+        auto tryAxis =
+                [&]( bool aVertical ) -> bool
+                {
+                    const int low = ( aVertical ? bbox.GetX() : bbox.GetY() ) + 1;
+                    const int high = ( aVertical ? bbox.GetRight() : bbox.GetBottom() ) - 1;
+
+                    if( high <= low )
+                        return false;
+
+                    double bestImbalance = std::numeric_limits<double>::infinity();
+                    std::array<SHAPE_LINE_CHAIN, 2> bestChildren;
+
+                    constexpr int kSamples = 15;
+
+                    for( int ii = 1; ii <= kSamples; ++ii )
+                    {
+                        int cut = low + ( ( high - low ) * ii ) / ( kSamples + 1 );
+                        std::array<SHAPE_LINE_CHAIN, 2> candidate;
+                        double areaA = 0.0;
+                        double areaB = 0.0;
+
+                        if( !splitPolygonAtCoordinate( aPoly, aVertical, cut, candidate, areaA, areaB ) )
+                            continue;
+
+                        double imbalance = std::abs( areaA - areaB ) / totalArea;
+
+                        if( imbalance < bestImbalance )
+                        {
+                            bestImbalance = imbalance;
+                            bestChildren = std::move( candidate );
+                        }
+                    }
+
+                    if( !std::isfinite( bestImbalance ) || bestImbalance > 0.35 )
+                        return false;
+
+                    aChildren = std::move( bestChildren );
+                    return true;
+                };
+
+        return tryAxis( verticalFirst ) || tryAxis( !verticalFirst );
+    }
+
+    std::vector<SHAPE_LINE_CHAIN> partitionPolygonBalanced( const SHAPE_LINE_CHAIN& aPoly,
+                                                            size_t aTargetLeaves ) const
+    {
+        std::vector<SHAPE_LINE_CHAIN> leaves = { aPoly };
+
+        if( aTargetLeaves < 2 )
+            return leaves;
+
+        while( leaves.size() < aTargetLeaves )
+        {
+            int    bestLeaf = -1;
+            double bestArea = 0.0;
+
+            for( size_t ii = 0; ii < leaves.size(); ++ii )
+            {
+                double area = std::abs( leaves[ii].Area() );
+
+                if( area > bestArea )
+                {
+                    bestArea = area;
+                    bestLeaf = static_cast<int>( ii );
+                }
+            }
+
+            if( bestLeaf < 0 )
+                break;
+
+            std::array<SHAPE_LINE_CHAIN, 2> children;
+
+            if( !splitPolygonBalanced( leaves[bestLeaf], children ) )
+                break;
+
+            leaves[bestLeaf] = std::move( children[0] );
+            leaves.push_back( std::move( children[1] ) );
+        }
+
+        return leaves;
+    }
+
+    size_t suggestedPartitionLeafCount( const SHAPE_LINE_CHAIN& aPoly ) const
+    {
+        constexpr size_t kVerticesPerLeaf = 50000;
+        constexpr size_t kMaxLeaves = 8;
+        size_t           leaves = 1;
+
+        while( leaves < kMaxLeaves
+               && static_cast<size_t>( aPoly.PointCount() ) / leaves > kVerticesPerLeaf )
+        {
+            leaves *= 2;
+        }
+
+        return leaves;
+    }
 
     /**
      * Outputs a list of vertices that have not yet been triangulated.
@@ -228,7 +538,6 @@ private:
         return nullptr;
     }
 
-
     /**
      * Iterate through the list to remove NULL triangles if they exist.
      *
@@ -318,6 +627,14 @@ private:
      */
     bool earcutList( VERTEX* aPoint, int pass = 0 )
     {
+        constexpr int kMaxRecursion = 64;
+
+        if( pass >= kMaxRecursion )
+        {
+            wxLogTrace( TRIANGULATE_TRACE, "earcutList recursion limit reached; aborting triangulation", pass );
+            return false;
+        }
+
         wxLogTrace( TRIANGULATE_TRACE, "earcutList starting at %p for pass %d", aPoint, pass );
 
         if( !aPoint )
@@ -327,31 +644,42 @@ private:
         VERTEX* prev;
         VERTEX* next;
         int internal_pass = 1;
+        constexpr int kEarLookahead = 2;
 
         while( aPoint->prev != aPoint->next )
         {
             prev = aPoint->prev;
             next = aPoint->next;
 
-            if( aPoint->isEar() )
-            {
-                // Tiny ears cannot be seen on the screen
-                if( !isTooSmall( aPoint ) )
-                {
-                    m_result.AddTriangle( prev->i, aPoint->i, next->i );
-                }
-                else
-                {
-                    wxLogTrace( TRIANGULATE_TRACE, "Ignoring tiny ear with area %f",
-                                area( prev, aPoint, next ) );
-                }
+            VERTEX* bestEar = nullptr;
+            double  bestScore = -1.0;
+            int     lookahead = 0;
 
-                aPoint->remove();
+            for( VERTEX* candidate = aPoint; candidate && lookahead < kEarLookahead;
+                 candidate = candidate->next, ++lookahead )
+            {
+                if( !candidate->isEar() || isTooSmall( candidate ) )
+                    continue;
+
+                const double score = earScore( candidate->prev, candidate, candidate->next );
+
+                if( !bestEar || score > bestScore )
+                {
+                    bestEar = candidate;
+                    bestScore = score;
+                }
+            }
+
+            if( bestEar )
+            {
+                prev = bestEar->prev;
+                next = bestEar->next;
+                m_result.AddTriangle( prev->i, bestEar->i, next->i );
+                bestEar->remove();
 
                 // Skip one vertex as the triangle will account for the prev node
                 aPoint = next->next;
                 stop = next->next;
-
                 continue;
             }
 
@@ -417,7 +745,7 @@ private:
                 // If we don't have any NULL triangles left, cut the polygon in two and try again
                 wxLogTrace( TRIANGULATE_TRACE, "Splitting polygon" );
 
-                if( !splitPolygon( aPoint ) )
+                if( !splitPolygon( aPoint, pass + 1 ) )
                     return false;
 
                 break;
@@ -460,6 +788,279 @@ private:
         return ( prev_sq_len < min_area || next_sq_len < min_area || opp_sq_len < min_area );
     }
 
+    double earScore( const VERTEX* a, const VERTEX* b, const VERTEX* c ) const
+    {
+        const double ab_sq = ( a->x - b->x ) * ( a->x - b->x ) + ( a->y - b->y ) * ( a->y - b->y );
+        const double bc_sq = ( b->x - c->x ) * ( b->x - c->x ) + ( b->y - c->y ) * ( b->y - c->y );
+        const double ca_sq = ( c->x - a->x ) * ( c->x - a->x ) + ( c->y - a->y ) * ( c->y - a->y );
+        const double norm = ab_sq + bc_sq + ca_sq;
+
+        if( norm <= 0.0 )
+            return 0.0;
+
+        return std::abs( area( a, b, c ) ) / norm;
+    }
+
+    /**
+     * Create a VERTEX linked list from a SHAPE_LINE_CHAIN with a global index offset.
+     * The winding direction is controlled by aWantCCW.
+     */
+    VERTEX* createRing( const SHAPE_LINE_CHAIN& aPoints, int aBaseIndex, bool aWantCCW )
+    {
+        VERTEX*  tail = nullptr;
+        double   sum = 0.0;
+        VECTOR2L last_pt;
+        bool     first = true;
+
+        for( int i = 0; i < aPoints.PointCount(); i++ )
+        {
+            VECTOR2D p1 = aPoints.CPoint( i );
+            VECTOR2D p2 = aPoints.CPoint( ( i + 1 ) % aPoints.PointCount() );
+            sum += ( ( p2.x - p1.x ) * ( p2.y + p1.y ) );
+        }
+
+        bool isCW = sum > 0.0;
+        bool needReverse = ( aWantCCW == isCW );
+
+        auto addVertex = [&]( int i )
+        {
+            const VECTOR2I& pt = aPoints.CPoint( i );
+
+            if( first || pt.SquaredDistance( last_pt ) > m_simplificationLevel )
+            {
+                tail = insertVertex( aBaseIndex + i, pt, tail );
+                last_pt = pt;
+                first = false;
+            }
+        };
+
+        if( needReverse )
+        {
+            for( int i = aPoints.PointCount() - 1; i >= 0; i-- )
+                addVertex( i );
+        }
+        else
+        {
+            for( int i = 0; i < aPoints.PointCount(); i++ )
+                addVertex( i );
+        }
+
+        // Collapse a final duplicate, but never on a single-vertex ring.  When the
+        // simplification pass leaves only one vertex, tail->next == tail and removing
+        // it would leave the caller holding a vertex with null next/prev pointers.
+        if( tail && tail->next != tail && ( *tail == *tail->next ) )
+            tail->next->remove();
+
+        return tail;
+    }
+
+    /**
+     * Bridge all hole rings into the outer ring by sorting holes left-to-right
+     * and connecting each hole's leftmost vertex to the nearest visible point
+     * on the outer boundary via VERTEX::split().
+     */
+    VERTEX* eliminateHoles( VERTEX* aOuterRing, std::vector<VERTEX*>& aHoleRings )
+    {
+        struct HoleInfo
+        {
+            VERTEX* leftmost;
+            double  leftX;
+        };
+
+        std::vector<HoleInfo> holes;
+        holes.reserve( aHoleRings.size() );
+
+        for( VERTEX* hole : aHoleRings )
+        {
+            VERTEX* leftmost = hole;
+            VERTEX* p = hole->next;
+
+            while( p != hole )
+            {
+                if( p->x < leftmost->x || ( p->x == leftmost->x && p->y < leftmost->y ) )
+                    leftmost = p;
+
+                p = p->next;
+            }
+
+            holes.push_back( { leftmost, leftmost->x } );
+        }
+
+        std::sort( holes.begin(), holes.end(),
+                   []( const HoleInfo& a, const HoleInfo& b ) { return a.leftX < b.leftX; } );
+
+        for( const HoleInfo& hi : holes )
+        {
+            VERTEX* bridge = findHoleBridge( hi.leftmost, aOuterRing );
+
+            if( bridge )
+            {
+                VERTEX* bridgeReverse = bridge->split( hi.leftmost );
+                filterPoints( bridgeReverse, bridgeReverse->next );
+                aOuterRing = filterPoints( bridge, bridge->next );
+            }
+            else
+            {
+                wxLogTrace( TRIANGULATE_TRACE, "Failed to find bridge for hole at (%f, %f)",
+                            hi.leftmost->x, hi.leftmost->y );
+            }
+        }
+
+        return aOuterRing;
+    }
+
+    /**
+     * Remove consecutive duplicate vertices from the linked list.
+     */
+    VERTEX* filterPoints( VERTEX* aStart, VERTEX* aEnd = nullptr )
+    {
+        if( !aStart )
+            return aStart;
+
+        if( !aEnd )
+            aEnd = aStart;
+
+        VERTEX* p = aStart;
+        bool    again;
+
+        do
+        {
+            again = false;
+
+            if( *p == *p->next )
+            {
+                VERTEX* toRemove = p->next;
+                
+                if( toRemove == aEnd )
+                    aEnd = p;
+
+                toRemove->remove();
+
+                if( p == p->next )
+                    return p;
+
+                p = p->prev;
+                again = true;
+            }
+            else
+            {
+                p = p->next;
+            }
+        } while( again || p != aEnd );
+
+        return aEnd;
+    }
+
+
+    /**
+     * Find a vertex on the outer ring visible from the hole's leftmost vertex
+     * by casting a horizontal ray to the left.
+     */
+    VERTEX* findHoleBridge( VERTEX* aHole, VERTEX* aOuterStart )
+    {
+        VERTEX* p = aOuterStart;
+        double  hx = aHole->x;
+        double  hy = aHole->y;
+        double  qx = -std::numeric_limits<double>::infinity();
+        VERTEX* m = nullptr;
+
+        do
+        {
+            if( hy <= p->y && hy >= p->next->y && p->next->y != p->y )
+            {
+                double x = p->x + ( hy - p->y ) * ( p->next->x - p->x )
+                                                  / ( p->next->y - p->y );
+
+                if( x <= hx && x > qx )
+                {
+                    qx = x;
+
+                    if( x == hx )
+                    {
+                        if( hy == p->y )
+                            return p;
+
+                        if( hy == p->next->y )
+                            return p->next;
+                    }
+
+                    m = ( p->x < p->next->x ) ? p : p->next;
+                }
+            }
+
+            p = p->next;
+        } while( p != aOuterStart );
+
+        if( !m )
+            return nullptr;
+
+        if( hx == qx )
+            return m;
+
+        // Pick the vertex inside the visibility triangle closest to the ray
+        const VERTEX* stop = m;
+        double        mx = m->x;
+        double        my = m->y;
+        double        tanMin = std::numeric_limits<double>::infinity();
+
+        p = m;
+
+        do
+        {
+            if( hx >= p->x && p->x >= mx && hx != p->x )
+            {
+                bool inside;
+
+                if( hy < my )
+                    inside = triArea( hx, hy, mx, my, p->x, p->y ) >= 0
+                             && triArea( mx, my, qx, hy, p->x, p->y ) >= 0
+                             && triArea( qx, hy, hx, hy, p->x, p->y ) >= 0;
+                else
+                    inside = triArea( qx, hy, mx, my, p->x, p->y ) >= 0
+                             && triArea( mx, my, hx, hy, p->x, p->y ) >= 0
+                             && triArea( hx, hy, qx, hy, p->x, p->y ) >= 0;
+
+                if( inside )
+                {
+                    double t = std::abs( hy - p->y ) / ( hx - p->x );
+
+                    if( locallyInside( p, aHole )
+                        && ( t < tanMin
+                             || ( t == tanMin
+                                  && ( p->x > m->x
+                                       || ( p->x == m->x
+                                            && sectorContainsSector( m, p ) ) ) ) ) )
+                    {
+                        m = p;
+                        tanMin = t;
+                    }
+                }
+            }
+
+            p = p->next;
+        } while( p != stop );
+
+        return m;
+    }
+
+    /**
+     * Signed area of triangle (ax,ay), (bx,by), (cx,cy).
+     */
+    static double triArea( double ax, double ay, double bx, double by,
+                           double cx, double cy )
+    {
+        return ( bx - ax ) * ( cy - ay ) - ( by - ay ) * ( cx - ax );
+    }
+
+    /**
+     * Whether sector in vertex m contains sector in vertex p in the same
+     * coordinate frame.
+     */
+    bool sectorContainsSector( const VERTEX* m, const VERTEX* p ) const
+    {
+        return area( m->prev, m, p->prev ) < 0 && area( p->next, m, m->next ) < 0;
+    }
+
     /**
      * Inserts a new vertex halfway between each existing pair of vertices.
      */
@@ -489,7 +1090,11 @@ private:
         avg /= longest.size();
         wxLogTrace( TRIANGULATE_TRACE, "Average length: %f", avg );
 
-        for( auto it = longest.begin(); it != longest.end() && it->second > avg; ++it )
+        constexpr double kSubdivideThresholdFactor = 1.1;
+        const double     subdivideThreshold = avg * kSubdivideThresholdFactor;
+
+        for( auto it = longest.begin(); it != longest.end() && it->second > subdivideThreshold;
+             ++it )
         {
             wxLogTrace( TRIANGULATE_TRACE, "Subdividing edge with length %f", it->second );
             VERTEX* a = it->first;
@@ -519,7 +1124,7 @@ private:
      * independently.  This is assured to generate at least one new ear if the
      * split is successful
      */
-    bool splitPolygon( VERTEX* start )
+    bool splitPolygon( VERTEX* start, int aPass )
     {
         VERTEX* origPoly = start;
 
@@ -573,7 +1178,8 @@ private:
             overlapPoints[1]->updateList();
             logVertices( overlapPoints[0], nullptr );
             logVertices( overlapPoints[1], nullptr );
-            bool retval = earcutList( overlapPoints[0] ) && earcutList( overlapPoints[1] );
+            bool retval = earcutList( overlapPoints[0], aPass )
+                          && earcutList( overlapPoints[1], aPass );
 
             wxLogTrace( TRIANGULATE_TRACE, "%s at first overlap split", retval ? "Success" : "Failed" );
             return retval;
@@ -599,7 +1205,7 @@ private:
                     origPoly->updateList();
                     newPoly->updateList();
 
-                    bool retval = earcutList( origPoly ) && earcutList( newPoly );
+                    bool retval = earcutList( origPoly, aPass ) && earcutList( newPoly, aPass );
 
                     wxLogTrace( TRIANGULATE_TRACE, "%s at split", retval ? "Success" : "Failed" );
                     return retval;
@@ -718,7 +1324,7 @@ private:
     VERTEX* insertTriVertex( const VECTOR2I& pt, VERTEX* last )
     {
         m_result.AddVertex( pt );
-        return insertVertex( m_result.GetVertexCount() - 1, pt, nullptr );
+        return insertVertex( m_result.GetVertexCount() - 1, pt, last );
     }
 
 private:

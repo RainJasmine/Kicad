@@ -27,6 +27,7 @@
 
 #include <sch_tablecell.h>
 #include <sch_item.h>
+#include <algorithm>
 
 
 class SCH_TABLE : public SCH_ITEM
@@ -180,10 +181,15 @@ public:
 
     void DeleteMarkedCells()
     {
-        alg::delete_if( m_cells,
+        std::erase_if( m_cells,
                 []( SCH_TABLECELL* cell )
                 {
-                    return ( cell->GetFlags() & STRUCT_DELETED ) > 0;
+                    if( cell->GetFlags() & STRUCT_DELETED )
+                    {
+                        delete cell;
+                        return true;
+                    }
+                    return false;
                 } );
     }
 
@@ -213,8 +219,8 @@ public:
     std::vector<int> ViewGetLayers() const override;
 
     bool HitTest( const VECTOR2I& aPosition, int aAccuracy = 0 ) const override;
-
     bool HitTest( const BOX2I& aRect, bool aContained, int aAccuracy = 0 ) const override;
+    bool HitTest( const SHAPE_LINE_CHAIN& aPoly, bool aContained ) const override;
 
     void DrawBorders( const std::function<void( const VECTOR2I& aPt1, const VECTOR2I& aPt2,
                                                 const STROKE_PARAMS& aStroke )>& aCallback ) const;

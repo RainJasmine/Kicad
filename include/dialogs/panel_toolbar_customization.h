@@ -36,11 +36,46 @@ class wxImageList;
 class APP_SETTINGS_BASE;
 class TOOL_ACTION;
 
+
+/**
+ * Navigation hierarchy tree control.
+ *
+ * wxTreeCtrl must be subclassed to implement the OnCompareItems method
+ * to sort according to page numbers.
+ */
+class TOOLBAR_TREE : public wxTreeCtrl
+{
+public:
+    TOOLBAR_TREE( wxWindow *parent, wxWindowID id = wxID_ANY, const wxPoint& pos = wxDefaultPosition,
+                  const wxSize& size = wxDefaultSize, long style = wxTR_DEFAULT_STYLE ) :
+            wxTreeCtrl( parent, id, pos, size, style )
+    {
+    }
+
+    int OnCompareItems( const wxTreeItemId& item1, const wxTreeItemId& item2 ) override;
+
+private:
+    // Need to use wxRTTI macros in order for OnCompareItems to work properly
+    // See: https://docs.wxwidgets.org/3.1/classwx_tree_ctrl.html#ab90a465793c291ca7aa827a576b7d146
+    wxDECLARE_ABSTRACT_CLASS( TOOLBAR_TREE );
+};
+
+
 class PANEL_TOOLBAR_CUSTOMIZATION : public PANEL_TOOLBAR_CUSTOMIZATION_BASE
 {
 public:
+    struct ACTION_LIST_ENTRY
+    {
+        wxString                label;
+        wxString                tooltip;
+        wxString                search_text;
+        TOOL_ACTION*            action = nullptr;
+        ACTION_TOOLBAR_CONTROL* control = nullptr;
+        int                     image_index = -1;
+    };
+
     PANEL_TOOLBAR_CUSTOMIZATION( wxWindow* aParent, APP_SETTINGS_BASE* aCfg, TOOLBAR_SETTINGS* aTbSettings,
-                                 const std::vector<TOOL_ACTION*>& aTools,
+                                 FRAME_T aActionContext, const std::vector<TOOL_ACTION*>& aTools,
                                  const std::vector<ACTION_TOOLBAR_CONTROL*>& aControls );
 
     ~PANEL_TOOLBAR_CUSTOMIZATION();
@@ -56,6 +91,9 @@ protected:
     void populateToolbarTree();
 
     void populateActions();
+    void applyActionFilter();
+    bool isActionSupported( const TOOL_ACTION& aAction ) const;
+    bool actionMatchesFilter( const ACTION_LIST_ENTRY& aEntry, const wxString& aFilter ) const;
 
     void enableCustomControls( bool enable );
     void enableToolbarControls( bool enable );
@@ -73,18 +111,26 @@ protected:
     void onTreeBeginLabelEdit( wxTreeEvent& event ) override;
     void onTreeEndLabelEdit( wxTreeEvent& event ) override;
     void onTbChoiceSelect( wxCommandEvent& event ) override;
-
+    void onListItemActivated( wxListEvent& event ) override;
+    void onActionFilterText( wxCommandEvent& event );
+    void onActionListMouseMove( wxMouseEvent& event );
+    
+    void removeControlFromOtherToolbars( const std::string& aControlName );
+    void removeControlFromCurrentTree( const std::string& aControlName );
 protected:
-    wxImageList*               m_actionImageList;
     wxVector<wxBitmapBundle>   m_actionImageBundleVector;
     std::map<std::string, int> m_actionImageListMap;
+    std::vector<ACTION_LIST_ENTRY> m_actionEntries;
+    long m_hoveredActionEntry = -1;
 
     // Actual settings for the frame
     APP_SETTINGS_BASE* m_appSettings;
     TOOLBAR_SETTINGS*  m_appTbSettings;
 
     // The toolbar currently being viewed
-    TOOLBAR_LOC  m_currentToolbar;
+    TOOLBAR_LOC              m_currentToolbar;
+    FRAME_T                  m_actionContext;
+    std::vector<TOOLBAR_LOC> m_toolbarChoices;
 
     // Shadow copy of the toolbar configurations used to store the changes in the dialog
     std::map<TOOLBAR_LOC, TOOLBAR_CONFIGURATION>   m_toolbars;

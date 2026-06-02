@@ -47,6 +47,8 @@ class PANEL_EESCHEMA_EDITING_OPTIONS_BASE : public RESETTABLE_PANEL
 		wxCheckBox* m_mouseDragIsDrag;
 		wxCheckBox* m_cbAutoStartWires;
 		wxCheckBox* m_escClearsNetHighlight;
+		wxCheckBox* m_checkAutoAnnotate;
+		wxCheckBox* m_checkAllowUnconstrainedPinSwaps;
 		wxStaticText* m_staticText26;
 		wxStaticLine* m_staticline4;
 		wxStaticText* m_borderColorLabel;

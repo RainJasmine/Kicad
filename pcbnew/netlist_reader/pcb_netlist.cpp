@@ -23,8 +23,10 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-
 #include "pcb_netlist.h"
+
+#include <wx/tokenzr.h>
+#include <wx/log.h>
 
 #include <footprint.h>
 #include <richio.h>
@@ -36,6 +38,33 @@ int COMPONENT_NET::Format( OUTPUTFORMATTER* aOut, int aNestLevel, int aCtl )
     return aOut->Print( aNestLevel, "(pin_net %s %s)",
                         aOut->Quotew( m_pinName ).c_str(),
                         aOut->Quotew( m_netName ).c_str() );
+}
+
+COMPONENT::COMPONENT( const LIB_ID&            aFPID,
+                      const wxString&          aReference,
+                      const wxString&          aValue,
+                      const KIID_PATH&         aPath,
+                      const std::vector<KIID>& aKiids )
+{
+    m_fpid             = aFPID;
+    m_reference        = aReference;
+    m_value            = aValue;
+    m_pinCount         = 0;
+    m_path             = aPath;
+    m_kiids            = aKiids;
+    m_duplicatePadNumbersAreJumpers = false;
+    m_group            = nullptr;
+}
+
+
+COMPONENT::~COMPONENT()
+{
+}
+
+
+FOOTPRINT* COMPONENT::GetFootprint( bool aRelease )
+{
+    return ( aRelease ) ? m_footprint.release() : m_footprint.get();
 }
 
 
@@ -54,21 +83,106 @@ void COMPONENT::SetFootprint( FOOTPRINT* aFootprint )
     aFootprint->SetValue( m_value );
     aFootprint->SetFPID( m_fpid );
     aFootprint->SetPath( path );
+
+    // Copy over unit info
+    std::vector<FOOTPRINT::FP_UNIT_INFO> fpUnits;
+
+    for( const UNIT_INFO& u : m_units )
+        fpUnits.push_back( { u.m_unitName, u.m_pins } );
+
+    aFootprint->SetUnitInfo( fpUnits );
 }
 
 
 COMPONENT_NET COMPONENT::m_emptyNet;
 
 
+
+
+
 const COMPONENT_NET& COMPONENT::GetNet( const wxString& aPinName ) const
 {
+    wxLogTrace( wxT( "NETLIST_STACKED_PINS" ),
+                wxT( "Looking for pin '%s' in component '%s'" ),
+                aPinName, m_reference );
+
     for( const COMPONENT_NET& net : m_nets )
     {
+        wxLogTrace( wxT( "NETLIST_STACKED_PINS" ),
+                    wxT( "  Checking net pin name '%s'" ),
+                    net.GetPinName() );
+
         if( net.GetPinName() == aPinName )
+        {
+            wxLogTrace( wxT( "NETLIST_STACKED_PINS" ),
+                        wxT( "  Found exact match for pin '%s'" ),
+                        aPinName );
             return net;
+        }
+
+        // Check if this net's pin name is a stacked pin notation that expands to include aPinName
+        std::vector<wxString> expandedPins = ExpandStackedPinNotation( net.GetPinName() );
+        if( !expandedPins.empty() )
+        {
+            wxLogTrace( wxT( "NETLIST_STACKED_PINS" ),
+                        wxT( "  Pin name '%s' expanded to %zu pins" ),
+                        net.GetPinName(), expandedPins.size() );
+
+            for( const wxString& expandedPin : expandedPins )
+            {
+                wxLogTrace( wxT( "NETLIST_STACKED_PINS" ),
+                            wxT( "    Checking expanded pin '%s'" ),
+                            expandedPin );
+                if( expandedPin == aPinName )
+                {
+                    wxLogTrace( wxT( "NETLIST_STACKED_PINS" ),
+                                wxT( "  Found match for pin '%s' in stacked notation '%s'" ),
+                                aPinName, net.GetPinName() );
+                    return net;
+                }
+            }
+        }
     }
 
+    wxLogTrace( wxT( "NETLIST_STACKED_PINS" ),
+                wxT( "  No net found for pin '%s'" ),
+                aPinName );
     return m_emptyNet;
+}
+
+
+const COMPONENT_VARIANT* COMPONENT::GetVariant( const wxString& aVariantName ) const
+{
+    auto it = m_variants.find( aVariantName );
+
+    return it != m_variants.end() ? &it->second : nullptr;
+}
+
+
+COMPONENT_VARIANT* COMPONENT::GetVariant( const wxString& aVariantName )
+{
+    auto it = m_variants.find( aVariantName );
+
+    return it != m_variants.end() ? &it->second : nullptr;
+}
+
+
+void COMPONENT::AddVariant( const COMPONENT_VARIANT& aVariant )
+{
+    if( aVariant.m_name.IsEmpty() )
+        return;
+
+    auto it = m_variants.find( aVariant.m_name );
+
+    if( it != m_variants.end() )
+    {
+        COMPONENT_VARIANT updated = aVariant;
+        updated.m_name = it->first;
+        it->second = std::move( updated );
+        return;
+    }
+
+    m_variants.emplace( aVariant.m_name, aVariant );
 }
 
 
@@ -110,6 +224,60 @@ void COMPONENT::Format( OUTPUTFORMATTER* aOut, int aNestLevel, int aCtl )
 
         if( m_properties.count( "exclude_from_bom" ) )
             aOut->Print( nl + 1, "(property (name \"exclude_from_bom\"))\n" );
+
+        if( !m_variants.empty() )
+        {
+            aOut->Print( nl + 1, "(variants" );
+
+            for( const auto& [variantName, variant] : m_variants )
+            {
+                aOut->Print( nl + 2, "\n(variant (name %s)",
+                             aOut->Quotew( variantName ).c_str() );
+
+                if( variant.m_hasDnp )
+                {
+                    aOut->Print( 0, " (property (name \"dnp\") (value %s))",
+                                 aOut->Quotew( variant.m_dnp ? wxT( "1" ) : wxT( "0" ) ).c_str() );
+                }
+
+                if( variant.m_hasExcludedFromBOM )
+                {
+                    aOut->Print( 0, " (property (name \"exclude_from_bom\") (value %s))",
+                                 aOut->Quotew( variant.m_excludedFromBOM ? wxT( "1" ) : wxT( "0" ) ).c_str() );
+                }
+
+                if( variant.m_hasExcludedFromSim )
+                {
+                    aOut->Print( 0, " (property (name \"exclude_from_sim\") (value %s))",
+                                 aOut->Quotew( variant.m_excludedFromSim ? wxT( "1" ) : wxT( "0" ) ).c_str() );
+                }
+
+                if( variant.m_hasExcludedFromPosFiles )
+                {
+                    aOut->Print( 0, " (property (name \"exclude_from_pos_files\") (value %s))",
+                                 aOut->Quotew( variant.m_excludedFromPosFiles ? wxT( "1" ) : wxT( "0" ) ).c_str() );
+                }
+
+                if( !variant.m_fields.empty() )
+                {
+                    aOut->Print( 0, "\n" );
+                    aOut->Print( nl + 3, "(fields" );
+
+                    for( const auto& [fieldName, fieldValue] : variant.m_fields )
+                    {
+                        aOut->Print( nl + 4, "\n(field (name %s) %s)",
+                                     aOut->Quotew( fieldName ).c_str(),
+                                     aOut->Quotew( fieldValue ).c_str() );
+                    }
+
+                    aOut->Print( 0, ")" );
+                }
+
+                aOut->Print( 0, ")" );
+            }
+
+            aOut->Print( 0, ")\n" );
+        }
     }
 
     if( !( aCtl & CTL_OMIT_FILTERS ) && m_footprintFilters.GetCount() )

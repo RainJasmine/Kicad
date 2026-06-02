@@ -27,8 +27,7 @@
  * @brief Class ZONE_SETTINGS used to handle zones parameters in dialogs.
  */
 
-#ifndef ZONE_SETTINGS_H_
-#define ZONE_SETTINGS_H_
+#pragma once
 
 #include <optional>
 #include <map>
@@ -38,7 +37,9 @@
 #include <geometry/eda_angle.h>
 #include <teardrop/teardrop_types.h>
 
+class PCB_BASE_FRAME;
 class wxDataViewListCtrl;
+
 
 enum class ZONE_FILL_MODE
 {
@@ -75,7 +76,8 @@ enum class PLACEMENT_SOURCE_T
 {
     SHEETNAME = 0,
     COMPONENT_CLASS,
-    GROUP_PLACEMENT
+    GROUP_PLACEMENT,
+    DESIGN_BLOCK
 };
 
 /**
@@ -183,10 +185,8 @@ public:
      * A helper routine for the various zone dialogs (copper, non-copper, keepout).
      * @param aList the wxDataViewListCtrl to populate
      * @param aFrame the parent editor frame
-     * @param aFpEditorMode true to show a single "Inner Layers" item for all inner copper layers
      */
-    void SetupLayersList( wxDataViewListCtrl* aList, PCB_BASE_FRAME* aFrame, LSET aLayers,
-                          bool aFpEditorMode );
+    void SetupLayersList( wxDataViewListCtrl* aList, PCB_BASE_FRAME* aFrame, LSET aLayers );
 
     /**
      * Function ExportSetting
@@ -259,5 +259,4 @@ public:
     void SetMinIslandArea( long long int aArea ) { m_minIslandArea = aArea; }
 };
 
-
-#endif  // ZONE_SETTINGS_H_
+class LAYER_PROPERTIES_GRID_TABLE;

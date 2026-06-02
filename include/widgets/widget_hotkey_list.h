@@ -47,7 +47,7 @@ public:
      * @param aParent is the parent widget.
      * @param aHotkeys is the #EDA_HOTKEY_CONFIG data: a hotkey store is constructed from this.
      */
-    WIDGET_HOTKEY_LIST( wxWindow* aParent, HOTKEY_STORE& aHotkeyStore, bool aReadOnly );
+    WIDGET_HOTKEY_LIST( wxWindow* aParent, HOTKEY_STORE& aHotkeyStore, bool readOnly );
 
     /**
      * Apply a filter string to the hotkey list, selecting which hotkeys to show.
@@ -110,6 +110,11 @@ protected:
     void onMenu( wxCommandEvent& aEvent );
 
     /**
+     * Handle key events to filter out dead keys that can crash on macOS.
+     */
+    void onCharHook( wxKeyEvent& aEvent );
+
+    /**
      * Check if we can set a hotkey, and prompt the user if there is a conflict between keys.
      * The key code should already have been checked that it's not for the same entry as it's
      * current in, or else this method will prompt for the self-change.
@@ -162,7 +167,6 @@ private:
 
 private:
     HOTKEY_STORE&  m_hk_store;
-    bool           m_readOnly;
 
     std::unordered_map<long, wxString> m_reservedHotkeys;
 

@@ -32,7 +32,7 @@
 #include <dpi_scaling_common.h>
 #include <eda_draw_frame.h>
 #include <footprint_preview_panel.h>
-#include <fp_lib_table.h>
+#include <footprint_library_adapter.h>
 #include <gal/graphics_abstraction_layer.h>
 #include <kiway.h>
 #include <math/box2.h>
@@ -70,6 +70,8 @@ FOOTPRINT_PREVIEW_PANEL::FOOTPRINT_PREVIEW_PANEL( KIWAY* aKiway, wxWindow* aPare
     Raise();
     Show( true );
     StartDrawing();
+
+    Bind( wxEVT_SIZE, &FOOTPRINT_PREVIEW_PANEL::onSize, this );
 }
 
 
@@ -163,6 +165,21 @@ void FOOTPRINT_PREVIEW_PANEL::fitToCurrentFootprint()
 }
 
 
+void FOOTPRINT_PREVIEW_PANEL::onSize( wxSizeEvent& aEvent )
+{
+    aEvent.Skip();
+
+    if( m_pendingFit && m_currentFootprint && IsShownOnScreen() )
+    {
+        m_pendingFit = false;
+
+        // Defer the fit until after the base class onSize handler has called
+        // GAL::ResizeScreen(), so SetViewport sees the correct screen dimensions.
+        CallAfter( [this]() { fitToCurrentFootprint(); } );
+    }
+}
+
+
 bool FOOTPRINT_PREVIEW_PANEL::DisplayFootprint( const LIB_ID& aFPID )
 {
     m_dummyBoard->DetachAllFootprints();
@@ -172,16 +189,11 @@ bool FOOTPRINT_PREVIEW_PANEL::DisplayFootprint( const LIB_ID& aFPID )
 
     GetView()->Clear();
 
-    FP_LIB_TABLE* fptbl = PROJECT_PCB::PcbFootprintLibs( &Prj() );
+    FOOTPRINT_LIBRARY_ADAPTER* adapter = PROJECT_PCB::FootprintLibAdapter( &Prj() );
 
     try
     {
-        const FOOTPRINT* fp = fptbl->GetEnumeratedFootprint( aFPID.GetLibNickname(), aFPID.GetLibItemName() );
-
-        if( fp )
-            m_currentFootprint.reset( static_cast<FOOTPRINT*>( fp->Duplicate( IGNORE_PARENT_GROUP ) ) );
-        else
-            m_currentFootprint.reset();
+        m_currentFootprint.reset( adapter->LoadFootprint( aFPID.GetLibNickname(), aFPID.GetLibItemName(), false ) );
     }
     catch( ... )
     {
@@ -191,6 +203,7 @@ bool FOOTPRINT_PREVIEW_PANEL::DisplayFootprint( const LIB_ID& aFPID )
     if( m_currentFootprint )
     {
         renderFootprint( m_currentFootprint );
+        m_pendingFit = true;
         fitToCurrentFootprint();
     }
 
@@ -218,10 +231,11 @@ void FOOTPRINT_PREVIEW_PANEL::DisplayFootprints( std::shared_ptr<FOOTPRINT> aFoo
 
     if( m_currentFootprint )
     {
-        wxASSERT( m_otherFootprint );
+        wxCHECK( m_otherFootprint, /* void */ );
 
         renderFootprint( m_currentFootprint );
         renderFootprint( m_otherFootprint );
+        m_pendingFit = true;
         fitToCurrentFootprint();
     }
 
@@ -241,13 +255,13 @@ FOOTPRINT_PREVIEW_PANEL* FOOTPRINT_PREVIEW_PANEL::New( KIWAY* aKiway, wxWindow* 
                                                        UNITS_PROVIDER* aUnitsProvider )
 {
     PCBNEW_SETTINGS* cfg = Pgm().GetSettingsManager().GetAppSettings<PCBNEW_SETTINGS>( "pcbnew" );
-
+    COMMON_SETTINGS* commonSettings = Pgm().GetCommonSettings();
     std::unique_ptr<GAL_DISPLAY_OPTIONS_IMPL> gal_opts;
 
     gal_opts = std::make_unique<GAL_DISPLAY_OPTIONS_IMPL>();
-    gal_opts->ReadConfig( *Pgm().GetCommonSettings(), cfg->m_Window, aParent );
+    gal_opts->ReadConfig( *commonSettings, cfg->m_Window, aParent );
 
-    auto galType = static_cast<EDA_DRAW_PANEL_GAL::GAL_TYPE>( cfg->m_Graphics.canvas_type );
+    auto galType = static_cast<EDA_DRAW_PANEL_GAL::GAL_TYPE>( commonSettings->m_Graphics.canvas_type );
     FOOTPRINT_PREVIEW_PANEL* panel = new FOOTPRINT_PREVIEW_PANEL( aKiway, aParent, aUnitsProvider,
                                                                   std::move( gal_opts ), galType );
 

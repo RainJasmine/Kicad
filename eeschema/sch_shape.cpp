@@ -30,8 +30,13 @@
 #include <bitmaps.h>
 #include <eda_draw_frame.h>
 #include <gr_basic.h>
+#include <geometry/geometry_utils.h>
 #include <schematic.h>
+#include <api/api_utils.h>
+#include <api/schematic/schematic_types.pb.h>
 #include <sch_shape.h>
+#include <properties/property.h>
+#include <properties/property_mgr.h>
 
 
 SCH_SHAPE::SCH_SHAPE( SHAPE_T aShape, SCH_LAYER_ID aLayer, int aLineWidth, FILL_T aFillType,
@@ -49,12 +54,46 @@ EDA_ITEM* SCH_SHAPE::Clone() const
 }
 
 
+void SCH_SHAPE::Serialize( google::protobuf::Any& aContainer ) const
+{
+    using namespace kiapi::common;
+
+    kiapi::schematic::types::SchematicGraphicShape msg;
+    google::protobuf::Any any;
+
+    msg.mutable_id()->set_value( m_Uuid.AsStdString() );
+    msg.set_locked( IsLocked() ? types::LockedState::LS_LOCKED : types::LockedState::LS_UNLOCKED );
+
+    EDA_SHAPE::Serialize( any, schIUScale );
+    any.UnpackTo( msg.mutable_shape() );
+
+    aContainer.PackFrom( msg );
+}
+
+
+bool SCH_SHAPE::Deserialize( const google::protobuf::Any& aContainer )
+{
+    using namespace kiapi::common;
+
+    kiapi::schematic::types::SchematicGraphicShape msg;
+
+    if( !aContainer.UnpackTo( &msg ) )
+        return false;
+
+    const_cast<KIID&>( m_Uuid ) = KIID( msg.id().value() );
+    SetLocked( msg.locked() == types::LockedState::LS_LOCKED );
+
+    google::protobuf::Any any;
+    any.PackFrom( msg.shape() );
+    return EDA_SHAPE::Deserialize( any, schIUScale );
+}
+
+
 void SCH_SHAPE::swapData( SCH_ITEM* aItem )
 {
     SCH_SHAPE* shape = static_cast<SCH_SHAPE*>( aItem );
 
     EDA_SHAPE::SwapShape( shape );
-    std::swap( m_layer, shape->m_layer );
 }
 
 
@@ -135,12 +174,60 @@ bool SCH_SHAPE::HitTest( const BOX2I& aRect, bool aContained, int aAccuracy ) co
 }
 
 
+bool SCH_SHAPE::HitTest( const SHAPE_LINE_CHAIN& aPoly, bool aContained ) const
+{
+    if( m_flags & (STRUCT_DELETED | SKIP_STRUCT ) )
+        return false;
+
+    std::vector<SHAPE*> shapes = MakeEffectiveShapes( false );
+
+    for( SHAPE* shape : shapes )
+    {
+        bool hit = KIGEOM::ShapeHitTest( aPoly, *shape, aContained );
+
+        if( hit )
+        {
+            for( SHAPE* s : shapes )
+                delete s;
+            return true;
+        }
+    }
+
+    for( SHAPE* shape : shapes )
+        delete shape;
+
+    return false;
+}
+
+
 bool SCH_SHAPE::IsEndPoint( const VECTOR2I& aPt ) const
 {
     SHAPE_T shape = GetShape();
 
-    if( ( shape == SHAPE_T::ARC ) || ( shape == SHAPE_T::BEZIER ) )
+    if( shape == SHAPE_T::ARC || shape == SHAPE_T::BEZIER || shape == SHAPE_T::SEGMENT )
         return ( aPt == GetStart() ) || ( aPt == GetEnd() );
+
+    if( shape == SHAPE_T::RECTANGLE )
+    {
+        for( const VECTOR2I& corner : GetRectCorners() )
+        {
+            if( corner == aPt )
+                return true;
+        }
+
+        return false;
+    }
+
+    if( shape == SHAPE_T::POLY )
+    {
+        for( const VECTOR2I& pt : GetPolyPoints() )
+        {
+            if( pt == aPt )
+                return true;
+        }
+
+        return false;
+    }
 
     return false;
 }
@@ -164,7 +251,7 @@ void SCH_SHAPE::Plot( PLOTTER* aPlotter, bool aBackground, const SCH_PLOT_OPTS& 
     {
         ptList.clear();
 
-        for( const VECTOR2I& pt : m_poly.Outline( 0 ).CPoints() )
+        for( const VECTOR2I& pt : GetPolyShape().Outline( 0 ).CPoints() )
             ptList.push_back( renderSettings->TransformCoordinate( pt ) + aOffset );
     }
     else if( GetShape() == SHAPE_T::BEZIER )
@@ -198,11 +285,15 @@ void SCH_SHAPE::Plot( PLOTTER* aPlotter, bool aBackground, const SCH_PLOT_OPTS& 
             break;
 
         case FILL_T::FILLED_WITH_COLOR:
-            // drop fill in B&W mode
-            if( !aPlotter->GetColorMode() )
+            // drop separate fills in B&W mode
+            if( !aPlotter->GetColorMode() && pen_size > 0 )
                 return;
 
             color = GetFillColor();
+
+            if( color == COLOR4D::UNSPECIFIED )
+                color = renderSettings->GetLayerColor( m_layer );
+
             break;
 
         case FILL_T::FILLED_WITH_BG_BODYCOLOR:
@@ -238,6 +329,9 @@ void SCH_SHAPE::Plot( PLOTTER* aPlotter, bool aBackground, const SCH_PLOT_OPTS& 
 
     if( bg == COLOR4D::UNSPECIFIED || !aPlotter->GetColorMode() )
         bg = COLOR4D::WHITE;
+
+    if( color.m_text && Schematic() )
+        color = COLOR4D( ResolveText( *color.m_text, &Schematic()->CurrentSheet() ) );
 
     if( aDimmed )
     {
@@ -275,7 +369,7 @@ void SCH_SHAPE::Plot( PLOTTER* aPlotter, bool aBackground, const SCH_PLOT_OPTS& 
         break;
 
     case SHAPE_T::RECTANGLE:
-        aPlotter->Rect( start, end, fill, pen_size );
+        aPlotter->Rect( start, end, fill, pen_size, GetCornerRadius() );
         break;
 
     case SHAPE_T::POLY:
@@ -317,10 +411,7 @@ const BOX2I SCH_SHAPE::GetBoundingBox() const
 
 void SCH_SHAPE::GetMsgPanelInfo( EDA_DRAW_FRAME* aFrame, std::vector<MSG_PANEL_ITEM>& aList )
 {
-    if( m_layer == LAYER_DEVICE )
-        getSymbolEditorMsgPanelInfo( aFrame, aList );
-    else
-        SCH_ITEM::GetMsgPanelInfo( aFrame, aList );
+    SCH_ITEM::GetMsgPanelInfo( aFrame, aList );
 
     ShapeGetMsgPanelInfo( aFrame, aList );
 }
@@ -345,7 +436,7 @@ wxString SCH_SHAPE::GetItemDescription( UNITS_PROVIDER* aUnitsProvider, bool aFu
 
     case SHAPE_T::POLY:
         return wxString::Format( _( "Polyline, %d points" ),
-                                 int( m_poly.Outline( 0 ).GetPointCount() ) );
+                                 int( GetPolyShape().Outline( 0 ).GetPointCount() ) );
 
     case SHAPE_T::BEZIER:
         return wxString::Format( _( "Bezier Curve, %d points" ),
@@ -404,13 +495,13 @@ void SCH_SHAPE::AddPoint( const VECTOR2I& aPosition )
 {
     if( GetShape() == SHAPE_T::POLY )
     {
-        if( m_poly.IsEmpty() )
+        if( GetPolyShape().IsEmpty() )
         {
-            m_poly.NewOutline();
-            m_poly.Outline( 0 ).SetClosed( false );
+            GetPolyShape().NewOutline();
+            GetPolyShape().Outline( 0 ).SetClosed( false );
         }
 
-        m_poly.Outline( 0 ).Append( aPosition, true );
+        GetPolyShape().Outline( 0 ).Append( aPosition, true );
     }
     else
     {
@@ -491,10 +582,10 @@ static struct SCH_SHAPE_DESC
 
         if( fillEnum.Choices().GetCount() == 0 )
         {
-            fillEnum.Map( FILL_T::NO_FILL, _HKI( "None" ) )
-                    .Map( FILL_T::FILLED_SHAPE, _HKI( "Body outline color" ) )
+            fillEnum.Map( FILL_T::NO_FILL,                  _HKI( "None" ) )
+                    .Map( FILL_T::FILLED_SHAPE,             _HKI( "Body outline color" ) )
                     .Map( FILL_T::FILLED_WITH_BG_BODYCOLOR, _HKI( "Body background color" ) )
-                    .Map( FILL_T::FILLED_WITH_COLOR, _HKI( "Fill color" ) );
+                    .Map( FILL_T::FILLED_WITH_COLOR,        _HKI( "Fill color" ) );
         }
 
         PROPERTY_MANAGER& propMgr = PROPERTY_MANAGER::Instance();

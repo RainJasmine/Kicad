@@ -195,6 +195,8 @@ public:
         m_scale = aScale;
     }
 
+    double GetScale() const { return m_scale; }
+
     wxValidator* DoGetValidator() const override;
 
     ///< Do not perform PG validation; the UX is not what we want.
@@ -214,7 +216,9 @@ public:
             wxEnumProperty( wxPG_LABEL, wxPG_LABEL, *aChoices, 0 ),
             m_colorFunc( []( int aDummy ) { return wxNullColour; } )
     {
-#if wxCHECK_VERSION( 3, 3, 0 )
+#if wxCHECK_VERSION( 3, 3, 1 )
+        SetFlag( wxPGFlags::CustomImage );
+#elif wxCHECK_VERSION( 3, 3, 0 )
         SetFlag( wxPGPropertyFlags::CustomImage );
 #else
         SetFlag( wxPG_PROP_CUSTOMIMAGE );
@@ -364,6 +368,17 @@ protected:
 
 protected:
     EDA_DRAW_FRAME* m_parentFrame;
+};
+
+
+class PGPROPERTY_NET : public wxEnumProperty
+{
+public:
+    PGPROPERTY_NET( const wxPGChoices& aChoices = wxPGChoices() );
+
+    virtual ~PGPROPERTY_NET() = default;
+
+    const wxPGEditor* DoGetEditorClass() const override;
 };
 
 #endif /* PG_PROPERTIES_H */

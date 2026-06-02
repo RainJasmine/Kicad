@@ -46,6 +46,12 @@
 #ifndef RTREE_H
 #define RTREE_H
 
+// DEPRECATED: This file is the legacy 1983 Guttman R-tree implementation.
+// New code should use the replacements in the same directory:
+//   - geometry/rtree/packed_rtree.h   (static, build-once-query-many workloads)
+//   - geometry/rtree/dynamic_rtree.h  (mutable, insert/remove/query workloads)
+//   - geometry/rtree/dynamic_rtree_cow.h  (copy-on-write wrapper for branching)
+
 // NOTE This file compiles under MSVC 6 SP5 and MSVC .Net 2003 it may not work on other compilers without modification.
 
 // NOTE These next few lines may be win32 specific, you may need to modify them to compile on other platform
@@ -1961,7 +1967,7 @@ bool RTREE_QUAL::Search( const Node* a_node, const Rect* a_rect, int& a_foundCou
         {
             if( Overlap( a_rect, &a_node->m_branch[index].m_rect ) )
             {
-                DATATYPE& id = a_node->m_branch[index].m_data;
+                const DATATYPE& id = a_node->m_branch[index].m_data;
                 ++a_foundCount;
 
                 if( a_callback && !a_callback( id ) )

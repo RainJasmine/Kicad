@@ -23,7 +23,9 @@ set( KIAPI_PROTO_SRCS
 
     common/types/base_types.proto
     common/types/enums.proto
+    common/types/jobs.proto
     common/types/project_settings.proto
+    common/types/wizards.proto
 
     common/commands/base_commands.proto
     common/commands/editor_commands.proto
@@ -31,14 +33,16 @@ set( KIAPI_PROTO_SRCS
 
     board/board.proto
     board/board_commands.proto
+    board/board_jobs.proto
     board/board_types.proto
 
     schematic/schematic_types.proto
     schematic/schematic_commands.proto
+    schematic/schematic_jobs.proto
     )
 
 # Generated C++ code must be in the build dir; it is dependent on the version of protoc installed
-set( KIAPI_CPP_BASEPATH ${CMAKE_CURRENT_BINARY_DIR}/cpp/api )
+set( KIAPI_CPP_BASEPATH ${CMAKE_CURRENT_BINARY_DIR}/${KICMAKE_CFG_INTDIR}/cpp/api )
 
 foreach( PROTO_SRC ${KIAPI_PROTO_SRCS} )
     string( REGEX REPLACE "\.proto$" ".pb.cc" CPP_SRC ${PROTO_SRC} )
@@ -72,9 +76,9 @@ target_compile_definitions( kiapi INTERFACE KIAPI_IMPORTEXPORT=APIIMPORT )
 
 # https://groups.google.com/g/protobuf/c/PDR1bqRazts
 if(MSVC)
-    target_compile_options( kiapi PRIVATE /FI${CMAKE_CURRENT_SOURCE_DIR}/../include/import_export.h )
+    target_compile_options( kiapi PUBLIC /FI${CMAKE_CURRENT_SOURCE_DIR}/../include/import_export.h )
 else()
-    add_definitions( -include ${CMAKE_CURRENT_SOURCE_DIR}/../include/import_export.h )
+    target_compile_options( kiapi PUBLIC -include ${CMAKE_CURRENT_SOURCE_DIR}/../include/import_export.h )
 endif()
 
 if( APPLE )
@@ -116,7 +120,7 @@ target_include_directories( kiapi SYSTEM PUBLIC ${Protobuf_INCLUDE_DIRS} )
 target_link_libraries( kiapi protobuf::libprotobuf )
 
 target_include_directories( kiapi INTERFACE
-    ${CMAKE_CURRENT_BINARY_DIR}/cpp     # Leaving off the /api/ to make #include statments less ambiguous
+    ${CMAKE_CURRENT_BINARY_DIR}/${KICMAKE_CFG_INTDIR}/cpp     # Leaving off the /api/ to make #include statments less ambiguous
     )
 
 # Because when building internally, the generated files do not include the "api" base path

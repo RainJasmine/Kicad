@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////
-// C++ code generated with wxFormBuilder (version 3.10.1-0-g8feb16b)
+// C++ code generated with wxFormBuilder (version 4.2.1-0-g80c4cb6)
 // http://www.wxformbuilder.org/
 //
 // PLEASE DO *NOT* EDIT THIS FILE!
@@ -47,9 +47,20 @@ PANEL_PACKAGE_BASE::PANEL_PACKAGE_BASE( wxWindow* parent, wxWindowID id, const w
 	wxBoxSizer* bSizer2;
 	bSizer2 = new wxBoxSizer( wxVERTICAL );
 
+	wxBoxSizer* bSizer8;
+	bSizer8 = new wxBoxSizer( wxHORIZONTAL );
+
 	m_name = new wxStaticText( this, wxID_ANY, _("Name"), wxDefaultPosition, wxDefaultSize, wxST_ELLIPSIZE_END );
 	m_name->Wrap( -1 );
-	bSizer2->Add( m_name, 0, wxEXPAND|wxLEFT|wxRIGHT|wxTOP, 5 );
+	bSizer8->Add( m_name, 1, wxEXPAND|wxLEFT|wxRIGHT|wxTOP, 5 );
+
+	m_warningIcon = new wxStaticBitmap( this, wxID_ANY, wxNullBitmap, wxDefaultPosition, wxDefaultSize, 0 );
+	m_warningIcon->Hide();
+
+	bSizer8->Add( m_warningIcon, 0, wxALL, 5 );
+
+
+	bSizer2->Add( bSizer8, 0, wxEXPAND, 5 );
 
 	wxBoxSizer* bSizer3;
 	bSizer3 = new wxBoxSizer( wxHORIZONTAL );

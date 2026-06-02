@@ -124,7 +124,7 @@ std::unique_ptr<ZONE> ZONE_CREATE_HELPER::createNewZone( bool aKeepout )
         if( m_params.m_keepout )
             dialogResult = InvokeRuleAreaEditor( frame, &zoneInfo, m_tool.board() );
         else if( ( zoneInfo.m_Layers & LSET::AllCuMask() ).any() )
-            dialogResult = InvokeCopperZonesEditor( frame, &zoneInfo );
+            dialogResult = InvokeCopperZonesEditor( frame, nullptr, &zoneInfo );
         else
             dialogResult = InvokeNonCopperZonesEditor( frame, &zoneInfo );
 
@@ -281,8 +281,9 @@ bool ZONE_CREATE_HELPER::OnFirstPoint( POLYGON_GEOM_MANAGER& aMgr )
 
             m_parentView.SetVisible( &m_previewItem, true );
 
-            aMgr.SetLeaderMode( m_tool.Is45Limited() ? POLYGON_GEOM_MANAGER::LEADER_MODE::DEG45
-                                                     : POLYGON_GEOM_MANAGER::LEADER_MODE::DIRECT );
+            LEADER_MODE mode = m_tool.GetAngleSnapMode();
+
+            aMgr.SetLeaderMode( mode );
         }
     }
 
@@ -328,7 +329,7 @@ void ZONE_CREATE_HELPER::OnComplete( const POLYGON_GEOM_MANAGER& aMgr )
 
         // In DEG45 mode, we may have intermediate points in the leader that should be included
         // as they are shown in the preview.  These typically maintain the 45 constraint
-        if( aMgr.GetLeaderMode() == POLYGON_GEOM_MANAGER::LEADER_MODE::DEG45 )
+        if( aMgr.GetLeaderMode() == LEADER_MODE::DEG45 || aMgr.GetLeaderMode() == LEADER_MODE::DEG90 )
         {
             const SHAPE_LINE_CHAIN leaderPts = aMgr.GetLeaderLinePoints();
 
@@ -350,7 +351,7 @@ void ZONE_CREATE_HELPER::OnComplete( const POLYGON_GEOM_MANAGER& aMgr )
         // Simplify doesn't handle that currently.
         if( chain.PointCount() >= 3 )
         {
-            SEG seg( chain.CPoint( -1 ), chain.CPoint( 1 ) );
+            SEG seg( chain.CLastPoint(), chain.CPoint( 1 ) );
 
             if( seg.LineDistance( chain.CPoint( 0 ) ) <= 1 )
                 chain.Remove( 0 );

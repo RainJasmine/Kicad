@@ -23,13 +23,13 @@
 
 #include <project.h>
 #include <kiface_base.h>
-#include <confirm.h>
 #include <pcb_edit_frame.h>
 #include <pcbnew_settings.h>
 #include <reporter.h>
 #include <bitmaps.h>
 #include <tool/tool_manager.h>
 #include <tools/pcb_actions.h>
+#include <tools/pcb_selection_tool.h>
 #include <connectivity/connectivity_data.h>
 #include <wildcards_and_files_ext.h>
 #include <widgets/std_bitmap_button.h>
@@ -38,6 +38,7 @@
 #include <project/project_file.h>  // LAST_PATH_TYPE
 #include <dialog_import_netlist.h>
 #include <widgets/wx_html_report_panel.h>
+#include <kiplatform/ui.h>
 #include <view/view_controls.h>
 #include <wx/filedlg.h>
 #include <wx/msgdlg.h>
@@ -54,30 +55,16 @@ void PCB_EDIT_FRAME::InstallNetlistFrame()
     SetLastPath( LAST_PATH_NETLIST, netlistName );
 }
 
-bool DIALOG_IMPORT_NETLIST::m_matchByUUID = false;
 
-
-DIALOG_IMPORT_NETLIST::DIALOG_IMPORT_NETLIST( PCB_EDIT_FRAME* aParent,
-                                              wxString& aNetlistFullFilename )
-    : DIALOG_IMPORT_NETLIST_BASE( aParent ),
-      m_parent( aParent ),
-      m_netlistPath( aNetlistFullFilename ),
-      m_initialized( false ),
-      m_runDragCommand( false )
+DIALOG_IMPORT_NETLIST::DIALOG_IMPORT_NETLIST( PCB_EDIT_FRAME* aParent, wxString& aNetlistFullFilename ) :
+        DIALOG_IMPORT_NETLIST_BASE( aParent ),
+        m_parent( aParent ),
+        m_netlistPath( aNetlistFullFilename ),
+        m_initialized( false ),
+        m_runDragCommand( false )
 {
     m_NetlistFilenameCtrl->SetValue( m_netlistPath );
     m_browseButton->SetBitmap( KiBitmapBundle( BITMAPS::small_folder ) );
-
-    if( PCBNEW_SETTINGS* cfg = m_parent->GetPcbNewSettings() )
-    {
-        m_cbUpdateFootprints->SetValue( cfg->m_NetlistDialog.update_footprints );
-        m_cbTransferGroups->SetValue( cfg->m_NetlistDialog.transfer_groups );
-        m_cbDeleteShortingTracks->SetValue( cfg->m_NetlistDialog.delete_shorting_tracks );
-        m_cbDeleteExtraFootprints->SetValue( cfg->m_NetlistDialog.delete_extra_footprints );
-        m_MessageWindow->SetVisibleSeverities( cfg->m_NetlistDialog.report_filter );
-    }
-
-    m_matchByTimestamp->SetSelection( m_matchByUUID ? 0 : 1 );
 
     m_MessageWindow->SetLabel( _("Changes to Be Applied") );
     m_MessageWindow->SetFileName( Prj().GetProjectPath() + wxT( "report.txt" ) );
@@ -93,19 +80,17 @@ DIALOG_IMPORT_NETLIST::DIALOG_IMPORT_NETLIST( PCB_EDIT_FRAME* aParent,
 
 DIALOG_IMPORT_NETLIST::~DIALOG_IMPORT_NETLIST()
 {
-    m_matchByUUID = m_matchByTimestamp->GetSelection() == 0;
-
-    if( PCBNEW_SETTINGS* cfg = m_parent->GetPcbNewSettings() )
-    {
-        cfg->m_NetlistDialog.report_filter           = m_MessageWindow->GetVisibleSeverities();
-        cfg->m_NetlistDialog.update_footprints       = m_cbUpdateFootprints->GetValue();
-        cfg->m_NetlistDialog.transfer_groups         = m_cbTransferGroups->GetValue();
-        cfg->m_NetlistDialog.delete_shorting_tracks  = m_cbDeleteShortingTracks->GetValue();
-        cfg->m_NetlistDialog.delete_extra_footprints = m_cbDeleteExtraFootprints->GetValue();
-    }
-
     if( m_runDragCommand )
     {
+        PCB_SELECTION_TOOL* selTool = m_parent->GetToolManager()->GetTool<PCB_SELECTION_TOOL>();
+        PCB_SELECTION&      selection = selTool->GetSelection();
+
+        // Set the reference point to (0,0) where the new footprints were spread. This ensures
+        // the move tool knows where the items are located, preventing an offset when the "warp
+        // cursor to origin of moved object" preference is disabled.
+        if( selection.Size() > 0 )
+            selection.SetReferencePoint( VECTOR2I( 0, 0 ) );
+
         KIGFX::VIEW_CONTROLS* controls = m_parent->GetCanvas()->GetViewControls();
         controls->SetCursorPosition( controls->GetMousePosition() );
         m_parent->GetToolManager()->RunAction( PCB_ACTIONS::move );
@@ -116,7 +101,6 @@ DIALOG_IMPORT_NETLIST::~DIALOG_IMPORT_NETLIST()
 void DIALOG_IMPORT_NETLIST::onBrowseNetlistFiles( wxCommandEvent& event )
 {
     wxString dirPath = wxFileName( Prj().GetProjectFullName() ).GetPath();
-
     wxString filename = m_parent->GetLastPath( LAST_PATH_NETLIST );
 
     if( !filename.IsEmpty() )
@@ -126,9 +110,10 @@ void DIALOG_IMPORT_NETLIST::onBrowseNetlistFiles( wxCommandEvent& event )
         filename = fn.GetFullName();
     }
 
-    wxFileDialog FilesDialog( this, _( "Import Netlist" ), dirPath, filename,
-                              FILEEXT::NetlistFileWildcard(),
+    wxFileDialog FilesDialog( this, _( "Import Netlist" ), dirPath, filename, FILEEXT::NetlistFileWildcard(),
                               wxFD_DEFAULT_STYLE | wxFD_FILE_MUST_EXIST );
+
+    KIPLATFORM::UI::AllowNetworkFileSystems( &FilesDialog );
 
     if( FilesDialog.ShowModal() != wxID_OK )
         return;
@@ -240,11 +225,10 @@ void DIALOG_IMPORT_NETLIST::loadNetlist( bool aDryRun )
     reporter.ReportHead( msg, RPT_SEVERITY_INFO );
     m_MessageWindow->SetLazyUpdate( true ); // Use lazy update to speed the creation of the report
                                             // (the window is not updated for each message)
-    m_matchByUUID = m_matchByTimestamp->GetSelection() == 0;
 
     NETLIST netlist;
 
-    netlist.SetFindByTimeStamp( m_matchByUUID );
+    netlist.SetFindByTimeStamp( m_matchByTimestamp->GetSelection() == 0 );
     netlist.SetReplaceFootprints( m_cbUpdateFootprints->GetValue() );
 
     if( !m_parent->ReadNetlistFromFile( netlistFileName, netlist, reporter ) )
@@ -253,11 +237,12 @@ void DIALOG_IMPORT_NETLIST::loadNetlist( bool aDryRun )
     BOARD_NETLIST_UPDATER updater( m_parent, m_parent->GetBoard() );
     updater.SetReporter ( &reporter );
     updater.SetIsDryRun( aDryRun );
-    updater.SetLookupByTimestamp( m_matchByUUID );
+    updater.SetLookupByTimestamp( m_matchByTimestamp->GetSelection() == 0 );
     updater.SetDeleteUnusedFootprints( m_cbDeleteExtraFootprints->GetValue());
     updater.SetReplaceFootprints( m_cbUpdateFootprints->GetValue() );
     updater.SetTransferGroups( m_cbTransferGroups->GetValue() );
     updater.SetOverrideLocks( m_cbOverrideLocks->GetValue() );
+    updater.SetUpdateFields( true );
     updater.UpdateNetlist( netlist );
 
     // The creation of the report was made without window update: the full page must be displayed

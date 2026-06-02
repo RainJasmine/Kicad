@@ -202,6 +202,11 @@ public:
     APPEARANCE_CONTROLS( PCB_BASE_FRAME* aParent, wxWindow* aFocusOwner, bool aFpEditor = false );
     ~APPEARANCE_CONTROLS();
 
+    // We own at least one list of raw pointers.  Don't let the compiler fill in copy c'tors that
+    // will only land us in trouble.
+    APPEARANCE_CONTROLS( const APPEARANCE_CONTROLS& ) = delete;
+    APPEARANCE_CONTROLS& operator=( const APPEARANCE_CONTROLS& ) = delete;
+
     wxSize GetBestSize() const;
 
     ///< Update the panel contents from the application and board models.
@@ -290,6 +295,8 @@ public:
     bool IsTogglingNetclassRatsnestVisibility();
     bool IsTogglingNetRatsnestVisibility();
 
+    void CommonSettingsChanged( int aFlag );
+
 protected:
     void OnNotebookPageChanged( wxNotebookEvent& event ) override;
     void OnSetFocus( wxFocusEvent& aEvent ) override;
@@ -319,7 +326,7 @@ private:
 
     void loadDefaultLayerPresets();
 
-    void rebuildLayerPresetsWidget();
+    void rebuildLayerPresetsWidget( bool aReset );
 
     void syncLayerPresetSelection();
 
@@ -334,6 +341,8 @@ private:
     void onObjectVisibilityChanged( GAL_LAYER_ID aLayer, bool isVisible, bool isFinal );
 
     void setVisibleLayers( const LSET& aLayers );
+
+    bool isLayerEnabled( PCB_LAYER_ID aLayer ) const;
 
     void setVisibleObjects( GAL_SET aObjects );
 
@@ -470,6 +479,10 @@ private:
     wxRadioButton*       m_rbRatsnestAllLayers;
     wxRadioButton*       m_rbRatsnestVisLayers;
     wxRadioButton*       m_rbRatsnestNone;
+
+    // Bitmap caches
+    wxBitmapBundle      m_visibleBitmapBundle;
+    wxBitmapBundle      m_notVisibileBitmapBundle;
 
     enum POPUP_ID
     {

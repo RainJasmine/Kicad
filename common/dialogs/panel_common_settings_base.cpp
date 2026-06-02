@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////
-// C++ code generated with wxFormBuilder (version 4.2.1-0-g80c4cb6)
+// C++ code generated with wxFormBuilder (version 4.2.1-0-g80c4cb6a-dirty)
 // http://www.wxformbuilder.org/
 //
 // PLEASE DO *NOT* EDIT THIS FILE!
@@ -16,50 +16,62 @@ PANEL_COMMON_SETTINGS_BASE::PANEL_COMMON_SETTINGS_BASE( wxWindow* parent, wxWind
 	wxBoxSizer* bPanelSizer;
 	bPanelSizer = new wxBoxSizer( wxHORIZONTAL );
 
-	wxBoxSizer* bLeftSizer;
 	bLeftSizer = new wxBoxSizer( wxVERTICAL );
 
-	m_staticText20 = new wxStaticText( this, wxID_ANY, _("Antialiasing"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_staticText20 = new wxStaticText( this, wxID_ANY, _("Rendering Engine"), wxDefaultPosition, wxDefaultSize, 0 );
 	m_staticText20->Wrap( -1 );
 	bLeftSizer->Add( m_staticText20, 0, wxTOP|wxRIGHT|wxLEFT|wxEXPAND, 13 );
 
 	m_staticline3 = new wxStaticLine( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxLI_HORIZONTAL );
 	bLeftSizer->Add( m_staticline3, 0, wxEXPAND|wxTOP|wxBOTTOM, 2 );
 
-	wxBoxSizer* bAntialiasingSizer;
-	bAntialiasingSizer = new wxBoxSizer( wxVERTICAL );
+
+	bLeftSizer->Add( 0, 3, 0, 0, 5 );
+
+	m_renderingSizer = new wxFlexGridSizer( 0, 1, 4, 0 );
+	m_renderingSizer->SetFlexibleDirection( wxBOTH );
+	m_renderingSizer->SetNonFlexibleGrowMode( wxFLEX_GROWMODE_SPECIFIED );
+
+	m_rbAccelerated = new wxRadioButton( this, wxID_ANY, _("Accelerated Graphics"), wxDefaultPosition, wxDefaultSize, wxRB_GROUP );
+	m_rbAccelerated->SetToolTip( _("Hardware-accelerated graphics (recommended)") );
+
+	m_renderingSizer->Add( m_rbAccelerated, 0, wxLEFT, 5 );
+
+	m_rbFallback = new wxRadioButton( this, wxID_ANY, _("Fallback Graphics"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_rbFallback->SetToolTip( _("Software graphics (for computers which do not support KiCad's hardware acceleration requirements)") );
+
+	m_renderingSizer->Add( m_rbFallback, 0, wxLEFT, 5 );
+
+
+	bLeftSizer->Add( m_renderingSizer, 1, wxEXPAND|wxTOP|wxRIGHT|wxLEFT, 5 );
+
+
+	bLeftSizer->Add( 0, 3, 0, 0, 5 );
 
 	wxGridBagSizer* gbSizer11;
-	gbSizer11 = new wxGridBagSizer( 6, 4 );
+	gbSizer11 = new wxGridBagSizer( 0, 6 );
 	gbSizer11->SetFlexibleDirection( wxBOTH );
 	gbSizer11->SetNonFlexibleGrowMode( wxFLEX_GROWMODE_SPECIFIED );
 	gbSizer11->SetEmptyCellSize( wxSize( -1,2 ) );
 
 	wxStaticText* antialiasingLabel;
-	antialiasingLabel = new wxStaticText( this, wxID_ANY, _("Accelerated graphics:"), wxDefaultPosition, wxDefaultSize, 0 );
+	antialiasingLabel = new wxStaticText( this, wxID_ANY, _("Antialiasing:"), wxDefaultPosition, wxDefaultSize, 0 );
 	antialiasingLabel->Wrap( -1 );
-	gbSizer11->Add( antialiasingLabel, wxGBPosition( 0, 0 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL|wxLEFT, 5 );
+	gbSizer11->Add( antialiasingLabel, wxGBPosition( 2, 0 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL|wxLEFT, 5 );
 
 	wxString m_antialiasingChoices[] = { _("No Antialiasing"), _("Fast Antialiasing"), _("High Quality Antialiasing") };
 	int m_antialiasingNChoices = sizeof( m_antialiasingChoices ) / sizeof( wxString );
 	m_antialiasing = new wxChoice( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, m_antialiasingNChoices, m_antialiasingChoices, 0 );
 	m_antialiasing->SetSelection( 0 );
-	gbSizer11->Add( m_antialiasing, wxGBPosition( 0, 1 ), wxGBSpan( 1, 2 ), wxALIGN_CENTER_VERTICAL|wxEXPAND|wxRIGHT, 5 );
-
-	m_antialiasingFallbackLabel = new wxStaticText( this, wxID_ANY, _("Fallback graphics:"), wxDefaultPosition, wxDefaultSize, 0 );
-	m_antialiasingFallbackLabel->Wrap( -1 );
-	gbSizer11->Add( m_antialiasingFallbackLabel, wxGBPosition( 1, 0 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL|wxLEFT, 5 );
-
-	wxString m_antialiasingFallbackChoices[] = { _("No Antialiasing"), _("Fast Antialiasing"), _("High Quality Antialiasing") };
-	int m_antialiasingFallbackNChoices = sizeof( m_antialiasingFallbackChoices ) / sizeof( wxString );
-	m_antialiasingFallback = new wxChoice( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, m_antialiasingFallbackNChoices, m_antialiasingFallbackChoices, 0 );
-	m_antialiasingFallback->SetSelection( 0 );
-	gbSizer11->Add( m_antialiasingFallback, wxGBPosition( 1, 1 ), wxGBSpan( 1, 2 ), wxALIGN_CENTER_VERTICAL|wxEXPAND|wxRIGHT, 5 );
+	gbSizer11->Add( m_antialiasing, wxGBPosition( 2, 1 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL|wxRIGHT, 5 );
 
 
 	gbSizer11->AddGrowableCol( 1 );
 
-	bAntialiasingSizer->Add( gbSizer11, 0, wxTOP|wxBOTTOM, 5 );
+	bLeftSizer->Add( gbSizer11, 0, wxLEFT, 5 );
+
+	wxBoxSizer* bAntialiasingSizer;
+	bAntialiasingSizer = new wxBoxSizer( wxVERTICAL );
 
 
 	bLeftSizer->Add( bAntialiasingSizer, 0, wxTOP|wxLEFT|wxEXPAND, 5 );
@@ -94,6 +106,9 @@ PANEL_COMMON_SETTINGS_BASE::PANEL_COMMON_SETTINGS_BASE( wxWindow* parent, wxWind
 
 	bHelperAppsSizer->Add( bSizer61, 0, wxTOP|wxRIGHT|wxEXPAND, 5 );
 
+
+	bHelperAppsSizer->Add( 0, 4, 0, wxEXPAND, 5 );
+
 	bSizerFileManager = new wxBoxSizer( wxHORIZONTAL );
 
 	m_staticTextFileManager = new wxStaticText( this, wxID_ANY, _("File manager:"), wxDefaultPosition, wxDefaultSize, 0 );
@@ -107,16 +122,16 @@ PANEL_COMMON_SETTINGS_BASE::PANEL_COMMON_SETTINGS_BASE( wxWindow* parent, wxWind
 	bHelperAppsSizer->Add( bSizerFileManager, 0, wxEXPAND|wxRIGHT|wxTOP, 5 );
 
 
-	bHelperAppsSizer->Add( 0, 12, 0, wxEXPAND, 5 );
+	bHelperAppsSizer->Add( 0, 12, 1, wxEXPAND, 5 );
 
 	wxBoxSizer* bSizer8;
 	bSizer8 = new wxBoxSizer( wxVERTICAL );
 
-	m_defaultPDFViewer = new wxRadioButton( this, wxID_ANY, _("System default PDF viewer"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_defaultPDFViewer = new wxRadioButton( this, wxID_ANY, _("System default PDF viewer"), wxDefaultPosition, wxDefaultSize, wxRB_GROUP );
 	bSizer8->Add( m_defaultPDFViewer, 0, wxTOP|wxRIGHT|wxLEFT, 5 );
 
 
-	bHelperAppsSizer->Add( bSizer8, 0, wxBOTTOM|wxEXPAND, 3 );
+	bHelperAppsSizer->Add( bSizer8, 0, wxBOTTOM|wxEXPAND, 2 );
 
 	wxBoxSizer* bSizer7;
 	bSizer7 = new wxBoxSizer( wxHORIZONTAL );
@@ -178,6 +193,11 @@ PANEL_COMMON_SETTINGS_BASE::PANEL_COMMON_SETTINGS_BASE( wxWindow* parent, wxWind
 
 
 	bUserInterfaceSizer->Add( bSizer14, 0, wxEXPAND, 5 );
+
+	m_disableCustomCursors = new wxCheckBox( this, wxID_ANY, _("Disable custom cursors"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_disableCustomCursors->SetToolTip( _("When enabled, KiCad will use default system cursors instead of custom ones") );
+
+	bUserInterfaceSizer->Add( m_disableCustomCursors, 0, wxBOTTOM|wxLEFT|wxRIGHT, 5 );
 
 	wxBoxSizer* bSizerIconsTheme;
 	bSizerIconsTheme = new wxBoxSizer( wxHORIZONTAL );
@@ -272,6 +292,32 @@ PANEL_COMMON_SETTINGS_BASE::PANEL_COMMON_SETTINGS_BASE( wxWindow* parent, wxWind
 
 	bUserInterfaceSizer->Add( bSizerHighContrast, 0, wxEXPAND|wxTOP|wxBOTTOM, 5 );
 
+	wxBoxSizer* bSizerAppTheme;
+	bSizerAppTheme = new wxBoxSizer( wxHORIZONTAL );
+
+	m_stAppTheme = new wxStaticText( this, wxID_ANY, _("App theme:"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_stAppTheme->Wrap( -1 );
+	bSizerAppTheme->Add( m_stAppTheme, 0, wxALL, 5 );
+
+	m_rbAppThemeLight = new wxRadioButton( this, wxID_ANY, _("Light"), wxDefaultPosition, wxDefaultSize, wxRB_GROUP );
+	m_rbAppThemeLight->SetToolTip( _("Use icons designed for light window backgrounds") );
+
+	bSizerAppTheme->Add( m_rbAppThemeLight, 0, wxALL, 5 );
+
+	m_rbAppThemeDark = new wxRadioButton( this, wxID_ANY, _("Dark"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_rbAppThemeDark->SetToolTip( _("Use icons designed for dark window backgrounds") );
+
+	bSizerAppTheme->Add( m_rbAppThemeDark, 0, wxALL, 5 );
+
+	m_rbAppThemeAuto = new wxRadioButton( this, wxID_ANY, _("Automatic"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_rbAppThemeAuto->SetValue( true );
+	m_rbAppThemeAuto->SetToolTip( _("Automatically choose light or dark icons based on the system color theme") );
+
+	bSizerAppTheme->Add( m_rbAppThemeAuto, 0, wxALL, 5 );
+
+
+	bUserInterfaceSizer->Add( bSizerAppTheme, 1, wxEXPAND, 5 );
+
 
 	bLeftSizer->Add( bUserInterfaceSizer, 0, wxTOP|wxLEFT|wxEXPAND, 5 );
 
@@ -280,6 +326,21 @@ PANEL_COMMON_SETTINGS_BASE::PANEL_COMMON_SETTINGS_BASE( wxWindow* parent, wxWind
 
 	wxBoxSizer* rightSizer;
 	rightSizer = new wxBoxSizer( wxVERTICAL );
+
+	m_staticText251 = new wxStaticText( this, wxID_ANY, _("Scaling"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_staticText251->Wrap( -1 );
+	rightSizer->Add( m_staticText251, 0, wxLEFT|wxRIGHT|wxTOP|wxEXPAND, 13 );
+
+	m_staticline7 = new wxStaticLine( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxLI_HORIZONTAL );
+	rightSizer->Add( m_staticline7, 0, wxEXPAND|wxTOP, 2 );
+
+	m_scalingSizer = new wxBoxSizer( wxVERTICAL );
+
+
+	rightSizer->Add( m_scalingSizer, 1, wxEXPAND|wxTOP|wxRIGHT|wxLEFT, 10 );
+
+
+	rightSizer->Add( 0, 15, 0, wxEXPAND, 5 );
 
 	m_staticText23 = new wxStaticText( this, wxID_ANY, _("Editing"), wxDefaultPosition, wxDefaultSize, 0 );
 	m_staticText23->Wrap( -1 );
@@ -326,24 +387,10 @@ PANEL_COMMON_SETTINGS_BASE::PANEL_COMMON_SETTINGS_BASE( wxWindow* parent, wxWind
 	bSessionSizer->Add( 0, 5, 0, 0, 5 );
 
 	wxGridBagSizer* gbSizer1;
-	gbSizer1 = new wxGridBagSizer( 4, 5 );
+	gbSizer1 = new wxGridBagSizer( 5, 5 );
 	gbSizer1->SetFlexibleDirection( wxBOTH );
 	gbSizer1->SetNonFlexibleGrowMode( wxFLEX_GROWMODE_SPECIFIED );
 	gbSizer1->SetEmptyCellSize( wxSize( -1,2 ) );
-
-	m_staticTextautosave = new wxStaticText( this, wxID_ANY, _("&Auto save:"), wxDefaultPosition, wxDefaultSize, 0 );
-	m_staticTextautosave->Wrap( -1 );
-	gbSizer1->Add( m_staticTextautosave, wxGBPosition( 0, 0 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL, 5 );
-
-	m_SaveTime = new wxSpinCtrl( this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 0, 10, 0 );
-	m_SaveTime->SetToolTip( _("Delay after the first change to create a backup file of the board on disk.\nIf set to 0, auto backup is disabled") );
-
-	gbSizer1->Add( m_SaveTime, wxGBPosition( 0, 1 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL|wxEXPAND, 5 );
-
-	wxStaticText* minutesLabel;
-	minutesLabel = new wxStaticText( this, wxID_ANY, _("minutes"), wxDefaultPosition, wxDefaultSize, 0 );
-	minutesLabel->Wrap( -1 );
-	gbSizer1->Add( minutesLabel, wxGBPosition( 0, 2 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL|wxRIGHT, 5 );
 
 	m_staticTextFileHistorySize = new wxStaticText( this, wxID_ANY, _("File history size:"), wxDefaultPosition, wxDefaultSize, 0 );
 	m_staticTextFileHistorySize->Wrap( -1 );
@@ -351,19 +398,6 @@ PANEL_COMMON_SETTINGS_BASE::PANEL_COMMON_SETTINGS_BASE( wxWindow* parent, wxWind
 
 	m_fileHistorySize = new wxSpinCtrl( this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 1, 100, 0 );
 	gbSizer1->Add( m_fileHistorySize, wxGBPosition( 1, 1 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL|wxEXPAND, 5 );
-
-	m_staticTextClear3DCache = new wxStaticText( this, wxID_ANY, _("3D cache file duration:"), wxDefaultPosition, wxDefaultSize, 0 );
-	m_staticTextClear3DCache->Wrap( -1 );
-	gbSizer1->Add( m_staticTextClear3DCache, wxGBPosition( 2, 0 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL, 5 );
-
-	m_Clear3DCacheFilesOlder = new wxSpinCtrl( this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 0, 120, 30 );
-	m_Clear3DCacheFilesOlder->SetToolTip( _("3D cache files older than this are deleted.\nIf set to 0, cache clearing is disabled") );
-
-	gbSizer1->Add( m_Clear3DCacheFilesOlder, wxGBPosition( 2, 1 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL|wxEXPAND, 5 );
-
-	m_staticTextDays = new wxStaticText( this, wxID_ANY, _("days"), wxDefaultPosition, wxDefaultSize, 0 );
-	m_staticTextDays->Wrap( -1 );
-	gbSizer1->Add( m_staticTextDays, wxGBPosition( 2, 2 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL, 5 );
 
 
 	gbSizer1->AddGrowableCol( 1 );
@@ -387,7 +421,7 @@ PANEL_COMMON_SETTINGS_BASE::PANEL_COMMON_SETTINGS_BASE( wxWindow* parent, wxWind
 	bProjectBackupSizer = new wxBoxSizer( wxVERTICAL );
 
 	wxGridBagSizer* gbSizer3;
-	gbSizer3 = new wxGridBagSizer( 0, 0 );
+	gbSizer3 = new wxGridBagSizer( 2, 0 );
 	gbSizer3->SetFlexibleDirection( wxBOTH );
 	gbSizer3->SetNonFlexibleGrowMode( wxFLEX_GROWMODE_SPECIFIED );
 
@@ -396,54 +430,42 @@ PANEL_COMMON_SETTINGS_BASE::PANEL_COMMON_SETTINGS_BASE( wxWindow* parent, wxWind
 
 	gbSizer3->Add( m_cbBackupEnabled, wxGBPosition( 0, 0 ), wxGBSpan( 1, 3 ), wxBOTTOM|wxRIGHT, 5 );
 
-	m_cbBackupAutosave = new wxCheckBox( this, wxID_ANY, _("Create backups when auto save occurs"), wxDefaultPosition, wxDefaultSize, 0 );
-	m_cbBackupAutosave->SetToolTip( _("Create backups when the auto save feature is enabled.  If not checked, backups will only be created when you manually save a file.") );
+	m_staticTextBackupFormat = new wxStaticText( this, wxID_ANY, _("Format:"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_staticTextBackupFormat->Wrap( -1 );
+	gbSizer3->Add( m_staticTextBackupFormat, wxGBPosition( 1, 0 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL|wxBOTTOM|wxRIGHT, 3 );
 
-	gbSizer3->Add( m_cbBackupAutosave, wxGBPosition( 1, 0 ), wxGBSpan( 1, 3 ), wxBOTTOM|wxRIGHT, 5 );
+	wxString m_choiceBackupFormatChoices[] = { _("Incremental"), _("Zip archive") };
+	int m_choiceBackupFormatNChoices = sizeof( m_choiceBackupFormatChoices ) / sizeof( wxString );
+	m_choiceBackupFormat = new wxChoice( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, m_choiceBackupFormatNChoices, m_choiceBackupFormatChoices, 0 );
+	m_choiceBackupFormat->SetSelection( 0 );
+	m_choiceBackupFormat->SetToolTip( _("Incremental: maintain a hidden .history git repository with continuous changes.\nZip: create timestamped zip archives on save; autosave uses recovery files.") );
 
-	m_staticText9 = new wxStaticText( this, wxID_ANY, _("Maximum backups to keep:"), wxDefaultPosition, wxDefaultSize, 0 );
-	m_staticText9->Wrap( -1 );
-	m_staticText9->SetToolTip( _("How many backup files total to keep (set to 0 for no limit)") );
+	gbSizer3->Add( m_choiceBackupFormat, wxGBPosition( 1, 1 ), wxGBSpan( 1, 2 ), wxALIGN_CENTER_VERTICAL|wxRIGHT|wxLEFT|wxEXPAND, 3 );
 
-	gbSizer3->Add( m_staticText9, wxGBPosition( 2, 0 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL|wxBOTTOM|wxRIGHT, 5 );
+	m_staticTextBackupLocation = new wxStaticText( this, wxID_ANY, _("Location:"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_staticTextBackupLocation->Wrap( -1 );
+	gbSizer3->Add( m_staticTextBackupLocation, wxGBPosition( 2, 0 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL|wxBOTTOM|wxRIGHT, 3 );
 
-	m_backupLimitTotalFiles = new wxSpinCtrl( this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 0, 1000, 0 );
-	gbSizer3->Add( m_backupLimitTotalFiles, wxGBPosition( 2, 1 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL|wxBOTTOM|wxRIGHT|wxLEFT|wxEXPAND, 5 );
+	wxString m_choiceBackupLocationChoices[] = { _("Project directory"), _("User data directory") };
+	int m_choiceBackupLocationNChoices = sizeof( m_choiceBackupLocationChoices ) / sizeof( wxString );
+	m_choiceBackupLocation = new wxChoice( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, m_choiceBackupLocationNChoices, m_choiceBackupLocationChoices, 0 );
+	m_choiceBackupLocation->SetSelection( 0 );
+	m_choiceBackupLocation->SetToolTip( _("Project: store backups and autosave files inside the project directory.\nUser: store them in your KiCad user data directory.") );
 
-	m_staticText10 = new wxStaticText( this, wxID_ANY, _("Maximum backups per day:"), wxDefaultPosition, wxDefaultSize, 0 );
-	m_staticText10->Wrap( -1 );
-	m_staticText10->SetToolTip( _("How many backup files to keep each day (set to 0 for no limit)") );
-
-	gbSizer3->Add( m_staticText10, wxGBPosition( 3, 0 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL|wxBOTTOM|wxRIGHT, 5 );
-
-	m_backupLimitDailyFiles = new wxSpinCtrl( this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 0, 1000, 0 );
-	gbSizer3->Add( m_backupLimitDailyFiles, wxGBPosition( 3, 1 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL|wxEXPAND|wxBOTTOM|wxRIGHT|wxLEFT, 5 );
-
-	m_staticText11 = new wxStaticText( this, wxID_ANY, _("Minimum time between backups:"), wxDefaultPosition, wxDefaultSize, 0 );
-	m_staticText11->Wrap( -1 );
-	m_staticText11->SetToolTip( _("Number of minutes since the last backup before another will be created the next time you save (set to 0 for no minimum)") );
-
-	gbSizer3->Add( m_staticText11, wxGBPosition( 4, 0 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL|wxBOTTOM|wxRIGHT, 5 );
-
-	m_backupMinInterval = new wxSpinCtrl( this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 0, 3600, 0 );
-	gbSizer3->Add( m_backupMinInterval, wxGBPosition( 4, 1 ), wxGBSpan( 1, 1 ), wxBOTTOM|wxRIGHT|wxLEFT|wxALIGN_CENTER_VERTICAL|wxEXPAND, 5 );
-
-	m_staticText15 = new wxStaticText( this, wxID_ANY, _("minutes"), wxDefaultPosition, wxDefaultSize, 0 );
-	m_staticText15->Wrap( -1 );
-	gbSizer3->Add( m_staticText15, wxGBPosition( 4, 2 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL|wxBOTTOM|wxRIGHT, 5 );
+	gbSizer3->Add( m_choiceBackupLocation, wxGBPosition( 2, 1 ), wxGBSpan( 1, 2 ), wxALIGN_CENTER_VERTICAL|wxRIGHT|wxLEFT|wxEXPAND, 3 );
 
 	m_staticText16 = new wxStaticText( this, wxID_ANY, _("Maximum total backup size:"), wxDefaultPosition, wxDefaultSize, 0 );
 	m_staticText16->Wrap( -1 );
 	m_staticText16->SetToolTip( _("If the total size of backup files grows above this limit, old backups will be deleted (set to 0 for no limit)") );
 
-	gbSizer3->Add( m_staticText16, wxGBPosition( 5, 0 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL|wxBOTTOM|wxRIGHT, 5 );
+	gbSizer3->Add( m_staticText16, wxGBPosition( 3, 0 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL|wxBOTTOM|wxRIGHT, 3 );
 
 	m_backupLimitTotalSize = new wxSpinCtrl( this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 0, 1000, 0 );
-	gbSizer3->Add( m_backupLimitTotalSize, wxGBPosition( 5, 1 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL|wxRIGHT|wxLEFT|wxEXPAND, 5 );
+	gbSizer3->Add( m_backupLimitTotalSize, wxGBPosition( 3, 1 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL|wxRIGHT|wxLEFT|wxEXPAND, 3 );
 
 	m_staticText17 = new wxStaticText( this, wxID_ANY, _("MB"), wxDefaultPosition, wxDefaultSize, 0 );
 	m_staticText17->Wrap( -1 );
-	gbSizer3->Add( m_staticText17, wxGBPosition( 5, 2 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL|wxRIGHT, 5 );
+	gbSizer3->Add( m_staticText17, wxGBPosition( 3, 2 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL|wxRIGHT, 3 );
 
 
 	gbSizer3->AddGrowableCol( 1 );
@@ -454,7 +476,7 @@ PANEL_COMMON_SETTINGS_BASE::PANEL_COMMON_SETTINGS_BASE( wxWindow* parent, wxWind
 	rightSizer->Add( bProjectBackupSizer, 0, wxEXPAND|wxTOP|wxLEFT, 5 );
 
 
-	bPanelSizer->Add( rightSizer, 0, wxRIGHT|wxLEFT, 5 );
+	bPanelSizer->Add( rightSizer, 1, wxLEFT|wxRIGHT, 5 );
 
 
 	this->SetSizer( bPanelSizer );

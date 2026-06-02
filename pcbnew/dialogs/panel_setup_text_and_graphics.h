@@ -24,27 +24,24 @@
 #pragma once
 
 #include <memory>
-
-#include <board.h>
-#include <widgets/unit_binder.h>
-#include <widgets/paged_dialog.h>
-
 #include <panel_setup_text_and_graphics_base.h>
 
+
 class BOARD_DESIGN_SETTINGS;
-class PANEL_SETUP_DIMENSIONS;
 class PCB_EDIT_FRAME;
+
 
 class PANEL_SETUP_TEXT_AND_GRAPHICS : public PANEL_SETUP_TEXT_AND_GRAPHICS_BASE
 {
 public:
-    PANEL_SETUP_TEXT_AND_GRAPHICS( wxWindow* aParentWindow, PCB_EDIT_FRAME* aFrame );
+    PANEL_SETUP_TEXT_AND_GRAPHICS( wxWindow* aParentWindow, PCB_EDIT_FRAME* aFrame,
+                                   BOARD_DESIGN_SETTINGS* aBrdSettings );
     ~PANEL_SETUP_TEXT_AND_GRAPHICS( ) override;
 
     bool TransferDataToWindow() override;
     bool TransferDataFromWindow() override;
 
-    void ImportSettingsFrom( BOARD* aBoard );
+    bool CommitPendingChanges();
 
 private:
     void onUnitsChanged( wxCommandEvent& aEvent );
@@ -52,6 +49,4 @@ private:
 private:
     PCB_EDIT_FRAME*         m_Frame;
     BOARD_DESIGN_SETTINGS*  m_BrdSettings;
-
-    std::unique_ptr<PANEL_SETUP_DIMENSIONS> m_dimensionsPanel;
 };

@@ -20,6 +20,7 @@
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "settings/settings_manager.h"
 #include <algorithm>
 
 #include <bitmaps.h>
@@ -38,26 +39,11 @@
 #include <widgets/std_bitmap_button.h>
 #include <sch_commit.h>
 
-bool g_selectRefDes = false;
-bool g_selectValue  = false;
-                                // { change, update }
-bool g_removeExtraFields[2]      = { false,  false  };
-bool g_resetEmptyFields[2]       = { false,  false  };
-bool g_resetFieldText[2]         = { true,   true   };
-bool g_resetFieldVisibilities[2] = { true,   false  };
-bool g_resetFieldEffects[2]      = { true,   false  };
-bool g_resetFieldPositions[2]    = { true,   false  };
-bool g_resetAttributes[2]        = { true,   false  };
-bool g_resetPinVisibilities[2]   = { true,   false  };
-bool g_resetCustomPower[2]       = { false,  false  };
-bool g_resetAlternatePins[2]     = { true,   false  };
 
-
-DIALOG_CHANGE_SYMBOLS::DIALOG_CHANGE_SYMBOLS( SCH_EDIT_FRAME* aParent, SCH_SYMBOL* aSymbol,
-                                              MODE aMode ) :
-    DIALOG_CHANGE_SYMBOLS_BASE( aParent ),
-    m_symbol( aSymbol),
-    m_mode( aMode )
+DIALOG_CHANGE_SYMBOLS::DIALOG_CHANGE_SYMBOLS( SCH_EDIT_FRAME* aParent, SCH_SYMBOL* aSymbol, MODE aMode ) :
+        DIALOG_CHANGE_SYMBOLS_BASE( aParent ),
+        m_symbol( aSymbol),
+        m_mode( aMode )
 {
     wxASSERT( aParent );
 
@@ -70,73 +56,11 @@ DIALOG_CHANGE_SYMBOLS::DIALOG_CHANGE_SYMBOLS( SCH_EDIT_FRAME* aParent, SCH_SYMBO
         m_matchAll->SetLabel( _( "Change all symbols in schematic" ) );
         SetTitle( _( "Change Symbols" ) );
         m_matchSizer->FindItem( m_matchAll )->Show( false );
-    }
 
-    if( m_symbol )
-    {
-        SCH_SHEET_PATH* currentSheet = &aParent->Schematic().CurrentSheet();
-
-        if( m_mode == MODE::CHANGE )
-            m_matchBySelection->SetLabel( _( "Change selected symbol(s)" ) );
-
-        m_newId->ChangeValue( UnescapeString( m_symbol->GetLibId().Format() ) );
-        m_specifiedReference->ChangeValue( m_symbol->GetRef( currentSheet ) );
-        m_specifiedValue->ChangeValue( UnescapeString( m_symbol->GetField( FIELD_T::VALUE )->GetText() ) );
-        m_specifiedId->ChangeValue( UnescapeString( m_symbol->GetLibId().Format() ) );
-    }
-    else
-    {
-        m_matchSizer->FindItem( m_matchBySelection )->Show( false );
-    }
-
-    m_matchIdBrowserButton->SetBitmap( KiBitmapBundle( BITMAPS::small_library ) );
-    m_newIdBrowserButton->SetBitmap( KiBitmapBundle( BITMAPS::small_library ) );
-
-    if( m_mode == MODE::CHANGE )
-    {
         m_matchByReference->SetLabel( _( "Change symbols matching reference designator:" ) );
         m_matchByValue->SetLabel( _( "Change symbols matching value:" ) );
         m_matchById->SetLabel( _( "Change symbols matching library identifier:" ) );
-    }
 
-    m_matchSizer->SetEmptyCellSize( wxSize( 0, 0 ) );
-    m_matchSizer->Layout();
-
-    for( FIELD_T fieldId : MANDATORY_FIELDS )
-    {
-        int listIdx = m_fieldsBox->GetCount();
-
-        m_fieldsBox->Append( GetDefaultFieldName( fieldId, DO_TRANSLATE ) );
-
-        if( fieldId == FIELD_T::REFERENCE )
-            m_fieldsBox->Check( listIdx, g_selectRefDes );
-        else if( fieldId == FIELD_T::VALUE )
-            m_fieldsBox->Check( listIdx, g_selectValue );
-        else
-            m_fieldsBox->Check( listIdx, true );
-
-        m_mandatoryFieldListIndexes[fieldId] = listIdx;
-    }
-
-    m_messagePanel->SetLazyUpdate( true );
-    m_messagePanel->SetFileName( Prj().GetProjectPath() + wxT( "report.txt" ) );
-
-    if( aSymbol && aSymbol->IsSelected() )
-    {
-        m_matchBySelection->SetValue( true );
-    }
-    else
-    {
-        if( aMode == MODE::UPDATE )
-            m_matchAll->SetValue( true );
-        else
-            m_matchByReference->SetValue( true );
-    }
-
-    updateFieldsList();
-
-    if( m_mode == MODE::CHANGE )
-    {
         m_updateFieldsSizer->GetStaticBox()->SetLabel( _( "Update Fields" ) );
         m_removeExtraBox->SetLabel( _( "Remove fields if not in new symbol" ) );
         m_resetEmptyFields->SetLabel( _( "Reset fields if empty in new symbol" ) );
@@ -148,18 +72,60 @@ DIALOG_CHANGE_SYMBOLS::DIALOG_CHANGE_SYMBOLS( SCH_EDIT_FRAME* aParent, SCH_SYMBO
         m_resetPinTextVisibility->SetLabel( _( "Update pin name/number visibilities" ) );
         m_resetAlternatePin->SetLabel( _( "Reset alternate pin functions" ) );
         m_resetCustomPower->SetLabel( _( "Reset custom power symbols" ) );
+
+        if( m_symbol )
+            m_matchBySelection->SetLabel( _( "Change selected symbol(s)" ) );
     }
 
-    m_removeExtraBox->SetValue( g_removeExtraFields[ (int) m_mode ] );
-    m_resetEmptyFields->SetValue( g_resetEmptyFields[ (int) m_mode ] );
-    m_resetFieldText->SetValue( g_resetFieldText[ (int) m_mode ] );
-    m_resetFieldVisibilities->SetValue( g_resetFieldVisibilities[ (int) m_mode ] );
-    m_resetFieldEffects->SetValue( g_resetFieldEffects[ (int) m_mode ] );
-    m_resetFieldPositions->SetValue( g_resetFieldPositions[ (int) m_mode ] );
-    m_resetAttributes->SetValue( g_resetAttributes[ (int) m_mode ] );
-    m_resetPinTextVisibility->SetValue( g_resetPinVisibilities[ (int) m_mode ] );
-    m_resetCustomPower->SetValue( g_resetCustomPower[ (int) m_mode ] );
-    m_resetAlternatePin->SetValue( g_resetAlternatePins[ (int) m_mode ] );
+    if( !m_symbol )
+        m_matchSizer->FindItem( m_matchBySelection )->Show( false );
+
+    m_matchIdBrowserButton->SetBitmap( KiBitmapBundle( BITMAPS::small_library ) );
+    m_newIdBrowserButton->SetBitmap( KiBitmapBundle( BITMAPS::small_library ) );
+
+    m_matchSizer->SetEmptyCellSize( wxSize( 0, 0 ) );
+    m_matchSizer->Layout();
+
+    bool selectReference = false;
+    bool selectValue = false;
+
+    if( EESCHEMA_SETTINGS* cfg = GetAppSettings<EESCHEMA_SETTINGS>( "eeschema" ) )
+    {
+        selectReference = cfg->m_ChangeSymbols.updateReferences;
+        selectValue = cfg->m_ChangeSymbols.updateValues;
+    }
+
+    for( FIELD_T fieldId : MANDATORY_FIELDS )
+    {
+        int listIdx = (int) m_fieldsBox->GetCount();
+
+        m_fieldsBox->Append( GetDefaultFieldName( fieldId, DO_TRANSLATE ) );
+
+        // List boxes aren't currently handled in DIALOG_SHIM's control-state-save/restore
+        if( fieldId == FIELD_T::REFERENCE )
+            m_fieldsBox->Check( listIdx, selectReference );
+        else if( fieldId == FIELD_T::VALUE )
+            m_fieldsBox->Check( listIdx, selectValue );
+        else
+            m_fieldsBox->Check( listIdx, true );
+
+        m_mandatoryFieldListIndexes[fieldId] = listIdx;
+    }
+
+    // initialize controls based on m_mode in case there is no saved state yet
+    m_removeExtraBox->SetValue( false );
+    m_resetEmptyFields->SetValue( false );
+    m_resetFieldText->SetValue( true );
+    m_resetCustomPower->SetValue( false );
+    m_resetFieldVisibilities->SetValue( ( m_mode == MODE::CHANGE ) ? true  : false );
+    m_resetFieldEffects->SetValue(      ( m_mode == MODE::CHANGE ) ? true  : false );
+    m_resetFieldPositions->SetValue(    ( m_mode == MODE::CHANGE ) ? true  : false );
+    m_resetAttributes->SetValue(        ( m_mode == MODE::CHANGE ) ? true  : false );
+    m_resetPinTextVisibility->SetValue( ( m_mode == MODE::CHANGE ) ? true  : false );
+    m_resetAlternatePin->SetValue(      ( m_mode == MODE::CHANGE ) ? true  : false );
+
+    m_messagePanel->SetLazyUpdate( true );
+    m_messagePanel->SetFileName( Prj().GetProjectPath() + wxT( "report.txt" ) );
 
     // DIALOG_SHIM needs a unique hash_key because classname is not sufficient
     // because the update and change versions of this dialog have different controls.
@@ -172,6 +138,30 @@ DIALOG_CHANGE_SYMBOLS::DIALOG_CHANGE_SYMBOLS( SCH_EDIT_FRAME* aParent, SCH_SYMBO
 
     // Now all widgets have the size fixed, call FinishDialogSettings
     finishDialogSettings();
+}
+
+
+bool DIALOG_CHANGE_SYMBOLS::TransferDataToWindow()
+{
+    if( m_symbol )
+    {
+        SCH_SHEET_PATH* currentSheet = &m_symbol->Schematic()->CurrentSheet();
+
+        m_specifiedReference->ChangeValue( m_symbol->GetRef( currentSheet ) );
+        m_specifiedValue->ChangeValue( UnescapeString( m_symbol->GetField( FIELD_T::VALUE )->GetText() ) );
+        m_specifiedId->ChangeValue( UnescapeString( m_symbol->GetLibId().Format() ) );
+    }
+
+    if( m_symbol && m_symbol->IsSelected() )
+        m_matchBySelection->SetValue( true );
+    else if( m_mode == MODE::UPDATE )
+        m_matchAll->SetValue( true );
+    else
+        m_matchByReference->SetValue( true );
+
+    updateFieldsList();
+
+    return true;
 }
 
 
@@ -231,19 +221,14 @@ void DIALOG_CHANGE_SYMBOLS::onNewLibIDKillFocus( wxFocusEvent& event )
 
 DIALOG_CHANGE_SYMBOLS::~DIALOG_CHANGE_SYMBOLS()
 {
-    g_selectRefDes = m_fieldsBox->IsChecked( m_mandatoryFieldListIndexes[FIELD_T::REFERENCE] );
-    g_selectValue = m_fieldsBox->IsChecked( m_mandatoryFieldListIndexes[FIELD_T::VALUE] );
+    // List boxes aren't currently handled in DIALOG_SHIM's control-state-save/restore
+    if( EESCHEMA_SETTINGS* cfg = GetAppSettings<EESCHEMA_SETTINGS>( "eeschema" ) )
+    {
+        EESCHEMA_SETTINGS::DIALOG_CHANGE_SYMBOLS& dlg_cfg = cfg->m_ChangeSymbols;
 
-    g_removeExtraFields[ (int) m_mode ] = m_removeExtraBox->GetValue();
-    g_resetEmptyFields[ (int) m_mode ] = m_resetEmptyFields->GetValue();
-    g_resetFieldText[ (int) m_mode ] = m_resetFieldText->GetValue();
-    g_resetFieldVisibilities[ (int) m_mode ] = m_resetFieldVisibilities->GetValue();
-    g_resetFieldEffects[ (int) m_mode ] = m_resetFieldEffects->GetValue();
-    g_resetFieldPositions[ (int) m_mode ] = m_resetFieldPositions->GetValue();
-    g_resetAttributes[ (int) m_mode ] = m_resetAttributes->GetValue();
-    g_resetPinVisibilities[ (int) m_mode ] = m_resetPinTextVisibility->GetValue();
-    g_resetCustomPower[ (int) m_mode ] = m_resetCustomPower->GetValue();
-    g_resetAlternatePins[ (int) m_mode ] = m_resetAlternatePin->GetValue();
+        dlg_cfg.updateReferences = m_fieldsBox->IsChecked( m_mandatoryFieldListIndexes[FIELD_T::REFERENCE] );
+        dlg_cfg.updateValues = m_fieldsBox->IsChecked( m_mandatoryFieldListIndexes[FIELD_T::VALUE] );
+    }
 }
 
 
@@ -577,8 +562,7 @@ int DIALOG_CHANGE_SYMBOLS::processMatchingSymbols( SCH_COMMIT* aCommit )
     if( symbols.size() > 0 )
         matchesProcessed += processSymbols( aCommit, symbols );
     else
-        m_messagePanel->Report( _( "*** No symbols matching criteria found ***" ),
-                                RPT_SEVERITY_ERROR );
+        m_messagePanel->Report( _( "*** No symbols matching criteria found ***" ), RPT_SEVERITY_ERROR );
 
     frame->GetCurrentSheet().UpdateAllScreenReferences();
 
@@ -586,8 +570,7 @@ int DIALOG_CHANGE_SYMBOLS::processMatchingSymbols( SCH_COMMIT* aCommit )
 }
 
 
-int DIALOG_CHANGE_SYMBOLS::processSymbols( SCH_COMMIT* aCommit,
-                                           const std::map<SCH_SYMBOL*,
+int DIALOG_CHANGE_SYMBOLS::processSymbols( SCH_COMMIT* aCommit, const std::map<SCH_SYMBOL*,
                                            SYMBOL_CHANGE_INFO>& aSymbols )
 {
     wxCHECK( !aSymbols.empty(), 0 );
@@ -607,7 +590,16 @@ int DIALOG_CHANGE_SYMBOLS::processSymbols( SCH_COMMIT* aCommit,
     {
         SCH_SYMBOL* symbol = it->first;
 
-        wxCHECK2( symbol && it->second.m_LibId.IsValid(), continue );
+        wxCHECK2( symbol, ++it; continue );
+
+        if( !it->second.m_LibId.IsValid() )
+        {
+            msg = getSymbolReferences( *symbol, it->second.m_LibId );
+            msg << wxT( ": " ) << _( "*** symbol lib id not valid ***" );
+            m_messagePanel->Report( msg, RPT_SEVERITY_ERROR );
+            it = symbols.erase( it );
+            continue;
+        }
 
         LIB_SYMBOL* libSymbol = frame->GetLibSymbol( it->second.m_LibId );
 
@@ -648,15 +640,6 @@ int DIALOG_CHANGE_SYMBOLS::processSymbols( SCH_COMMIT* aCommit,
         screen->Remove( symbol );
         SCH_SYMBOL* symbol_copy = static_cast<SCH_SYMBOL*>( symbol->Clone() );
         aCommit->Modified( symbol, symbol_copy, screen );
-
-        CONNECTION_GRAPH*           connectionGraph = screen->Schematic()->ConnectionGraph();
-
-        // When we replace the lib symbol below, we free the associated pins if the new symbol has
-        // fewer than the original.  This will cause the connection graph to be out of date unless
-        // we replace references in the graph to the old symbol/pins with references to the ones
-        // stored in the undo stack.
-        if( connectionGraph )
-            connectionGraph->ExchangeItem( symbol, symbol_copy );
     }
 
     for( const auto& [ symbol, symbol_change_info ] : symbols )
@@ -664,10 +647,13 @@ int DIALOG_CHANGE_SYMBOLS::processSymbols( SCH_COMMIT* aCommit,
         // Remember initial link before changing for diags purpose
         wxString initialLibLinkName = UnescapeString( symbol->GetLibId().Format() );
 
+        LIB_SYMBOL* libSymbol = frame->GetLibSymbol( symbol_change_info.m_LibId );
+
+        wxCHECK2( libSymbol, continue );
+
         if( symbol_change_info.m_LibId != symbol->GetLibId() )
             symbol->SetLibId( symbol_change_info.m_LibId );
 
-        LIB_SYMBOL*                 libSymbol = frame->GetLibSymbol( symbol_change_info.m_LibId );
         std::unique_ptr<LIB_SYMBOL> flattenedSymbol = libSymbol->Flatten();
         SCH_SCREEN*                 screen = symbol_change_info.m_Instances[0].LastScreen();
 
@@ -680,6 +666,7 @@ int DIALOG_CHANGE_SYMBOLS::processSymbols( SCH_COMMIT* aCommit,
             symbol->SetExcludedFromSim( symbol->GetLibSymbolRef()->GetExcludedFromSim() );
             symbol->SetExcludedFromBOM( symbol->GetLibSymbolRef()->GetExcludedFromBOM() );
             symbol->SetExcludedFromBoard( symbol->GetLibSymbolRef()->GetExcludedFromBoard() );
+            symbol->SetExcludedFromPosFiles( symbol->GetLibSymbolRef()->GetExcludedFromPosFiles() );
         }
 
         if( m_resetPinTextVisibility->GetValue() )
@@ -828,9 +815,12 @@ int DIALOG_CHANGE_SYMBOLS::processSymbols( SCH_COMMIT* aCommit,
                     // name which causes library symbol comparison errors.  Clear the alternate pin
                     // name in this case even if the reset option is not checked.  Also clear the
                     // alternate pin name if it no longer exists in the alternate pin map.
-                    if( m_resetAlternatePin->IsChecked() || ( pin->GetAlt() == pin->GetName() )
-                      || ( pin->GetAlternates().count( pin->GetAlt() ) == 0 ) )
+                    if( m_resetAlternatePin->IsChecked()
+                        || ( pin->GetAlt() == pin->GetBaseName() )
+                        || ( pin->GetAlternates().count( pin->GetAlt() ) == 0 ) )
+                    {
                         pin->SetAlt( wxEmptyString );
+                    }
                 }
             }
         }
@@ -847,15 +837,13 @@ int DIALOG_CHANGE_SYMBOLS::processSymbols( SCH_COMMIT* aCommit,
 }
 
 
-wxString DIALOG_CHANGE_SYMBOLS::getSymbolReferences( SCH_SYMBOL& aSymbol,
-                                                     const LIB_ID& aNewId,
+wxString DIALOG_CHANGE_SYMBOLS::getSymbolReferences( SCH_SYMBOL& aSymbol, const LIB_ID& aNewId,
                                                      const wxString* aOldLibLinkName )
 {
-    wxString msg;
-    wxString references;
+    wxString      msg;
+    wxString      references;
     const LIB_ID& oldId = aSymbol.GetLibId();
-
-    wxString oldLibLinkName;    // For report
+    wxString      oldLibLinkName;    // For report
 
     if( aOldLibLinkName )
         oldLibLinkName = *aOldLibLinkName;

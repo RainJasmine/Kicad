@@ -27,6 +27,8 @@
 
 #include "../render_3d_base.h"
 
+class GLUquadric;
+
 /**
  * @class SPHERES_GIZMO
  * @brief Renders a set of colored spheres in 3D space that act as a directional orientation gizmo.
@@ -42,6 +44,8 @@ public:
     void                           setGizmoPosition( int ax, int ay );
 
     void handleMouseInput( int aMouseX, int aMouseY );
+
+    void updateSelection( glm::mat4 aCameraRotationMatrix );
 
     /**
      * @enum GizmoSphereSelection
@@ -91,6 +95,8 @@ private:
     // Define sphere positions
     const float m_arrowSize = RANGE_SCALE_3D * 0.20f;
     const float m_sphereRadius = 0.05f * RANGE_SCALE_3D;
+
+    glm::mat4 m_cameraRotationMatrix = glm::mat4( 1.0f );
 
     /**
      * @brief List of all directional gizmo spheres.

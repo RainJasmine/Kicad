@@ -18,6 +18,11 @@
  */
 
 #include "grid_tricks.h"
+#include <functional>
+
+
+class LIBRARY_TABLE_ROW;
+
 
 class LIB_TABLE_GRID_TRICKS : public GRID_TRICKS
 {
@@ -28,20 +33,43 @@ class LIB_TABLE_GRID_TRICKS : public GRID_TRICKS
         LIB_TABLE_GRID_TRICKS_SET_VISIBLE,
         LIB_TABLE_GRID_TRICKS_UNSET_VISIBLE,
         LIB_TABLE_GRID_TRICKS_LIBRARY_SETTINGS,
+        LIB_TABLE_GRID_TRICKS_OPEN_TABLE,
         LIB_TABLE_GRID_TRICKS_OPTIONS_EDITOR
     };
 
 public:
     explicit LIB_TABLE_GRID_TRICKS( WX_GRID* aGrid );
+    LIB_TABLE_GRID_TRICKS( WX_GRID* aGrid, std::function<void( wxCommandEvent& )> aAddHandler );
 
     virtual ~LIB_TABLE_GRID_TRICKS(){};
 
     void showPopupMenu( wxMenu& menu, wxGridEvent& aEvent ) override;
     void doPopupSelection( wxCommandEvent& event ) override;
 
+    static void AppendRowHandler( WX_GRID* aGrid );
+    static void DeleteRowHandler( WX_GRID* aGrid );
+
+    static void MoveUpHandler( WX_GRID* aGrid );
+    static void MoveDownHandler( WX_GRID* aGrid );
+
+    static bool VerifyTable( WX_GRID* aGrid, bool aSupportsVisibilityColumn,
+                             std::function<void( int aRow, int aCol )> aErrorHandler );
+
 protected:
     virtual void optionsEditor( int aRow ) = 0;
+    virtual void openTable( const LIBRARY_TABLE_ROW& aRow ) = 0;
+
+    void onGridCellLeftClick( wxGridEvent& aEvent ) override;
     bool handleDoubleClick( wxGridEvent& aEvent ) override;
 
-    virtual bool supportsVisibilityColumn() { return false; }
+    void onCharHook( wxKeyEvent& ev );
+
+    /*
+     * Handle specialized clipboard text, either s-expr syntax starting with a lib table preamble
+     * (such as "(fp_lib_table"), or spreadsheet formatted text.
+     */
+    void paste_text( const wxString& cb_text ) override;
+
+    virtual bool supportsVisibilityColumn() = 0;
+    virtual wxString getTablePreamble() = 0;
 };

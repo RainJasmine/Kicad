@@ -19,9 +19,12 @@
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <algorithm>
+#include <wx/tokenzr.h>
 #include <widgets/wx_grid.h>
 #include <widgets/std_bitmap_button.h>
 #include <confirm.h>
+#include <project/project_file.h>
 #include <sch_edit_frame.h>
 #include <schematic.h>
 #include <dialogs/panel_setup_buses.h>
@@ -72,6 +75,9 @@ PANEL_SETUP_BUSES::PANEL_SETUP_BUSES( wxWindow* aWindow, SCH_EDIT_FRAME* aFrame 
     m_membersGrid->Connect( wxEVT_GRID_CELL_CHANGING,
                             wxGridEventHandler( PANEL_SETUP_BUSES::OnMemberGridCellChanging ),
                             nullptr, this );
+    m_membersGrid->Connect( wxEVT_GRID_CELL_CHANGED,
+                            wxGridEventHandler( PANEL_SETUP_BUSES::OnMemberGridCellChanged ),
+                            nullptr, this );
 
     Layout();
 }
@@ -89,43 +95,36 @@ PANEL_SETUP_BUSES::~PANEL_SETUP_BUSES()
     m_membersGrid->Disconnect( wxEVT_GRID_CELL_CHANGING,
                                wxGridEventHandler( PANEL_SETUP_BUSES::OnMemberGridCellChanging ),
                                nullptr, this );
+    m_membersGrid->Disconnect( wxEVT_GRID_CELL_CHANGED,
+                               wxGridEventHandler( PANEL_SETUP_BUSES::OnMemberGridCellChanged ),
+                               nullptr, this );
 }
 
 
-void PANEL_SETUP_BUSES::loadAliases( const SCHEMATIC& aSchematic )
+void PANEL_SETUP_BUSES::loadAliases()
 {
-    auto contains =
-            [&]( const std::shared_ptr<BUS_ALIAS>& alias ) -> bool
+    m_aliases.clear();
+
+    const auto& projectAliases = m_frame->Prj().GetProjectFile().m_BusAliases;
+
+    std::vector<std::pair<wxString, std::vector<wxString>>> aliasList( projectAliases.begin(),
+                                                                      projectAliases.end() );
+
+    std::sort( aliasList.begin(), aliasList.end(),
+            []( const std::pair<wxString, std::vector<wxString>>& a,
+                const std::pair<wxString, std::vector<wxString>>& b )
             {
-                wxString              aName = alias->GetName();
-                std::vector<wxString> aMembers = alias->Members();
+                return a.first.CmpNoCase( b.first ) < 0;
+            } );
 
-                std::sort( aMembers.begin(), aMembers.end() );
-
-                for( const std::shared_ptr<BUS_ALIAS>& candidate : m_aliases )
-                {
-                    wxString              bName = candidate->GetName();
-                    std::vector<wxString> bMembers = candidate->Members();
-
-                    std::sort( bMembers.begin(), bMembers.end() );
-
-                    if( aName == bName && aMembers == bMembers )
-                        return true;
-                }
-
-                return false;
-            };
-
-    SCH_SCREENS screens( aSchematic.Root() );
-
-    // collect aliases from each open sheet
-    for( SCH_SCREEN* screen = screens.GetFirst(); screen != nullptr; screen = screens.GetNext() )
+    for( const auto& alias : aliasList )
     {
-        for( const std::shared_ptr<BUS_ALIAS>& alias : screen->GetBusAliases() )
-        {
-            if( !contains( alias ) )
-                m_aliases.push_back( alias->Clone() );
-        }
+        std::shared_ptr<BUS_ALIAS> entry = std::make_shared<BUS_ALIAS>();
+
+        entry->SetName( alias.first );
+        entry->SetMembers( alias.second );
+
+        m_aliases.push_back( entry );
     }
 
     int ii = 0;
@@ -142,7 +141,7 @@ void PANEL_SETUP_BUSES::loadAliases( const SCHEMATIC& aSchematic )
 
 bool PANEL_SETUP_BUSES::TransferDataToWindow()
 {
-    loadAliases( m_frame->Schematic() );
+    loadAliases();
     return true;
 }
 
@@ -159,13 +158,7 @@ bool PANEL_SETUP_BUSES::TransferDataFromWindow()
     // Associate the respective members with the last alias that is active.
     updateAliasMembers( m_lastAlias );
 
-    SCH_SCREENS screens( m_frame->Schematic().Root() );
-
-    for( SCH_SCREEN* screen = screens.GetFirst(); screen != nullptr; screen = screens.GetNext() )
-        screen->ClearBusAliases();
-
-    for( const std::shared_ptr<BUS_ALIAS>& alias : m_aliases )
-        alias->GetParent()->AddBusAlias( alias );
+    m_frame->Schematic().SetBusAliases( m_aliases );
 
     return true;
 }
@@ -176,26 +169,25 @@ void PANEL_SETUP_BUSES::OnAddAlias( wxCommandEvent& aEvent )
     if( !m_aliasesGrid->CommitPendingChanges() || !m_membersGrid->CommitPendingChanges() )
         return;
 
-    // New aliases get stored on the currently visible sheet
-    m_aliases.push_back( std::make_shared<BUS_ALIAS>( m_frame->GetScreen() ) );
+    m_aliasesGrid->OnAddRow(
+            [&]() -> std::pair<int, int>
+            {
+                // New aliases are stored at the project level
+                m_aliases.push_back( std::make_shared<BUS_ALIAS>() );
 
-    int row = m_aliasesGrid->GetNumberRows();
+                int row = m_aliasesGrid->GetNumberRows();
 
-    // Associate the respective members with the previous alias. This ensures that the association
-    // starts correctly when adding more than one row.
-    // But in order to avoid overwriting the members of the last (row - 1) alias with
-    // those of the selected alias (since the user may choose a different alias),
-    // the alias member update here should only happen if the current alias (m_lastAlias) is the last one (row - 1).
-    if( ( row > 0 ) && ( m_lastAlias == ( row - 1 ) ) )
-        updateAliasMembers( row - 1 );
+                // Associate the respective members with the previous alias. This ensures that the association
+                // starts correctly when adding more than one row.
+                // But in order to avoid overwriting the members of the last (row - 1) alias with those of the
+                // selected alias (since the user may choose a different alias), the alias member update here
+                // should only happen if the current alias (m_lastAlias) is the last one (row - 1).
+                if( ( row > 0 ) && ( m_lastAlias == ( row - 1 ) ) )
+                    updateAliasMembers( row - 1 );
 
-    m_aliasesGrid->AppendRows();
-
-    m_aliasesGrid->MakeCellVisible( row, 0 );
-    m_aliasesGrid->SetGridCursor( row, 0 );
-
-    m_aliasesGrid->EnableCellEditControl( true );
-    m_aliasesGrid->ShowCellEditControl();
+                m_aliasesGrid->AppendRows();
+                return { row, 0 };
+            } );
 }
 
 
@@ -204,96 +196,72 @@ void PANEL_SETUP_BUSES::OnDeleteAlias( wxCommandEvent& aEvent )
     if( !m_aliasesGrid->CommitPendingChanges() || !m_membersGrid->CommitPendingChanges() )
         return;
 
-    int curRow = m_aliasesGrid->GetGridCursorRow();
+    m_aliasesGrid->OnDeleteRows(
+            [&]( int row )
+            {
+                // Clear the members grid first so we don't try to write it back to a deleted alias
+               m_membersGrid->ClearRows();
+               m_lastAlias = -1;
+               m_lastAliasName = wxEmptyString;
 
-    if( curRow < 0 )
-        return;
+               m_aliases.erase( m_aliases.begin() + row );
 
-    // Clear the members grid first so we don't try to write it back to a deleted alias
-    m_membersGrid->ClearRows();
-    m_lastAlias = -1;
-    m_lastAliasName = wxEmptyString;
-
-    m_aliases.erase( m_aliases.begin() + curRow );
-
-    m_aliasesGrid->DeleteRows( curRow, 1 );
-
-    if( m_aliasesGrid->GetNumberRows() > 0 )
-    {
-        m_aliasesGrid->MakeCellVisible( std::max( 0, curRow-1 ), 0 );
-        m_aliasesGrid->SelectRow( std::max( 0, curRow-1 ) );
-    }
+               m_aliasesGrid->DeleteRows( row, 1 );
+            } );
 }
 
 
 void PANEL_SETUP_BUSES::OnAddMember( wxCommandEvent& aEvent )
 {
-    if( !m_membersGrid->CommitPendingChanges() )
-        return;
+    m_membersGrid->OnAddRow(
+            [&]() -> std::pair<int, int>
+            {
+                int row = m_membersGrid->GetNumberRows();
+                m_membersGrid->AppendRows();
 
-    int row = m_membersGrid->GetNumberRows();
-    m_membersGrid->AppendRows();
+                /*
+                 * Check if the clipboard contains text data.
+                 *
+                 * - If `clipboardHasText` is true, select the specified row in the members grid to allow
+                 *   our custom context menu to paste the clipboard .
+                 * - Otherwise, enable and display the cell edit control, allowing the user to manually edit
+                 *   the cell.
+                 */
+                bool clipboardHasText = false;
 
-    m_membersGrid->MakeCellVisible( row, 0 );
-    m_membersGrid->SetGridCursor( row, 0 );
+                if( wxTheClipboard->Open() )
+                {
+                    if( wxTheClipboard->IsSupported( wxDF_TEXT )
+                        || wxTheClipboard->IsSupported( wxDF_UNICODETEXT ) )
+                    {
+                        clipboardHasText = true;
+                    }
 
-    /*
-     * Check if the clipboard contains text data.
-     *
-     * - If `clipboardHasText` is true, select the specified row in the members grid to allow
-     *   our custom context menu to paste the clipboard .
-     * - Otherwise, enable and display the cell edit control, allowing the user to manually edit
-     *   the cell.
-     */
-    bool clipboardHasText = false;
+                    wxTheClipboard->Close();
+                }
 
-    if( wxTheClipboard->Open() )
-    {
-        if( wxTheClipboard->IsSupported( wxDF_TEXT )
-            || wxTheClipboard->IsSupported( wxDF_UNICODETEXT ) )
-        {
-            clipboardHasText = true;
-        }
-
-        wxTheClipboard->Close();
-    }
-
-    if( clipboardHasText )
-    {
-        m_membersGrid->SelectRow( row );
-    }
-    else
-    {
-        m_membersGrid->EnableCellEditControl( true );
-        m_membersGrid->ShowCellEditControl();
-    }
+                if( clipboardHasText )
+                    return { row, -1 };
+                else
+                    return { row, 0 };
+            } );
 }
 
 
 void PANEL_SETUP_BUSES::OnRemoveMember( wxCommandEvent& aEvent )
 {
-    if( !m_membersGrid->CommitPendingChanges() )
-        return;
+    m_membersGrid->OnDeleteRows(
+            [&]( int row )
+            {
+                m_membersGrid->DeleteRows( row, 1 );
 
-    int curRow = m_membersGrid->GetGridCursorRow();
+                // Update the member list of the current bus alias from the members grid
+                const std::shared_ptr<BUS_ALIAS>& alias = m_aliases[ m_lastAlias ];
+                alias->ClearMembers();
 
-    if( curRow < 0 )
-        return;
-
-    m_membersGrid->DeleteRows( curRow, 1 );
-
-    // Update the member list of the current bus alias from the members grid
-    const std::shared_ptr<BUS_ALIAS>& alias = m_aliases[ m_lastAlias ];
-    alias->Members().clear();
-
-    for( int ii = 0; ii < m_membersGrid->GetNumberRows(); ++ii )
-        alias->Members().push_back( m_membersGrid->GetCellValue( ii, 0 ) );
-
-    if( m_membersGrid->GetNumberRows() > 0 )
-    {
-        m_membersGrid->MakeCellVisible( std::max( 0, curRow-1 ), 0 );
-        m_membersGrid->SelectRow( std::max( 0, curRow-1 ) );
-    }
+                for( int ii = 0; ii < m_membersGrid->GetNumberRows(); ++ii )
+                    alias->AddMember( m_membersGrid->GetCellValue( ii, 0 ) );
+            } );
 }
 
 
@@ -310,8 +278,7 @@ void PANEL_SETUP_BUSES::OnAliasesGridCellChanging( wxGridEvent& event )
             if( ii == event.GetRow() )
                 continue;
 
-            if( name == m_aliasesGrid->GetCellValue( ii, 0 )
-                    && m_aliases[ row ]->GetParent() == m_aliases[ ii ]->GetParent() )
+            if( name == m_aliasesGrid->GetCellValue( ii, 0 ) )
             {
                 m_errorMsg = wxString::Format( _( "Alias name '%s' already in use." ), name );
                 m_errorGrid = m_aliasesGrid;
@@ -347,7 +314,7 @@ void PANEL_SETUP_BUSES::OnMemberGridCellChanging( wxGridEvent& event )
 
         const std::shared_ptr<BUS_ALIAS>& alias = m_aliases[ m_lastAlias ];
 
-        alias->Members().clear();
+        alias->ClearMembers();
 
         for( int ii = 0; ii < m_membersGrid->GetNumberRows(); ++ii )
         {
@@ -363,14 +330,26 @@ void PANEL_SETUP_BUSES::OnMemberGridCellChanging( wxGridEvent& event )
                 }
 
                 while( tok.HasMoreTokens() )
-                    alias->Members().push_back( tok.GetNextToken() );
+                    alias->AddMember( tok.GetNextToken() );
             }
             else
             {
-                alias->Members().push_back( m_membersGrid->GetCellValue( ii, 0 ) );
+                alias->AddMember( m_membersGrid->GetCellValue( ii, 0 ) );
             }
         }
     }
+}
+
+
+void PANEL_SETUP_BUSES::OnMemberGridCellChanged( wxGridEvent& event )
+{
+    if( event.GetRow() >= 0 && m_lastAlias >= 0
+            && m_lastAlias < (int) m_aliases.size() )
+    {
+        updateAliasMembers( m_lastAlias );
+    }
+
+    event.Skip();
 }
 
 
@@ -381,12 +360,6 @@ void PANEL_SETUP_BUSES::doReloadMembersGrid()
         const std::shared_ptr<BUS_ALIAS>& alias = m_aliases[ m_lastAlias ];
         wxString                          source;
         wxString                          membersLabel;
-
-        if( alias->GetParent() )
-        {
-            wxFileName sheet_name( alias->GetParent()->GetFileName() );
-            source.Printf( wxS( "(" ) + sheet_name.GetFullName() + wxS( ")" ) );
-        }
 
         membersLabel.Printf( m_membersLabelTemplate, m_lastAliasName );
 
@@ -508,13 +481,39 @@ void PANEL_SETUP_BUSES::OnUpdateUI( wxUpdateUIEvent& event )
 }
 
 
-void PANEL_SETUP_BUSES::ImportSettingsFrom( const SCHEMATIC& aOtherSchematic )
+void PANEL_SETUP_BUSES::ImportSettingsFrom( const std::map<wxString, std::vector<wxString>>& aAliases )
 {
-    loadAliases( aOtherSchematic );
+    m_aliases.clear();
 
-    // New aliases get stored on the currently visible sheet
+    std::vector<std::pair<wxString, std::vector<wxString>>> aliasList( aAliases.begin(),
+                                                                      aAliases.end() );
+
+    std::sort( aliasList.begin(), aliasList.end(),
+            []( const std::pair<wxString, std::vector<wxString>>& a,
+                const std::pair<wxString, std::vector<wxString>>& b )
+            {
+                return a.first.CmpNoCase( b.first ) < 0;
+            } );
+
+    for( const auto& alias : aliasList )
+    {
+        std::shared_ptr<BUS_ALIAS> entry = std::make_shared<BUS_ALIAS>();
+
+        entry->SetName( alias.first );
+        entry->SetMembers( alias.second );
+
+        m_aliases.push_back( entry );
+    }
+
+    int ii = 0;
+
+    m_aliasesGrid->ClearRows();
+    m_aliasesGrid->AppendRows( m_aliases.size() );
+
     for( const std::shared_ptr<BUS_ALIAS>& alias : m_aliases )
-        alias->SetParent( m_frame->GetScreen() );
+        m_aliasesGrid->SetCellValue( ii++, 0, alias->GetName() );
+
+    m_membersBook->SetSelection( 1 );
 }
 
 
@@ -525,16 +524,9 @@ void PANEL_SETUP_BUSES::updateAliasMembers( int aAliasIndex )
     {
         const std::shared_ptr<BUS_ALIAS>& alias = m_aliases[aAliasIndex];
 
-        alias->Members().clear();
+        alias->ClearMembers();
 
         for( int ii = 0; ii < m_membersGrid->GetNumberRows(); ++ii )
-        {
-            wxString memberValue = m_membersGrid->GetCellValue( ii, 0 );
-
-            if( !memberValue.empty() )
-            {
-                alias->Members().push_back( memberValue );
-            }
-        }
+            alias->AddMember( m_membersGrid->GetCellValue( ii, 0 ) );
     }
 }

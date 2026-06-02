@@ -21,8 +21,7 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#ifndef __DIALOG_GLOBAL_PADS_EDITION_H
-#define __DIALOG_GLOBAL_PADS_EDITION_H
+#pragma once
 
 #include <dialog_push_pad_properties_base.h>
 
@@ -35,18 +34,16 @@ class DIALOG_PUSH_PAD_PROPERTIES : public DIALOG_PUSH_PAD_PROPERTIES_BASE
 public:
     DIALOG_PUSH_PAD_PROPERTIES( PCB_BASE_FRAME* aParent );
 
+    bool GetPadShapeFilter() const { return m_Pad_Shape_Filter_CB->GetValue(); }
+    bool GetPadLayerFilter() const { return m_Pad_Layer_Filter_CB->GetValue(); }
+    bool GetPadOrientFilter() const { return m_Pad_Orient_Filter_CB->GetValue(); }
+    bool GetPadTypeFilter() const { return m_Pad_Type_Filter_CB->GetValue(); }
+
 private:
     void PadPropertiesAccept( wxCommandEvent& event ) override;
-
-public:
-    static bool m_Pad_Shape_Filter;
-    static bool m_Pad_Layer_Filter;
-    static bool m_Pad_Orient_Filter;
-    static bool m_Pad_Type_Filter;
 
 private:
     PCB_BASE_FRAME* m_parent;
 };
 
 
-#endif // __DIALOG_GLOBAL_PADS_EDITION_H

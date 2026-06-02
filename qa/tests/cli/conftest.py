@@ -24,6 +24,20 @@ import pytest
 import os
 from pathlib import Path
 
+def pytest_report_header(config):
+    """Print key environment vars."""
+    path_val = os.environ.get("PATH", "")
+    pythonpath_val = os.environ.get("PYTHONPATH", "")
+    kibuildpaths_val = os.environ.get("KICAD_BUILD_PATHS", "")
+
+    message = "Environment:\n"
+    message += f"PATH={path_val}\n"
+    message += f"PYTHONPATH={pythonpath_val}\n"
+    message += f"KICAD_BUILD_PATHS={kibuildpaths_val}\n"
+
+    return message
+
+
 class KiTestFixture:
     junit: bool = False
     _output_path: Path = None
@@ -38,7 +52,7 @@ class KiTestFixture:
             self._ci_project_dir = Path( env_project_dir )
 
         junitxml = config.getoption("xmlpath")
-        
+
         if junitxml is not None:
             p = Path( junitxml )
             p = Path( p.parent ) # get the directory as junitxml points to a file
@@ -47,45 +61,55 @@ class KiTestFixture:
             self._junit = True
         else:
             p = Path.cwd()
-            
+
         p = p.joinpath('output/')
-        
+
         self._output_path = p
-        
+
     def get_output_path( self, sub: str ) -> Path:
         """Return the calculated output path for test artifacts"""
-        
+
         output_path =  self._output_path.joinpath( sub )
-        
+
         os.makedirs( str( output_path ), exist_ok=True )
-        
+
         return output_path
-    
-    def get_data_file_path( self, file: str ) -> str:
+
+    def get_data_file_path( self, file: str ) -> Path:
         current_dir = os.path.dirname(__file__)
         base_data_path = os.path.abspath(os.path.join(current_dir, '../../data'))
 
-        return os.path.join(base_data_path, file)
-        
-    def add_attachment( self, path: str ) -> None:
+        return Path(base_data_path).joinpath(file)
+
+    def add_attachment( self, path ) -> None:
         """Prints the attachment message line for junit reports"""
 
         if not self._junit:
             return
-        
-        # Make the attachment path relative, gitlab in particular wants it
-        # relative tot he CI_PROJECT_DIR variable
+
+        # Coerce at the boundary so callers passing either Path or str both work.
+        # Without this, str arguments crash on .relative_to() only when running
+        # under GitLab CI (where self._junit is True and CI_PROJECT_DIR is set).
         attach_src_path = Path( path )
-        attach_path: Path = None
+
+        # Make the attachment path relative, gitlab in particular wants it
+        # relative to the CI_PROJECT_DIR variable
         if self._ci_project_dir is not None:
             attach_path = attach_src_path.relative_to( self._ci_project_dir )
         else:
             attach_path = attach_src_path.relative_to( self._junit_folder )
-        
+
         print( "[[ATTACHMENT|{}]]".format( str( attach_path ) ) )
-    
-    
+
+
 @pytest.fixture
 def kitest( pytestconfig ):
     kitesthelper = KiTestFixture( pytestconfig )
     yield kitesthelper
+
+
+# We need this on Windows when executing from ctest
+if os.name == 'nt':
+    for p in os.environ[ 'KICAD_BUILD_PATHS' ].split( ':' ):
+        if os.path.isdir( p ):
+            os.add_dll_directory( p )

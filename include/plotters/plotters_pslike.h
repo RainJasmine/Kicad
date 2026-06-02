@@ -26,7 +26,12 @@
 #pragma once
 
 #include "plotter.h"
+#include <memory>
+#include <plotters/pdf_stroke_font.h>
+#include <plotters/pdf_outline_font.h>
+#include <math/vector3.h>
 
+namespace MARKUP { struct NODE; }
 
 /**
  * The PSLIKE_PLOTTER class is an intermediate class to handle common routines for engines
@@ -185,7 +190,8 @@ public:
 
     virtual void SetViewport( const VECTOR2I& aOffset, double aIusPerDecimil,
                               double aScale, bool aMirror ) override;
-    virtual void Rect( const VECTOR2I& p1, const VECTOR2I& p2, FILL_T fill, int width ) override;
+    virtual void Rect( const VECTOR2I& p1, const VECTOR2I& p2, FILL_T fill, int width,
+                       int aCornerRadius = 0 ) override;
     virtual void Circle( const VECTOR2I& pos, int diametre, FILL_T fill, int width ) override;
     virtual void Arc( const VECTOR2D& aCenter, const EDA_ANGLE& aStartAngle,
                       const EDA_ANGLE& aAngle, double aRadius, FILL_T aFill, int aWidth ) override;
@@ -223,6 +229,9 @@ public:
                            const KIFONT::METRICS& aFontMetrics,
                            void*                  aData = nullptr ) override;
 
+    virtual void PlotPoly( const SHAPE_LINE_CHAIN& aCornerList, FILL_T aFill,
+                           int aWidth, void* aData = nullptr ) override;
+
 
 protected:
     virtual void emitSetRGBColor( double r, double g, double b, double a ) override;
@@ -232,7 +241,7 @@ protected:
 struct PDF_3D_VIEW
 {
     std::string m_name;
-    float       m_cameraMatrix[12];
+    std::vector<float> m_cameraMatrix;
     float       m_cameraCenter;
     float       m_fov;
 };
@@ -252,9 +261,13 @@ public:
             m_workFile( nullptr ),
             m_totalOutlineNodes( 0 ),
             m_3dModelHandle( -1 ),
-            m_3dExportMode( false )
+            m_3dExportMode( false ),
+            m_strokeFontManager( nullptr ),
+            m_outlineFontManager( nullptr )
     {
     }
+
+    virtual ~PDF_PLOTTER();
 
     virtual PLOT_FORMAT GetPlotterType() const override
     {
@@ -320,13 +333,14 @@ public:
      * PDF can have multiple pages, so SetPageSettings can be called
      * with the outputFile open (but not inside a page stream!)
      */
-    virtual void SetViewport( const VECTOR2I& aOffset, double aIusPerDecimil,
-                              double aScale, bool aMirror ) override;
+    virtual void SetViewport( const VECTOR2I& aOffset, double aIusPerDecimil, double aScale,
+                              bool aMirror ) override;
 
     /**
      * Rectangles in PDF. Supported by the native operator.
      */
-    virtual void Rect( const VECTOR2I& p1, const VECTOR2I& p2, FILL_T fill, int width ) override;
+    virtual void Rect( const VECTOR2I& p1, const VECTOR2I& p2, FILL_T fill, int width,
+                       int aCornerRadius = 0 ) override;
 
     /**
      * Circle drawing for PDF. They're approximated by curves, but fill is supported
@@ -336,14 +350,16 @@ public:
     /**
      * The PDF engine can't directly plot arcs so we use polygonization.
      */
-    virtual void Arc( const VECTOR2D& aCenter, const EDA_ANGLE& aStartAngle,
-                      const EDA_ANGLE& aAngle, double aRadius, FILL_T aFill,
-                      int aWidth ) override;
+    virtual void Arc( const VECTOR2D& aCenter, const EDA_ANGLE& aStartAngle, const EDA_ANGLE& aAngle,
+                      double aRadius, FILL_T aFill, int aWidth ) override;
 
     /**
      * Polygon plotting for PDF. Everything is supported
      */
     virtual void PlotPoly( const std::vector<VECTOR2I>& aCornerList, FILL_T aFill,
+                           int aWidth = USE_DEFAULT_LINE_WIDTH, void* aData = nullptr ) override;
+
+    virtual void PlotPoly( const SHAPE_LINE_CHAIN& aLineChain, FILL_T aFill,
                            int aWidth = USE_DEFAULT_LINE_WIDTH, void* aData = nullptr ) override;
 
     virtual void PenTo( const VECTOR2I& pos, char plume ) override;
@@ -363,6 +379,44 @@ public:
                        const KIFONT::METRICS& aFontMetrics,
                        void*                  aData = nullptr ) override;
 
+private:
+    // Structure to hold overbar drawing information
+    struct OVERBAR_INFO
+    {
+        VECTOR2I          startPos;    // Start position of overbar text
+        VECTOR2I          endPos;      // End position of overbar text
+        VECTOR2I          fontSize;    // Font size for proper overbar positioning
+        bool              isOutline;   // True if the overbar applies to an outline font run
+        GR_TEXT_V_ALIGN_T vAlign;      // Original vertical alignment of the parent text
+    };
+
+    /**
+     * Render a single word with the given style parameters
+     */
+    VECTOR2I renderWord( const wxString& aWord, const VECTOR2I& aPosition, const VECTOR2I& aSize,
+                         const EDA_ANGLE& aOrient, bool aTextMirrored, int aWidth, bool aBold, bool aItalic,
+                         KIFONT::FONT* aFont, const KIFONT::METRICS& aFontMetrics,
+                         enum GR_TEXT_V_ALIGN_T aV_justify, TEXT_STYLE_FLAGS aTextStyle );
+
+    /**
+     * Recursively render markup nodes with appropriate styling
+     */
+    VECTOR2I renderMarkupNode( const MARKUP::NODE* aNode, const VECTOR2I& aPosition,
+                               const VECTOR2I& aBaseSize, const EDA_ANGLE& aOrient, bool aTextMirrored,
+                               int aWidth, bool aBaseBold, bool aBaseItalic, KIFONT::FONT* aFont,
+                               const KIFONT::METRICS& aFontMetrics, enum GR_TEXT_V_ALIGN_T aV_justify,
+                               TEXT_STYLE_FLAGS aTextStyle, std::vector<OVERBAR_INFO>& aOverbars );
+
+    /**
+     * Draw overbar lines above text
+     */
+    void drawOverbars( const std::vector<OVERBAR_INFO>& aOverbars, const EDA_ANGLE& aOrient,
+                       const KIFONT::METRICS& aFontMetrics );
+
+    std::vector<VECTOR2D> arcPath( const VECTOR2D& aCenter, const EDA_ANGLE& aStartAngle,
+                                   const EDA_ANGLE& aAngle, double aRadius );
+
+public:
     virtual void PlotText( const VECTOR2I&        aPos,
                            const COLOR4D&         aColor,
                            const wxString&        aText,
@@ -387,6 +441,24 @@ public:
      */
     void PlotImage( const wxImage& aImage, const VECTOR2I& aPos, double aScaleFactor ) override;
 
+    /**
+     * Generates the camera to world matrix for use with a 3D View.
+     *
+     * @param aTargetPosition The position of the target, which is also the camera rotation center
+     * @param aCameraDistance The distance the camera should be set back from the target
+     * @param aYawDegrees The yaw angle in degrees
+     * @param aPitchDegrees The pitch angle in degrees
+     * @param aRollDegrees The roll angle in degrees
+     *
+     * @return A vector of 12 floats that represent the camera to world matrix
+     * in linear form as specified by the PDF Spec 1.7 section 13.6.5
+     *
+     */
+    static std::vector<float> CreateC2WMatrixFromAngles( const VECTOR3D& aTargetPosition,
+                                                         float aCameraDistance,
+                                                         float aYawDegrees,
+                                                         float aPitchDegrees,
+                                                         float aRollDegrees );
 
 protected:
     struct OUTLINE_NODE
@@ -435,6 +507,9 @@ protected:
     /// convert a wxString unicode string to a char string compatible with the accepted
     /// string PDF format (convert special chars and non ascii7 chars)
     std::string encodeStringForPlotter( const wxString& aUnicode ) override;
+
+    /// Convert a double to a PDF-compatible numeric token (no exponent notation).
+    std::string encodeDoubleForPlotter( double aValue ) const;
 
     /**
      * PDF supports colors fully. It actually has distinct fill and pen colors,
@@ -501,6 +576,11 @@ protected:
 
     void endPlotEmitResources();
 
+    void emitStrokeFonts();
+    void emitOutlineFonts();
+
+    std::string encodeByteString( const std::string& aBytes );
+
     int m_pageTreeHandle;           ///< Handle to the root of the page tree object.
     int m_fontResDictHandle;        ///< Font resource dictionary.
     int m_imgResDictHandle;         ///< Image resource dictionary.
@@ -536,6 +616,8 @@ protected:
 
     int  m_3dModelHandle;
     bool m_3dExportMode;
+    std::unique_ptr<PDF_STROKE_FONT_MANAGER> m_strokeFontManager;
+    std::unique_ptr<PDF_OUTLINE_FONT_MANAGER> m_outlineFontManager;
 };
 
 
@@ -572,7 +654,8 @@ public:
 
     virtual void SetViewport( const VECTOR2I& aOffset, double aIusPerDecimil, double aScale,
                               bool aMirror ) override;
-    virtual void Rect( const VECTOR2I& p1, const VECTOR2I& p2, FILL_T fill, int width ) override;
+    virtual void Rect( const VECTOR2I& p1, const VECTOR2I& p2, FILL_T fill, int width,
+                       int aCornerRadius = 0 ) override;
     virtual void Circle( const VECTOR2I& pos, int diametre, FILL_T fill, int width ) override;
     virtual void Arc( const VECTOR2D& aCenter, const EDA_ANGLE& aStartAngle,
                       const EDA_ANGLE& aAngle, double aRadius, FILL_T aFill,
@@ -618,6 +701,17 @@ public:
      * @param aData should be null
      */
     virtual void EndBlock( void* aData ) override;
+
+    /**
+     * Start a new named layer group in the SVG output.
+     * @param aLayerName The name/id for the layer group
+     */
+    void StartLayer( const wxString& aLayerName );
+
+    /**
+     * End the current layer group in the SVG output.
+     */
+    void EndLayer();
 
     virtual void Text( const VECTOR2I&        aPos,
                        const COLOR4D&         aColor,

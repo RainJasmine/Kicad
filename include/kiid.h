@@ -28,7 +28,6 @@
 
 #include <kicommon.h>
 #include <boost/uuid/uuid.hpp>
-#include <macros_swig.h>
 #include <nlohmann/json_fwd.hpp>
 
 #include <string>
@@ -97,6 +96,18 @@ public:
     void ConvertTimestampToUuid();
 
     /**
+     * Creates a deterministic KIID from two input KIIDs by XORing their underlying UUIDs.
+     *
+     * This is useful for generating stable IDs for derived objects (like teardrops) that are
+     * created from the combination of two parent objects.
+     *
+     * @param aFirst the first KIID to combine
+     * @param aSecond the second KIID to combine
+     * @return a new KIID that is the XOR combination of the two inputs
+     */
+    static KIID Combine( const KIID& aFirst, const KIID& aSecond );
+
+    /**
      * Generates a deterministic replacement for a given ID.
      *
      * NB: destroys uniform distribution!  But it's the only thing we have when a deterministic
@@ -133,10 +144,7 @@ extern KICOMMON_API KIID niluuid;
 
 KICOMMON_API KIID& NilUuid();
 
-// declare KIID_VECT_LIST as std::vector<KIID> both for c++ and swig:
-DECL_VEC_FOR_SWIG( KIID_VECT_LIST, KIID )
-
-class KICOMMON_API KIID_PATH : public KIID_VECT_LIST
+class KICOMMON_API KIID_PATH : public std::vector<KIID>
 {
 public:
     KIID_PATH()

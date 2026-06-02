@@ -26,6 +26,7 @@
 
 #include <memory>
 #include <wx/debug.h>
+#include <wx/tokenzr.h>
 
 #include <project/project_file.h>
 #include <confirm.h>
@@ -169,7 +170,7 @@ bool SIMULATOR_FRAME_UI::loadLegacyWorkbook( const wxString& aPath )
         wxString          command = UnescapeString( file.GetNextLine() );
         wxString          simCommand;
         int               simOptions = NETLIST_EXPORTER_SPICE::OPTION_DEFAULT_FLAGS;
-        wxStringTokenizer tokenizer( command, wxT( "\r\n" ), wxTOKEN_STRTOK );
+        wxStringTokenizer tokenizer( command, "\r\n", wxTOKEN_STRTOK );
 
         if( version >= 2 )
         {

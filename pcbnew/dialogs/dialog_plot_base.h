@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////
-// C++ code generated with wxFormBuilder (version 4.2.1-0-g80c4cb6)
+// C++ code generated with wxFormBuilder (version 4.2.1-0-g80c4cb6a-dirty)
 // http://www.wxformbuilder.org/
 //
 // PLEASE DO *NOT* EDIT THIS FILE!
@@ -21,6 +21,7 @@ class WX_HTML_REPORT_PANEL;
 #include <wx/font.h>
 #include <wx/colour.h>
 #include <wx/settings.h>
+#include <wx/sizer.h>
 #include <wx/choice.h>
 #include <wx/textctrl.h>
 #include <wx/bmpbuttn.h>
@@ -28,7 +29,6 @@ class WX_HTML_REPORT_PANEL;
 #include <wx/image.h>
 #include <wx/icon.h>
 #include <wx/button.h>
-#include <wx/sizer.h>
 #include <wx/checklst.h>
 #include <wx/statbox.h>
 #include <wx/checkbox.h>
@@ -56,6 +56,8 @@ class DIALOG_PLOT_BASE : public DIALOG_SHIM
 		wxBoxSizer* m_MainSizer;
 		wxStaticText* m_staticTextPlotFmt;
 		wxChoice* m_plotFormatOpt;
+		wxStaticText* m_variantLabel;
+		wxChoice* m_variantChoiceCtrl;
 		wxStaticText* m_staticTextDir;
 		wxTextCtrl* m_outputDirectoryName;
 		STD_BITMAP_BUTTON* m_browseButton;
@@ -106,6 +108,7 @@ class DIALOG_PLOT_BASE : public DIALOG_SHIM
 		wxStaticText* DXF_exportUnitsLabel;
 		wxChoice* m_DXF_plotUnits;
 		wxCheckBox* m_DXF_plotTextStrokeFontOpt;
+		wxCheckBox* m_DXF_exportAsMultiLayeredFile;
 		wxStaticBoxSizer* m_svgOptionsSizer;
 		wxStaticText* svgPrecisionLabel;
 		wxSpinCtrl* m_svgPrecsision;
@@ -121,6 +124,10 @@ class DIALOG_PLOT_BASE : public DIALOG_SHIM
 		wxCheckBox* m_pdfSingle;
 		wxStaticText* m_pdfBackgroundColorText;
 		COLOR_SWATCH* m_pdfBackgroundColorSwatch;
+		wxStaticBoxSizer* m_pngOptionsSizer;
+		wxStaticText* pngDPILabel;
+		wxSpinCtrl* m_pngDPI;
+		wxCheckBox* m_pngAntialias;
 		WX_HTML_REPORT_PANEL* m_messagesPanel;
 		wxBoxSizer* m_sizerButtons;
 		wxButton* m_buttonDRC;

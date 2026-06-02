@@ -107,12 +107,15 @@ public:
     int Paste( const TOOL_EVENT& aEvent );
     int AppendBoardFromFile( const TOOL_EVENT& aEvent );
     int AppendDesignBlock( const TOOL_EVENT& aEvent );
+    int ApplyDesignBlockLayout( const TOOL_EVENT& aEvent );
     int PlaceLinkedDesignBlock( const TOOL_EVENT& aEvent );
     int SaveToLinkedDesignBlock( const TOOL_EVENT& aEvent );
-    int AppendBoard( PCB_IO& pi, const wxString& fileName, DESIGN_BLOCK* aDesignBlock = nullptr );
+    int AppendBoard( PCB_IO& pi, const wxString& fileName, DESIGN_BLOCK* aDesignBlock = nullptr,
+                     BOARD_COMMIT* aCommit = nullptr, bool aSkipMove = false );
     int UpdateMessagePanel( const TOOL_EVENT& aEvent );
     int PlaceCharacteristics( const TOOL_EVENT& aEvent );
     int PlaceStackup( const TOOL_EVENT& aEvent );
+    int CollectAndEmbed3DModels( const TOOL_EVENT& aEvent );
 
     int FlipPcbView( const TOOL_EVENT& aEvent );
 
@@ -151,11 +154,11 @@ private:
      * @param aReannotateDuplicates = true to reannotate any footprints with a designator
      *                                that already exist in the board.
      */
-    bool placeBoardItems( BOARD_COMMIT* aCommit, std::vector<BOARD_ITEM*>& aItems, bool aIsNew,
-                          bool aAnchorAtOrigin, bool aReannotateDuplicates );
+    bool placeBoardItems( BOARD_COMMIT* aCommit, std::vector<BOARD_ITEM*>& aItems, bool aIsNew, bool aAnchorAtOrigin,
+                          bool aReannotateDuplicates, bool aSkipMove );
 
-    bool placeBoardItems( BOARD_COMMIT* aCommit, BOARD* aBoard, bool aAnchorAtOrigin,
-                          bool aReannotateDuplicates );
+    bool placeBoardItems( BOARD_COMMIT* aCommit, BOARD* aBoard, bool aAnchorAtOrigin, bool aReannotateDuplicates,
+                          bool aSkipMove );
 
     void rehatchBoardItem( BOARD_ITEM* aItem );
 

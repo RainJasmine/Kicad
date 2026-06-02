@@ -27,7 +27,6 @@
 #include <settings/app_settings.h>
 #include <variant>
 
-class ACTION_PLUGIN;
 class PCB_SCREEN;
 class BOARD;
 class BOARD_COMMIT;
@@ -44,6 +43,7 @@ class PCB_GROUP;
 class PCB_DIMENSION_BASE;
 class DRC;
 class DIALOG_FIND;
+class DIALOG_FIND_BY_PROPERTIES;
 class DIALOG_PLOT;
 class ZONE;
 class GENERAL_COLLECTOR;
@@ -61,6 +61,7 @@ class ACTION_MENU;
 class TOOL_ACTION;
 class DIALOG_BOARD_SETUP;
 class PCB_DESIGN_BLOCK_PANE;
+class WX_INFOBAR;
 
 #ifdef KICAD_IPC_API
 class KICAD_API_SERVER;
@@ -102,16 +103,6 @@ public:
     bool IsContentModified() const override;
 
     /**
-     * Synchronize the environment variables from KiCad's environment into the Python interpreter.
-     */
-    void PythonSyncEnvironmentVariables();
-
-    /**
-     * Synchronize the project name from KiCad's environment into the Python interpreter.
-     */
-    void PythonSyncProjectName();
-
-    /**
      * Update the layer manager and other widgets from the board setup
      * (layer and items visibility, colors ...)
      */
@@ -134,7 +125,7 @@ public:
      */
     void ExecuteRemoteCommand( const char* cmdline ) override;
 
-    void KiwayMailIn( KIWAY_EXPRESS& aEvent ) override;
+    void KiwayMailIn( KIWAY_MAIL_EVENT& aEvent ) override;
 
     /**
      * Used to find items by selection synchronization spec string.
@@ -152,6 +143,16 @@ public:
     void ShowFindDialog();
 
     /**
+     * Show the Find by Properties dialog.
+     */
+    void ShowFindByPropertiesDialog();
+
+    /**
+     * Notify the Find by Properties dialog that the selection has changed.
+     */
+    void NotifyFindByPropertiesDialog();
+
+    /**
      * Find the next item using our existing search parameters.
      */
     void FindNext( bool reverse = false );
@@ -166,6 +167,25 @@ public:
     void UpdateTrackWidthSelectBox( wxChoice* aTrackWidthSelectBox, bool aShowNetclass,
                                     bool aShowEdit );
     void UpdateViaSizeSelectBox( wxChoice* aViaSizeSelectBox, bool aShowNetclass, bool aShowEdit );
+
+    /**
+     * Update the variant selection dropdown with the current board's variant names.
+     *
+     * If the currently selected variant is no longer available, the default (no variant)
+     * will be selected.
+     */
+    void UpdateVariantSelectionCtrl();
+
+    /**
+     * Set the current variant on the board and update the drawing sheet's cached
+     * variant name and description accordingly.
+     */
+    void SetCurrentVariant( const wxString& aVariantName );
+
+    /**
+     * Event handler for variant selection changes in the toolbar.
+     */
+    void onVariantSelected( wxCommandEvent& aEvent );
 
     /**
      * Return the angle used for rotate operations.
@@ -186,13 +206,13 @@ public:
      * Return true if button visibility action plugin setting was set to true
      * or it is unset and plugin defaults to true.
      */
-    static bool GetActionPluginButtonVisible( const wxString& aPluginPath, bool aPluginDefault );
+    static bool GetPluginActionButtonVisible( const wxString& aPluginPath, bool aPluginDefault );
 
     /**
      * Return ordered list of plugins in sequence in which they should appear on toolbar or
-     * in settings.  Handles both legacy (SWIG) and API plugins, so returns a heterogenous list.
+     * in settings.
      */
-    static std::vector<std::variant<ACTION_PLUGIN*, const PLUGIN_ACTION*>> GetOrderedActionPlugins();
+    static std::vector<const PLUGIN_ACTION*> GetOrderedPluginActions();
 
     void SaveProjectLocalSettings() override;
 
@@ -301,7 +321,7 @@ public:
     ///< @copydoc EDA_DRAW_FRAME::UseGalCanvas()
     void ActivateGalCanvas() override;
 
-    void ShowBoardSetupDialog( const wxString& aInitialPage = wxEmptyString );
+    void ShowBoardSetupDialog( const wxString& aInitialPage = wxEmptyString, wxWindow* aParent = nullptr );
 
     void PrepareLayerIndicator( bool aForceRebuild = false );
 
@@ -325,6 +345,7 @@ public:
      * @param aNoTHItems true to include only footprints with no TH pads no matter
      *                   the footprint flag
      * @param aExcludeDNP true to exclude footprints flagged DNP
+     * @param aExcludeBOM true to exclude footprints flagged exclude from BOM
      * @param aTopSide true to list footprints on front (top) side.
      * @param aBottomSide true to list footprints on back (bottom) side, if \a aTopSide and
      *                    \a aTopSide are true, list footprints on both sides.
@@ -334,8 +355,9 @@ public:
      * @return the number of footprints found on aSide side or -1 if the file could not be created.
      */
     int DoGenFootprintsPositionFile( const wxString& aFullFileName, bool aUnitsMM, bool aOnlySMD,
-                                     bool aNoTHItems, bool aExcludeDNP, bool aTopSide, bool aBottomSide,
-                                     bool aFormatCSV, bool aUseAuxOrigin, bool aNegateBottomX );
+                                     bool aNoTHItems, bool aExcludeDNP, bool aExcludeBOM, bool aTopSide,
+                                     bool aBottomSide, bool aFormatCSV, bool aUseAuxOrigin,
+                                     bool aNegateBottomX );
 
     void OnFileHistory( wxCommandEvent& event );
     void OnClearFileHistory( wxCommandEvent& aEvent );
@@ -414,9 +436,9 @@ public:
 
     bool SaveSelectionAsDesignBlock( const wxString& aLibraryName );
 
-    bool SaveBoardToDesignBlock( const LIB_ID& aLibId );
+    bool UpdateDesignBlockFromBoard( const LIB_ID& aLibId );
 
-    bool SaveSelectionToDesignBlock( const LIB_ID& aLibId );
+    bool UpdateDesignBlockFromSelection( const LIB_ID& aLibId );
 
     PCB_DESIGN_BLOCK_PANE* GetDesignBlockPane() const { return m_designBlocksPane; }
 
@@ -522,11 +544,13 @@ public:
      * @param aCommit commit that should store the changes.
      */
     void ExchangeFootprint( FOOTPRINT* aExisting, FOOTPRINT* aNew, BOARD_COMMIT& aCommit,
+                            bool matchPadPositions,
                             bool deleteExtraTexts = true,
                             bool resetTextLayers = true,
                             bool resetTextEffects = true,
-                            bool resetFabricationAttrs = true,
+                            bool resetTextPositions = true,
                             bool resetTextContent = true,
+                            bool resetFabricationAttrs = true,
                             bool resetClearanceOverrides = true,
                             bool reset3DModels = true,
                             bool* aUpdated = nullptr );
@@ -687,6 +711,8 @@ public:
      */
     bool DoAutoSave();
 
+    void ClearToolbarControl( int aId ) override;
+
     DECLARE_EVENT_TABLE()
 
 protected:
@@ -695,13 +721,13 @@ protected:
      */
     struct LAYER_TOOLBAR_ICON_VALUES
     {
-        int     previous_requested_scale;
+        int     previous_icon_size;
         COLOR4D previous_Route_Layer_TOP_color;
         COLOR4D previous_Route_Layer_BOTTOM_color;
         COLOR4D previous_background_color;
 
         LAYER_TOOLBAR_ICON_VALUES()
-                : previous_requested_scale( 0 ),
+                : previous_icon_size( 0 ),
                   previous_Route_Layer_TOP_color( COLOR4D::UNSPECIFIED ),
                   previous_Route_Layer_BOTTOM_color( COLOR4D::UNSPECIFIED ),
                   previous_background_color( COLOR4D::UNSPECIFIED )
@@ -725,37 +751,6 @@ protected:
      * It also reinit the layers manager that slightly changes with canvases
      */
     void SwitchCanvas( EDA_DRAW_PANEL_GAL::GAL_TYPE aCanvasType ) override;
-
-    /**
-     * Fill action menu with all registered action plugins
-     */
-    void buildActionPluginMenus( ACTION_MENU* aActionMenu );
-
-    /**
-     * Append action plugin buttons to given toolbar
-     */
-    void addActionPluginTools( ACTION_TOOLBAR* aToolbar );
-
-    /**
-     * Execute action plugin's Run() method and updates undo buffer.
-     *
-     * @param aActionPlugin action plugin
-     */
-    void RunActionPlugin( ACTION_PLUGIN* aActionPlugin );
-
-    /**
-     * Launched by the menu when an action is called.
-     *
-     * @param aEvent sent by wx
-     */
-    void OnActionPluginMenu( wxCommandEvent& aEvent);
-
-    /**
-     * Launched by the button when an action is called.
-     *
-     * @param aEvent sent by wx
-     */
-    void OnActionPluginButton( wxCommandEvent& aEvent );
 
     PLUGIN_ACTION_SCOPE PluginActionScope() const override { return PLUGIN_ACTION_SCOPE::PCB; }
 
@@ -813,14 +808,34 @@ protected:
 public:
     wxChoice* m_SelTrackWidthBox;        // a choice box to display and select current track width
     wxChoice* m_SelViaSizeBox;           // a choice box to display and select current via diameter
+    wxChoice* m_CurrentVariantCtrl;      // a choice box to display and select current variant
 
-    bool m_show_layer_manager_tools;
-    bool m_show_search;
-    bool m_show_net_inspector;
+    bool      m_ShowLayerManagerTools;
+    bool      m_ShowSearch;
+    bool      m_ShowNetInspector;
 
-    bool m_ZoneFillsDirty;          // Board has been modified since last zone fill.
+    bool      m_ZoneFillsDirty;          // Board has been modified since last zone fill.
 
-    bool m_probingSchToPcb;         // Recursion guard when synchronizing selection from schematic
+    bool      m_ProbingSchToPcb;         // Recursion guard when synchronizing selection from schematic
+
+    /// Reactive text-var invalidation listener state. The handle alone is
+    /// ambiguous across board/project swaps — the tracker it belongs to must
+    /// be remembered so the destructor (and tracker-change detection)
+    /// removes from the correct tracker, not whatever GetBoard() points at
+    /// post-swap. Handle == 0 means not installed.
+    std::size_t             m_textVarListenerHandle = 0;
+    class TEXT_VAR_TRACKER* m_textVarListenerTracker = nullptr;
+
+    /**
+     * Drop every cached reference into the current BOARD's text-var tracker.
+     * Must run before the BOARD is freed (SetBoard replacement or frame
+     * teardown).
+     */
+    void detachTextVarTracker();
+
+    void StartCrossProbeFlash( const std::vector<BOARD_ITEM*>& aItems );
+    void OnCrossProbeFlashTimer( wxTimerEvent& aEvent );
+    void UpdateProperties() override;
 
 private:
     friend struct PCB::IFACE;
@@ -835,27 +850,40 @@ private:
      */
     TOOL_ACTION* m_exportNetlistAction;
 
-    DIALOG_FIND* m_findDialog;
-    DIALOG_BOOK_REPORTER* m_inspectDrcErrorDlg;
-    DIALOG_BOOK_REPORTER* m_inspectClearanceDlg;
-    DIALOG_BOOK_REPORTER* m_inspectConstraintsDlg;
-    DIALOG_BOOK_REPORTER* m_footprintDiffDlg;
-    DIALOG_BOARD_SETUP*   m_boardSetupDlg;
+    DIALOG_FIND*               m_findDialog;
+    DIALOG_FIND_BY_PROPERTIES* m_findByPropertiesDialog;
+    DIALOG_BOOK_REPORTER*      m_inspectDrcErrorDlg;
+    DIALOG_BOOK_REPORTER*      m_inspectClearanceDlg;
+    DIALOG_BOOK_REPORTER*      m_inspectConstraintsDlg;
+    DIALOG_BOOK_REPORTER*      m_footprintDiffDlg;
+    DIALOG_BOARD_SETUP*        m_boardSetupDlg;
 
     std::vector<LIB_ID>    m_designBlockHistoryList;
     PCB_DESIGN_BLOCK_PANE* m_designBlocksPane;
+
+    /// Secondary infobar that stacks above the main one; reserved for load-time
+    /// notices (currently the WRL -> STEP migration prompt) that must not be
+    /// stomped by later infobar messages such as read-only warnings or DRC
+    /// rule errors.
+    WX_INFOBAR*            m_loadNoticeInfoBar = nullptr;
 
     const std::map<std::string, UTF8>* m_importProperties; // Properties used for non-KiCad import.
 
     /**
      * Keep track of viewport so that track net labels can be adjusted when it changes.
      */
-    BOX2D        m_lastNetnamesViewport;
+    BOX2D             m_lastNetnamesViewport;
 
-    wxTimer*     m_eventCounterTimer;
+    wxTimer*          m_eventCounterTimer;
+
+    // Cross-probe flashing support
+    wxTimer           m_crossProbeFlashTimer;          ///< Timer to toggle selection visibility for flash
+    int               m_crossProbeFlashPhase = 0;      ///< Phase counter
+    std::vector<KIID> m_crossProbeFlashItems;          ///< Items to flash (by UUID)
+    bool              m_crossProbeFlashing = false;    ///< Currently flashing guard
 
 #ifdef KICAD_IPC_API
-    std::unique_ptr<API_HANDLER_PCB> m_apiHandler;
+    std::unique_ptr<API_HANDLER_PCB>    m_apiHandler;
     std::unique_ptr<API_HANDLER_COMMON> m_apiHandlerCommon;
 #endif
 };

@@ -21,12 +21,15 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 #include <bitmaps.h>
+#include <api/schematic/schematic_types.pb.h>
+#include <google/protobuf/any.pb.h>
 #include <eda_draw_frame.h>
 #include <eda_group.h>
 #include <geometry/shape_compound.h>
 #include <sch_item.h>
 #include <sch_group.h>
 #include <sch_screen.h>
+#include <schematic.h>
 #include <sch_symbol.h>
 #include <symbol.h>
 #include <confirm.h>
@@ -34,17 +37,73 @@
 #include <view/view.h>
 
 #include <wx/debug.h>
+#include <properties/property.h>
+#include <properties/property_mgr.h>
 
 SCH_GROUP::SCH_GROUP() : SCH_ITEM( nullptr, SCH_GROUP_T )
 {
+    SetLayer( LAYER_GROUP );
 }
 
 SCH_GROUP::SCH_GROUP( SCH_ITEM* aParent ) : SCH_ITEM( aParent, SCH_GROUP_T )
 {
+    SetLayer( LAYER_GROUP );
 }
 
 SCH_GROUP::SCH_GROUP( SCH_SCREEN* aParent ) : SCH_ITEM( aParent, SCH_GROUP_T )
 {
+    SetLayer( LAYER_GROUP );
+}
+
+
+void SCH_GROUP::Serialize( google::protobuf::Any& aContainer ) const
+{
+    using namespace kiapi::schematic::types;
+
+    Group group;
+    EDA_ITEM_SET sortedItems( m_items.begin(), m_items.end() );
+
+    group.mutable_id()->set_value( m_Uuid.AsStdString() );
+    group.set_name( GetName().ToUTF8() );
+    group.set_locked( IsLocked() ? kiapi::common::types::LockedState::LS_LOCKED
+                                 : kiapi::common::types::LockedState::LS_UNLOCKED );
+
+    for( EDA_ITEM* member : sortedItems )
+        group.add_items()->set_value( member->m_Uuid.AsStdString() );
+
+    aContainer.PackFrom( group );
+}
+
+
+bool SCH_GROUP::Deserialize( const google::protobuf::Any& aContainer )
+{
+    using namespace kiapi::schematic::types;
+
+    Group group;
+
+    if( !aContainer.UnpackTo( &group ) )
+        return false;
+
+    const_cast<KIID&>( m_Uuid ) = KIID( group.id().value() );
+    SetName( wxString::FromUTF8( group.name() ) );
+    SetLocked( group.locked() == kiapi::common::types::LockedState::LS_LOCKED );
+
+    m_items.clear();
+
+    SCHEMATIC* schematic = Schematic();
+
+    if( !schematic )
+        return false;
+
+    for( const kiapi::common::types::KIID& memberId : group.items() )
+    {
+        KIID id( memberId.value() );
+
+        if( SCH_ITEM* item = schematic->ResolveItem( id, nullptr, true ) )
+            m_items.insert( item );
+    }
+
+    return true;
 }
 
 std::unordered_set<SCH_ITEM*> SCH_GROUP::GetSchItems() const
@@ -67,8 +126,13 @@ std::unordered_set<SCH_ITEM*> SCH_GROUP::GetSchItems() const
  */
 EDA_GROUP* getClosestGroup( SCH_ITEM* aItem, bool isSymbolEditor )
 {
+    // In the schematic editor, items with either symbols or sheets as their parents (e.g., fields,
+    // pins, sheet pins, etc.) don't get their own groups and instead follow the group of their parent
+    // object.
     if( !isSymbolEditor && aItem->GetParent() && aItem->GetParent()->Type() == SCH_SYMBOL_T )
         return static_cast<SCH_SYMBOL*>( aItem->GetParent() )->GetParentGroup();
+    else if( aItem->GetParent() && aItem->GetParent()->Type() == SCH_SHEET_T )
+        return static_cast<SCH_SHEET*>( aItem->GetParent() )->GetParentGroup();
     else
         return aItem->GetParentGroup();
 }
@@ -178,6 +242,25 @@ void SCH_GROUP::swapData( SCH_ITEM* aImage )
     std::swap( m_items, image->m_items );
     std::swap( m_name, image->m_name );
     std::swap( m_designBlockLibId, image->m_designBlockLibId );
+
+    // A group doesn't own its children (they're owned by the schematic), so undo doesn't do a
+    // deep clone when making an image.  However, it's still safest to update the parentGroup
+    // pointers of the group's children. We must do it in the right order in case any of the
+    // children are shared (ie: image first, "this" second so that any shared children end up
+    // with "this").
+    image->RunOnChildren(
+            [&]( SCH_ITEM* child )
+            {
+                child->SetParentGroup( image );
+            },
+            RECURSE_MODE::NO_RECURSE );
+
+    RunOnChildren(
+            [&]( SCH_ITEM* child )
+            {
+                child->SetParentGroup( this );
+            },
+            RECURSE_MODE::NO_RECURSE );
 }
 
 
@@ -311,7 +394,6 @@ void SCH_GROUP::MirrorVertically( int aCenter )
 void SCH_GROUP::Plot( PLOTTER* aPlotter, bool aBackground, const SCH_PLOT_OPTS& aPlotOpts,
                       int aUnit, int aBodyStyle, const VECTOR2I& aOffset, bool aDimmed )
 {
-    // TODO: should we plot the name & border of named groups?
 }
 
 

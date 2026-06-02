@@ -52,22 +52,27 @@ extern const char* getTextTypeToken( KICAD_T aType );
 
 extern void formatArc( OUTPUTFORMATTER* aFormatter, EDA_SHAPE* aArc, bool aIsPrivate,
                        const STROKE_PARAMS& aStroke, FILL_T aFillMode, const COLOR4D& aFillColor,
-                       bool aInvertY, const KIID& aUuid = niluuid );
+                       bool aInvertY, const KIID& aUuid = niluuid,
+                       bool aLocked = false );
 
 extern void formatCircle( OUTPUTFORMATTER* aFormatter, EDA_SHAPE* aCircle, bool aIsPrivate,
                           const STROKE_PARAMS& aStroke, FILL_T aFillMode, const COLOR4D& aFillColor,
-                          bool aInvertY, const KIID& aUuid = niluuid );
+                          bool aInvertY, const KIID& aUuid = niluuid,
+                          bool aLocked = false );
 
 extern void formatRect( OUTPUTFORMATTER* aFormatter, EDA_SHAPE* aRect, bool aIsPrivate,
                         const STROKE_PARAMS& aStroke, FILL_T aFillMode, const COLOR4D& aFillColor,
-                        bool aInvertY, const KIID& aUuid = niluuid );
+                        bool aInvertY, const KIID& aUuid = niluuid,
+                        bool aLocked = false );
 
 extern void formatBezier( OUTPUTFORMATTER* aFormatter, EDA_SHAPE* aBezier, bool aIsPrivate,
                           const STROKE_PARAMS& aStroke, FILL_T aFillMode, const COLOR4D& aFillColor,
-                          bool aInvertY, const KIID& aUuid = niluuid );
+                          bool aInvertY, const KIID& aUuid = niluuid,
+                          bool aLocked = false );
 
 extern void formatPoly( OUTPUTFORMATTER* aFormatter, EDA_SHAPE* aPolyLine, bool aIsPrivate,
                         const STROKE_PARAMS& aStroke, FILL_T aFillMode, const COLOR4D& aFillColor,
-                        bool aInvertY, const KIID& aUuid = niluuid );
+                        bool aInvertY, const KIID& aUuid = niluuid,
+                        bool aLocked = false );
 
 #endif    // SCH_IO_KICAD_SEXPR_COMMON_H_

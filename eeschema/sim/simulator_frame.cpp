@@ -33,6 +33,7 @@
 
 #include <project/project_file.h>
 #include <sch_edit_frame.h>
+#include <widgets/wx_infobar.h>
 #include <kiway.h>
 #include <confirm.h>
 #include <bitmaps.h>
@@ -282,7 +283,8 @@ WINDOW_SETTINGS* SIMULATOR_FRAME::GetWindowSettings( APP_SETTINGS_BASE* aCfg )
     if( EESCHEMA_SETTINGS* cfg = GetAppSettings<EESCHEMA_SETTINGS>( "eeschema" ) )
         return &cfg->m_Simulator.window;
 
-    return nullptr;
+    wxFAIL_MSG( wxT( "SIMULATOR not running with EESCHEMA_SETTINGS" ) );
+    return &aCfg->m_Window;     // non-null fail-safe
 }
 
 
@@ -418,7 +420,7 @@ void SIMULATOR_FRAME::StartSimulation()
 
         if( tranSpicePlot.IsEmpty() )
         {
-            DisplayErrorMessage( this, _( "You must run a TRAN simulation first; its results"
+            DisplayErrorMessage( this, _( "You must run a TRAN simulation first; its results "
                                           "will be used for the fast Fourier transform." ) );
         }
         else

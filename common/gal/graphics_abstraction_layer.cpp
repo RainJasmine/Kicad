@@ -25,7 +25,7 @@
  */
 
 #include <wx/log.h>
-
+#include <advanced_config.h>
 #include <gal/graphics_abstraction_layer.h>
 #include <gal/definitions.h>
 #include <font/font.h>
@@ -62,11 +62,12 @@ GAL::GAL( GAL_DISPLAY_OPTIONS& aDisplayOptions ) :
 
     // wxDC::GetPPI() reports 96 DPI, but somehow this value
     // is the closest match to the legacy renderer
-    SetScreenDPI( 91 );
+    SetScreenDPI( ADVANCED_CFG::GetCfg().m_ScreenDPI );
     SetDepthRange( VECTOR2D( GAL::MIN_DEPTH, GAL::MAX_DEPTH ) );
     SetLayerDepth( 0.0 );
     SetFlip( false, false );
     SetLineWidth( 1.0f );
+    SetMinLineWidth( 1.0f );
     computeWorldScale();
     SetAxesEnabled( false );
 
@@ -79,7 +80,7 @@ GAL::GAL( GAL_DISPLAY_OPTIONS& aDisplayOptions ) :
 
     // Initialize the cursor shape
     SetCursorColor( COLOR4D( 1.0, 1.0, 1.0, 1.0 ) );
-    m_fullscreenCursor = false;
+    m_crossHairMode = CROSS_HAIR_MODE::SMALL_CROSS;
     m_forceDisplayCursor = false;
     SetCursorEnabled( false );
 
@@ -142,9 +143,9 @@ bool GAL::updatedGalDisplayOptions( const GAL_DISPLAY_OPTIONS& aOptions )
         refresh = true;
     }
 
-    if( m_options.m_fullscreenCursor != m_fullscreenCursor )
+    if( m_options.GetCursorMode() != m_crossHairMode )
     {
-        m_fullscreenCursor = m_options.m_fullscreenCursor;
+        m_crossHairMode = m_options.GetCursorMode();
         refresh = true;
     }
 

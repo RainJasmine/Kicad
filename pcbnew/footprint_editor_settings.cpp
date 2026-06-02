@@ -20,6 +20,8 @@
 
 #include "footprint_editor_settings.h"
 
+#include <project/board_project_settings_params.h>
+#include <settings/color_settings.h>
 #include <common.h>
 #include <layer_ids.h>
 #include <lset.h>
@@ -50,11 +52,10 @@ FOOTPRINT_EDITOR_SETTINGS::FOOTPRINT_EDITOR_SETTINGS() :
         m_DisplayInvertXAxis( false ),
         m_DisplayInvertYAxis( false ),
         m_RotationAngle( ANGLE_90 ),
-        m_Use45Limit( true ),
+        m_AngleSnapMode( LEADER_MODE::DEG45 ),
         m_ArcEditMode( ARC_EDIT_MODE::KEEP_CENTER_ADJUST_ANGLE_RADIUS ),
         m_LibWidth( 250 ),
-        m_LastExportPath(),
-        m_FootprintTextShownColumns()
+        m_LastExportPath()
 {
     m_MagneticItems.pads      = MAGNETIC_OPTIONS::CAPTURE_ALWAYS;
     m_MagneticItems.tracks    = MAGNETIC_OPTIONS::NO_EFFECT;
@@ -84,7 +85,7 @@ FOOTPRINT_EDITOR_SETTINGS::FOOTPRINT_EDITOR_SETTINGS() :
             &m_AuiPanels.properties_splitter, 0.5f ) );
 
     m_params.emplace_back( new PARAM<bool>( "aui.show_properties",
-            &m_AuiPanels.show_properties, false ) );
+            &m_AuiPanels.show_properties, true ) );
 
     m_params.emplace_back( new PARAM<int>( "library.sort_mode",
             &m_LibrarySortMode, 0 ) );
@@ -103,9 +104,6 @@ FOOTPRINT_EDITOR_SETTINGS::FOOTPRINT_EDITOR_SETTINGS() :
 
     m_params.emplace_back( new PARAM<bool>( "pcb_display.pad_numbers",
             &m_ViewersDisplay.m_DisplayPadNumbers, true ) );
-
-    m_params.emplace_back( new PARAM<wxString>( "window.footprint_text_shown_columns",
-            &m_FootprintTextShownColumns, "0 1 2 3 4 5 7" ) );
 
     m_params.emplace_back( new PARAM<int>( "editing.magnetic_pads",
             reinterpret_cast<int*>( &m_MagneticItems.pads ),
@@ -138,8 +136,9 @@ FOOTPRINT_EDITOR_SETTINGS::FOOTPRINT_EDITOR_SETTINGS() :
             },
             900 ) );
 
-    m_params.emplace_back( new PARAM<bool>( "editing.fp_use_45_degree_limit",
-            &m_Use45Limit, false ) );
+    m_params.emplace_back( new PARAM<int>( "editing.fp_angle_snap_mode",
+            reinterpret_cast<int*>( &m_AngleSnapMode ),
+            static_cast<int>( LEADER_MODE::DEG45 ) ) );
 
     m_params.emplace_back( new PARAM_LAYER_PRESET( "pcb_display.layer_presets", &m_LayerPresets ) );
 
@@ -194,6 +193,11 @@ FOOTPRINT_EDITOR_SETTINGS::FOOTPRINT_EDITOR_SETTINGS() :
 
     m_params.emplace_back( new PARAM_MAP<wxString>( "design_settings.default_footprint_layer_names",
                                                     &m_DesignSettings.m_UserLayerNames, {} ) );
+
+    m_params.emplace_back( new PARAM_LAMBDA<int>( "design_settings.user_layer_count",
+            [this]() { return m_DesignSettings.GetUserDefinedLayerCount(); },
+            [this]( int aCount ) { m_DesignSettings.SetUserDefinedLayerCount( aCount ); },
+            4 ) );
 
     int minTextSize = pcbIUScale.mmToIU( TEXT_MIN_SIZE_MM );
     int maxTextSize = pcbIUScale.mmToIU( TEXT_MAX_SIZE_MM );
@@ -335,6 +339,7 @@ FOOTPRINT_EDITOR_SETTINGS::FOOTPRINT_EDITOR_SETTINGS() :
                 ret["zones"]       = m_SelectionFilter.zones;
                 ret["keepouts"]    = m_SelectionFilter.keepouts;
                 ret["dimensions"]  = m_SelectionFilter.dimensions;
+                ret["points"]      = m_SelectionFilter.points;
                 ret["otherItems"]  = m_SelectionFilter.otherItems;
 
                 return ret;
@@ -354,6 +359,7 @@ FOOTPRINT_EDITOR_SETTINGS::FOOTPRINT_EDITOR_SETTINGS() :
                 SetIfPresent( aVal, "zones", m_SelectionFilter.zones );
                 SetIfPresent( aVal, "keepouts", m_SelectionFilter.keepouts );
                 SetIfPresent( aVal, "dimensions", m_SelectionFilter.dimensions );
+                SetIfPresent( aVal, "points", m_SelectionFilter.points );
                 SetIfPresent( aVal, "otherItems", m_SelectionFilter.otherItems );
             },
             {
@@ -367,6 +373,7 @@ FOOTPRINT_EDITOR_SETTINGS::FOOTPRINT_EDITOR_SETTINGS() :
                 { "zones", true },
                 { "keepouts", true },
                 { "dimensions", true },
+                { "points", true },
                 { "otherItems", true }
             } ) );
 
@@ -394,7 +401,6 @@ bool FOOTPRINT_EDITOR_SETTINGS::MigrateFromLegacy( wxConfigBase* aCfg )
     //
     ret &= fromLegacy<int>(  aCfg, "ModeditLibWidth",              "window.lib_width" );
     ret &= fromLegacyString( aCfg, "import_last_path",             "system.last_import_export_path" );
-    ret &= fromLegacyString( aCfg, "LibFootprintTextShownColumns", "window.footprint_text_shown_columns" );
 
     ret &= fromLegacy<int>(  aCfg, "FpEditorMagneticPads",               "editing.magnetic_pads" );
     ret &= fromLegacy<bool>( aCfg, "FpEditorDisplayPolarCoords",         "editing.polar_coords" );
@@ -469,7 +475,8 @@ bool FOOTPRINT_EDITOR_SETTINGS::MigrateFromLegacy( wxConfigBase* aCfg )
     migrateLegacyColor( f + "Color4DPCBBackground",      LAYER_PCB_BACKGROUND );
     migrateLegacyColor( f + "Color4DPCBCursor",          LAYER_CURSOR );
     migrateLegacyColor( f + "Color4DRatsEx",             LAYER_RATSNEST );
-    migrateLegacyColor( f + "Color4DViaBBlindEx",        LAYER_VIA_BBLIND );
+    migrateLegacyColor( f + "Color4DViaBBlindEx",        LAYER_VIA_BLIND );
+    migrateLegacyColor( f + "Color4DViaBBlindEx",        LAYER_VIA_BURIED );
     migrateLegacyColor( f + "Color4DViaMicroEx",         LAYER_VIA_MICROVIA );
     migrateLegacyColor( f + "Color4DViaThruEx",          LAYER_VIA_THROUGH );
     migrateLegacyColor( f + "Color4DWorksheet",          LAYER_DRAWINGSHEET );

@@ -20,18 +20,26 @@
 #ifndef FONT_CHOICE_H
 #define FONT_CHOICE_H
 
-#include <wx/choice.h>
+#include <wx/odcombo.h>
 #include <wx/fontenum.h>
 #include <font/font.h>
 
 
-class FONT_CHOICE : public wxChoice
+class FONT_CHOICE : public wxOwnerDrawnComboBox
 {
 public:
     FONT_CHOICE( wxWindow* aParent, int aId, wxPoint aPosition, wxSize aSize, int nChoices,
                  wxString* aChoices, int aStyle );
 
     virtual ~FONT_CHOICE();
+
+    void RefreshFonts();
+
+    /**
+     * Set if the choice selection should show the INDETERMINATE_ACTION option at the top
+     * of the font selection list.
+     */
+    void SetHasIndeterminateChoice( bool aHasChoice = true ) { m_hasIndeterminateChoice = aHasChoice; }
 
     /**
      * Set the selection in wxChoice widget
@@ -46,9 +54,37 @@ public:
 
     KIFONT::FONT* GetFontSelection( bool aBold, bool aItalic, bool aForDrawingSheet = false ) const;
 
+    wxString GetStringSelection() const override;
+
+protected:
+    wxCoord OnMeasureItem( size_t aItem ) const override;
+    void    OnDrawItem( wxDC& aDc, const wxRect& aRect, int aItem, int aFlags ) const override;
+    void    OnKeyDown( wxKeyEvent& aEvent );
+    void    OnCharHook( wxKeyEvent& aEvent );
+    void    OnTextCtrl( wxCommandEvent& aEvent );
+    void    OnDropDown( wxCommandEvent& aEvent );
+    void    OnCloseUp( wxCommandEvent& aEvent );
+    void    OnSetFocus( wxFocusEvent& aEvent );
+    void    OnKillFocus( wxFocusEvent& aEvent );
+
 private:
-    int       m_systemFontCount;
-    wxString  m_notFound;
+    // Clear the wxOwnerDrawnComboBox list.
+    // Same as wxOwnerDrawnComboBox::Clear(), but without issues related to Clear() (see code)
+    void clearList();
+    void DoAutoComplete( const wxString& aText );
+    void FilterFontList( const wxString& aFilter );
+    void RestoreFullFontList();
+    int FindBestMatch( const wxString& aText );
+    wxString FindBestPartialMatch( const wxString& aText );
+    wxString GetDefaultFontName() const;
+
+    int                m_systemFontCount;
+    wxString           m_notFound;
+    wxArrayString      m_fullFontList;
+    bool               m_hasIndeterminateChoice;
+    bool               m_isFiltered;
+    wxString           m_lastText;
+    wxString           m_originalSelection;  // Store original selection when popup opens
 };
 
 #endif // FONT_CHOICE_H

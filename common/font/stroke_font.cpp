@@ -72,7 +72,7 @@ STROKE_FONT* STROKE_FONT::LoadFont( const wxString& aFontName )
     }
     else
     {
-        // FONT TODO: support for other stroke fonts?
+        // If we ever supported other stroke fonts, the code would go here.
         return nullptr;
     }
 }
@@ -283,9 +283,35 @@ VECTOR2I STROKE_FONT::GetTextAsGlyphs( BOX2I* aBBox, std::vector<std::unique_ptr
     if( aBBox )
     {
         aBBox->SetOrigin( aPosition );
-        aBBox->SetEnd( cursor.x - KiROUND( glyphSize.x * INTER_CHAR ), cursor.y + glyphSize.y );
+        aBBox->SetEnd( cursor.x - KiROUND( glyphSize.x * INTER_CHAR ), cursor.y - glyphSize.y );
         aBBox->Normalize();
     }
 
     return VECTOR2I( cursor.x, aPosition.y );
+}
+
+
+unsigned STROKE_FONT::GetGlyphCount() const
+{
+    return m_glyphs ? m_glyphs->size() : 0;
+}
+
+
+const STROKE_GLYPH* STROKE_FONT::GetGlyph( unsigned aIndex ) const
+{
+    if( !m_glyphs || aIndex >= m_glyphs->size() )
+        return nullptr;
+
+    return static_cast<const STROKE_GLYPH*>( m_glyphs->at( aIndex ).get() );
+}
+
+
+const BOX2D& STROKE_FONT::GetGlyphBoundingBox( unsigned aIndex ) const
+{
+    static const BOX2D empty;
+
+    if( !m_glyphBoundingBoxes || aIndex >= m_glyphBoundingBoxes->size() )
+        return empty;
+
+    return m_glyphBoundingBoxes->at( aIndex );
 }

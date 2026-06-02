@@ -26,6 +26,7 @@
 
 #include <git/git_progress.h>
 #include <git/git_repo_mixin.h>
+#include <import_export.h>
 #include <git/kicad_git_errors.h>
 #include <wx/string.h>
 
@@ -37,7 +38,7 @@ enum class PushResult
     Error
 };
 
-class GIT_PUSH_HANDLER : public KIGIT_REPO_MIXIN
+class APIEXPORT GIT_PUSH_HANDLER : public KIGIT_REPO_MIXIN
 {
 public:
     GIT_PUSH_HANDLER( KIGIT_COMMON* aCommon );
@@ -46,12 +47,12 @@ public:
     PushResult PerformPush();
 
     // Virtual method for progress reporting
-    virtual void ReportProgress(int aCurrent, int aTotal, const wxString& aMessage) {}
+    virtual void ReportProgress( int aCurrent, int aTotal, const wxString& aMessage ) {}
 
 private:
 
     // Implementation of GIT_PROGRESS's virtual method
-    void UpdateProgress(int aCurrent, int aTotal, const wxString& aMessage) override;
+    void UpdateProgress( int aCurrent, int aTotal, const wxString& aMessage ) override;
 };
 
 #endif // _GIT_PUSH_HANDLER_H_

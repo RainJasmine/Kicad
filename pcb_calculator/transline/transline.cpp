@@ -23,23 +23,12 @@
  */
 
 #include <cmath>
-#include <limits>
 
 #include <wx/colour.h>
 #include <wx/settings.h>
 
 #include "transline.h"
 #include "units.h"
-
-#ifndef INFINITY
-#define INFINITY std::numeric_limits<double>::infinity()
-#endif
-
-
-#ifndef M_PI_2
-#define M_PI_2 ( M_PI / 2 )
-#endif
-
 
 // Functions to Read/Write parameters in pcb_calculator main frame:
 // They are wrapper to actual functions, so all transline functions do not
@@ -97,6 +86,19 @@ void TRANSLINE::Init()
     {
         m_parameters[i] = 0;
     }
+
+    // 1 GHz spec defaults to the canonical FR-4 reporting point for Er and tan delta.
+    m_parameters[DIELECTRIC_MODEL_PRM] = 0.0;
+    m_parameters[EPSILONR_SPEC_FREQ_PRM] = 1.0e9;
+
+    // Soldermask defaults.  SOLDERMASK_PRESENT = 0 keeps the math path bit-identical to
+    // the un-coated baseline.  Thickness 20 um, er 3.5, tan d 0.025 match a typical green
+    // LPI; fills-gaps defaults on because standard LPI processes flood the CPW slots.
+    m_parameters[SOLDERMASK_PRESENT_PRM] = 0.0;
+    m_parameters[SOLDERMASK_THICKNESS_PRM] = 20.0e-6;
+    m_parameters[SOLDERMASK_EPSILONR_PRM] = 3.5;
+    m_parameters[SOLDERMASK_TAND_PRM] = 0.025;
+    m_parameters[SOLDERMASK_FILLS_GAPS_PRM] = 1.0;
 }
 
 
@@ -186,8 +188,40 @@ void TRANSLINE::checkProperties()
     if( !std::isfinite( m_parameters[STRIPLINE_A_PRM] ) || m_parameters[STRIPLINE_A_PRM] <= 0 )
         setErrorLevel( STRIPLINE_A_PRM, TRANSLINE_WARNING );
 
-    if( !std::isfinite( m_parameters[H_T_PRM] ) || m_parameters[H_T_PRM] <= 0 )
+    // Warn on non-positive or non-finite H_T, and also on the regime where the cover
+    // correction breaks down (air gap below roughly the conductor thickness plus 10 percent
+    // of the substrate height).
+    if( !std::isfinite( m_parameters[H_T_PRM] ) || m_parameters[H_T_PRM] <= 0
+            || ( std::isfinite( m_parameters[H_PRM] ) && m_parameters[H_PRM] > 0
+                 && std::isfinite( m_parameters[T_PRM] )
+                 && m_parameters[H_T_PRM] < ( m_parameters[T_PRM] + 0.1 * m_parameters[H_PRM] ) ) )
+    {
         setErrorLevel( H_T_PRM, TRANSLINE_WARNING );
+    }
+
+    // Wadell Sec. 3.6.3 (off-center stripline) claims +/-2 percent accuracy only when the strip
+    // plane sits inside 0.2 < a/h < 0.8 and the strip-thickness ratio t/h stays below 0.2.  Flag
+    // STRIPLINE_A_PRM and T_PRM when we leave that regime so the UI can warn that the offset
+    // correction is extrapolating outside its fit range.
+    if( std::isfinite( m_parameters[STRIPLINE_A_PRM] )
+            && m_parameters[STRIPLINE_A_PRM] > 0
+            && std::isfinite( m_parameters[H_PRM] )
+            && m_parameters[H_PRM] > 0 )
+    {
+        const double aRatio = m_parameters[STRIPLINE_A_PRM] / m_parameters[H_PRM];
+
+        if( aRatio < 0.2 || aRatio > 0.8 )
+            setErrorLevel( STRIPLINE_A_PRM, TRANSLINE_WARNING );
+    }
+
+    if( std::isfinite( m_parameters[T_PRM] )
+            && m_parameters[T_PRM] > 0
+            && std::isfinite( m_parameters[H_PRM] )
+            && m_parameters[H_PRM] > 0
+            && ( m_parameters[T_PRM] / m_parameters[H_PRM] ) > 0.2 )
+    {
+        setErrorLevel( T_PRM, TRANSLINE_WARNING );
+    }
 
     // How can we check ROUGH_PRM ?
 
@@ -230,7 +264,6 @@ void TRANSLINE::synthesize()
  *
  * \f$ \frac{1}{\sqrt{ \pi \cdot f \cdot \mu \cdot \sigma }} \f$
  */
-#include <cstdio>
 double TRANSLINE::skin_depth()
 {
     double depth;
@@ -241,182 +274,6 @@ double TRANSLINE::skin_depth()
 }
 
 
-/* *****************************************************************
-**********                                             **********
-**********          mathematical functions             **********
-**********                                             **********
-***************************************************************** */
-
-#define NR_EPSI 2.2204460492503131e-16
-
-/* The function computes the complete elliptic integral of first kind
- *  K() and the second kind E() using the arithmetic-geometric mean
- *  algorithm (AGM) by Abramowitz and Stegun.
- */
-void TRANSLINE::ellipke( double arg, double& k, double& e )
-{
-    int iMax = 16;
-
-    if( arg == 1.0 )
-    {
-        k = INFINITY; // infinite
-        e = 0;
-    }
-    else if( std::isinf( arg ) && arg < 0 )
-    {
-        k = 0;
-        e = INFINITY; // infinite
-    }
-    else
-    {
-        double a, b, c, fr, s, fk = 1, fe = 1, t, da = arg;
-        int    i;
-
-        if( arg < 0 )
-        {
-            fk = 1 / sqrt( 1 - arg );
-            fe = sqrt( 1 - arg );
-            da = -arg / ( 1 - arg );
-        }
-
-        a  = 1;
-        b  = sqrt( 1 - da );
-        c  = sqrt( da );
-        fr = 0.5;
-        s  = fr * c * c;
-
-        for( i = 0; i < iMax; i++ )
-        {
-            t = ( a + b ) / 2;
-            c = ( a - b ) / 2;
-            b = sqrt( a * b );
-            a = t;
-            fr *= 2;
-            s += fr * c * c;
-
-            if( c / a < NR_EPSI )
-                break;
-        }
-
-        if( i >= iMax )
-        {
-            k = 0;
-            e = 0;
-        }
-        else
-        {
-            k = M_PI_2 / a;
-            e = M_PI_2 * ( 1 - s ) / a;
-            if( arg < 0 )
-            {
-                k *= fk;
-                e *= fe;
-            }
-        }
-    }
-}
-
-
-/* We need to know only K(k), and if possible KISS. */
-double TRANSLINE::ellipk( double k )
-{
-    double r, lost;
-
-    ellipke( k, r, lost );
-    return r;
-}
-
-#define MAX_ERROR 0.000001
-
-/**
- * @function minimizeZ0Error1D
- *
- * Tries to find a parameter that minimizes the error ( on Z0 ).
- * This function only works with a single parameter.
- * Calls @ref calcAnalyze several times until the error is acceptable.
- * While the error is unnacceptable, changes slightly the parameter.
- *
- * This function does not change Z0 / Angl_L.
- *
- * @param avar Parameter to synthesize
- * @return 'true' if error < MAX_ERROR, else 'false'
- */
-
-
-bool TRANSLINE::minimizeZ0Error1D( double* aVar )
-{
-    double Z0_dest, Z0_current, Z0_result, angl_l_dest, increment, slope, error;
-    int    iteration;
-
-    if( !std::isfinite( m_parameters[Z0_PRM] ) )
-    {
-        *aVar = NAN;
-        return false;
-    }
-
-    if( ( !std::isfinite( *aVar ) ) || ( *aVar == 0 ) )
-        *aVar = 0.001;
-
-    /* required value of Z0 */
-    Z0_dest = m_parameters[Z0_PRM];
-
-    /* required value of angl_l */
-    angl_l_dest = m_parameters[ANG_L_PRM];
-
-    /* Newton's method */
-    iteration = 0;
-
-    /* compute parameters */
-    calcAnalyze();
-    Z0_current = m_parameters[Z0_PRM];
-
-    error = fabs( Z0_dest - Z0_current );
-
-    while( error > MAX_ERROR )
-    {
-        iteration++;
-        increment = *aVar / 100.0;
-        *aVar += increment;
-        /* compute parameters */
-        calcAnalyze();
-        Z0_result = m_parameters[Z0_PRM];
-        /* f(w(n)) = Z0 - Z0(w(n)) */
-        /* f'(w(n)) = -f'(Z0(w(n))) */
-        /* f'(Z0(w(n))) = (Z0(w(n)) - Z0(w(n+delw))/delw */
-        /* w(n+1) = w(n) - f(w(n))/f'(w(n)) */
-        slope = ( Z0_result - Z0_current ) / increment;
-        slope = ( Z0_dest - Z0_current ) / slope - increment;
-        *aVar += slope;
-
-        if( *aVar <= 0.0 )
-            *aVar = increment;
-
-        /* find new error */
-        /* compute parameters */
-        calcAnalyze();
-        Z0_current = m_parameters[Z0_PRM];
-        error      = fabs( Z0_dest - Z0_current );
-
-        if( iteration > 100 )
-            break;
-    }
-
-    /* Compute one last time, but with correct length */
-    m_parameters[Z0_PRM]       = Z0_dest;
-    m_parameters[ANG_L_PRM]    = angl_l_dest;
-    m_parameters[PHYS_LEN_PRM] = C0 / m_parameters[FREQUENCY_PRM]
-                                 / sqrt( m_parameters[EPSILON_EFF_PRM] ) * m_parameters[ANG_L_PRM]
-                                 / 2.0 / M_PI; /* in m */
-    calcAnalyze();
-
-    /* Restore parameters */
-    m_parameters[Z0_PRM]       = Z0_dest;
-    m_parameters[ANG_L_PRM]    = angl_l_dest;
-    m_parameters[PHYS_LEN_PRM] = C0 / m_parameters[FREQUENCY_PRM]
-                                 / sqrt( m_parameters[EPSILON_EFF_PRM] ) * m_parameters[ANG_L_PRM]
-                                 / 2.0 / M_PI; /* in m */
-    return error <= MAX_ERROR;
-}
 /**
  * @function setErrorLevel
  *
@@ -440,12 +297,6 @@ void TRANSLINE::setErrorLevel( PRMS_ID aP, char aErrorLevel )
 }
 
 
-double TRANSLINE::calcUnitPropagationDelay( const double epsilonEff )
-{
-    return std::sqrt( epsilonEff ) * ( 1.0e10 / 2.99e8 );
-}
-
-
 char TRANSLINE::convertParameterStatusCode( TRANSLINE_STATUS aStatus )
 {
     switch( aStatus )
@@ -456,4 +307,19 @@ char TRANSLINE::convertParameterStatusCode( TRANSLINE_STATUS aStatus )
     }
 
     return TRANSLINE_OK;
+}
+
+
+void TRANSLINE::pushSoldermaskParameters( TRANSLINE_CALCULATION_BASE& aCalc,
+                                          bool aIncludeFillsGaps ) const
+{
+    using TCP = TRANSLINE_PARAMETERS;
+
+    aCalc.SetParameter( TCP::SOLDERMASK_PRESENT, m_parameters[SOLDERMASK_PRESENT_PRM] );
+    aCalc.SetParameter( TCP::SOLDERMASK_THICKNESS, m_parameters[SOLDERMASK_THICKNESS_PRM] );
+    aCalc.SetParameter( TCP::SOLDERMASK_EPSILONR, m_parameters[SOLDERMASK_EPSILONR_PRM] );
+    aCalc.SetParameter( TCP::SOLDERMASK_TAND, m_parameters[SOLDERMASK_TAND_PRM] );
+
+    if( aIncludeFillsGaps )
+        aCalc.SetParameter( TCP::SOLDERMASK_FILLS_GAPS, m_parameters[SOLDERMASK_FILLS_GAPS_PRM] );
 }

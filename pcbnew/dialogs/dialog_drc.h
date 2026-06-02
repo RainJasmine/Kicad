@@ -24,16 +24,18 @@
  */
 
 
-#ifndef _DIALOG_DRC_H_
-#define _DIALOG_DRC_H_
+#pragma once
 
 #include <chrono>
+#include <core/throttle.h>
 #include <wx/htmllbox.h>
 #include <rc_item.h>
 #include <pcb_marker.h>
 #include <board.h>
 #include <dialog_drc_base.h>
 #include <widgets/progress_reporter_base.h>
+
+class wxStatusBar;
 
 
 class BOARD_DESIGN_SETTINGS;
@@ -73,9 +75,13 @@ public:
     void ExcludeMarker();
 
 private:
-    void syncCheckboxes();
+    int getSeverities();
     void updateDisplayedCounts();
 
+    bool TransferDataToWindow() override;
+
+    void OnMenu( wxCommandEvent& aEvent ) override;
+    void OnCharHook( wxKeyEvent& aEvt ) override;
     void OnDRCItemSelected( wxDataViewEvent& aEvent ) override;
     void OnDRCItemDClick( wxDataViewEvent& aEvent ) override;
     void OnDRCItemRClick( wxDataViewEvent& aEvent ) override;
@@ -109,11 +115,16 @@ private:
 
     BOARD_DESIGN_SETTINGS& bds() { return m_currentBoard->GetDesignSettings(); }
 
+private:
     BOARD*             m_currentBoard;     // the board currently on test
     PCB_EDIT_FRAME*    m_frame;
     bool               m_running;
     bool               m_drcRun;
     bool               m_footprintTestsRun;
+
+    bool               m_report_all_track_errors;
+    bool               m_crossprobe;
+    bool               m_scroll_on_crossprobe;
 
     wxString           m_markersTitleTemplate;
     wxString           m_unconnectedTitleTemplate;
@@ -128,11 +139,11 @@ private:
     RC_TREE_MODEL*                     m_unconnectedTreeModel;  // wx reference-counted ptr
     RC_TREE_MODEL*                     m_fpWarningsTreeModel;   // wx reference-counted ptr
 
-    int                                m_severities;            // A mask of SEVERITY flags
+    THROTTLE m_updateThrottle;
+    THROTTLE m_yieldThrottle;
 
-    /// Used to slow down the rate of yields in updateUi()
-    std::chrono::steady_clock::time_point m_lastUpdateUi;
+    wxStatusBar*                          m_drcStatusBar;
+    std::chrono::steady_clock::time_point m_drcStartTime;
+    int                                   m_lastTickSeconds;
 };
-
-#endif  // _DIALOG_DRC_H_
 

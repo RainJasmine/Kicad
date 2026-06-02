@@ -24,10 +24,11 @@
 #ifndef PCBNEW_CONNECTIVITY_RTREE_H_
 #define PCBNEW_CONNECTIVITY_RTREE_H_
 
+#include <layer_ids.h>
 #include <math/box2.h>
 #include <router/pns_layerset.h>
 
-#include <geometry/rtree.h>
+#include <geometry/rtree/dynamic_rtree.h>
 
 
 /**
@@ -40,15 +41,14 @@ class CN_RTREE
 {
 public:
 
-    CN_RTREE()
-    {
-        this->m_tree = new RTree<T, int, 3, double>();
-    }
+    CN_RTREE() = default;
+    ~CN_RTREE() = default;
 
-    ~CN_RTREE()
-    {
-        delete this->m_tree;
-    }
+    CN_RTREE( CN_RTREE&& aOther ) noexcept = default;
+    CN_RTREE& operator=( CN_RTREE&& aOther ) noexcept = default;
+
+    CN_RTREE( const CN_RTREE& ) = delete;
+    CN_RTREE& operator=( const CN_RTREE& ) = delete;
 
     /**
      * Function Insert()
@@ -61,7 +61,7 @@ public:
         const int mmin[3] = { aItem->StartLayer(), bbox.GetX(), bbox.GetY() };
         const int mmax[3] = { aItem->EndLayer(), bbox.GetRight(), bbox.GetBottom() };
 
-        m_tree->Insert( mmin, mmax, aItem );
+        m_tree.Insert( mmin, mmax, aItem );
     }
 
     /**
@@ -71,33 +71,23 @@ public:
      */
     void Remove( T aItem )
     {
+        const BOX2I& bbox = aItem->BBox();
 
-        // First, attempt to remove the item using its given BBox
-        const BOX2I&        bbox    = aItem->BBox();
+        const int mmin[3] = { aItem->StartLayer(), bbox.GetX(), bbox.GetY() };
+        const int mmax[3] = { aItem->EndLayer(), bbox.GetRight(), bbox.GetBottom() };
 
-        const int           mmin[3] = { aItem->StartLayer(), bbox.GetX(), bbox.GetY() };
-        const int           mmax[3] = { aItem->EndLayer(), bbox.GetRight(), bbox.GetBottom() };
-
-        // If we are not successful ( 1 == not found ), then we expand
-        // the search to the full tree
-        if( m_tree->Remove( mmin, mmax, aItem ) )
-        {
-            // N.B. We must search the whole tree for the pointer to remove
-            // because the item may have been moved before we have the chance to
-            // delete it from the tree
-            const int       mmin2[3] = { INT_MIN, INT_MIN, INT_MIN };
-            const int       mmax2[3] = { INT_MAX, INT_MAX, INT_MAX };
-            m_tree->Remove( mmin2, mmax2, aItem );
-        }
+        // DYNAMIC_RTREE::Remove tries the provided bbox first, then falls back
+        // to full-tree search if the item has moved since insertion.
+        m_tree.Remove( mmin, mmax, aItem );
     }
 
     /**
      * Function RemoveAll()
      * Removes all items from the RTree
      */
-    void RemoveAll( )
+    void RemoveAll()
     {
-        m_tree->RemoveAll();
+        m_tree.RemoveAll();
     }
 
     /**
@@ -111,15 +101,14 @@ public:
         int start_layer = aStartLayer == B_Cu ? INT_MAX : aStartLayer;
         int end_layer = aEndLayer == B_Cu ? INT_MAX : aEndLayer;
 
-        const int   mmin[3] = { start_layer, aBounds.GetX(), aBounds.GetY() };
-        const int   mmax[3] = { end_layer, aBounds.GetRight(), aBounds.GetBottom() };
+        const int mmin[3] = { start_layer, aBounds.GetX(), aBounds.GetY() };
+        const int mmax[3] = { end_layer, aBounds.GetRight(), aBounds.GetBottom() };
 
-        m_tree->Search( mmin, mmax, aVisitor );
+        m_tree.Search( mmin, mmax, aVisitor );
     }
 
 private:
-
-    RTree<T, int, 3, double>* m_tree;
+    KIRTREE::DYNAMIC_RTREE<T, int, 3> m_tree;
 };
 
 

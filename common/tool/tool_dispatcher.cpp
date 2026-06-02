@@ -158,6 +158,43 @@ TOOL_DISPATCHER::~TOOL_DISPATCHER()
         delete st;
 }
 
+int TOOL_DISPATCHER::decodeModifiers( const wxKeyboardState* aState )
+{
+    int mods = 0;
+    int wxmods = aState->GetModifiers();
+
+    // Returns the state of key modifiers (Alt, Ctrl and so on). Be carefull:
+    // the flag wxMOD_ALTGR is defined in wxWidgets as wxMOD_CONTROL|wxMOD_ALT
+    // So AltGr key cannot used as modifier key because it is the same as Alt key + Ctrl key.
+#if CAN_USE_ALTGR_KEY
+    if( wxmods & wxMOD_ALTGR )
+        mods |= MD_ALTGR;
+    else
+#endif
+    {
+        if( wxmods & wxMOD_CONTROL )
+            mods |= MD_CTRL;
+
+        if( wxmods & wxMOD_ALT )
+            mods |= MD_ALT;
+    }
+
+    if( wxmods & wxMOD_SHIFT )
+        mods |= MD_SHIFT;
+
+#ifdef wxMOD_META
+    if( wxmods & wxMOD_META )
+        mods |= MD_META;
+#endif
+
+#ifdef wxMOD_WIN
+    if( wxmods & wxMOD_WIN )
+        mods |= MD_SUPER;
+#endif
+
+    return mods;
+}
+
 
 void TOOL_DISPATCHER::ResetState()
 {
@@ -297,7 +334,19 @@ static bool isKeyModifierOnly( int aKeyCode )
 {
     static std::vector<enum wxKeyCode> special_keys =
     {
-        WXK_CONTROL, WXK_RAW_CONTROL, WXK_SHIFT, WXK_ALT
+        WXK_CONTROL, WXK_RAW_CONTROL, WXK_SHIFT, WXK_ALT,
+#ifdef WXK_WINDOWS_LEFT
+        WXK_WINDOWS_LEFT, WXK_WINDOWS_RIGHT,
+#endif
+#ifdef WXK_MENU
+        WXK_MENU,
+#endif
+#ifdef WXK_COMMAND
+        WXK_COMMAND,
+#endif
+#ifdef WXK_META
+        WXK_META,
+#endif
     };
 
     return alg::contains( special_keys, aKeyCode );
@@ -425,6 +474,28 @@ std::optional<TOOL_EVENT> TOOL_DISPATCHER::GetToolEvent( wxKeyEvent* aKeyEvent, 
 }
 
 
+void TOOL_DISPATCHER::flushPendingClicks()
+{
+    // When an escape key event arrives, keyboard events can be processed before mouse button
+    // events due to wxWidgets event queue ordering. If a mouse button was pressed and has since
+    // been released (detected via polling), we need to process that click before handling the
+    // escape to maintain proper event ordering.
+    for( BUTTON_STATE* st : m_buttons )
+    {
+        if( st->pressed && !st->GetState() )
+        {
+            st->pressed = false;
+
+            TOOL_EVENT clickEvt( TC_MOUSE, TA_MOUSE_CLICK, st->button );
+            clickEvt.SetMousePosition( st->downPosition );
+            m_toolMgr->ProcessEvent( clickEvt );
+
+            st->dragging = false;
+        }
+    }
+}
+
+
 void TOOL_DISPATCHER::DispatchWxEvent( wxEvent& aEvent )
 {
     bool            motion = false;
@@ -515,7 +586,7 @@ void TOOL_DISPATCHER::DispatchWxEvent( wxEvent& aEvent )
         if( !evt && me->GetWheelRotation() != 0 )
         {
             const unsigned modBits =
-                    static_cast<unsigned>( mods ) & ( MD_CTRL | MD_ALT | MD_SHIFT );
+                    static_cast<unsigned>( mods ) & MD_MODIFIER_MASK;
             const bool shouldHandle = std::popcount( modBits ) > 1;
 
             if( shouldHandle )
@@ -542,6 +613,12 @@ void TOOL_DISPATCHER::DispatchWxEvent( wxEvent& aEvent )
         }
 
         keyIsEscape = ( ke->GetKeyCode() == WXK_ESCAPE );
+
+        // When escape is pressed shortly after a mouse click, the keyboard event can be
+        // processed before the mouse button release event. Flush any pending clicks first
+        // to ensure proper event ordering.
+        if( keyIsEscape )
+            flushPendingClicks();
 
         if( KIUI::IsInputControlFocused( focus ) )
         {

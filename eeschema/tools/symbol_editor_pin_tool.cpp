@@ -92,12 +92,11 @@ bool SYMBOL_EDITOR_PIN_TOOL::Init()
     SCH_TOOL_BASE::Init();
 
     auto canEdit =
-            [&]( const SELECTION& sel )
+            [this]( const SELECTION& sel )
             {
                 SYMBOL_EDIT_FRAME* editor = static_cast<SYMBOL_EDIT_FRAME*>( m_frame );
-                wxCHECK( editor, false );
 
-                return editor->IsSymbolEditable() && !editor->IsSymbolAlias();
+                return editor && editor->IsSymbolEditable() && !editor->IsSymbolAlias();
             };
 
     static const std::vector<KICAD_T> pinTypes = { SCH_PIN_T };
@@ -123,7 +122,7 @@ bool SYMBOL_EDITOR_PIN_TOOL::EditPinProperties( SCH_PIN* aPin, bool aFocusPinNum
     LIB_SYMBOL*           parentSymbol = static_cast<LIB_SYMBOL*>( aPin->GetParentSymbol() );
 
     if( aPin->GetEditFlags() == 0 )
-        commit.Modify( parentSymbol );
+        commit.Modify( parentSymbol, m_frame->GetScreen() );
 
     if( dlg.ShowModal() == wxID_CANCEL )
         return false;
@@ -415,7 +414,7 @@ SCH_PIN* SYMBOL_EDITOR_PIN_TOOL::RepeatPin( const SCH_PIN* aSourcePin )
     SCH_COMMIT  commit( m_frame );
     LIB_SYMBOL* symbol = m_frame->GetCurSymbol();
 
-    commit.Modify( symbol );
+    commit.Modify( symbol, m_frame->GetScreen() );
 
     SCH_PIN* pin = static_cast<SCH_PIN*>( aSourcePin->Duplicate( true, &commit ) );
 

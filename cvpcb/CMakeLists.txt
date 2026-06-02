@@ -74,6 +74,7 @@ target_link_libraries( cvpcb_kiface
     gal
     common
     kimath
+    markdown_lib
     ${PCBNEW_IO_LIBRARIES}
     Boost::headers
     ${wxWidgets_LIBRARIES}
@@ -98,7 +99,7 @@ if( APPLE )
         LIBRARY_OUTPUT_DIRECTORY ${OSX_BUNDLE_BUILD_KIFACE_DIR}
         )
     set_target_properties( cvpcb_kiface PROPERTIES INSTALL_RPATH
-            "@executable_path/../Frameworks;@executable_path/../Frameworks/Python.framework" )
+            "@executable_path/../Frameworks" )
     set_target_properties( cvpcb_kiface PROPERTIES BUILD_WITH_INSTALL_RPATH 1 )
 else()
     install( TARGETS cvpcb_kiface

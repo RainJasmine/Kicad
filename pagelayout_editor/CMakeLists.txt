@@ -139,10 +139,10 @@ if( APPLE )
         )
 
     set_target_properties( pl_editor PROPERTIES INSTALL_RPATH
-            "@executable_path/../Frameworks;@executable_path/../Frameworks/Python.framework" )
+            "@executable_path/../Frameworks" )
 
     set_target_properties( pl_editor_kiface PROPERTIES INSTALL_RPATH
-            "@executable_path/../Frameworks;@executable_path/../Frameworks/Python.framework" )
+            "@executable_path/../Frameworks" )
     set_target_properties( pl_editor_kiface PROPERTIES BUILD_WITH_INSTALL_RPATH 1 )
 
     # put individual bundle outside of main bundle as a first step

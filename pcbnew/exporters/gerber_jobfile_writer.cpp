@@ -32,12 +32,14 @@
 #include <vector>
 
 #include <build_version.h>
+#include <common.h>
 #include <locale_io.h>
 #include <pcb_edit_frame.h>
 #include <plotters/plotter.h>
 
 #include <board.h>
 #include <board_design_settings.h>
+#include <project/net_settings.h>
 #include <footprint.h>
 #include <pad.h>
 #include <pcb_track.h>
@@ -168,8 +170,6 @@ bool GERBER_JOBFILE_WRITER::WriteJSONJobFile( const wxString& aFullFilename )
     // Note: in Gerber job file, dimensions are in mm, and are floating numbers
     std::ofstream file( aFullFilename.ToUTF8() );
 
-    LOCALE_IO dummy;
-
     m_json = nlohmann::ordered_json( {} );
 
     // output the job file header
@@ -268,8 +268,15 @@ void GERBER_JOBFILE_WRITER::addJSONGeneralSpecs()
     if( brd_stackup.m_HasDielectricConstrains )
         m_json["GeneralSpecs"]["ImpedanceControlled"] = true;
 
+    #if 0   // Old way to set property
     if( brd_stackup.m_CastellatedPads )
         m_json["GeneralSpecs"]["Castellated"] = true;
+    #endif
+    if( m_pcb->GetPadWithCastellatedAttrCount() )
+        m_json["GeneralSpecs"]["Castellated"] = true;
+
+    if( m_pcb->GetPadWithPressFitAttrCount() )
+        m_json["GeneralSpecs"]["Press-fit"] = true;
 
     if( brd_stackup.m_EdgePlating )
         m_json["GeneralSpecs"]["EdgePlating"] = true;
@@ -333,8 +340,11 @@ void GERBER_JOBFILE_WRITER::addJSONFilesAttributes()
 
             if( layer == B_Cu )
                 gbr_layer_id << m_pcb->GetCopperLayerCount();
-            else
-                gbr_layer_id << layer + 1;
+            else if( layer == F_Cu )
+                gbr_layer_id << 1;
+            else    // Copper layers are numbered B_Cu + n*2 for inner layer n (n = 1 ... val max)
+                    // and gbr_layer_id = 2 ... val max
+                gbr_layer_id << (layer-B_Cu) / 2 + 1;
 
             gbr_layer_id << wxT( "," );
 

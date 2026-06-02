@@ -25,6 +25,7 @@
 #include <dialogs/panel_setup_netclasses.h>
 #include <dialogs/panel_setup_severities.h>
 #include <dialogs/panel_setup_buses.h>
+#include <panel_eeschema_annotation_options.h>
 #include <panel_setup_formatting.h>
 #include <panel_setup_pinmap.h>
 #include <erc/erc_item.h>
@@ -35,6 +36,7 @@
 #include <project/net_settings.h>
 #include <sch_io/sch_io.h>
 #include <settings/settings_manager.h>
+#include <widgets/wx_infobar.h>
 #include <widgets/wx_progress_reporters.h>
 #include "dialog_schematic_setup.h"
 #include "panel_template_fieldnames.h"
@@ -62,6 +64,13 @@ DIALOG_SCHEMATIC_SETUP::DIALOG_SCHEMATIC_SETUP( SCH_EDIT_FRAME* aFrame ) :
                 return new PANEL_SETUP_FORMATTING( aParent, m_frame );
             }, _( "Formatting" ) );
 
+    m_annotationPage = m_treebook->GetPageCount();
+    m_treebook->AddLazySubPage(
+            [this]( wxWindow* aParent ) -> wxWindow*
+            {
+                return new PANEL_EESCHEMA_ANNOTATION_OPTIONS( aParent, m_frame );
+            }, _( "Annotation" ) );
+
     m_fieldNameTemplatesPage = m_treebook->GetPageCount();
     m_treebook->AddLazySubPage(
             [this]( wxWindow* aParent ) -> wxWindow*
@@ -87,8 +96,7 @@ DIALOG_SCHEMATIC_SETUP::DIALOG_SCHEMATIC_SETUP( SCH_EDIT_FRAME* aFrame ) :
             {
                 ERC_SETTINGS& ercSettings = m_frame->Schematic().ErcSettings();
                 return new PANEL_SETUP_SEVERITIES( aParent, ERC_ITEM::GetItemsWithSeverities(),
-                                                   ercSettings.m_ERCSeverities,
-                                                   m_pinToPinError.get() );
+                                                   ercSettings.m_ERCSeverities, m_pinToPinError.get() );
             }, _( "Violation Severity" ) );
 
     m_pinMapPage = m_treebook->GetPageCount();
@@ -107,8 +115,7 @@ DIALOG_SCHEMATIC_SETUP::DIALOG_SCHEMATIC_SETUP( SCH_EDIT_FRAME* aFrame ) :
                 SCHEMATIC& schematic = m_frame->Schematic();
                 return new PANEL_SETUP_NETCLASSES( aParent, m_frame,
                                                    m_frame->Prj().GetProjectFile().NetSettings(),
-                                                   schematic.GetNetClassAssignmentCandidates(),
-                                                   true );
+                                                   schematic.GetNetClassAssignmentCandidates(), true );
             }, _( "Net Classes" ) );
 
     m_busesPage = m_treebook->GetPageCount();
@@ -132,7 +139,7 @@ DIALOG_SCHEMATIC_SETUP::DIALOG_SCHEMATIC_SETUP( SCH_EDIT_FRAME* aFrame ) :
     m_treebook->AddLazySubPage(
             [this]( wxWindow* aParent ) -> wxWindow*
             {
-                return new PANEL_EMBEDDED_FILES( aParent, &m_frame->Schematic() );
+                return new PANEL_EMBEDDED_FILES( aParent, &m_frame->Schematic(), NO_MARGINS );
             }, _( "Embedded Files" ) );
 
     for( size_t i = 0; i < m_treebook->GetPageCount(); ++i )
@@ -144,18 +151,13 @@ DIALOG_SCHEMATIC_SETUP::DIALOG_SCHEMATIC_SETUP( SCH_EDIT_FRAME* aFrame ) :
 
     if( Prj().IsReadOnly() )
     {
-        m_infoBar->ShowMessage( _( "Project is missing or read-only. Settings will not be "
-                                   "editable." ), wxICON_WARNING );
+        m_infoBar->ShowMessage( _( "Project is missing or read-only. Settings will not be editable." ),
+                                wxICON_WARNING );
     }
 
     wxBookCtrlEvent evt( wxEVT_TREEBOOK_PAGE_CHANGED, wxID_ANY, 0 );
 
     wxQueueEvent( m_treebook, evt.Clone() );
-}
-
-
-DIALOG_SCHEMATIC_SETUP::~DIALOG_SCHEMATIC_SETUP()
-{
 }
 
 
@@ -244,52 +246,16 @@ void DIALOG_SCHEMATIC_SETUP::onAuxiliaryAction( wxCommandEvent& event )
                 ->ImportBomFmtPresetsFrom( *file.m_SchematicSettings );
     }
 
+    if( importDlg.m_annotationOpt->GetValue() )
+    {
+        static_cast<PANEL_EESCHEMA_ANNOTATION_OPTIONS*>( m_treebook->ResolvePage( m_annotationPage ) )
+                ->ImportSettingsFrom( *file.m_SchematicSettings );
+    }
+
     if( importDlg.m_BusAliasesOpt->GetValue() )
     {
-        // The bus aliases are stored on individual sheets, so we have to load the whole
-        // schematic for this one.
-
-        wxFileName schematicFn( projectFn );
-        schematicFn.SetExt( FILEEXT::KiCadSchematicFileExtension );
-
-        wxString             fullFileName = schematicFn.GetFullPath();
-        wxString             msg;
-        IO_RELEASER<SCH_IO>  pi( SCH_IO_MGR::FindPlugin( SCH_IO_MGR::SCH_KICAD ) );
-        WX_PROGRESS_REPORTER progressReporter( this, _( "Load Bus Aliases" ), 1, PR_CAN_ABORT );
-
-        pi->SetProgressReporter( &progressReporter );
-
-        try
-        {
-            wxBusyCursor busy;
-            otherSch.SetRoot( pi->LoadSchematicFile( fullFileName, &otherSch ) );
-
-            // Make ${SHEETNAME} work on the root sheet until we properly support
-            // naming the root sheet
-            otherSch.Root().SetName( _( "Root" ) );
-        }
-        catch( const FUTURE_FORMAT_ERROR& ffe )
-        {
-            msg.Printf( _( "Error fetching bus aliases.  Could not load schematic '%s'." ),
-                        fullFileName );
-            progressReporter.Hide();
-            DisplayErrorMessage( this, msg, ffe.Problem() );
-        }
-        catch( const IO_ERROR& ioe )
-        {
-            msg.Printf( _( "Error fetching bus aliases.  Could not load schematic '%s'." ),
-                        fullFileName );
-            progressReporter.Hide();
-            DisplayErrorMessage( this, msg, ioe.What() );
-        }
-
-        // This fixes a focus issue after the progress reporter is done on GTK.  It shouldn't
-        // cause any issues on macOS and Windows.  If it does, it will have to be conditionally
-        // compiled.
-        Raise();
-
         static_cast<PANEL_SETUP_BUSES*>( m_treebook->ResolvePage( m_busesPage ) )
-                ->ImportSettingsFrom( otherSch );
+                ->ImportSettingsFrom( file.m_BusAliases );
     }
 
     if( importDlg.m_TextVarsOpt->GetValue() )

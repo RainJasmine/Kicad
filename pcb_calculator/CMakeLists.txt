@@ -11,7 +11,6 @@ set( PCB_CALCULATOR_SRCS
     common_data.cpp
     eseries.cpp
     params_read_write.cpp
-    pcb_calculator_control.cpp
     pcb_calculator_frame.cpp
     pcb_calculator_settings.cpp
     datafile_read_write.cpp
@@ -144,9 +143,9 @@ if( APPLE )
         )
 
     set_target_properties( pcb_calculator PROPERTIES INSTALL_RPATH
-            "@executable_path/../Frameworks;@executable_path/../Frameworks/Python.framework" )
+            "@executable_path/../Frameworks" )
     set_target_properties( pcb_calculator_kiface PROPERTIES INSTALL_RPATH
-            "@executable_path/../Frameworks;@executable_path/../Frameworks/Python.framework" )
+            "@executable_path/../Frameworks" )
     set_target_properties( pcb_calculator_kiface PROPERTIES BUILD_WITH_INSTALL_RPATH 1 )
 
     # put individual bundle outside of main bundle as a first step

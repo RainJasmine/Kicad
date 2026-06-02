@@ -21,7 +21,6 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#include <symbol_library.h>
 #include <dialog_symbol_chooser.h>
 #include <widgets/panel_symbol_chooser.h>
 #include <eeschema_settings.h>
@@ -32,6 +31,7 @@
 #include <widgets/footprint_preview_widget.h>
 #include <widgets/footprint_select_widget.h>
 #include <widgets/symbol_preview_widget.h>
+
 #include <wx/button.h>
 #include <wx/checkbox.h>
 #include <wx/sizer.h>
@@ -69,8 +69,10 @@ DIALOG_SYMBOL_CHOOSER::DIALOG_SYMBOL_CHOOSER( SCH_BASE_FRAME* aParent, const LIB
     if( aFilter && aFilter->GetFilterPowerSymbols() )
         SetTitle( _( "Choose Power Symbol" ) );
 
-    SetTitle( GetTitle() + wxString::Format( _( " (%d items loaded)" ),
-                                             m_chooserPanel->GetItemCount() ) );
+    m_originalTitle = GetTitle();
+    onLazyLoadUpdate();
+    m_chooserPanel->Adapter()->RegisterLazyLoadHandler(
+            std::bind( &DIALOG_SYMBOL_CHOOSER::onLazyLoadUpdate, this ) );
 
     wxBoxSizer* buttonsSizer = new wxBoxSizer( wxHORIZONTAL );
 
@@ -78,13 +80,8 @@ DIALOG_SYMBOL_CHOOSER::DIALOG_SYMBOL_CHOOSER( SCH_BASE_FRAME* aParent, const LIB
     m_keepSymbol->SetToolTip( _( "Keep the symbol selected for subsequent clicks." ) );
 
     m_useUnits = new wxCheckBox( this, wxID_ANY, _( "Place all units" ) );
+    m_useUnits->SetValue( true );
     m_useUnits->SetToolTip( _( "Sequentially place all units of the symbol." ) );
-
-    if( EESCHEMA_SETTINGS* cfg = dynamic_cast<EESCHEMA_SETTINGS*>( Kiface().KifaceSettings() ) )
-    {
-        m_keepSymbol->SetValue( cfg->m_SymChooserPanel.keep_symbol );
-        m_useUnits->SetValue( cfg->m_SymChooserPanel.place_all_units );
-    }
 
     buttonsSizer->Add( m_keepSymbol, 0, wxLEFT | wxALIGN_CENTER_VERTICAL, 5 );
     buttonsSizer->Add( m_useUnits, 0, wxLEFT | wxALIGN_CENTER_VERTICAL, 30 );
@@ -114,12 +111,6 @@ DIALOG_SYMBOL_CHOOSER::DIALOG_SYMBOL_CHOOSER( SCH_BASE_FRAME* aParent, const LIB
 
 DIALOG_SYMBOL_CHOOSER::~DIALOG_SYMBOL_CHOOSER()
 {
-    if( EESCHEMA_SETTINGS* cfg = dynamic_cast<EESCHEMA_SETTINGS*>( Kiface().KifaceSettings() ) )
-    {
-        cfg->m_SymChooserPanel.keep_symbol = m_keepSymbol->GetValue();
-        cfg->m_SymChooserPanel.place_all_units = m_useUnits->GetValue();
-    }
-
     Unbind( wxEVT_CHAR_HOOK, &PANEL_SYMBOL_CHOOSER::OnChar, m_chooserPanel );
 }
 
@@ -136,3 +127,10 @@ std::vector<std::pair<FIELD_T, wxString>> DIALOG_SYMBOL_CHOOSER::GetFields() con
 }
 
 
+
+void DIALOG_SYMBOL_CHOOSER::onLazyLoadUpdate()
+{
+    SetTitle( m_originalTitle + wxString::Format( _( " (%d items loaded)" ),
+                                                  m_chooserPanel->GetItemCount() ) );
+    m_chooserPanel->Regenerate();
+}

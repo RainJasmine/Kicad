@@ -25,15 +25,16 @@
 #include <pcbnew_utils/board_test_utils.h>
 #include <board.h>
 #include <board_design_settings.h>
+#include <drc/drc_engine.h>
 #include <pcb_marker.h>
+#include <drc/drc_engine.h>
 #include <drc/drc_item.h>
 #include <settings/settings_manager.h>
 
 
 struct DRC_REGRESSION_TEST_FIXTURE
 {
-    DRC_REGRESSION_TEST_FIXTURE() :
-            m_settingsManager( true /* headless */ )
+    DRC_REGRESSION_TEST_FIXTURE()
     { }
 
     SETTINGS_MANAGER       m_settingsManager;
@@ -63,8 +64,8 @@ BOOST_FIXTURE_TEST_CASE( DRCCustomRuleSeverityTest, DRC_REGRESSION_TEST_FIXTURE 
     bds.m_DRCSeverities[ DRCE_FOOTPRINT_TYPE_MISMATCH ] = SEVERITY::RPT_SEVERITY_IGNORE;
 
     bds.m_DRCEngine->SetViolationHandler(
-            [&]( const std::shared_ptr<DRC_ITEM>& aItem, VECTOR2I aPos, int aLayer,
-                 DRC_CUSTOM_MARKER_HANDLER* aCustomHandler )
+            [&]( const std::shared_ptr<DRC_ITEM>& aItem, const VECTOR2I& aPos, int aLayer,
+                 const std::function<void( PCB_MARKER* )>& aPathGenerator )
             {
                 PCB_MARKER temp( aItem, aPos );
 

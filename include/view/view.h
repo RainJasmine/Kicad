@@ -24,10 +24,10 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#ifndef __VIEW_H
-#define __VIEW_H
+#pragma once
 
 #include <gal/gal.h>
+#include <map>
 #include <vector>
 #include <set>
 #include <unordered_map>
@@ -35,7 +35,7 @@
 
 #include <math/box2.h>
 #include <gal/definitions.h>
-
+#include <base_set.h>
 #include <view/view_overlay.h>
 
 namespace KIGFX
@@ -73,6 +73,11 @@ public:
     VIEW();
     virtual ~VIEW();
 
+    // We own at least one list of raw pointers.  Don't let the compiler fill in copy c'tors that
+    // will only land us in trouble.
+    VIEW( const VIEW& ) = delete;
+    VIEW& operator=( const VIEW& ) = delete;
+
     /**
      * Nasty hack, invoked by the destructor of VIEW_ITEM to auto-remove the item
      * from the owning VIEW if there is any.
@@ -91,6 +96,14 @@ public:
      * @param aDrawPriority: priority to draw this item on its layer, lowest first.
      */
     virtual void Add( VIEW_ITEM* aItem, int aDrawPriority = -1 );
+
+    /**
+     * Add a batch of items to the view, using bulk-loaded R-trees for initial population.
+     *
+     * Much faster than calling Add() in a loop when adding many items at once (e.g. during
+     * board load) because it avoids R*-tree forced-reinsertion cascades.
+     */
+    void AddBatch( const std::vector<VIEW_ITEM*>& aItems );
 
     /**
      * Remove a #VIEW_ITEM from the view.
@@ -415,7 +428,7 @@ public:
      *
      * @param aLayer true if the layer is visible, false otherwise.
      */
-    inline bool IsLayerVisible( int aLayer ) const
+    bool IsLayerVisible( int aLayer ) const
     {
         auto it = m_layers.find( aLayer );
 
@@ -423,6 +436,11 @@ public:
             return false;
 
         return it->second.visible;
+    }
+
+    inline bool IsLayerVisibleCached( int aLayer ) const
+    {
+        return m_layerVisibilityCache[ aLayer ];
     }
 
     /**
@@ -505,8 +523,10 @@ public:
      *
      * @param aLayer is the layer.
      * @param aRenderingOrder is an arbitrary number denoting the rendering order.
+     * @param aAutoSort set to false to avoid sorting. In that case,
+                        call SortOrderedLayers() after setting all layer orders.
      */
-    void SetLayerOrder( int aLayer, int aRenderingOrder );
+    void SetLayerOrder( int aLayer, int aRenderingOrder, bool aAutoSort = true );
 
     /**
      * Return rendering order of a particular layer. Lower values are rendered first.
@@ -515,6 +535,12 @@ public:
      * @return Rendering order of a particular layer.
      */
     int GetLayerOrder( int aLayer ) const;
+
+    /**
+     * Sorts m_orderedLayers after layer rendering order has changed.
+     * Must be called after calling SetLayerOrder with aAutoSort = false
+     */ 
+    void SortOrderedLayers();
 
     /**
      * Change the order of given layer ids, so after sorting the order corresponds to layers
@@ -673,6 +699,14 @@ public:
     void UpdateItems();
 
     /**
+     * @return true when at least one item has queued update flags that still need processing.
+     */
+    bool HasPendingItemUpdates() const
+    {
+        return m_hasPendingItemUpdates;
+    }
+
+    /**
      * Update all items in the view according to the given flags.
      *
      * @param aUpdateFlags is is according to KIGFX::VIEW_UPDATE_FLAGS
@@ -768,10 +802,6 @@ protected:
         }
     };
 
-
-
-    VIEW( const VIEW& ) = delete;
-
     /// Redraw contents within rectangle \a aRect.
     void redrawRect( const BOX2I& aRect );
 
@@ -812,9 +842,6 @@ protected:
      */
     void draw( VIEW_GROUP* aGroup, bool aImmediate = false );
 
-    /// Sort m_orderedLayers when layer rendering order has changed.
-    void sortOrderedLayers();
-
     /// Clear cached GAL group numbers (*ONLY* numbers stored in VIEW_ITEMs, not group objects
     /// used by GAL).
     void clearGroupCache();
@@ -848,6 +875,8 @@ protected:
     /// Check if every layer required by the aLayerId layer is enabled.
     bool areRequiredLayersEnabled( int aLayerId ) const;
 
+    void syncLayerVisibilityCache();
+
     // Function objects that need to access VIEW/VIEW_ITEM private/protected members
     struct CLEAR_LAYER_CACHE_VISITOR;
     struct RECACHE_ITEM_VISITOR;
@@ -856,7 +885,7 @@ protected:
     struct UPDATE_DEPTH_VISITOR;
 
     std::unique_ptr<KIGFX::VIEW_GROUP> m_preview;
-    std::vector<VIEW_ITEM *>            m_ownedItems;
+    std::vector<VIEW_ITEM*>            m_ownedItems;
 
     /// Whether to use rendering order modifier or not.
     bool                               m_enableOrderModifier;
@@ -883,6 +912,8 @@ protected:
 
     bool                               m_mirrorX;
     bool                               m_mirrorY;
+    BASE_SET                           m_layerVisibilityCache;
+    BASE_SET                           m_layerCachedFlagCache;
 
     /// PAINTER contains information how do draw items.
     PAINTER* m_painter;
@@ -901,7 +932,8 @@ protected:
 
     /// Flag to reverse the draw order when using draw priority.
     bool m_reverseDrawOrder;
+
+    /// True when at least one item has deferred update flags that still need processing.
+    mutable bool m_hasPendingItemUpdates;
 };
 } // namespace KIGFX
-
-#endif

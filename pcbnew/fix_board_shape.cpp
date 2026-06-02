@@ -25,77 +25,111 @@
 #include "fix_board_shape.h"
 
 #include <vector>
+#include <algorithm>
+#include <limits>
 #include <pcb_shape.h>
 #include <geometry/circle.h>
+
+#include <nanoflann.hpp>
+
+
+struct PCB_SHAPE_ENDPOINTS_ADAPTOR
+{
+    std::vector<std::pair<VECTOR2I, PCB_SHAPE*>> endpoints;
+
+    PCB_SHAPE_ENDPOINTS_ADAPTOR( const std::vector<PCB_SHAPE*>& shapes )
+    {
+        endpoints.reserve( shapes.size() * 2 );
+
+        for( PCB_SHAPE* shape : shapes )
+        {
+            endpoints.emplace_back( shape->GetStart(), shape );
+            endpoints.emplace_back( shape->GetEnd(), shape );
+        }
+    }
+
+    // Required by nanoflann
+    size_t kdtree_get_point_count() const { return endpoints.size(); }
+
+    // Returns the dim'th component of the idx'th point
+    double kdtree_get_pt( const size_t idx, const size_t dim ) const
+    {
+        if( dim == 0 )
+            return static_cast<double>( endpoints[idx].first.x );
+        else
+            return static_cast<double>( endpoints[idx].first.y );
+    }
+
+    template <class BBOX>
+    bool kdtree_get_bbox( BBOX& ) const
+    {
+        return false;
+    }
+};
+
+using KDTree = nanoflann::KDTreeSingleIndexAdaptor<nanoflann::L2_Simple_Adaptor<double, PCB_SHAPE_ENDPOINTS_ADAPTOR>,
+                                                   PCB_SHAPE_ENDPOINTS_ADAPTOR,
+                                                   2 /* dim */ >;
 
 
 /**
  * Searches for a PCB_SHAPE matching a given end point or start point in a list.
  * @param aShape The starting shape.
  * @param aPoint The starting or ending point to search for.
- * @param aList The list to remove from.
- * @param aLimit is the distance from \a aPoint that still constitutes a valid find.
+ * @param kdTree The KD-tree for efficient nearest neighbor search.
+ * @param adaptor The adaptor containing the endpoints data.
+ * @param aChainingEpsilon is the distance from \a aPoint that still constitutes a valid find.
  * @return PCB_SHAPE* - The first PCB_SHAPE that has a start or end point matching
  *   aPoint, otherwise NULL if none.
  */
-static PCB_SHAPE* findNext( PCB_SHAPE* aShape, const VECTOR2I& aPoint,
-                            const std::vector<PCB_SHAPE*>& aList, unsigned aLimit )
+static PCB_SHAPE* findNext( PCB_SHAPE* aShape, const VECTOR2I& aPoint, const KDTree& kdTree,
+                            const PCB_SHAPE_ENDPOINTS_ADAPTOR& adaptor, double aChainingEpsilon )
 {
-    // Look for an unused, exact hit
-    for( PCB_SHAPE* graphic : aList )
+    const double query_pt[2] = { static_cast<double>( aPoint.x ), static_cast<double>( aPoint.y ) };
+
+    uint32_t indices[2];
+    double distances[2];
+    kdTree.knnSearch( query_pt, 2, indices, distances );
+
+    if( distances[0] == std::numeric_limits<double>::max() )
+        return nullptr;
+
+    // Find the closest valid candidate
+    PCB_SHAPE* closest_graphic = nullptr;
+    double closest_dist_sq = aChainingEpsilon * aChainingEpsilon;
+
+    for( size_t i = 0; i < 2; ++i )
     {
-        if( graphic == aShape || ( graphic->GetFlags() & SKIP_STRUCT ) != 0 )
+        if( distances[i] == std::numeric_limits<double>::max() )
             continue;
 
-        if( aPoint == graphic->GetStart() || aPoint == graphic->GetEnd() )
-            return graphic;
-    }
+        PCB_SHAPE* candidate = adaptor.endpoints[indices[i]].second;
 
-    // Search again for anything that's close.
-    VECTOR2I    pt( aPoint );
-    SEG::ecoord closest_dist_sq = SEG::Square( aLimit );
-    PCB_SHAPE*  closest_graphic = nullptr;
-    SEG::ecoord d_sq;
-
-    for( PCB_SHAPE* graphic : aList )
-    {
-        if( graphic == aShape || ( graphic->GetFlags() & SKIP_STRUCT ) != 0 )
+        if( candidate == aShape )
             continue;
 
-        d_sq = ( pt - graphic->GetStart() ).SquaredEuclideanNorm();
+        if( candidate->GetFlags() & SKIP_STRUCT )
+            continue;
 
-        if( d_sq < closest_dist_sq )
+        if( distances[i] < closest_dist_sq )
         {
-            closest_dist_sq = d_sq;
-            closest_graphic = graphic;
-        }
-
-        d_sq = ( pt - graphic->GetEnd() ).SquaredEuclideanNorm();
-
-        if( d_sq < closest_dist_sq )
-        {
-            closest_dist_sq = d_sq;
-            closest_graphic = graphic;
+            closest_dist_sq = distances[i];
+            closest_graphic = candidate;
         }
     }
 
-    return closest_graphic; // Note: will be nullptr if nothing within aLimit
+    return closest_graphic;
 }
 
 
-void ConnectBoardShapes( std::vector<PCB_SHAPE*>&                 aShapeList,
-                         std::vector<std::unique_ptr<PCB_SHAPE>>& aNewShapes, int aChainingEpsilon )
+void ConnectBoardShapes( std::vector<PCB_SHAPE*>& aShapeList, int aChainingEpsilon )
 {
     if( aShapeList.size() == 0 )
         return;
 
-#if 0
-    // Not used, but not removed, just in case
-    auto close_enough = []( const VECTOR2I& aLeft, const VECTOR2I& aRight, unsigned aLimit ) -> bool
-    {
-        return ( aLeft - aRight ).SquaredEuclideanNorm() <= SEG::Square( aLimit );
-    };
-#endif
+    // Pre-build KD-tree
+    PCB_SHAPE_ENDPOINTS_ADAPTOR adaptor( aShapeList );
+    KDTree                      kdTree( 2, adaptor );
 
     auto closer_to_first = []( const VECTOR2I& aRef, const VECTOR2I& aFirst,
                                const VECTOR2I& aSecond ) -> bool
@@ -110,21 +144,6 @@ void ConnectBoardShapes( std::vector<PCB_SHAPE*>&                 aShapeList,
                          ( aRef - aSecond ).SquaredEuclideanNorm() );
     };
 
-    auto addSegment = [&]( const VECTOR2I start, const VECTOR2I end, int width, PCB_LAYER_ID layer )
-    {
-        // Ensure null shapes are not added
-        if( start == end )
-            return;
-
-        std::unique_ptr<PCB_SHAPE> seg = std::make_unique<PCB_SHAPE>( nullptr, SHAPE_T::SEGMENT );
-        seg->SetStart( start );
-        seg->SetEnd( end );
-        seg->SetWidth( width );
-        seg->SetLayer( layer );
-
-        aNewShapes.emplace_back( std::move( seg ) );
-    };
-
     auto connectPair = [&]( PCB_SHAPE* aPrevShape, PCB_SHAPE* aShape )
     {
         bool success = false;
@@ -136,17 +155,26 @@ void ConnectBoardShapes( std::vector<PCB_SHAPE*>&                 aShapeList,
         {
             SEG seg0( aPrevShape->GetStart(), aPrevShape->GetEnd() );
             SEG seg1( aShape->GetStart(), aShape->GetEnd() );
+            SEG::ecoord d[4];
+            d[0] = ( seg0.A - seg1.A ).SquaredEuclideanNorm();
+            d[1] = ( seg0.A - seg1.B ).SquaredEuclideanNorm();
+            d[2] = ( seg0.B - seg1.A ).SquaredEuclideanNorm();
+            d[3] = ( seg0.B - seg1.B ).SquaredEuclideanNorm();
+
+            int idx = std::min_element( d, d + 4 ) - d;
+            int i0 = idx / 2;
+            int i1 = idx % 2;
 
             if( seg0.Intersects( seg1 ) || seg0.Angle( seg1 ) > ANGLE_45 )
             {
                 if( OPT_VECTOR2I inter = seg0.IntersectLines( seg1 ) )
                 {
-                    if( closer_to_first( *inter, seg0.A, seg0.B ) )
+                    if( i0 == 0 )
                         aPrevShape->SetStart( *inter );
                     else
                         aPrevShape->SetEnd( *inter );
 
-                    if( closer_to_first( *inter, seg1.A, seg1.B ) )
+                    if( i1 == 0 )
                         aShape->SetStart( *inter );
                     else
                         aShape->SetEnd( *inter );
@@ -161,84 +189,184 @@ void ConnectBoardShapes( std::vector<PCB_SHAPE*>&                 aShapeList,
             PCB_SHAPE* arcShape = shape0 == SHAPE_T::ARC ? aPrevShape : aShape;
             PCB_SHAPE* segShape = shape0 == SHAPE_T::SEGMENT ? aPrevShape : aShape;
 
-            SHAPE_ARC arc =
-                    SHAPE_ARC( arcShape->GetStart(), arcShape->GetArcMid(), arcShape->GetEnd(), 0 );
+            VECTOR2I arcPts[2] = { arcShape->GetStart(), arcShape->GetEnd() };
+            VECTOR2I segPts[2] = { segShape->GetStart(), segShape->GetEnd() };
 
-            EDA_ANGLE extAngle( 20, DEGREES_T );
-            if( arc.IsClockwise() )
-                extAngle = -extAngle;
+            SEG::ecoord d[4];
+            d[0] = ( segPts[0] - arcPts[0] ).SquaredEuclideanNorm();
+            d[1] = ( segPts[0] - arcPts[1] ).SquaredEuclideanNorm();
+            d[2] = ( segPts[1] - arcPts[0] ).SquaredEuclideanNorm();
+            d[3] = ( segPts[1] - arcPts[1] ).SquaredEuclideanNorm();
 
-            VECTOR2D  arcStart = arc.GetP0();
-            EDA_ANGLE arcAngle = arc.GetCentralAngle();
+            int idx = std::min_element( d, d + 4 ) - d;
 
-            RotatePoint( arcStart, arc.GetCenter(), extAngle );
-            arcAngle += extAngle * 2;
-
-            arcAngle = std::clamp( arcAngle, -ANGLE_360, ANGLE_360 );
-
-            SHAPE_ARC extarc( arc.GetCenter(), arcStart, arcAngle );
-            SEG       seg( segShape->GetStart(), segShape->GetEnd() );
-
-            std::vector<VECTOR2I> ips;
-            std::vector<VECTOR2I> onSeg;
-            extarc.IntersectLine( seg, &ips );
-
-            for( const VECTOR2I& ip : ips )
+            switch( idx )
             {
-                if( min_distance_sq( ip, segShape->GetStart(), segShape->GetEnd() ) <= 0
-                    && min_distance_sq( ip, arcShape->GetStart(), arcShape->GetEnd() ) <= 0 )
-                {
-                    // Already connected
-                    continue;
-                }
-
-                if( seg.Distance( ip ) <= aChainingEpsilon )
-                {
-                    if( closer_to_first( ip, seg.A, seg.B ) )
-                        segShape->SetStart( ip );
-                    else
-                        segShape->SetEnd( ip );
-
-                    // Move points in the actual PCB_SHAPE
-                    if( closer_to_first( ip, arc.GetP0(), arc.GetP1() ) )
-                        arcShape->SetArcGeometry( ip, arc.GetArcMid(), arc.GetP1() );
-                    else
-                        arcShape->SetArcGeometry( arc.GetP0(), arc.GetArcMid(), ip );
-
-                    // Reconstruct the arc shape - we may have more than 1 intersection
-                    arc = SHAPE_ARC( arcShape->GetStart(), arcShape->GetArcMid(),
-                                     arcShape->GetEnd(), 0 );
-
-                    success = true;
-                    break;
-                }
+            case 0: segShape->SetStart( arcPts[0] ); break;
+            case 1: segShape->SetStart( arcPts[1] ); break;
+            case 2: segShape->SetEnd( arcPts[0] );   break;
+            case 3: segShape->SetEnd( arcPts[1] );   break;
             }
 
-            if( !success )
+            success = true;
+        }
+        else if( shape0 == SHAPE_T::ARC && shape1 == SHAPE_T::ARC )
+        {
+            PCB_SHAPE* arc0 = aPrevShape;
+            PCB_SHAPE* arc1 = aShape;
+
+            VECTOR2I pts0[2] = { arc0->GetStart(), arc0->GetEnd() };
+            VECTOR2I pts1[2] = { arc1->GetStart(), arc1->GetEnd() };
+
+            SEG::ecoord d[4];
+            d[0] = ( pts0[0] - pts1[0] ).SquaredEuclideanNorm();
+            d[1] = ( pts0[0] - pts1[1] ).SquaredEuclideanNorm();
+            d[2] = ( pts0[1] - pts1[0] ).SquaredEuclideanNorm();
+            d[3] = ( pts0[1] - pts1[1] ).SquaredEuclideanNorm();
+
+            int idx = std::min_element( d, d + 4 ) - d;
+            int i0 = idx / 2;
+            int i1 = idx % 2;
+            VECTOR2I middle = ( pts0[i0] + pts1[i1] ) / 2;
+
+            if( i0 == 0 )
+                arc0->SetArcGeometry( middle, arc0->GetArcMid(), arc0->GetEnd() );
+            else
+                arc0->SetArcGeometry( arc0->GetStart(), arc0->GetArcMid(), middle );
+
+            if( i1 == 0 )
+                arc1->SetArcGeometry( middle, arc1->GetArcMid(), arc1->GetEnd() );
+            else
+                arc1->SetArcGeometry( arc1->GetStart(), arc1->GetArcMid(), middle );
+
+            success = true;
+        }
+        else if( ( shape0 == SHAPE_T::BEZIER && shape1 == SHAPE_T::ARC )
+                 || ( shape0 == SHAPE_T::ARC && shape1 == SHAPE_T::BEZIER ) )
+        {
+            PCB_SHAPE* bezShape = shape0 == SHAPE_T::BEZIER ? aPrevShape : aShape;
+            PCB_SHAPE* arcShape = shape0 == SHAPE_T::ARC ? aPrevShape : aShape;
+
+            VECTOR2I bezPts[2] = { bezShape->GetStart(), bezShape->GetEnd() };
+            VECTOR2I arcPts[2] = { arcShape->GetStart(), arcShape->GetEnd() };
+
+            SEG::ecoord d[4];
+            d[0] = ( bezPts[0] - arcPts[0] ).SquaredEuclideanNorm();
+            d[1] = ( bezPts[0] - arcPts[1] ).SquaredEuclideanNorm();
+            d[2] = ( bezPts[1] - arcPts[0] ).SquaredEuclideanNorm();
+            d[3] = ( bezPts[1] - arcPts[1] ).SquaredEuclideanNorm();
+
+            int idx = std::min_element( d, d + 4 ) - d;
+
+            switch( idx )
             {
-                // Try to avoid acute angles
-                VECTOR2I lineProj = seg.LineProject( arc.GetCenter() );
-                bool     intersectsPerp = seg.SquaredDistance( lineProj ) <= 0;
-
-                if( intersectsPerp )
-                {
-                    if( closer_to_first( lineProj, seg.A, seg.B ) )
-                        segShape->SetStart( lineProj );
-                    else
-                        segShape->SetEnd( lineProj );
-
-                    CIRCLE   circ( arc.GetCenter(), arc.GetRadius() );
-                    VECTOR2I circProj = circ.NearestPoint( lineProj );
-
-                    if( closer_to_first( circProj, arc.GetP0(), arc.GetP1() ) )
-                        arcShape->SetArcGeometry( circProj, arc.GetArcMid(), arc.GetP1() );
-                    else
-                        arcShape->SetArcGeometry( arc.GetP0(), arc.GetArcMid(), circProj );
-
-                    addSegment( circProj, lineProj, segShape->GetWidth(), segShape->GetLayer() );
-                    success = true;
-                }
+            case 0:
+            {
+                VECTOR2I delta = arcPts[0] - bezPts[0];
+                bezShape->SetStart( arcPts[0] );
+                bezShape->SetBezierC1( bezShape->GetBezierC1() + delta );
+                break;
             }
+            case 1:
+            {
+                VECTOR2I delta = arcPts[1] - bezPts[0];
+                bezShape->SetStart( arcPts[1] );
+                bezShape->SetBezierC1( bezShape->GetBezierC1() + delta );
+                break;
+            }
+            case 2:
+            {
+                VECTOR2I delta = arcPts[0] - bezPts[1];
+                bezShape->SetEnd( arcPts[0] );
+                bezShape->SetBezierC2( bezShape->GetBezierC2() + delta );
+                break;
+            }
+            case 3:
+            {
+                VECTOR2I delta = arcPts[1] - bezPts[1];
+                bezShape->SetEnd( arcPts[1] );
+                bezShape->SetBezierC2( bezShape->GetBezierC2() + delta );
+                break;
+            }
+            }
+
+            success = true;
+        }
+        else if( ( shape0 == SHAPE_T::BEZIER && shape1 == SHAPE_T::SEGMENT )
+                 || ( shape0 == SHAPE_T::SEGMENT && shape1 == SHAPE_T::BEZIER ) )
+        {
+            PCB_SHAPE* bezShape = shape0 == SHAPE_T::BEZIER ? aPrevShape : aShape;
+            PCB_SHAPE* segShape = shape0 == SHAPE_T::SEGMENT ? aPrevShape : aShape;
+
+            VECTOR2I bezPts[2] = { bezShape->GetStart(), bezShape->GetEnd() };
+            VECTOR2I segPts[2] = { segShape->GetStart(), segShape->GetEnd() };
+
+            SEG::ecoord d[4];
+            d[0] = ( segPts[0] - bezPts[0] ).SquaredEuclideanNorm();
+            d[1] = ( segPts[0] - bezPts[1] ).SquaredEuclideanNorm();
+            d[2] = ( segPts[1] - bezPts[0] ).SquaredEuclideanNorm();
+            d[3] = ( segPts[1] - bezPts[1] ).SquaredEuclideanNorm();
+
+            int idx = std::min_element( d, d + 4 ) - d;
+
+            switch( idx )
+            {
+            case 0: segShape->SetStart( bezPts[0] ); break;
+            case 1: segShape->SetStart( bezPts[1] ); break;
+            case 2: segShape->SetEnd( bezPts[0] );   break;
+            case 3: segShape->SetEnd( bezPts[1] );   break;
+            }
+
+            success = true;
+        }
+        else if( shape0 == SHAPE_T::BEZIER  && shape1 == SHAPE_T::BEZIER )
+        {
+            PCB_SHAPE* bez0 = aPrevShape;
+            PCB_SHAPE* bez1 = aShape;
+
+            VECTOR2I pts0[2] = { bez0->GetStart(), bez0->GetEnd() };
+            VECTOR2I pts1[2] = { bez1->GetStart(), bez1->GetEnd() };
+
+            SEG::ecoord d[4];
+            d[0] = ( pts0[0] - pts1[0] ).SquaredEuclideanNorm();
+            d[1] = ( pts0[0] - pts1[1] ).SquaredEuclideanNorm();
+            d[2] = ( pts0[1] - pts1[0] ).SquaredEuclideanNorm();
+            d[3] = ( pts0[1] - pts1[1] ).SquaredEuclideanNorm();
+
+            int idx = std::min_element( d, d + 4 ) - d;
+            int i0 = idx / 2;
+            int i1 = idx % 2;
+            VECTOR2I middle = ( pts0[i0] + pts1[i1] ) / 2;
+
+            // Adjust first bezier curve
+            if( i0 == 0 )
+            {
+                VECTOR2I delta = middle - bez0->GetStart();
+                bez0->SetStart( middle );
+                bez0->SetBezierC1( bez0->GetBezierC1() + delta );
+            }
+            else
+            {
+                VECTOR2I delta = middle - bez0->GetEnd();
+                bez0->SetEnd( middle );
+                bez0->SetBezierC2( bez0->GetBezierC2() + delta );
+            }
+
+            // Adjust second bezier curve
+            if( i1 == 0 )
+            {
+                VECTOR2I delta = middle - bez1->GetStart();
+                bez1->SetStart( middle );
+                bez1->SetBezierC1( bez1->GetBezierC1() + delta );
+            }
+            else
+            {
+                VECTOR2I delta = middle - bez1->GetEnd();
+                bez1->SetEnd( middle );
+                bez1->SetBezierC2( bez1->GetBezierC2() + delta );
+            }
+
+            success = true;
         }
 
         return success;
@@ -269,29 +397,16 @@ void ConnectBoardShapes( std::vector<PCB_SHAPE*>&                 aShapeList,
             {
                 // Get next closest segment.
                 PCB_SHAPE* nextGraphic =
-                        findNext( curr_graphic, prevPt, aShapeList, aChainingEpsilon );
+                        findNext( curr_graphic, prevPt, kdTree, adaptor, aChainingEpsilon );
 
                 if( !nextGraphic )
                     break;
 
-                VECTOR2I nstart = nextGraphic->GetStart();
-                VECTOR2I nend = nextGraphic->GetEnd();
+                connectPair( curr_graphic, nextGraphic );
 
-                if( !closer_to_first( prevPt, nstart, nend ) )
-                    std::swap( nstart, nend );
-
-                if( !connectPair( curr_graphic, nextGraphic ) )
-                    addSegment( prevPt, nstart, curr_graphic->GetWidth(),
-                                curr_graphic->GetLayer() );
-
-                // Shape might've changed
-                nstart = nextGraphic->GetStart();
-                nend = nextGraphic->GetEnd();
-
-                if( !closer_to_first( prevPt, nstart, nend ) )
-                    std::swap( nstart, nend );
-
-                prevPt = nend;
+                prevPt = closer_to_first( prevPt, nextGraphic->GetStart(), nextGraphic->GetEnd() )
+                                                                ? nextGraphic->GetEnd()
+                                                                : nextGraphic->GetStart();
                 curr_graphic = nextGraphic;
                 curr_graphic->SetFlags( SKIP_STRUCT );
                 startCandidates.erase( curr_graphic );
@@ -301,8 +416,8 @@ void ConnectBoardShapes( std::vector<PCB_SHAPE*>&                 aShapeList,
         const VECTOR2I ptEnd = graphic->GetEnd();
         const VECTOR2I ptStart = graphic->GetStart();
 
-        PCB_SHAPE* grAtEnd = findNext( graphic, ptEnd, aShapeList, aChainingEpsilon );
-        PCB_SHAPE* grAtStart = findNext( graphic, ptStart, aShapeList, aChainingEpsilon );
+        PCB_SHAPE* grAtEnd = findNext( graphic, ptEnd, kdTree, adaptor, aChainingEpsilon );
+        PCB_SHAPE* grAtStart = findNext( graphic, ptStart, kdTree, adaptor, aChainingEpsilon );
 
         bool beginFromEndPt = true;
 

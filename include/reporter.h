@@ -48,6 +48,8 @@ class wxStatusBar;
 class wxTextCtrl;
 class WX_HTML_REPORT_PANEL;
 class WX_INFOBAR;
+class KISTATUSBAR;
+class STATUSBAR_WARNING_REPORTER_IMPL;
 
 
 /**
@@ -73,7 +75,7 @@ class KICOMMON_API REPORTER
 {
 public:
     REPORTER() :
-            m_severityMask( 0 )
+            m_reportedSeverityMask( 0 )
     { }
 
     virtual ~REPORTER()
@@ -102,7 +104,7 @@ public:
     virtual REPORTER& Report( const wxString& aText,
                               SEVERITY aSeverity = RPT_SEVERITY_UNDEFINED )
     {
-        m_severityMask |= aSeverity;
+        m_reportedSeverityMask |= aSeverity;
         return *this;
     }
 
@@ -129,9 +131,12 @@ public:
     REPORTER& operator <<( const wxString& aText ) { return Report( aText ); }
 
     /**
-     * Returns true if the reporter client is non-empty.
+     * Returns true if any messages were reported.
      */
-    virtual bool HasMessage() const = 0;
+    virtual bool HasMessage() const
+    {
+        return m_reportedSeverityMask != 0;
+    }
 
     /**
      * Returns true if the reporter has one or more messages matching the specified
@@ -139,7 +144,7 @@ public:
      */
     virtual bool HasMessageOfSeverity( int aSeverityMask ) const
     {
-        return ( m_severityMask & aSeverityMask ) != 0;
+        return ( m_reportedSeverityMask & aSeverityMask ) != 0;
     }
 
     virtual EDA_UNITS GetUnits() const
@@ -149,11 +154,11 @@ public:
 
     virtual void Clear()
     {
-        m_severityMask = 0;
+        m_reportedSeverityMask = 0;
     }
 
 private:
-    int m_severityMask;
+    int m_reportedSeverityMask;
 };
 
 
@@ -176,8 +181,6 @@ public:
     REPORTER& Report( const wxString& aText,
                       SEVERITY aSeverity = RPT_SEVERITY_UNDEFINED ) override;
 
-    bool HasMessage() const override;
-
 private:
     wxTextCtrl* m_textCtrl;
 };
@@ -197,8 +200,6 @@ public:
     { }
 
     REPORTER& Report( const wxString& aText, SEVERITY aSeverity = RPT_SEVERITY_UNDEFINED ) override;
-
-    bool HasMessage() const override;
 
     const wxString& GetMessages() const;
     void            Clear() override;
@@ -226,28 +227,36 @@ public:
 
     REPORTER& Report( const wxString& aText,
                       SEVERITY aSeverity = RPT_SEVERITY_UNDEFINED ) override;
-
-    bool HasMessage() const override { return false; }
 };
 
 
 /**
- * Reporter forwarding messages to stdout or stderr as appropriate
+ * Reporter forwarding messages to stdout or stderr as appropriate.
+ * By default, debug messages are suppressed unless verbose mode is enabled.
  */
 class KICOMMON_API CLI_REPORTER : public REPORTER
 {
 public:
-    CLI_REPORTER()
+    CLI_REPORTER() :
+            m_verbose( false )
     { }
 
     virtual ~CLI_REPORTER()
     { }
 
-    static REPORTER& GetInstance();
+    static CLI_REPORTER& GetInstance();
+
+    /**
+     * Enable or disable verbose mode. When enabled, debug messages are printed.
+     */
+    void SetVerbose( bool aVerbose ) { m_verbose = aVerbose; }
+
+    bool GetVerbose() const { return m_verbose; }
 
     REPORTER& Report( const wxString& aMsg, SEVERITY aSeverity = RPT_SEVERITY_UNDEFINED ) override;
 
-    bool HasMessage() const override { return false; }
+private:
+    bool m_verbose;
 };
 
 
@@ -266,8 +275,6 @@ public:
     static REPORTER& GetInstance();
 
     REPORTER& Report( const wxString& aMsg, SEVERITY aSeverity = RPT_SEVERITY_UNDEFINED ) override;
-
-    bool HasMessage() const override { return false; }
 };
 
 
@@ -283,8 +290,67 @@ public:
     static REPORTER& GetInstance();
 
     REPORTER& Report( const wxString& aMsg, SEVERITY aSeverity = RPT_SEVERITY_UNDEFINED ) override;
+};
 
-    bool HasMessage() const override { return false; }
+
+class KICOMMON_API LOAD_INFO_REPORTER : public REPORTER
+{
+public:
+    LOAD_INFO_REPORTER()
+    { }
+
+    virtual ~LOAD_INFO_REPORTER()
+    { }
+
+    static LOAD_INFO_REPORTER& GetInstance();
+
+    REPORTER& Report( const wxString& aMsg, SEVERITY aSeverity = RPT_SEVERITY_UNDEFINED ) override;
+
+    void SetRedirectTarget( REPORTER* aReporter );
+    REPORTER* GetRedirectTarget() const;
+
+private:
+    REPORTER* m_redirectTarget = nullptr;
+};
+
+
+class KICOMMON_API LOAD_INFO_REPORTER_SCOPE
+{
+public:
+    explicit LOAD_INFO_REPORTER_SCOPE( REPORTER* aReporter );
+    ~LOAD_INFO_REPORTER_SCOPE();
+
+private:
+    LOAD_INFO_REPORTER& m_reporter;
+    REPORTER*           m_previousReporter;
+};
+
+
+/**
+ * RAII class to set and restore the fontconfig reporter.
+ *
+ * Ensures the fontconfig reporter is properly reset even if an exception occurs
+ * during file loading operations.
+ */
+class KICOMMON_API FONTCONFIG_REPORTER_SCOPE
+{
+public:
+    explicit FONTCONFIG_REPORTER_SCOPE( REPORTER* aReporter );
+    ~FONTCONFIG_REPORTER_SCOPE();
+
+private:
+    REPORTER* m_previousReporter;
+};
+
+
+class KICOMMON_API REDIRECT_REPORTER : public REPORTER
+{
+public:
+    REDIRECT_REPORTER( REPORTER* aRedirectTarget ) : m_redirectTarget( aRedirectTarget ) {}
+
+    REPORTER& Report( const wxString& aMsg, SEVERITY aSeverity = RPT_SEVERITY_UNDEFINED ) override;
+
+    REPORTER* m_redirectTarget;
 };
 
 
@@ -302,11 +368,22 @@ public:
 
     REPORTER& Report( const wxString& aText, SEVERITY aSeverity = RPT_SEVERITY_UNDEFINED ) override;
 
-    bool HasMessage() const override;
-
 private:
     wxStatusBar* m_statusBar;
     int          m_position;
+};
+
+
+class KICOMMON_API STATUSBAR_WARNING_REPORTER : public REPORTER
+{
+public:
+    STATUSBAR_WARNING_REPORTER( KISTATUSBAR* aStatusBar, const wxString& aSource );
+    ~STATUSBAR_WARNING_REPORTER() override;
+
+    REPORTER& Report( const wxString& aText, SEVERITY aSeverity = RPT_SEVERITY_UNDEFINED ) override;
+
+private:
+    std::shared_ptr<STATUSBAR_WARNING_REPORTER_IMPL> m_impl;
 };
 
 #endif     // _REPORTER_H_

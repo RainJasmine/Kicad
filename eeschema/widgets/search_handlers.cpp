@@ -240,11 +240,11 @@ wxString SYMBOL_SEARCH_HANDLER::getResultCell( const SCH_SEARCH_HIT& aHit, int a
     else if( aCol == 8 )
         return sym->ResolveExcludedFromBoard() ? wxS( "X" ) : wxS( " " );
     else if( aCol == 9 )
-        return sym->ResolveDNP() ? wxS( "X" ) : wxS( " " );
+        return sym->ResolveDNP( aHit.sheetPath, m_frame->Schematic().GetCurrentVariant() ) ? wxS( "X" ) : wxS( " " );
     else if( aCol == 10 )
         return sym->GetLibId().Format();
     else if( aCol == 11 )
-        return sym->GetDescription();
+        return sym->GetShownDescription();
 
     return wxEmptyString;
 }

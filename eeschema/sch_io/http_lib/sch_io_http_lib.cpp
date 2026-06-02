@@ -20,27 +20,25 @@
 
 
 #include <wx/log.h>
+#include <wx/tokenzr.h>
 
 #include <fmt.h>
 #include <lib_symbol.h>
-#include <symbol_lib_table.h>
 
+#include <libraries/symbol_library_adapter.h>
 #include <http_lib/http_lib_connection.h>
 #include "sch_io_http_lib.h"
+#include <ki_exception.h>
 
 
-SCH_IO_HTTP_LIB::SCH_IO_HTTP_LIB() : SCH_IO( wxS( "HTTP library" ) ), m_libTable( nullptr )
+SCH_IO_HTTP_LIB::SCH_IO_HTTP_LIB() :
+        SCH_IO( wxS( "HTTP library" ) ),
+        m_adapter( nullptr )
 {
 }
 
 
-SCH_IO_HTTP_LIB::~SCH_IO_HTTP_LIB()
-{
-}
-
-
-void SCH_IO_HTTP_LIB::EnumerateSymbolLib( wxArrayString&         aSymbolNameList,
-                                          const wxString&        aLibraryPath,
+void SCH_IO_HTTP_LIB::EnumerateSymbolLib( wxArrayString& aSymbolNameList, const wxString& aLibraryPath,
                                           const std::map<std::string, UTF8>* aProperties )
 {
     std::vector<LIB_SYMBOL*> symbols;
@@ -51,23 +49,17 @@ void SCH_IO_HTTP_LIB::EnumerateSymbolLib( wxArrayString&         aSymbolNameList
 }
 
 
-void SCH_IO_HTTP_LIB::EnumerateSymbolLib( std::vector<LIB_SYMBOL*>& aSymbolList,
-                                          const wxString&           aLibraryPath,
-                                          const std::map<std::string, UTF8>*    aProperties )
+void SCH_IO_HTTP_LIB::EnumerateSymbolLib( std::vector<LIB_SYMBOL*>& aSymbolList, const wxString& aLibraryPath,
+                                          const std::map<std::string, UTF8>* aProperties )
 {
-    wxCHECK_RET( m_libTable, _( "httplib plugin missing library table handle!" ) );
+    wxCHECK_RET( m_adapter, "HTTP plugin missing library manager adapter handle!" );
     ensureSettings( aLibraryPath );
     ensureConnection();
 
     if( !m_conn )
-    {
         THROW_IO_ERROR( m_lastError );
-        return;
-    }
 
-    bool powerSymbolsOnly =
-            ( aProperties
-              && aProperties->find( SYMBOL_LIB_TABLE::PropPowerSymsOnly ) != aProperties->end() );
+    bool powerSymbolsOnly = ( aProperties && aProperties->contains( SYMBOL_LIBRARY_ADAPTER::PropPowerSymsOnly ) );
 
     for( const HTTP_LIB_CATEGORY& category : m_conn->getCategories() )
     {
@@ -93,7 +85,7 @@ void SCH_IO_HTTP_LIB::EnumerateSymbolLib( std::vector<LIB_SYMBOL*>& aSymbolList,
         {
             wxString libIDString( part.name );
 
-            LIB_SYMBOL* symbol = loadSymbolFromPart( libIDString, category, part );
+            LIB_SYMBOL* symbol = loadSymbolFromPart( aLibraryPath, libIDString, category, part );
 
             if( symbol && ( !powerSymbolsOnly || symbol->IsPower() ) )
                 aSymbolList.emplace_back( symbol );
@@ -105,7 +97,7 @@ void SCH_IO_HTTP_LIB::EnumerateSymbolLib( std::vector<LIB_SYMBOL*>& aSymbolList,
 LIB_SYMBOL* SCH_IO_HTTP_LIB::LoadSymbol( const wxString& aLibraryPath, const wxString& aAliasName,
                                          const std::map<std::string, UTF8>* aProperties )
 {
-    wxCHECK( m_libTable, nullptr );
+    wxCHECK_MSG( m_adapter, nullptr, "HTTP plugin missing library manager adapter handle!" );
     ensureSettings( aLibraryPath );
     ensureConnection();
 
@@ -121,12 +113,10 @@ LIB_SYMBOL* SCH_IO_HTTP_LIB::LoadSymbol( const wxString& aLibraryPath, const wxS
 
     std::vector<HTTP_LIB_CATEGORY> categories = m_conn->getCategories();
 
-    if( m_conn->getCachedParts().empty() )
-    {
+    if( m_conn->GetCachedParts().empty() )
         syncCache();
-    }
 
-    std::tuple  relations = m_conn->getCachedParts()[partName];
+    std::tuple  relations = m_conn->GetCachedParts()[partName];
     std::string associatedCatID = std::get<1>( relations );
 
     // get the matching category
@@ -158,20 +148,19 @@ LIB_SYMBOL* SCH_IO_HTTP_LIB::LoadSymbol( const wxString& aLibraryPath, const wxS
 
     if( m_conn->SelectOne( part_id, result ) )
     {
-        wxLogTrace( traceHTTPLib, wxT( "loadSymbol: SelectOne (%s) found in %s" ), part_id,
-                    foundCategory->name );
+        wxLogTrace( traceHTTPLib, wxT( "LoadSymbol: SelectOne (%s) found in %s" ), part_id, foundCategory->name );
     }
     else
     {
-        wxLogTrace( traceHTTPLib, wxT( "loadSymbol: SelectOne (%s) failed for category %s" ),
-                    part_id, foundCategory->name );
+        wxLogTrace( traceHTTPLib, wxT( "LoadSymbol: SelectOne (%s) failed for category %s" ), part_id,
+                    foundCategory->name );
 
         THROW_IO_ERROR( m_lastError );
     }
 
     wxCHECK( foundCategory, nullptr );
 
-    return loadSymbolFromPart( aAliasName, *foundCategory, result );
+    return loadSymbolFromPart( aLibraryPath, aAliasName, *foundCategory, result );
 }
 
 
@@ -193,10 +182,12 @@ void SCH_IO_HTTP_LIB::GetSubLibraryNames( std::vector<wxString>& aNames )
     }
 }
 
+
 wxString SCH_IO_HTTP_LIB::GetSubLibraryDescription( const wxString& aName )
 {
     return m_conn->getCategoryDescription( std::string( aName.mb_str() ) );
 }
+
 
 void SCH_IO_HTTP_LIB::GetAvailableSymbolFields( std::vector<wxString>& aNames )
 {
@@ -207,71 +198,58 @@ void SCH_IO_HTTP_LIB::GetAvailableSymbolFields( std::vector<wxString>& aNames )
 
 void SCH_IO_HTTP_LIB::GetDefaultSymbolFields( std::vector<wxString>& aNames )
 {
-    std::copy( m_defaultShownFields.begin(), m_defaultShownFields.end(),
-               std::back_inserter( aNames ) );
+    std::copy( m_defaultShownFields.begin(), m_defaultShownFields.end(), std::back_inserter( aNames ) );
 }
 
 
 void SCH_IO_HTTP_LIB::ensureSettings( const wxString& aSettingsPath )
 {
-    auto tryLoad = [&]()
-    {
-        if( !m_settings->LoadFromFile() )
-        {
-            wxString msg = wxString::Format(
-                    _( "HTTP library settings file %s missing or invalid" ), aSettingsPath );
+    auto tryLoad =
+            [&]()
+            {
+                if( !m_settings->LoadFromFile() )
+                {
+                    THROW_IO_ERROR( wxString::Format( _( "HTTP library settings file %s missing or invalid." ),
+                                                      aSettingsPath ) );
+                }
 
-            THROW_IO_ERROR( msg );
-        }
+                if( m_settings->m_Source.api_version.empty() )
+                {
+                    THROW_IO_ERROR( wxString::Format( _( "HTTP library settings file %s is missing the API version "
+                                                         "number." ),
+                                                      aSettingsPath ) );
+                }
 
-        if( m_settings->m_Source.api_version.empty() )
-        {
-            wxString msg = wxString::Format(
-                    _( "HTTP library settings file %s is missing the API version number!" ),
-                    aSettingsPath );
+                if( m_settings->getSupportedAPIVersion() != m_settings->m_Source.api_version )
+                {
+                    THROW_IO_ERROR( wxString::Format( _( "HTTP library settings file %s uses API version %s, but "
+                                                         "KiCad requires version %s." ),
+                                                      aSettingsPath, m_settings->m_Source.api_version,
+                                                      m_settings->getSupportedAPIVersion() ) );
+                }
 
-            THROW_IO_ERROR( msg );
-        }
+                if( m_settings->m_Source.root_url.empty() )
+                {
+                    THROW_IO_ERROR( wxString::Format( _( "HTTP library settings file %s is missing the root URL." ),
+                                                      aSettingsPath ) );
+                }
 
-        if( m_settings->getSupportedAPIVersion() != m_settings->m_Source.api_version )
-        {
-            wxString msg = wxString::Format( _( "HTTP library settings file %s uses API version "
-                                                "%s, but KiCad requires version %s" ),
-                                             aSettingsPath, m_settings->m_Source.api_version,
-                                             m_settings->getSupportedAPIVersion() );
+                // map lib source type
+                m_settings->m_Source.type = m_settings->get_HTTP_LIB_SOURCE_TYPE();
 
-            THROW_IO_ERROR( msg );
-        }
+                if( m_settings->m_Source.type == HTTP_LIB_SOURCE_TYPE::INVALID )
+                {
+                    THROW_IO_ERROR( wxString::Format( _( "HTTP library settings file %s has invalid library type." ),
+                                                      aSettingsPath ) );
+                }
 
-        if( m_settings->m_Source.root_url.empty() )
-        {
-            wxString msg = wxString::Format(
-                    _( "HTTP library settings file %s is missing the root URL!" ), aSettingsPath );
+                // make sure that the root url finishes with a forward slash
+                if( m_settings->m_Source.root_url.at( m_settings->m_Source.root_url.length() - 1 ) != '/' )
+                    m_settings->m_Source.root_url += "/";
 
-            THROW_IO_ERROR( msg );
-        }
-
-        // map lib source type
-        m_settings->m_Source.type = m_settings->get_HTTP_LIB_SOURCE_TYPE();
-
-        if( m_settings->m_Source.type == HTTP_LIB_SOURCE_TYPE::INVALID )
-        {
-            wxString msg = wxString::Format(
-                    _( "HTTP library settings file %s has an invalid library type" ),
-                    aSettingsPath );
-
-            THROW_IO_ERROR( msg );
-        }
-
-        // make sure that the root url finishes with a forward slash
-        if( m_settings->m_Source.root_url.at( m_settings->m_Source.root_url.length() - 1 ) != '/' )
-        {
-            m_settings->m_Source.root_url += "/";
-        }
-
-        // Append api version to root URL
-        m_settings->m_Source.root_url += m_settings->m_Source.api_version + "/";
-    };
+                // Append api version to root URL
+                m_settings->m_Source.root_url += m_settings->m_Source.api_version + "/";
+            };
 
     if( !m_settings && !aSettingsPath.IsEmpty() )
     {
@@ -302,10 +280,9 @@ void SCH_IO_HTTP_LIB::ensureConnection()
 
     if( !m_conn || !m_conn->IsValidEndpoint() )
     {
-        wxString msg = wxString::Format( _( "Could not connect to %s. Errors: %s" ),
-                                         m_settings->m_Source.root_url, m_lastError );
-
-        THROW_IO_ERROR( msg );
+        THROW_IO_ERROR( wxString::Format( _( "Could not connect to %s. Errors: %s" ),
+                                          m_settings->m_Source.root_url,
+                                          m_lastError ) );
     }
 }
 
@@ -330,13 +307,13 @@ void SCH_IO_HTTP_LIB::connect()
     }
 }
 
+
 void SCH_IO_HTTP_LIB::syncCache()
 {
     for( const HTTP_LIB_CATEGORY& category : m_conn->getCategories() )
-    {
         syncCache( category );
-    }
 }
+
 
 void SCH_IO_HTTP_LIB::syncCache( const HTTP_LIB_CATEGORY& category )
 {
@@ -346,9 +323,9 @@ void SCH_IO_HTTP_LIB::syncCache( const HTTP_LIB_CATEGORY& category )
     {
         if( !m_conn->GetLastError().empty() )
         {
-            wxString msg = wxString::Format( _( "Error retriving data from HTTP library %s: %s" ),
-                                             category.name, m_conn->GetLastError() );
-            THROW_IO_ERROR( msg );
+            THROW_IO_ERROR( wxString::Format( _( "Error retrieving data from HTTP library %s: %s" ),
+                                              category.name,
+                                              m_conn->GetLastError() ) );
         }
 
         return;
@@ -363,9 +340,10 @@ void SCH_IO_HTTP_LIB::syncCache( const HTTP_LIB_CATEGORY& category )
 }
 
 
-LIB_SYMBOL* SCH_IO_HTTP_LIB::loadSymbolFromPart( const wxString&          aSymbolName,
+LIB_SYMBOL* SCH_IO_HTTP_LIB::loadSymbolFromPart( const wxString& aLibraryPath,
+                                                 const wxString& aSymbolName,
                                                  const HTTP_LIB_CATEGORY& aCategory,
-                                                 const HTTP_LIB_PART&     aPart )
+                                                 const HTTP_LIB_PART& aPart )
 {
     LIB_SYMBOL* symbol = nullptr;
     LIB_SYMBOL* originalSymbol = nullptr;
@@ -373,39 +351,40 @@ LIB_SYMBOL* SCH_IO_HTTP_LIB::loadSymbolFromPart( const wxString&          aSymbo
 
     std::string symbolIdStr = aPart.symbolIdStr;
 
+    // Extract library nickname from the library path (e.g., "/path/to/W5.kicad_httplib" -> "W5")
+    wxFileName libFileName( aLibraryPath );
+    wxString   libNickname = libFileName.GetName();
+
     // Get or Create the symbol using the found symbol
     if( !symbolIdStr.empty() )
     {
         symbolId.Parse( symbolIdStr );
 
         if( symbolId.IsValid() )
-        {
-            originalSymbol = m_libTable->LoadSymbol( symbolId );
-        }
+            originalSymbol = m_adapter->LoadSymbol( symbolId );
 
         if( originalSymbol )
         {
-            wxLogTrace( traceHTTPLib, wxT( "loadSymbolFromPart: found original symbol '%s'" ),
-                        symbolIdStr );
+            wxLogTrace( traceHTTPLib, wxT( "loadSymbolFromPart: found original symbol '%s'" ), symbolIdStr );
 
             symbol = originalSymbol->Duplicate();
             symbol->SetSourceLibId( symbolId );
+            symbol->SetName( aSymbolName );
 
             LIB_ID libId = symbol->GetLibId();
+            libId.SetLibNickname( libNickname );
             libId.SetSubLibraryName( aCategory.name );
             symbol->SetLibId( libId );
         }
         else if( !symbolId.IsValid() )
         {
             wxLogTrace( traceHTTPLib, wxT( "loadSymbolFromPart: source symbol id '%s' is invalid, "
-                                           "will create empty symbol" ),
-                        symbolIdStr );
+                                           "will create empty symbol" ), symbolIdStr );
         }
         else
         {
             wxLogTrace( traceHTTPLib, wxT( "loadSymbolFromPart: source symbol '%s' not found, "
-                                           "will create empty symbol" ),
-                        symbolIdStr );
+                                           "will create empty symbol" ), symbolIdStr );
         }
     }
 
@@ -416,6 +395,7 @@ LIB_SYMBOL* SCH_IO_HTTP_LIB::loadSymbolFromPart( const wxString&          aSymbo
         symbol = new LIB_SYMBOL( aSymbolName );
 
         LIB_ID libId = symbol->GetLibId();
+        libId.SetLibNickname( libNickname );
         libId.SetSubLibraryName( aCategory.name );
         symbol->SetLibId( libId );
     }
@@ -424,44 +404,50 @@ LIB_SYMBOL* SCH_IO_HTTP_LIB::loadSymbolFromPart( const wxString&          aSymbo
     symbol->SetExcludedFromBoard( aPart.exclude_from_board );
     symbol->SetExcludedFromSim( aPart.exclude_from_sim );
 
-    SCH_FIELD* field;
+    wxArrayString fp_filters;
 
-    for( auto& _field : aPart.fields )
+    for( auto& [fieldName, fieldProperties] : aPart.fields )
     {
-        wxString   fieldName = wxString( _field.first );
-        std::tuple fieldProperties = _field.second;
+        wxString lowerFieldName = wxString( fieldName ).Lower();
 
-        if( fieldName.Lower() == footprint_field )
+        if( lowerFieldName == footprint_field )
         {
-            field = &symbol->GetFootprintField();
+            SCH_FIELD*        field = &symbol->GetFootprintField();
+            wxStringTokenizer tokenizer( std::get<0>( fieldProperties ), ";\t\r\n", wxTOKEN_STRTOK );
+
+            while( tokenizer.HasMoreTokens() )
+                fp_filters.Add( tokenizer.GetNextToken() );
+
+            if( fp_filters.size() > 0 )
+                field->SetText( fp_filters[0] );
+
+            field->SetVisible( std::get<1>( fieldProperties ) );
+        }
+        else if( lowerFieldName == description_field )
+        {
+            SCH_FIELD* field = &symbol->GetDescriptionField();
             field->SetText( std::get<0>( fieldProperties ) );
             field->SetVisible( std::get<1>( fieldProperties ) );
         }
-        else if( fieldName.Lower() == description_field )
+        else if( lowerFieldName == value_field )
         {
-            field = &symbol->GetDescriptionField();
+            SCH_FIELD* field = &symbol->GetValueField();
             field->SetText( std::get<0>( fieldProperties ) );
             field->SetVisible( std::get<1>( fieldProperties ) );
         }
-        else if( fieldName.Lower() == value_field )
+        else if( lowerFieldName == datasheet_field )
         {
-            field = &symbol->GetValueField();
+            SCH_FIELD* field = &symbol->GetDatasheetField();
             field->SetText( std::get<0>( fieldProperties ) );
             field->SetVisible( std::get<1>( fieldProperties ) );
         }
-        else if( fieldName.Lower() == datasheet_field )
+        else if( lowerFieldName == reference_field )
         {
-            field = &symbol->GetDatasheetField();
+            SCH_FIELD* field = &symbol->GetReferenceField();
             field->SetText( std::get<0>( fieldProperties ) );
             field->SetVisible( std::get<1>( fieldProperties ) );
         }
-        else if( fieldName.Lower() == reference_field )
-        {
-            field = &symbol->GetReferenceField();
-            field->SetText( std::get<0>( fieldProperties ) );
-            field->SetVisible( std::get<1>( fieldProperties ) );
-        }
-        else if( fieldName.Lower() == keywords_field )
+        else if( lowerFieldName == keywords_field )
         {
             symbol->SetKeyWords( std::get<0>( fieldProperties ) );
         }
@@ -472,7 +458,7 @@ LIB_SYMBOL* SCH_IO_HTTP_LIB::loadSymbolFromPart( const wxString&          aSymbo
             // This proves useful in situations where, for instance, an individual requires a particular value, such as
             // the material type showcased at a specific position for a capacitor. Subsequently, this value could be defined
             // in the symbol itself and then, potentially, be modified by the HTTP library as necessary.
-            field = symbol->GetField( fieldName );
+            SCH_FIELD* field = symbol->GetField( fieldName );
 
             if( field != nullptr )
             {
@@ -494,6 +480,14 @@ LIB_SYMBOL* SCH_IO_HTTP_LIB::loadSymbolFromPart( const wxString&          aSymbo
             }
         }
     }
+
+    symbol->SetDescription( aPart.desc );
+    symbol->SetKeyWords( aPart.keywords );
+
+    for( const std::string& filter : aPart.fp_filters )
+        fp_filters.push_back( filter );
+
+    symbol->SetFPFilters( fp_filters );
 
     return symbol;
 }

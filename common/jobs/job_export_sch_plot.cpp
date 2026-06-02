@@ -21,6 +21,7 @@
 #include <jobs/job_export_sch_plot.h>
 #include <jobs/job_registry.h>
 #include <i18n_utility.h>
+#include <plotters/plotter_png.h>
 
 NLOHMANN_JSON_SERIALIZE_ENUM( JOB_PAGE_SIZE,
                               {
@@ -36,6 +37,7 @@ NLOHMANN_JSON_SERIALIZE_ENUM( SCH_PLOT_FORMAT,
                                       { SCH_PLOT_FORMAT::POST, "post" },
                                       { SCH_PLOT_FORMAT::SVG, "svg" },
                                       { SCH_PLOT_FORMAT::DXF, "dxf" },
+                                      { SCH_PLOT_FORMAT::PNG, "png" },
                               } )
 
 JOB_EXPORT_SCH_PLOT::JOB_EXPORT_SCH_PLOT( bool aOutputIsDirectory ) :
@@ -53,7 +55,8 @@ JOB_EXPORT_SCH_PLOT::JOB_EXPORT_SCH_PLOT( bool aOutputIsDirectory ) :
         m_PDFPropertyPopups( true ),
         m_PDFHierarchicalLinks( true ),
         m_PDFMetadata( true ),
-        m_theme()
+        m_theme(),
+        m_variantNames()
 {
     m_params.emplace_back( new JOB_PARAM<SCH_PLOT_FORMAT>( "format",
             &m_plotFormat, m_plotFormat ) );
@@ -93,6 +96,11 @@ JOB_EXPORT_SCH_PLOT::JOB_EXPORT_SCH_PLOT( bool aOutputIsDirectory ) :
 
     m_params.emplace_back( new JOB_PARAM<wxString>( "color_theme",
             &m_theme, m_theme ) );
+
+    m_params.emplace_back( new JOB_PARAM<wxString>( "variant_name", &m_variant, m_variant ) );
+
+    m_params.emplace_back( new JOB_PARAM_LIST<wxString>( "variant_names", &m_variantNames,
+                                                         m_variantNames ) );
 }
 
 
@@ -185,6 +193,29 @@ wxString JOB_EXPORT_SCH_PLOT_HPGL::GetDefaultDescription() const
 }
 
 
+JOB_EXPORT_SCH_PLOT_PNG::JOB_EXPORT_SCH_PLOT_PNG() :
+        JOB_EXPORT_SCH_PLOT( true ),
+        m_dpi( DEFAULT_PNG_DPI ),
+        m_antialias( true )
+{
+    m_plotFormat = SCH_PLOT_FORMAT::PNG;
+    m_params.emplace_back( new JOB_PARAM<int>( "dpi", &m_dpi, m_dpi ) );
+    m_params.emplace_back( new JOB_PARAM<bool>( "antialias", &m_antialias, m_antialias ) );
+}
+
+
+wxString JOB_EXPORT_SCH_PLOT_PNG::GetDefaultDescription() const
+{
+    return _( "Export PNG" );
+}
+
+
+wxString JOB_EXPORT_SCH_PLOT_PNG::GetSettingsDialogTitle() const
+{
+    return _( "Export PNG Job Settings" );
+}
+
+
 REGISTER_JOB( sch_export_plot_svg, _HKI( "Schematic: Export SVG" ), KIWAY::FACE_SCH,
               JOB_EXPORT_SCH_PLOT_SVG );
 REGISTER_DEPRECATED_JOB( sch_export_plot_hpgl, _HKI( "Schematic: Export HPGL" ), KIWAY::FACE_SCH,
@@ -195,3 +226,5 @@ REGISTER_JOB( sch_export_plot_dxf, _HKI( "Schematic: Export DXF" ), KIWAY::FACE_
               JOB_EXPORT_SCH_PLOT_DXF );
 REGISTER_JOB( sch_export_plot_pdf, _HKI( "Schematic: Export PDF" ), KIWAY::FACE_SCH,
               JOB_EXPORT_SCH_PLOT_PDF );
+REGISTER_JOB( sch_export_plot_png, _HKI( "Schematic: Export PNG" ), KIWAY::FACE_SCH,
+              JOB_EXPORT_SCH_PLOT_PNG );

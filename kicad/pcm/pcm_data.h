@@ -44,6 +44,7 @@ enum PCM_PACKAGE_TYPE
     PT_PLUGIN,
     PT_FAB,
     PT_LIBRARY,
+    PT_DATASOURCE,
     PT_COLORTHEME,
 };
 
@@ -146,6 +147,7 @@ struct PCM_REPOSITORY
     std::optional<PCM_CONTACT>            maintainer;
 
     // Not serialized fields
+    int                      schema_version = 1;
     std::vector<PCM_PACKAGE> package_list;
     // pkg id to index of package from package_list for quick lookup
     std::unordered_map<wxString, size_t> package_map;
@@ -172,6 +174,7 @@ NLOHMANN_JSON_SERIALIZE_ENUM( PCM_PACKAGE_TYPE, {
                                                         { PT_PLUGIN, "plugin" },
                                                         { PT_FAB, "fab" },
                                                         { PT_LIBRARY, "library" },
+                                                        { PT_DATASOURCE, "datasource" },
                                                         { PT_COLORTHEME, "colortheme" },
                                                 } )
 

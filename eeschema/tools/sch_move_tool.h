@@ -27,27 +27,54 @@
 
 #include <tools/sch_tool_base.h>
 #include <sch_base_frame.h>
+#include <unordered_map>
+#include <unordered_set>
 
 
 class SCH_EDIT_FRAME;
 class SCH_SELECTION_TOOL;
+class SCH_LINE;
+class SCH_LABEL_BASE;
+class SCH_SHEET_PIN;
+class SCH_JUNCTION;
+class SCH_SELECTION;
+class SCH_SHEET;
+class SCH_COMMIT;
+class SCH_ITEM;
+class EE_GRID_HELPER;
+
+enum GRID_HELPER_GRIDS : int;
 
 
 struct SPECIAL_CASE_LABEL_INFO
 {
     SCH_LINE* attachedLine;
     VECTOR2I  originalLabelPos;
+    VECTOR2I  originalLineStart;
+    VECTOR2I  originalLineEnd;
+    bool      trackMovingEnd = false;
 };
 
 
 class SCH_MOVE_TOOL : public SCH_TOOL_BASE<SCH_EDIT_FRAME>
 {
 public:
+    enum MOVE_MODE
+    {
+        MOVE,
+        DRAG,
+        BREAK,
+        SLICE
+    };
+
     SCH_MOVE_TOOL();
     ~SCH_MOVE_TOOL() override { }
 
     /// @copydoc TOOL_INTERACTIVE::Init()
     bool Init() override;
+
+    /// @copydoc TOOL_INTERACTIVE::Reset()
+    void Reset( RESET_REASON aReason ) override;
 
     /**
      * Run an interactive move of the selected items, or the item under the cursor.
@@ -63,7 +90,7 @@ public:
     int AlignToGrid( const TOOL_EVENT& aEvent );
 
 private:
-    bool doMoveSelection( const TOOL_EVENT& aEvent, SCH_COMMIT* aCommit, bool aIsSlice );
+    bool doMoveSelection( const TOOL_EVENT& aEvent, SCH_COMMIT* aCommit );
 
     void moveItem( EDA_ITEM* aItem, const VECTOR2I& aDelta );
 
@@ -77,6 +104,8 @@ private:
     void orthoLineDrag( SCH_COMMIT* aCommit, SCH_LINE* line, const VECTOR2I& splitDelta,
                         int& xBendCount, int& yBendCount, const EE_GRID_HELPER& grid );
 
+    void moveSelectionToSheet( SCH_SELECTION& aSelection, SCH_SHEET* aTarget, SCH_COMMIT* aCommit );
+
     ///< Clears the new drag lines and removes them from the screen
     void clearNewDragLines();
 
@@ -86,13 +115,60 @@ private:
     ///< Cleanup dangling lines left after a drag
     void trimDanglingLines( SCH_COMMIT* aCommit );
 
+    ///< Break or slice the current selection before initiating a move, if required
+    void preprocessBreakOrSliceSelection( SCH_COMMIT* aCommit, const TOOL_EVENT& aEvent );
+
+    // Helper methods for doMoveSelection refactoring
+    ///< Check if a move is already in progress and handle state transitions
+    bool checkMoveInProgress( const TOOL_EVENT& aEvent, SCH_COMMIT* aCommit, bool aCurrentModeIsDragLike,
+                              bool aWasDragging );
+
+    ///< Promote pin selections to parent symbols and request final selection
+    SCH_SELECTION& prepareSelection( bool& aUnselect );
+
+    ///< Refresh selection traits (sheet pins, graphic items, etc.)
+    void refreshSelectionTraits( const SCH_SELECTION& aSelection, bool& aHasSheetPins,
+                                 bool& aHasGraphicItems, bool& aHasNonGraphicItems,
+                                 bool& aIsGraphicsOnly );
+
+    ///< Initialize the move/drag operation, setting up flags and connections
+    void initializeMoveOperation( const TOOL_EVENT& aEvent, SCH_SELECTION& aSelection, SCH_COMMIT* aCommit,
+                                  std::vector<DANGLING_END_ITEM>& aInternalPoints, GRID_HELPER_GRIDS& aSnapLayer );
+
+    ///< Setup items for drag operation, collecting connected items
+    void setupItemsForDrag( SCH_SELECTION& aSelection, SCH_COMMIT* aCommit );
+
+    ///< Setup items for move operation, marking dangling ends
+    void setupItemsForMove( SCH_SELECTION& aSelection,
+                            std::vector<DANGLING_END_ITEM>& aInternalPoints );
+
+    ///< Find the target sheet for dropping items (if any)
+    SCH_SHEET* findTargetSheet( const SCH_SELECTION& aSelection, const VECTOR2I& aCursorPos,
+                                bool aHasSheetPins, bool aIsGraphicsOnly, bool aCtrlDown );
+
+    ///< Perform the actual move of items by delta, handling split moves and orthogonal dragging
+    void performItemMove( SCH_SELECTION& aSelection, const VECTOR2I& aDelta,
+                          SCH_COMMIT* aCommit, int& aXBendCount, int& aYBendCount,
+                          const EE_GRID_HELPER& aGrid );
+
+    ///< Handle tool action events during the move operation
+    bool handleMoveToolActions( const TOOL_EVENT* aEvent, SCH_COMMIT* aCommit,
+                                const SCH_SELECTION& aSelection );
+
+    ///< Update stored positions after transformations (rotation, mirroring, etc.) during move
+    void updateStoredPositions( const SCH_SELECTION& aSelection );
+
+    ///< Finalize the move operation, updating junctions and cleaning up
+    void finalizeMoveOperation( SCH_SELECTION& aSelection, SCH_COMMIT* aCommit, bool aUnselect,
+                                const std::vector<DANGLING_END_ITEM>& aInternalPoints );
+
 private:
     ///< Re-entrancy guard
     bool                  m_inMoveTool;
 
     ///< Flag determining if anything is being dragged right now
     bool                  m_moveInProgress;
-    bool                  m_isDrag;
+    MOVE_MODE             m_mode;
 
     ///< Items (such as wires) which were added to the selection for a drag
     std::vector<KIID>                   m_dragAdditions;
@@ -102,6 +178,8 @@ private:
     std::unordered_set<SCH_LINE*>       m_newDragLines;
     ///< Lines changed by drag algorithm that weren't selected
     std::unordered_set<SCH_LINE*>       m_changedDragLines;
+    ///< Junctions that were hidden during the move
+    std::vector<SCH_JUNCTION*>           m_hiddenJunctions;
 
     VECTOR2I              m_moveOffset;
 
@@ -110,6 +188,7 @@ private:
     VECTOR2I              m_cursor;
 
     OPT_VECTOR2I          m_anchorPos;
+    OPT_VECTOR2I          m_breakPos;
 
     // A map of labels to scaling factors.  Used to scale the movement vector for labels that
     // are attached to wires which have only one end moving.

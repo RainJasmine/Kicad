@@ -27,10 +27,13 @@
 #ifndef _DIALOG_PAD_PROPERTIES_H_
 #define _DIALOG_PAD_PROPERTIES_H_
 
+#include <optional>
+
 #include <pcb_base_frame.h>
+
 #include <wx/valnum.h>
+
 #include <board.h>
-#include <footprint.h>
 #include <padstack.h>
 #include <pcb_shape.h>
 #include <origin_viewitem.h>
@@ -38,6 +41,9 @@
 #include <widgets/text_ctrl_eval.h>
 #include <pcb_draw_panel_gal.h>
 #include <widgets/unit_binder.h>
+#include <widgets/margin_offset_binder.h>
+
+class PAD;
 
 /**
  * DIALOG_PAD_PROPERTIES, derived from DIALOG_PAD_PROPERTIES_BASE,
@@ -62,10 +68,15 @@ private:
     void afterPadstackModeChanged();
 
     /**
-     * Updates the CheckBox states in pad layers list, based on the layer_mask (if non-empty)
-     * or the default layers for the current pad type.
+     * Updates the CheckBox states in pad layers list.
+     *
+     * When @a layer_mask has a value, its exact contents (including an empty set) are reflected
+     * in the UI.  When it is std::nullopt, the default layers for the current pad type are used
+     * instead; this is intended for the case when the pad type has just changed and the previous
+     * layer set no longer applies.
      */
-    void updatePadLayersList( LSET layer_mask, bool remove_unconnected, bool keep_top_bottom );
+    void updatePadLayersList( std::optional<LSET> layer_mask, bool remove_unconnected,
+                              bool keep_top_bottom );
 
     /// Copy values from dialog field to aPad's members
     bool transferDataToPad( PAD* aPad );
@@ -83,9 +94,13 @@ private:
 
     void OnUpdateUINonCopperWarning( wxUpdateUIEvent& event ) override;
 
+    void onBackDrillChoice( wxCommandEvent& event ) override;
+    void onTopPostMachining( wxCommandEvent& event ) override;
+    void onBottomPostMachining( wxCommandEvent& event ) override;
+
     void OnPadShapeSelection( wxCommandEvent& event ) override;
     void OnDrillShapeSelected( wxCommandEvent& event ) override;
-	void onChangePadMode( wxCommandEvent& event ) override;
+	void onChangePadDrawMode( wxCommandEvent& event ) override;
 	void OnOffsetCheckbox( wxCommandEvent& event ) override;
 	void OnPadToDieCheckbox( wxCommandEvent& event ) override;
     void OnPadToDieDelayCheckbox( wxCommandEvent& event ) override;
@@ -124,6 +139,16 @@ private:
 
     void onModify( wxCommandEvent& aEvent ) override;
     void onModify( wxSpinDoubleEvent& aEvent ) override;
+
+    // Return the largest chamfer ratio allowed by the current pad shape
+    double getMaxChamferRatio() const;
+
+    // Return the largest corner radius allowed by the current pad shape
+    double getMaxCornerRadius() const;
+
+    void updateAllowedPadChamferCorners();
+
+    void onPadShapeSelection( bool aUpdateSpokeAngle );
 
 private:
     PCB_BASE_FRAME* m_parent;
@@ -166,14 +191,21 @@ private:
     UNIT_BINDER m_holeX, m_holeY;
     UNIT_BINDER m_clearance;
     UNIT_BINDER m_maskMargin;
-    UNIT_BINDER m_pasteMargin;
-    UNIT_BINDER m_pasteMarginRatio;
+    MARGIN_OFFSET_BINDER m_pasteMargin;
     UNIT_BINDER m_thermalGap;
     UNIT_BINDER m_spokeWidth;
     UNIT_BINDER m_spokeAngle;
     UNIT_BINDER m_pad_orientation;
     UNIT_BINDER m_teardropMaxLenSetting;
     UNIT_BINDER m_teardropMaxHeightSetting;
+
+    UNIT_BINDER m_topPostMachineSize1Binder;
+    UNIT_BINDER m_topPostMachineSize2Binder;
+    UNIT_BINDER m_bottomPostMachineSize1Binder;
+    UNIT_BINDER m_bottomPostMachineSize2Binder;
+
+    UNIT_BINDER m_backDrillTopSizeBinder;
+    UNIT_BINDER m_backDrillBottomSizeBinder;
 };
 
 

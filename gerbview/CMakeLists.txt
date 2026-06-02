@@ -73,6 +73,10 @@ set( GERBVIEW_SRCS
     tools/gerbview_selection_tool.cpp
     tools/gerbview_control.cpp
     gerber_collectors.cpp
+    gerber_to_polyset.cpp
+    gerber_diff.cpp
+    gerber_to_png.cpp
+    gerbview_jobs_handler.cpp
     )
 
 set( GERBVIEW_EXTRA_SRCS
@@ -156,6 +160,7 @@ target_link_libraries( gerbview_kiface
     PRIVATE
         nlohmann_json
         gal
+        kicommon
         common
         core
         gerbview_kiface_objects
@@ -190,10 +195,10 @@ if( APPLE )
         )
 
     set_target_properties( gerbview PROPERTIES INSTALL_RPATH
-            "@executable_path/../Frameworks;@executable_path/../Frameworks/Python.framework" )
+            "@executable_path/../Frameworks" )
 
     set_target_properties( gerbview_kiface PROPERTIES INSTALL_RPATH
-            "@executable_path/../Frameworks;@executable_path/../Frameworks/Python.framework" )
+            "@executable_path/../Frameworks" )
     set_target_properties( gerbview_kiface PROPERTIES BUILD_WITH_INSTALL_RPATH 1 )
 
     # put individual bundle outside of main bundle as a first step

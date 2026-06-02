@@ -25,22 +25,25 @@
 /*
  * Edit properties of Lines, Circles, Arcs and Polygons for PCBNew and Footprint Editor
  */
+#include "dialog_shape_properties_base.h"
+
+#include <wx/valnum.h>
 
 #include <pcb_base_edit_frame.h>
 #include <pcb_edit_frame.h>
-#include <wx/valnum.h>
 #include <board_commit.h>
 #include <board_design_settings.h>
 #include <pcb_layer_box_selector.h>
 #include <dialogs/html_message_box.h>
 #include <length_delay_calculation/length_delay_calculation.h>
+#include <string_utils.h>
 #include <tool/tool_manager.h>
 #include <tool/actions.h>
 #include <pcb_shape.h>
 #include <macros.h>
+#include <algorithm>
 #include <widgets/unit_binder.h>
 
-#include <dialog_shape_properties_base.h>
 #include <tools/drawing_tool.h>
 
 
@@ -493,7 +496,7 @@ public:
     {
         const VECTOR2I  center{ GetIntValue( CSA_CENTER_X ), GetIntValue( CSA_CENTER_Y ) };
         const VECTOR2I  start{ GetIntValue( CSA_START_X ), GetIntValue( CSA_START_Y ) };
-        const EDA_ANGLE angle( GetIntValue( CSA_ANGLE ), DEGREES_T );
+        const EDA_ANGLE angle{ GetAngleValue( CSA_ANGLE ) };
 
         GetShape().SetCenter( center );
         GetShape().SetStart( start );
@@ -703,18 +706,20 @@ public:
     }
 };
 
+
 class DIALOG_SHAPE_PROPERTIES : public DIALOG_SHAPE_PROPERTIES_BASE
 {
 public:
     DIALOG_SHAPE_PROPERTIES( PCB_BASE_EDIT_FRAME* aParent, PCB_SHAPE* aShape );
-    ~DIALOG_SHAPE_PROPERTIES() {};
+    ~DIALOG_SHAPE_PROPERTIES() override = default;
 
 private:
     bool TransferDataToWindow() override;
     bool TransferDataFromWindow() override;
 
+    void onRoundedRectChanged( wxCommandEvent& event ) override;
+    void onCornerRadius( wxCommandEvent& event ) override;
     void onLayerSelection( wxCommandEvent& event ) override;
-
     void onTechLayersChanged( wxCommandEvent& event ) override;
 
     bool Validate() override;
@@ -745,6 +750,7 @@ private:
     PCB_BASE_EDIT_FRAME*  m_parent;
     PCB_SHAPE*            m_item;
 
+    UNIT_BINDER           m_cornerRadius;
     UNIT_BINDER           m_thickness;
     UNIT_BINDER           m_solderMaskMargin;
 
@@ -755,8 +761,7 @@ private:
 
 
 static void AddXYPointToSizer( EDA_DRAW_FRAME& aFrame, wxGridBagSizer& aSizer, int row, int col,
-                               const wxString aName, bool aRelative,
-                               std::vector<BOUND_CONTROL>& aBoundCtrls )
+                               const wxString& aName, bool aRelative, std::vector<BOUND_CONTROL>& aBoundCtrls )
 {
     //    Name
     // X [Ctrl] mm
@@ -770,14 +775,13 @@ static void AddXYPointToSizer( EDA_DRAW_FRAME& aFrame, wxGridBagSizer& aSizer, i
 
     for( size_t coord = 0; coord < 2; ++coord )
     {
-        wxStaticText* label =
-                new wxStaticText( parent, wxID_ANY, coord == 0 ? _( "X" ) : _( "Y" ) );
+        wxStaticText* label = new wxStaticText( parent, wxID_ANY, coord == 0 ? _( "X:" ) : _( "Y:" ) );
         aSizer.Add( label, wxGBPosition( row, col ), wxDefaultSpan,
-                    wxALIGN_LEFT | wxALIGN_CENTER_VERTICAL | wxLEFT, 5 );
+                    wxALIGN_LEFT | wxALIGN_CENTER_VERTICAL | wxLEFT, col > 0 ? 20 : 5 );
 
         wxTextCtrl* ctrl = new wxTextCtrl( parent, wxID_ANY, "" );
         aSizer.Add( ctrl, wxGBPosition( row, col + 1 ), wxDefaultSpan,
-                    wxEXPAND | wxTOP | wxLEFT | wxRIGHT, 5 );
+                    wxEXPAND | wxALIGN_CENTER_VERTICAL, 5 );
 
         wxStaticText* units = new wxStaticText( parent, wxID_ANY, _( "mm" ) );
         aSizer.Add( units, wxGBPosition( row, col + 2 ), wxDefaultSpan,
@@ -786,11 +790,9 @@ static void AddXYPointToSizer( EDA_DRAW_FRAME& aFrame, wxGridBagSizer& aSizer, i
         auto binder = std::make_unique<UNIT_BINDER>( &aFrame, label, ctrl, units );
 
         if( aRelative )
-            binder->SetCoordType( coord == 0 ? ORIGIN_TRANSFORMS::REL_X_COORD
-                                             : ORIGIN_TRANSFORMS::REL_Y_COORD );
+            binder->SetCoordType( coord == 0 ? ORIGIN_TRANSFORMS::REL_X_COORD : ORIGIN_TRANSFORMS::REL_Y_COORD );
         else
-            binder->SetCoordType( coord == 0 ? ORIGIN_TRANSFORMS::ABS_X_COORD
-                                             : ORIGIN_TRANSFORMS::ABS_Y_COORD );
+            binder->SetCoordType( coord == 0 ? ORIGIN_TRANSFORMS::ABS_X_COORD : ORIGIN_TRANSFORMS::ABS_Y_COORD );
 
         aBoundCtrls.push_back( BOUND_CONTROL{ std::move( binder ), ctrl } );
         row++;
@@ -802,19 +804,19 @@ static void AddXYPointToSizer( EDA_DRAW_FRAME& aFrame, wxGridBagSizer& aSizer, i
 
 
 void AddFieldToSizer( EDA_DRAW_FRAME& aFrame, wxGridBagSizer& aSizer, int row, int col,
-                      const wxString aName, ORIGIN_TRANSFORMS::COORD_TYPES_T aCoordType,
+                      const wxString& aName, ORIGIN_TRANSFORMS::COORD_TYPES_T aCoordType,
                       bool aIsAngle, std::vector<BOUND_CONTROL>& aBoundCtrls )
 {
-    // Name [Ctrl] mm
+    // Name: [Ctrl] mm
     wxWindow* parent = aSizer.GetContainingWindow();
 
-    wxStaticText* label = new wxStaticText( parent, wxID_ANY, aName );
+    wxStaticText* label = new wxStaticText( parent, wxID_ANY, aName + wxS( ":" ) );
     aSizer.Add( label, wxGBPosition( row, col ), wxDefaultSpan,
-                wxALIGN_LEFT | wxALIGN_CENTER_VERTICAL | wxLEFT, 5 );
+                wxALIGN_LEFT | wxALIGN_CENTER_VERTICAL | wxLEFT, col > 0 ? 20 : 5 );
 
     wxTextCtrl* ctrl = new wxTextCtrl( parent, wxID_ANY );
     aSizer.Add( ctrl, wxGBPosition( row, col + 1 ), wxDefaultSpan,
-                wxEXPAND | wxTOP | wxLEFT | wxRIGHT, 5 );
+                wxEXPAND | wxALIGN_CENTER_VERTICAL, 5 );
 
     wxStaticText* units = new wxStaticText( parent, wxID_ANY, _( "mm" ) );
     aSizer.Add( units, wxGBPosition( row, col + 2 ), wxDefaultSpan,
@@ -840,12 +842,13 @@ static std::map<SHAPE_T, int> s_lastTabForShape;
 
 
 DIALOG_SHAPE_PROPERTIES::DIALOG_SHAPE_PROPERTIES( PCB_BASE_EDIT_FRAME* aParent, PCB_SHAPE* aShape ):
-    DIALOG_SHAPE_PROPERTIES_BASE( aParent ),
-    m_parent( aParent ),
-    m_item( aShape ),
-    m_thickness( aParent, m_thicknessLabel, m_thicknessCtrl, m_thicknessUnits ),
-    m_solderMaskMargin( aParent, m_solderMaskMarginLabel, m_solderMaskMarginCtrl, m_solderMaskMarginUnit ),
-    m_workingCopy( *m_item )
+        DIALOG_SHAPE_PROPERTIES_BASE( aParent ),
+        m_parent( aParent ),
+        m_item( aShape ),
+        m_cornerRadius( aParent, m_cornerRadiusLabel, m_cornerRadiusCtrl, m_cornerRadiusUnits ),
+        m_thickness( aParent, m_thicknessLabel, m_thicknessCtrl, m_thicknessUnits ),
+        m_solderMaskMargin( aParent, m_solderMaskMarginLabel, m_solderMaskMarginCtrl, m_solderMaskMarginUnit ),
+        m_workingCopy( *m_item )
 {
     SetTitle( wxString::Format( GetTitle(), m_item->GetFriendlyName() ) );
     m_hash_key = TO_UTF8( GetTitle() );
@@ -857,19 +860,20 @@ DIALOG_SHAPE_PROPERTIES::DIALOG_SHAPE_PROPERTIES( PCB_BASE_EDIT_FRAME* aParent, 
     // use. Constructing on-demand would work fine too.
     std::set<int> shownPages;
 
-    const auto showPage = [&]( wxSizer& aMainSizer, bool aSelect = false )
-    {
-        // Get the parent of the sizer, which is the panel
-        wxWindow* page = aMainSizer.GetContainingWindow();
-        wxCHECK( page, /* void */ );
-        page->Layout();
+    const auto showPage =
+            [&]( wxSizer& aMainSizer, bool aSelect = false )
+            {
+                // Get the parent of the sizer, which is the panel
+                wxWindow* page = aMainSizer.GetContainingWindow();
+                wxCHECK( page, /* void */ );
+                page->Layout();
 
-        const int pageIdx = m_notebookShapeDefs->FindPage( page );
-        shownPages.insert( pageIdx );
+                const int pageIdx = m_notebookShapeDefs->FindPage( page );
+                shownPages.insert( pageIdx );
 
-        if( aSelect )
-            m_notebookShapeDefs->SetSelection( pageIdx );
-    };
+                if( aSelect )
+                    m_notebookShapeDefs->SetSelection( pageIdx );
+            };
 
     switch( m_item->GetShape() )
     {
@@ -909,12 +913,15 @@ DIALOG_SHAPE_PROPERTIES::DIALOG_SHAPE_PROPERTIES( PCB_BASE_EDIT_FRAME* aParent, 
         showPage( *m_gbsLineByEnds, true );
         showPage( *m_gbsLineByLengthAngle );
         showPage( *m_gbsLineByStartMid );
+
+        m_cbRoundRect->Show( false );
+        m_cornerRadius.Show( false );
         break;
 
     case SHAPE_T::ARC:
         AddXYPointToSizer( *aParent, *m_gbsArcByCSA, 0, 0, _( "Center" ), false, m_boundCtrls);
         AddXYPointToSizer( *aParent, *m_gbsArcByCSA, 0, 3, _( "Start Point" ), false, m_boundCtrls);
-        AddFieldToSizer( *aParent, *m_gbsArcByCSA, 3, 0, _( "Start Angle" ), ORIGIN_TRANSFORMS::NOT_A_COORD, true, m_boundCtrls );
+        AddFieldToSizer( *aParent, *m_gbsArcByCSA, 3, 0, _( "Included Angle" ), ORIGIN_TRANSFORMS::NOT_A_COORD, true, m_boundCtrls );
 
         AddXYPointToSizer( *aParent, *m_gbsArcBySME, 0, 0, _( "Start Point" ), false, m_boundCtrls );
         AddXYPointToSizer( *aParent, *m_gbsArcBySME, 0, 3, _( "Mid Point" ), false, m_boundCtrls );
@@ -924,6 +931,9 @@ DIALOG_SHAPE_PROPERTIES::DIALOG_SHAPE_PROPERTIES( PCB_BASE_EDIT_FRAME* aParent, 
 
         showPage( *m_gbsArcByCSA, true );
         showPage( *m_gbsArcBySME );
+
+        m_cbRoundRect->Show( false );
+        m_cornerRadius.Show( false );
         break;
 
     case SHAPE_T::CIRCLE:
@@ -937,6 +947,9 @@ DIALOG_SHAPE_PROPERTIES::DIALOG_SHAPE_PROPERTIES( PCB_BASE_EDIT_FRAME* aParent, 
 
         showPage( *m_gbsCircleCenterRadius, true );
         showPage( *m_gbsCircleCenterPoint );
+
+        m_cbRoundRect->Show( false );
+        m_cornerRadius.Show( false );
         break;
 
     case SHAPE_T::BEZIER:
@@ -953,6 +966,9 @@ DIALOG_SHAPE_PROPERTIES::DIALOG_SHAPE_PROPERTIES( PCB_BASE_EDIT_FRAME* aParent, 
     case SHAPE_T::POLY:
         m_notebookShapeDefs->Hide();
         // Nothing to do here...yet
+
+        m_cbRoundRect->Show( false );
+        m_cornerRadius.Show( false );
         break;
 
     case SHAPE_T::UNDEFINED:
@@ -993,11 +1009,9 @@ DIALOG_SHAPE_PROPERTIES::DIALOG_SHAPE_PROPERTIES( PCB_BASE_EDIT_FRAME* aParent, 
     // Configure the layers list selector
     if( m_parent->GetFrameType() == FRAME_FOOTPRINT_EDITOR )
     {
-        LSET forbiddenLayers = LSET::ForbiddenFootprintLayers();
-
-        // If someone went to the trouble of setting the layer in a text editor, then there's
-        // very little sense in nagging them about it.
-        forbiddenLayers.set( m_item->GetLayer(), false );
+        // In the footprint editor, turn off the layers that the footprint doesn't have
+        const LSET& brdLayers = aParent->GetBoard()->GetEnabledLayers();
+        LSET        forbiddenLayers = LSET::AllLayersMask() & ~brdLayers;
 
         m_LayerSelectionCtrl->SetNotAllowedLayerSet( forbiddenLayers );
     }
@@ -1015,20 +1029,6 @@ DIALOG_SHAPE_PROPERTIES::DIALOG_SHAPE_PROPERTIES( PCB_BASE_EDIT_FRAME* aParent, 
     {
         m_netLabel->Hide();
         m_netSelector->Hide();
-    }
-    else
-    {
-        int net = aShape->GetNetCode();
-
-        if( net >= 0 )
-        {
-            m_netSelector->SetSelectedNetcode( net );
-        }
-        else
-        {
-            m_netSelector->SetIndeterminateString( INDETERMINATE_STATE );
-            m_netSelector->SetIndeterminate();
-        }
     }
 
     if( m_item->GetShape() == SHAPE_T::ARC
@@ -1063,6 +1063,19 @@ void PCB_BASE_EDIT_FRAME::ShowGraphicItemPropertiesDialog( PCB_SHAPE* aShape )
 }
 
 
+void DIALOG_SHAPE_PROPERTIES::onRoundedRectChanged( wxCommandEvent &event )
+{
+    if( !m_cbRoundRect->GetValue() )
+        m_cornerRadius.ChangeValue( wxEmptyString );
+}
+
+
+void DIALOG_SHAPE_PROPERTIES::onCornerRadius( wxCommandEvent &event )
+{
+    m_cbRoundRect->SetValue( true );
+}
+
+
 void DIALOG_SHAPE_PROPERTIES::onLayerSelection( wxCommandEvent& event )
 {
     if( m_LayerSelectionCtrl->GetLayerSelection() >= 0 )
@@ -1083,12 +1096,26 @@ bool DIALOG_SHAPE_PROPERTIES::TransferDataToWindow()
     if( !m_item )
         return false;
 
-    // Not al shapes have a syncer (e.g. polygons)
+    // Not all shapes have a syncer (e.g. polygons)
     if( m_geomSync )
         m_geomSync->SetShape( *m_item );
 
     m_fillCtrl->SetSelection( m_item->GetFillModeProp() );
     m_locked->SetValue( m_item->IsLocked() );
+
+    if( m_item->GetShape() == SHAPE_T::RECTANGLE )
+    {
+        if( m_item->GetCornerRadius() > 0 )
+        {
+            m_cbRoundRect->SetValue( true );
+            m_cornerRadius.ChangeValue( m_item->GetCornerRadius() );
+        }
+        else
+        {
+            m_cbRoundRect->SetValue( false );
+            m_cornerRadius.ChangeValue( wxEmptyString );
+        }
+    }
 
     m_thickness.SetValue( m_item->GetStroke().GetWidth() );
 
@@ -1107,6 +1134,21 @@ bool DIALOG_SHAPE_PROPERTIES::TransferDataToWindow()
         m_solderMaskMargin.SetValue( m_item->GetLocalSolderMaskMargin().value() );
     else
         m_solderMaskMargin.SetValue( wxEmptyString );
+
+    if( m_parent->GetFrameType() == FRAME_PCB_EDITOR )
+    {
+        int net = m_item->GetNetCode();
+
+        if( net >= 0 )
+        {
+            m_netSelector->SetSelectedNetcode( net );
+        }
+        else
+        {
+            m_netSelector->SetIndeterminateString( INDETERMINATE_STATE );
+            m_netSelector->SetIndeterminate();
+        }
+    }
 
     enableNetInfo();
     enableTechLayers();
@@ -1138,6 +1180,9 @@ bool DIALOG_SHAPE_PROPERTIES::TransferDataFromWindow()
     *m_item = m_workingCopy;
 
     bool wasLocked = m_item->IsLocked();
+
+    if( m_item->GetShape() == SHAPE_T::RECTANGLE )
+        m_item->SetCornerRadius( m_cbRoundRect->GetValue() ? m_cornerRadius.GetIntValue() : 0 );
 
     m_item->SetFillModeProp( (UI_FILL_MODE) m_fillCtrl->GetSelection() );
     m_item->SetLocked( m_locked->GetValue() );
@@ -1207,10 +1252,20 @@ bool DIALOG_SHAPE_PROPERTIES::Validate()
         break;
 
     case SHAPE_T::RECTANGLE:
+    {
         if( m_fillCtrl->GetSelection() != UI_FILL_MODE::SOLID && m_thickness.GetValue() <= 0 )
             errors.Add( _( "Line width must be greater than zero for an unfilled rectangle." ) );
 
+        int shortSide = std::min( m_item->GetRectangleWidth(), m_item->GetRectangleHeight() );
+
+        if( m_cbRoundRect->GetValue() && m_cornerRadius.GetIntValue() * 2 > shortSide )
+        {
+            errors.Add( _( "Corner radius must be less than or equal to half the smaller side." ) );
+            m_cornerRadius.SetValue( KiROUND( shortSide / 2.0 ) );
+        }
+
         break;
+    }
 
     case SHAPE_T::POLY:
         if( m_fillCtrl->GetSelection() != UI_FILL_MODE::SOLID && m_thickness.GetValue() <= 0 )

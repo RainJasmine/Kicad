@@ -36,6 +36,7 @@
 class EDA_TEXT;
 class PLOTTER;
 class PCB_TEXT;
+class PCB_BARCODE;
 class PAD;
 class PCB_SHAPE;
 class PCB_TABLE;
@@ -94,6 +95,7 @@ public:
                    const KIFONT::METRICS& aFontMetrics, bool aStrikeout = false );
     void PlotShape( const PCB_SHAPE* aShape );
     void PlotTableBorders( const PCB_TABLE* aTable );
+    void PlotBarCode( const PCB_BARCODE* aBarCode );
 
     /**
      * Plot a pad.
@@ -228,21 +230,6 @@ void PlotStandardLayer( BOARD* aBoard, PLOTTER* aPlotter, const LSET& aLayerMask
  */
 void PlotLayerOutlines( BOARD* aBoard, PLOTTER* aPlotter, const LSET& aLayerMask,
                         const PCB_PLOT_PARAMS& aPlotOpt );
-
-/**
- * Complete a plot filename.
- *
- * It forces the output directory, adds a suffix to the name, and sets the specified extension.
- * The suffix is usually the layer name and replaces illegal file name character in the suffix
- * with an underscore character.
- *
- * @param aFilename is the file name to initialize that contains the base filename.
- * @param aOutputDir is the path.
- * @param aSuffix is the suffix to add to the base filename.
- * @param aExtension is the file extension.
- */
-void BuildPlotFileName( wxFileName* aFilename, const wxString& aOutputDir, const wxString& aSuffix,
-                        const wxString& aExtension );
 
 
 /**

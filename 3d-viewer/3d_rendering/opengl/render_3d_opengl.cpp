@@ -24,15 +24,16 @@
  */
 
 #include <cstdint>
-#include <gal/opengl/kiglew.h>    // Must be included first
+#include <kicad_gl/kiglad.h>    // Must be included first
 
 #include "plugins/3dapi/xv3d_types.h"
 #include "render_3d_opengl.h"
 #include "opengl_utils.h"
 #include "common_ogl/ogl_utils.h"
+#include "../3d_placeholder_utils.h"
 #include <board.h>
 #include <footprint.h>
-#include <gal/opengl/gl_context_mgr.h>
+#include <kicad_gl/gl_context_mgr.h>
 #include <3d_math.h>
 #include <glm/geometric.hpp>
 #include <lset.h>
@@ -43,6 +44,28 @@
 #include <wx/log.h>
 
 #include <base_units.h>
+
+#include <glm/gtc/type_ptr.hpp>
+
+/**
+ * Attempt to control the transparency based on the gray value of the color.
+ * This function applies a non-linear transformation that reduces transparency
+ * for darker colors while preserving copper visibility through the solder mask.
+ *
+ * @param aGrayColorValue - diffuse gray value (0.0 to 1.0)
+ * @param aTransparency - base transparency value (0.0 opaque to 1.0 transparent)
+ * @return transparency to use in material
+ */
+static float TransparencyControl( float aGrayColorValue, float aTransparency )
+{
+    const float aaa = aTransparency * aTransparency * aTransparency;
+
+    // 1.00-1.05*(1.0-x)^3
+    float ca = 1.0f - aTransparency;
+    ca       = 1.00f - 1.05f * ca * ca * ca;
+
+    return glm::clamp( aGrayColorValue * ca + aaa, 0.0f, 1.0f );
+}
 
 /**
  * Scale conversion from 3d model units to pcb units
@@ -72,12 +95,15 @@ RENDER_3D_OPENGL::RENDER_3D_OPENGL( EDA_3D_CANVAS* aCanvas, BOARD_ADAPTER& aAdap
     m_outerViaThroughHoles = nullptr;
     m_microviaHoles = nullptr;
     m_padHoles = nullptr;
+    m_viaFrontCover = nullptr;
+    m_viaBackCover = nullptr;
 
     m_circleTexture = 0;
     m_grid = 0;
     m_lastGridType = GRID3D_TYPE::NONE;
     m_currentRollOverItem = nullptr;
     m_boardWithHoles = nullptr;
+    m_postMachinePlugs = nullptr;
 
     m_3dModelMap.clear();
 
@@ -90,6 +116,8 @@ RENDER_3D_OPENGL::~RENDER_3D_OPENGL()
     wxLogTrace( m_logTrace, wxT( "RENDER_3D_OPENGL::RENDER_3D_OPENGL" ) );
 
     freeAllLists();
+
+    delete m_placeholderModel;
 
     glDeleteTextures( 1, &m_circleTexture );
 
@@ -176,6 +204,12 @@ void RENDER_3D_OPENGL::handleGizmoMouseInput( int mouseX, int mouseY )
 }
 
 
+void RENDER_3D_OPENGL::updateGizmoSelection( glm::mat4 aCameraRotationMatrix )
+{
+    m_spheres_gizmo->updateSelection( aCameraRotationMatrix );
+}
+
+
 void RENDER_3D_OPENGL::setupMaterials()
 {
     m_materials = {};
@@ -252,7 +286,8 @@ void RENDER_3D_OPENGL::setupMaterials()
     m_materials.m_SilkSBot.m_Shininess = 0.078125f * 128.0f;
     m_materials.m_SilkSBot.m_Emissive  = SFVEC3F( 0.0f, 0.0f, 0.0f );
 
-    m_materials.m_SolderMask.m_Shininess    = 0.8f * 128.0f;
+    // Shininess is computed dynamically in setLayerMaterial() based on color darkness
+    m_materials.m_SolderMask.m_Shininess    = 0.85f * 128.0f;
     m_materials.m_SolderMask.m_Emissive     = SFVEC3F( 0.0f, 0.0f, 0.0f );
 
     // Epoxy material
@@ -291,13 +326,28 @@ void RENDER_3D_OPENGL::setLayerMaterial( PCB_LAYER_ID aLayerID )
 
         m_materials.m_SolderMask.m_Diffuse = layerColor;
 
-        // Convert Opacity to Transparency
-        m_materials.m_SolderMask.m_Transparency = 1.0f - layerColor.a;
+        // Compute gray value for material property adjustments based on color darkness
+        const float solderMask_gray = ( layerColor.r + layerColor.g + layerColor.b ) / 3.0f;
+
+        // Use TransparencyControl to make darker colors more opaque, preventing copper
+        // show-through on dark solder masks
+        const float baseTransparency = 1.0f - layerColor.a;
+        m_materials.m_SolderMask.m_Transparency = TransparencyControl( solderMask_gray,
+                                                                       baseTransparency );
 
         m_materials.m_SolderMask.m_Ambient = m_materials.m_SolderMask.m_Diffuse * 0.3f;
 
-        m_materials.m_SolderMask.m_Specular = m_materials.m_SolderMask.m_Diffuse
-                                                * m_materials.m_SolderMask.m_Diffuse;
+        // Darker solder masks need a higher specular floor to avoid washed-out appearance
+        const SFVEC3F baseSpecular = m_materials.m_SolderMask.m_Diffuse
+                                     * m_materials.m_SolderMask.m_Diffuse;
+        m_materials.m_SolderMask.m_Specular = glm::max( baseSpecular, SFVEC3F( 0.30f ) );
+
+        // Darker colors get higher shininess for a tighter specular highlight, matching
+        // how dark solder masks appear in real life
+        const float minSolderMaskShininess = 0.85f * 128.0f;
+        const float maxSolderMaskShininess = 512.0f;
+        m_materials.m_SolderMask.m_Shininess = minSolderMaskShininess
+                + ( maxSolderMaskShininess - minSolderMaskShininess ) * ( 1.0f - solderMask_gray );
 
         OglSetMaterial( m_materials.m_SolderMask, 1.0f );
         break;
@@ -479,6 +529,16 @@ void RENDER_3D_OPENGL::renderBoardBody( bool aSkipRenderHoles )
 
         ogl_disp_list->SetItIsTransparent( true );
         ogl_disp_list->DrawAll();
+    }
+
+    // Also render post-machining plugs (board material that remains after backdrill/counterbore/countersink)
+    if( !aSkipRenderHoles && m_postMachinePlugs )
+    {
+        m_postMachinePlugs->ApplyScalePosition( -m_boardAdapter.GetBoardBodyThickness() / 2.0f,
+                                                m_boardAdapter.GetBoardBodyThickness() );
+
+        m_postMachinePlugs->SetItIsTransparent( true );
+        m_postMachinePlugs->DrawAll();
     }
 }
 
@@ -730,6 +790,81 @@ bool RENDER_3D_OPENGL::Redraw( bool aIsMoving, REPORTER* aStatusReporter,
     // Render 3D Models (Non-transparent)
     renderOpaqueModels( cameraViewMatrix );
 
+    // Render extruded 3D bodies
+    {
+        EDA_3D_VIEWER_SETTINGS::RENDER_SETTINGS& extCfg = m_boardAdapter.m_Cfg->m_Render;
+        const SFVEC3F                            extSelColor = m_boardAdapter.GetColor( extCfg.opengl_selection_color );
+
+        // Render extruded pad standoffs (metallic pins)
+        for( auto& [fp, renderList] : m_extrudedPadLists )
+        {
+            if( renderList )
+            {
+                bool highlight = false;
+
+                if( m_boardAdapter.m_IsBoardView )
+                {
+                    if( fp->IsSelected() )
+                        highlight = true;
+
+                    if( extCfg.highlight_on_rollover && fp == m_currentRollOverItem )
+                        highlight = true;
+                }
+
+                SMATERIAL mat = m_materials.m_Copper;
+                mat.m_Diffuse = SFVEC3F( 0.75f, 0.75f, 0.75f );
+                mat.m_Specular = SFVEC3F( 0.85f, 0.85f, 0.85f );
+                mat.m_Shininess = 0.6f * 128.0f;
+                mat.m_Transparency = 0.0f;
+
+                OglSetMaterial( mat, 1.0f, highlight, extSelColor );
+                renderList->DrawAll();
+            }
+        }
+
+        for( auto& [fp, renderList] : m_extrudedBodyLists )
+        {
+            const EXTRUDED_3D_BODY* body = fp->GetExtrudedBody();
+
+            if( !body )
+                continue;
+
+            if( renderList )
+            {
+                bool highlight = false;
+
+                if( m_boardAdapter.m_IsBoardView )
+                {
+                    if( fp->IsSelected() )
+                        highlight = true;
+
+                    if( extCfg.highlight_on_rollover && fp == m_currentRollOverItem )
+                        highlight = true;
+                }
+
+                KIGFX::COLOR4D c = body->m_color;
+
+                if( c == KIGFX::COLOR4D::UNSPECIFIED )
+                    c = EXTRUDED_3D_BODY::GetDefaultColor( body->m_material );
+
+                SMATERIAL mat;
+
+                SFVEC3F                  diffuse( c.r, c.g, c.b );
+                EXTRUSION_MATERIAL_PROPS props = GetMaterialProps( body->m_material, diffuse );
+
+                mat.m_Diffuse = diffuse;
+                mat.m_Ambient = props.m_Ambient;
+                mat.m_Specular = props.m_Specular;
+                mat.m_Shininess = props.m_Shininess;
+                mat.m_Emissive = SFVEC3F( 0.0f );
+                mat.m_Transparency = 1.0f - c.a;
+
+                OglSetMaterial( mat, 1.0f, highlight, extSelColor );
+                renderList->DrawAll();
+            }
+        }
+    }
+
     // Display board body
     if( layerFlags.test( LAYER_3D_BOARD ) )
         renderBoardBody( skipRenderHoles );
@@ -939,6 +1074,7 @@ void RENDER_3D_OPENGL::freeAllLists()
 
     DELETE_AND_FREE( m_board )
     DELETE_AND_FREE( m_boardWithHoles )
+    DELETE_AND_FREE( m_postMachinePlugs )
     DELETE_AND_FREE( m_antiBoard )
 
     DELETE_AND_FREE( m_outerThroughHoles )
@@ -947,6 +1083,12 @@ void RENDER_3D_OPENGL::freeAllLists()
 
     DELETE_AND_FREE( m_microviaHoles )
     DELETE_AND_FREE( m_padHoles )
+    DELETE_AND_FREE( m_viaFrontCover )
+    DELETE_AND_FREE( m_viaBackCover )
+    DELETE_AND_FREE( m_placeholderModel )
+
+    DELETE_AND_FREE_MAP( m_extrudedBodyLists )
+    DELETE_AND_FREE_MAP( m_extrudedPadLists )
 }
 
 
@@ -968,6 +1110,17 @@ void RENDER_3D_OPENGL::renderSolderMaskLayer( PCB_LAYER_ID aLayerID, float aZPos
         setLayerMaterial( aLayerID );
         m_board->SetItIsTransparent( true );
         m_board->DrawCulled( aShowThickness, solder_mask, via_holes );
+
+        if( aLayerID == F_Mask && m_viaFrontCover )
+        {
+            m_viaFrontCover->ApplyScalePosition( aZPos, 4 * m_boardAdapter.GetNonCopperLayerThickness() );
+            m_viaFrontCover->DrawTop();
+        }
+        else if( aLayerID == B_Mask && m_viaBackCover )
+        {
+            m_viaBackCover->ApplyScalePosition( aZPos, 4 * m_boardAdapter.GetNonCopperLayerThickness() );
+            m_viaBackCover->DrawBot();
+        }
     }
 }
 
@@ -1000,9 +1153,12 @@ void RENDER_3D_OPENGL::get3dModelsSelected( std::list<MODELTORENDER> &aDstRender
                 continue;
         }
 
-        if( !fp->Models().empty() )
+        bool hasModels = !fp->Models().empty();
+        bool showMissing = m_boardAdapter.m_Cfg->m_Render.show_missing_models;
+
+        if( hasModels || showMissing )
         {
-            if( m_boardAdapter.IsFootprintShown( (FOOTPRINT_ATTR_T) fp->GetAttributes() ) )
+            if( m_boardAdapter.IsFootprintShown( fp ) )
             {
                 const bool isFlipped = fp->IsFlipped();
 
@@ -1028,8 +1184,7 @@ void RENDER_3D_OPENGL::get3dModelsFromFootprint( std::list<MODELTORENDER> &aDstR
         glm::mat4 fpMatrix( 1.0f );
 
         fpMatrix = glm::translate( fpMatrix, SFVEC3F( pos.x * m_boardAdapter.BiuTo3dUnits(),
-                                                      -pos.y * m_boardAdapter.BiuTo3dUnits(),
-                                                      zpos ) );
+                                                      -pos.y * m_boardAdapter.BiuTo3dUnits(), zpos ) );
 
         if( !aFootprint->GetOrientation().IsZero() )
         {
@@ -1057,7 +1212,11 @@ void RENDER_3D_OPENGL::get3dModelsFromFootprint( std::list<MODELTORENDER> &aDstR
             auto cache_i = m_3dModelMap.find( sM.m_Filename );
 
             if( cache_i == m_3dModelMap.end() )
+            {
+                renderPlaceholderForFootprint( aDstRenderList, fpMatrix, aFootprint, aRenderTransparentOnly,
+                                               aIsSelected, aRenderTransparentOnly ? sM.m_Opacity : 1.0f );
                 continue;
+            }
 
             if( const MODEL_3D* modelPtr = cache_i->second )
             {
@@ -1103,6 +1262,79 @@ void RENDER_3D_OPENGL::get3dModelsFromFootprint( std::list<MODELTORENDER> &aDstR
                 }
             }
         }
+    }
+    else
+    {
+        const double zpos = m_boardAdapter.GetFootprintZPos( aFootprint->IsFlipped() );
+
+        VECTOR2I pos = aFootprint->GetPosition();
+
+        glm::mat4 fpMatrix( 1.0f );
+
+        fpMatrix = glm::translate( fpMatrix, SFVEC3F( pos.x * m_boardAdapter.BiuTo3dUnits(),
+                                                      -pos.y * m_boardAdapter.BiuTo3dUnits(), zpos ) );
+
+        if( !aFootprint->GetOrientation().IsZero() )
+        {
+            fpMatrix = glm::rotate( fpMatrix, (float) aFootprint->GetOrientation().AsRadians(),
+                                    SFVEC3F( 0.0f, 0.0f, 1.0f ) );
+        }
+
+        if( aFootprint->IsFlipped() )
+        {
+            fpMatrix = glm::rotate( fpMatrix, glm::pi<float>(), SFVEC3F( 0.0f, 1.0f, 0.0f ) );
+            fpMatrix = glm::rotate( fpMatrix, glm::pi<float>(), SFVEC3F( 0.0f, 0.0f, 1.0f ) );
+        }
+
+        double modelunit_to_3d_units_factor = m_boardAdapter.BiuTo3dUnits() * UNITS3D_TO_UNITSPCB;
+
+        fpMatrix = glm::scale( fpMatrix, SFVEC3F( modelunit_to_3d_units_factor ) );
+
+        renderPlaceholderForFootprint( aDstRenderList, fpMatrix, aFootprint, aRenderTransparentOnly, aIsSelected,
+                                       1.0f );
+    }
+}
+
+
+void RENDER_3D_OPENGL::renderPlaceholderForFootprint( std::list<MODELTORENDER>& aDstRenderList,
+                                                      const glm::mat4& aFpMatrix, const FOOTPRINT* aFootprint,
+                                                      bool aRenderTransparentOnly, bool aIsSelected, float aOpacity )
+{
+    if( !m_boardAdapter.m_Cfg->m_Render.show_missing_models || !m_placeholderModel )
+        return;
+
+    // Suppress placeholder if a valid extruded body was built
+    if( m_extrudedBodyLists.count( aFootprint ) )
+        return;
+
+    BOX2I localBox = CalcPlaceholderLocalBox( aFootprint );
+
+    float bboxW = std::abs( localBox.GetWidth() ) / pcbIUScale.IU_PER_MM * 0.9f;
+    float bboxH = std::abs( localBox.GetHeight() ) / pcbIUScale.IU_PER_MM * 0.9f;
+
+    float scaleX = bboxW;
+    float scaleY = bboxH;
+    float scaleZ = std::min( bboxW, bboxH ) * 0.5f;
+
+    VECTOR2I localCenter = localBox.GetCenter();
+    float    offsetX = localCenter.x / pcbIUScale.IU_PER_MM;
+    float    offsetY = -localCenter.y / pcbIUScale.IU_PER_MM;
+    float    offsetZ = scaleZ * 0.5f;
+
+    if( aFootprint->IsFlipped() )
+        offsetY = -offsetY;
+
+    glm::mat4 mtx = aFpMatrix;
+    mtx = glm::translate( mtx, SFVEC3F( offsetX, offsetY, offsetZ ) );
+    mtx = glm::scale( mtx, SFVEC3F( scaleX, scaleY, scaleZ ) );
+
+    bool placeholderOpaque = aOpacity >= 1.0;
+
+    if( ( !aRenderTransparentOnly && m_placeholderModel->HasOpaqueMeshes() && placeholderOpaque )
+        || ( aRenderTransparentOnly && ( m_placeholderModel->HasTransparentMeshes() || !placeholderOpaque ) ) )
+    {
+        aDstRenderList.emplace_back( mtx, m_placeholderModel, aOpacity, aRenderTransparentOnly,
+                                     aFootprint->IsSelected() || aIsSelected );
     }
 }
 
@@ -1464,4 +1696,102 @@ void RENDER_3D_OPENGL::generate3dGrid( GRID3D_TYPE aGridType )
     glDisable( GL_BLEND );
 
     glEndList();
+}
+
+
+void RENDER_3D_OPENGL::createPlaceholderModel()
+{
+    // Unit cube: 1mm × 1mm × 1mm, centered at origin
+    static SFVEC3F positions[24] = { // +Z (top)
+                                     { -0.5f, -0.5f, 0.5f },
+                                     { 0.5f, -0.5f, 0.5f },
+                                     { 0.5f, 0.5f, 0.5f },
+                                     { -0.5f, 0.5f, 0.5f },
+
+                                     // -Z (bottom)
+                                     { -0.5f, 0.5f, -0.5f },
+                                     { 0.5f, 0.5f, -0.5f },
+                                     { 0.5f, -0.5f, -0.5f },
+                                     { -0.5f, -0.5f, -0.5f },
+
+                                     // +X
+                                     { 0.5f, -0.5f, -0.5f },
+                                     { 0.5f, 0.5f, -0.5f },
+                                     { 0.5f, 0.5f, 0.5f },
+                                     { 0.5f, -0.5f, 0.5f },
+
+                                     // -X
+                                     { -0.5f, -0.5f, 0.5f },
+                                     { -0.5f, 0.5f, 0.5f },
+                                     { -0.5f, 0.5f, -0.5f },
+                                     { -0.5f, -0.5f, -0.5f },
+
+                                     // +Y
+                                     { -0.5f, 0.5f, 0.5f },
+                                     { 0.5f, 0.5f, 0.5f },
+                                     { 0.5f, 0.5f, -0.5f },
+                                     { -0.5f, 0.5f, -0.5f },
+
+                                     // -Y
+                                     { -0.5f, -0.5f, -0.5f },
+                                     { 0.5f, -0.5f, -0.5f },
+                                     { 0.5f, -0.5f, 0.5f },
+                                     { -0.5f, -0.5f, 0.5f }
+    };
+
+    static SFVEC3F normals[24] = { // +Z
+                                   { 0, 0, 1 },
+                                   { 0, 0, 1 },
+                                   { 0, 0, 1 },
+                                   { 0, 0, 1 },
+                                   // -Z
+                                   { 0, 0, -1 },
+                                   { 0, 0, -1 },
+                                   { 0, 0, -1 },
+                                   { 0, 0, -1 },
+                                   // +X
+                                   { 1, 0, 0 },
+                                   { 1, 0, 0 },
+                                   { 1, 0, 0 },
+                                   { 1, 0, 0 },
+                                   // -X
+                                   { -1, 0, 0 },
+                                   { -1, 0, 0 },
+                                   { -1, 0, 0 },
+                                   { -1, 0, 0 },
+                                   // +Y
+                                   { 0, 1, 0 },
+                                   { 0, 1, 0 },
+                                   { 0, 1, 0 },
+                                   { 0, 1, 0 },
+                                   // -Y
+                                   { 0, -1, 0 },
+                                   { 0, -1, 0 },
+                                   { 0, -1, 0 },
+                                   { 0, -1, 0 }
+    };
+
+    static unsigned int indices[36] = {
+        0,  1,  2,  0,  2,  3,  // +Z
+        4,  5,  6,  4,  6,  7,  // -Z
+        8,  9,  10, 8,  10, 11, // +X
+        12, 13, 14, 12, 14, 15, // -X
+        16, 17, 18, 16, 18, 19, // +Y
+        20, 21, 22, 20, 22, 23  // -Y
+    };
+
+    static SMATERIAL material = {
+        SFVEC3F( 0.2f, 0.1f, 0.0f ), // ambient
+        SFVEC3F( 1.0f, 0.5f, 0.0f ), // diffuse
+        SFVEC3F( 0.0f, 0.0f, 0.0f ), // emissive
+        SFVEC3F( 0.1f, 0.1f, 0.1f ), // specular
+        0.1f,                        // shininess
+        0.4f                         // transparency
+    };
+
+    static SMESH mesh = { 24, positions, normals, nullptr, nullptr, 36, indices, 0 };
+
+    static S3DMODEL model = { 1, &mesh, 1, &material };
+
+    m_placeholderModel = new MODEL_3D( model, MATERIAL_MODE::NORMAL );
 }

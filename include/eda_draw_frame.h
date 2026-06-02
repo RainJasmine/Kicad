@@ -26,9 +26,8 @@
 #ifndef DRAW_FRAME_H_
 #define DRAW_FRAME_H_
 
-#include <api/api_plugin.h>
+#include <api/plugin_action_scope.h>
 #include <eda_base_frame.h>
-#include <eda_search_data.h>
 #include <kiway_player.h>
 #include <gal/gal_display_options.h>
 #include <gal_display_options_common.h>
@@ -36,8 +35,11 @@
 #include <class_draw_panel_gal.h>
 #include <kiid.h>
 #include <hotkeys_basic.h>
-#include <widgets/lib_tree.h>
+#include <lib_id.h>
 
+struct EDA_SEARCH_DATA;
+struct PLUGIN_ACTION;
+class LIB_TREE;
 class EDA_ITEM;
 class wxSingleInstanceChecker;
 class ACTION_TOOLBAR;
@@ -52,6 +54,7 @@ class HOTKEY_CYCLE_POPUP;
 class PROPERTIES_PANEL;
 class NET_INSPECTOR_PANEL;
 enum class BITMAP_TYPE;
+class FILEDLG_HOOK_NEW_LIBRARY;
 
 namespace KIGFX
 {
@@ -104,17 +107,7 @@ public:
      */
     void ReleaseFile();
 
-    /**
-     * Toggle the scripting console visibility.
-     */
-    void ScriptingConsoleEnableDisable();
-
-    /**
-     * Get the current visibility of the scripting console window.
-     */
-    bool IsScriptingConsoleVisible();
-
-    EDA_SEARCH_DATA& GetFindReplaceData() { return *m_findReplaceData; }
+    EDA_SEARCH_DATA& GetFindReplaceData();
     wxArrayString& GetFindHistoryList() { return m_findStringHistoryList; }
 
     virtual void SetPageSettings( const PAGE_INFO& aPageSettings ) = 0;
@@ -184,17 +177,19 @@ public:
     virtual COLOR_SETTINGS* GetColorSettings( bool aForceRefresh = false ) const;
 
     /**
+     * @param aTitle dialog title
      * @param doOpen if true runs an Open Library browser, otherwise New Library
      * @param aFilename for New may contain a default name; in both cases return the chosen
      *                  filename.
      * @param wildcard a wildcard to filter the displayed files
      * @param ext the library file extension
      * @param isDirectory indicates the library files are directories
+     * @param aFileDlgHook optional; adds customized controls to dialog
      * @return true for OK; false for Cancel.
      */
-    bool LibraryFileBrowser( bool doOpen, wxFileName& aFilename, const wxString& wildcard,
-                             const wxString& ext, bool isDirectory = false, bool aIsGlobal = false,
-                             const wxString& aGlobalPath = wxEmptyString );
+    bool LibraryFileBrowser( const wxString& aTitle, bool doOpen, wxFileName& aFilename,
+                             const wxString& wildcard, const wxString& ext, bool isDirectory,
+                             FILEDLG_HOOK_NEW_LIBRARY* aFileDlgHook = nullptr );
 
     void CommonSettingsChanged( int aFlags ) override;
 
@@ -221,10 +216,10 @@ public:
      *
      * These parameters are saved in KiCad config for each main frame.
      */
-    bool IsGridVisible() const;
+    bool IsGridVisible();
     virtual void SetGridVisibility( bool aVisible );
 
-    bool         IsGridOverridden() const;
+    bool         IsGridOverridden();
     virtual void SetGridOverrides( bool aOverride );
 
     virtual COLOR4D GetGridColor() { return m_gridColor; }
@@ -303,14 +298,14 @@ public:
      *
      * @param aPos is the point to go to.
      */
-    void FocusOnLocation( const VECTOR2I& aPos );
+    void FocusOnLocation( const VECTOR2I& aPos, bool aAllowScroll = true );
 
     /**
      * Focus on a particular canvas item.
      *
      * @param aItem is the item to focus on. nullptr clears the focus.
      */
-    virtual void FocusOnItem( EDA_ITEM* aItem ) {}
+    virtual void FocusOnItem( EDA_ITEM* aItem, bool aAllowScroll = true ) {}
 
     virtual void ClearFocus() { FocusOnItem( nullptr ); }
 
@@ -346,6 +341,13 @@ public:
      */
     virtual void OnPageSettingsChange() {}
 
+    /** Create the status line (like a wxStatusBar). This is actually a KISTATUSBAR status bar.
+     * the specified number of fields is the extra number of fields, not the full field count.
+     * @return a KISTATUSBAR (derived from wxStatusBar)
+     */
+    wxStatusBar* OnCreateStatusBar( int number, long style, wxWindowID id,
+                                    const wxString& name ) override;
+
     /**
      * Update the status bar information.
      *
@@ -364,6 +366,8 @@ public:
      * Display current grid size in the status bar.
      */
     virtual void DisplayGridMsg();
+
+    bool GetOverrideLocks() const;
 
     void LoadSettings( APP_SETTINGS_BASE* aCfg ) override;
     void SaveSettings( APP_SETTINGS_BASE* aCfg ) override;
@@ -416,7 +420,7 @@ public:
 
     PROPERTIES_PANEL* GetPropertiesPanel() { return m_propertiesPanel; }
 
-    void UpdateProperties();
+    virtual void UpdateProperties();
 
     virtual void ToggleProperties() {}
 
@@ -425,6 +429,8 @@ public:
     static const wxString NetInspectorPanelName() { return wxS( "NetInspector" ); }
 
     static const wxString DesignBlocksPaneName() { return wxS( "DesignBlocks" ); }
+
+    static const wxString RemoteSymbolPaneName() { return wxS( "RemoteSymbol" ); }
 
     static const wxString AppearancePanelName() { return wxS( "LayersManager" ); }
 
@@ -455,6 +461,8 @@ public:
     void SetCanvas( EDA_DRAW_PANEL_GAL* aPanel ) { m_canvas = aPanel; }
 
     wxWindow* GetToolCanvas() const override { return GetCanvas(); }
+
+    void ClearToolbarControl( int aId ) override;
 
     /**
      * Return a reference to the gal rendering options used by GAL for rendering.
@@ -519,7 +527,7 @@ public:
      * @param aCfg is the settings to read the plugin ordering from.
      */
     static std::vector<const PLUGIN_ACTION*> GetOrderedPluginActions( PLUGIN_ACTION_SCOPE aScope,
-        APP_SETTINGS_BASE* aCfg );
+                                                                      APP_SETTINGS_BASE* aCfg );
 
     /**
      * Append actions from API plugins to the given toolbar.
@@ -536,6 +544,8 @@ protected:
     virtual void SetScreen( BASE_SCREEN* aScreen )  { m_currentScreen = aScreen; }
 
     void unitsChangeRefresh() override;
+
+    void setupUIConditions() override;
 
     void setupUnits( APP_SETTINGS_BASE* aCfg );
 
@@ -554,7 +564,7 @@ protected:
      * @param aCfg is the APP_SETTINGS_BASE config storing the canvas type.
      * If nullptr (default) the KifaceSettings() will be used
      */
-    EDA_DRAW_PANEL_GAL::GAL_TYPE loadCanvasTypeSetting( APP_SETTINGS_BASE* aCfg = nullptr );
+    EDA_DRAW_PANEL_GAL::GAL_TYPE loadCanvasTypeSetting();
 
     /**
      * Store the canvas type in the application settings.
@@ -584,6 +594,7 @@ protected:
 
     wxChoice*            m_gridSelectBox;
     wxChoice*            m_zoomSelectBox;
+    wxCheckBox*          m_overrideLocksCb;
 
     std::unique_ptr<EDA_SEARCH_DATA> m_findReplaceData;
     wxArrayString        m_findStringHistoryList;

@@ -25,6 +25,9 @@
 #include <algorithm>
 
 #include <bitmaps.h>
+#include <api/api_enums.h>
+#include <api/api_utils.h>
+#include <api/schematic/schematic_types.pb.h>
 #include <general.h>
 #include <geometry/shape_line_chain.h>
 #include <string_utils.h>
@@ -36,6 +39,8 @@
 #include <sch_painter.h>
 #include <schematic.h>
 #include <trigo.h>
+#include <properties/property.h>
+#include <properties/property_mgr.h>
 
 
 SCH_SHEET_PIN::SCH_SHEET_PIN( SCH_SHEET* parent, const VECTOR2I& pos, const wxString& text ) :
@@ -56,6 +61,56 @@ SCH_SHEET_PIN::SCH_SHEET_PIN( SCH_SHEET* parent, const VECTOR2I& pos, const wxSt
     m_shape      = LABEL_FLAG_SHAPE::L_INPUT;
     m_isDangling = true;
     m_number     = 2;
+}
+
+
+void SCH_SHEET_PIN::Serialize( google::protobuf::Any& aContainer ) const
+{
+    using namespace kiapi::schematic::types;
+
+    SheetPin pin;
+
+    pin.mutable_id()->set_value( m_Uuid.AsStdString() );
+    kiapi::common::PackVector2( *pin.mutable_position(), GetPosition(), schIUScale );
+    pin.set_spin_style(
+            ToProtoEnum<SPIN_STYLE::SPIN, SchematicLabelSpinStyle>(
+                    static_cast<SPIN_STYLE::SPIN>( static_cast<int>( GetSpinStyle() ) ) ) );
+    pin.set_shape( ToProtoEnum<LABEL_FLAG_SHAPE, SchematicLabelShape>( GetShape() ) );
+    pin.set_side( ToProtoEnum<SHEET_SIDE, SheetSide>( GetSide() ) );
+    pin.set_locked( SCH_ITEM::IsLocked() ? kiapi::common::types::LockedState::LS_LOCKED
+                                         : kiapi::common::types::LockedState::LS_UNLOCKED );
+
+    google::protobuf::Any any;
+    EDA_TEXT::Serialize( any, schIUScale );
+    any.UnpackTo( pin.mutable_text() );
+
+    aContainer.PackFrom( pin );
+}
+
+
+bool SCH_SHEET_PIN::Deserialize( const google::protobuf::Any& aContainer )
+{
+    using namespace kiapi::schematic::types;
+
+    SheetPin pin;
+
+    if( !aContainer.UnpackTo( &pin ) )
+        return false;
+
+    const_cast<KIID&>( m_Uuid ) = KIID( pin.id().value() );
+
+    google::protobuf::Any any;
+    any.PackFrom( pin.text() );
+
+    if( !EDA_TEXT::Deserialize( any, schIUScale ) )
+        return false;
+
+    SetPosition( kiapi::common::UnpackVector2( pin.position(), schIUScale ) );
+    SetSide( FromProtoEnum<SHEET_SIDE, SheetSide>( pin.side() ) );
+    SetSpinStyle( FromProtoEnum<SPIN_STYLE::SPIN, SchematicLabelSpinStyle>( pin.spin_style() ) );
+    SetShape( FromProtoEnum<LABEL_FLAG_SHAPE, SchematicLabelShape>( pin.shape() ) );
+    SetLocked( pin.locked() == kiapi::common::types::LockedState::LS_LOCKED );
+    return true;
 }
 
 
@@ -105,7 +160,7 @@ void SCH_SHEET_PIN::SetNumber( int aNumber )
 
 void SCH_SHEET_PIN::SetSide( SHEET_SIDE aEdge )
 {
-    SCH_SHEET* Sheet = GetParent();
+    SCH_SHEET* sheet = GetParent();
 
     // use SHEET_UNDEFINED_SIDE to adjust text orientation without changing edge
 
@@ -113,25 +168,25 @@ void SCH_SHEET_PIN::SetSide( SHEET_SIDE aEdge )
     {
     case SHEET_SIDE::LEFT:
         m_edge = aEdge;
-        SetTextX( Sheet->m_pos.x );
+        SetTextX( sheet->m_pos.x );
         SetSpinStyle( SPIN_STYLE::RIGHT ); // Orientation horiz inverse
         break;
 
     case SHEET_SIDE::RIGHT:
         m_edge = aEdge;
-        SetTextX( Sheet->m_pos.x + Sheet->m_size.x );
+        SetTextX( sheet->m_pos.x + sheet->m_size.x );
         SetSpinStyle( SPIN_STYLE::LEFT ); // Orientation horiz normal
         break;
 
     case SHEET_SIDE::TOP:
         m_edge = aEdge;
-        SetTextY( Sheet->m_pos.y );
+        SetTextY( sheet->m_pos.y );
         SetSpinStyle( SPIN_STYLE::BOTTOM ); // Orientation vert BOTTOM
         break;
 
     case SHEET_SIDE::BOTTOM:
         m_edge = aEdge;
-        SetTextY( Sheet->m_pos.y + Sheet->m_size.y );
+        SetTextY( sheet->m_pos.y + sheet->m_size.y );
         SetSpinStyle( SPIN_STYLE::UP ); // Orientation vert UP
         break;
 
@@ -147,7 +202,7 @@ enum SHEET_SIDE SCH_SHEET_PIN::GetSide() const
 }
 
 
-void SCH_SHEET_PIN::ConstrainOnEdge( VECTOR2I aPos, bool aAllowEdgeSwitch )
+void SCH_SHEET_PIN::ConstrainOnEdge( const VECTOR2I& aPos, bool aAllowEdgeSwitch )
 {
     SCH_SHEET* sheet = GetParent();
 
@@ -328,7 +383,7 @@ void SCH_SHEET_PIN::GetEndPoints( std::vector<DANGLING_END_ITEM>& aItemList )
 
 wxString SCH_SHEET_PIN::GetItemDescription( UNITS_PROVIDER* aUnitsProvider, bool aFull ) const
 {
-    return wxString::Format( _( "Hierarchical Sheet Pin %s" ),
+    return wxString::Format( _( "Hierarchical Sheet Pin '%s'" ),
                              aFull ? GetShownText( false ) : KIUI::EllipsizeMenuText( GetText() ) );
 }
 
@@ -401,6 +456,18 @@ bool SCH_SHEET_PIN::HasConnectivityChanges( const SCH_ITEM* aItem,
 }
 
 
+bool SCH_SHEET_PIN::IsLocked() const
+{
+    if( SCH_SHEET* parentSheet = GetParent() )
+    {
+        if( parentSheet->IsLocked() )
+            return true;
+    }
+
+    return SCH_ITEM::IsLocked();
+}
+
+
 #if defined(DEBUG)
 
 void SCH_SHEET_PIN::Show( int nestLevel, std::ostream& os ) const
@@ -426,5 +493,8 @@ static struct SCH_SHEET_PIN_DESC
         propMgr.AddTypeCast( new TYPE_CAST<SCH_SHEET_PIN, EDA_TEXT> );
 
         propMgr.InheritsAfter( TYPE_HASH( SCH_SHEET_PIN ), TYPE_HASH( SCH_HIERLABEL ) );
+
+        // Lock state is inherited from parent sheet
+        propMgr.Mask( TYPE_HASH( SCH_SHEET_PIN ), TYPE_HASH( SCH_ITEM ), _HKI( "Locked" ) );
     }
 } _SCH_SHEET_PIN_DESC;

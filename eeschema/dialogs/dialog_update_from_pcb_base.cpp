@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////
-// C++ code generated with wxFormBuilder (version 3.10.1-0-g8feb16b3)
+// C++ code generated with wxFormBuilder (version 4.2.1-0-g80c4cb6)
 // http://www.wxformbuilder.org/
 //
 // PLEASE DO *NOT* EDIT THIS FILE!
@@ -57,25 +57,46 @@ DIALOG_UPDATE_FROM_PCB_BASE::DIALOG_UPDATE_FROM_PCB_BASE( wxWindow* parent, wxWi
 	fgSizer2->Add( m_cbUpdateReferences, 0, wxBOTTOM|wxRIGHT|wxLEFT, 5 );
 
 	m_cbUpdateFootprints = new wxCheckBox( sbSizer2->GetStaticBox(), wxID_ANY, _("Footprint assignments"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_cbUpdateFootprints->SetValue(true);
 	m_cbUpdateFootprints->SetToolTip( _("Update footprint associations of symbols whose footprints have been replaced with different footprints in PCB.") );
 
 	fgSizer2->Add( m_cbUpdateFootprints, 0, wxBOTTOM|wxRIGHT|wxLEFT, 5 );
 
 	m_cbUpdateValues = new wxCheckBox( sbSizer2->GetStaticBox(), wxID_ANY, _("Values"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_cbUpdateValues->SetValue(true);
 	m_cbUpdateValues->SetToolTip( _("Update symbols values that have been replaced in the PCB editor.") );
 
 	fgSizer2->Add( m_cbUpdateValues, 0, wxBOTTOM|wxRIGHT|wxLEFT, 5 );
 
 	m_cbUpdateNetNames = new wxCheckBox( sbSizer2->GetStaticBox(), wxID_ANY, _("Net names"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_cbUpdateNetNames->SetValue(true);
+	m_cbUpdateNetNames->SetToolTip( _("Update schematic net labels to match net names from the PCB editor.") );
+
 	fgSizer2->Add( m_cbUpdateNetNames, 0, wxBOTTOM|wxRIGHT|wxLEFT, 5 );
 
 	m_cbUpdateAttributes = new wxCheckBox( sbSizer2->GetStaticBox(), wxID_ANY, _("Attributes"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_cbUpdateAttributes->SetValue(true);
+	m_cbUpdateAttributes->SetToolTip( _("Update symbol attribute flags like Do Not Populate to match the footprint.") );
+
 	fgSizer2->Add( m_cbUpdateAttributes, 0, wxBOTTOM|wxLEFT|wxRIGHT, 5 );
 
+	m_cbPreferUnitSwaps = new wxCheckBox( sbSizer2->GetStaticBox(), wxID_ANY, _("Prefer symbol unit swaps over label swaps"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_cbPreferUnitSwaps->SetValue(true);
+	m_cbPreferUnitSwaps->SetToolTip( _("When possible, detect footprint gate swaps and apply corresponding symbol unit swaps instead of changing net labels.") );
+
+	fgSizer2->Add( m_cbPreferUnitSwaps, 0, wxBOTTOM|wxLEFT|wxRIGHT, 5 );
+
 	m_cbUpdateOtherFields = new wxCheckBox( sbSizer2->GetStaticBox(), wxID_ANY, _("Other fields"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_cbUpdateOtherFields->SetValue(true);
 	m_cbUpdateOtherFields->SetToolTip( _("Update all other fields in the symbol from the footprint") );
 
 	fgSizer2->Add( m_cbUpdateOtherFields, 0, wxBOTTOM|wxLEFT|wxRIGHT, 5 );
+
+	m_cbPreferPinSwaps = new wxCheckBox( sbSizer2->GetStaticBox(), wxID_ANY, _("Prefer symbol pin swaps over label swaps"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_cbPreferPinSwaps->SetValue(true);
+	m_cbPreferPinSwaps->SetToolTip( _("When possible, swap symbol pins to match footprint pad net swaps instead of changing net labels.") );
+
+	fgSizer2->Add( m_cbPreferPinSwaps, 0, wxBOTTOM|wxLEFT|wxRIGHT, 5 );
 
 
 	sbSizer2->Add( fgSizer2, 1, wxEXPAND, 5 );
@@ -117,7 +138,9 @@ DIALOG_UPDATE_FROM_PCB_BASE::DIALOG_UPDATE_FROM_PCB_BASE( wxWindow* parent, wxWi
 	m_cbUpdateValues->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_UPDATE_FROM_PCB_BASE::OnOptionChanged ), NULL, this );
 	m_cbUpdateNetNames->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_UPDATE_FROM_PCB_BASE::OnOptionChanged ), NULL, this );
 	m_cbUpdateAttributes->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_UPDATE_FROM_PCB_BASE::OnOptionChanged ), NULL, this );
+	m_cbPreferUnitSwaps->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_UPDATE_FROM_PCB_BASE::OnOptionChanged ), NULL, this );
 	m_cbUpdateOtherFields->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_UPDATE_FROM_PCB_BASE::OnOptionChanged ), NULL, this );
+	m_cbPreferPinSwaps->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_UPDATE_FROM_PCB_BASE::OnOptionChanged ), NULL, this );
 	m_sdbSizerOK->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_UPDATE_FROM_PCB_BASE::OnUpdateClick ), NULL, this );
 }
 
@@ -130,7 +153,9 @@ DIALOG_UPDATE_FROM_PCB_BASE::~DIALOG_UPDATE_FROM_PCB_BASE()
 	m_cbUpdateValues->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_UPDATE_FROM_PCB_BASE::OnOptionChanged ), NULL, this );
 	m_cbUpdateNetNames->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_UPDATE_FROM_PCB_BASE::OnOptionChanged ), NULL, this );
 	m_cbUpdateAttributes->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_UPDATE_FROM_PCB_BASE::OnOptionChanged ), NULL, this );
+	m_cbPreferUnitSwaps->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_UPDATE_FROM_PCB_BASE::OnOptionChanged ), NULL, this );
 	m_cbUpdateOtherFields->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_UPDATE_FROM_PCB_BASE::OnOptionChanged ), NULL, this );
+	m_cbPreferPinSwaps->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_UPDATE_FROM_PCB_BASE::OnOptionChanged ), NULL, this );
 	m_sdbSizerOK->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_UPDATE_FROM_PCB_BASE::OnUpdateClick ), NULL, this );
 
 }

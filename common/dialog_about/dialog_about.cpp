@@ -22,6 +22,9 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#if defined( _WIN32 )
+#include <windows.h>
+#endif
 
 #include <build_version.h>
 #include <eda_base_frame.h>
@@ -53,39 +56,25 @@ DIALOG_ABOUT::DIALOG_ABOUT( EDA_BASE_FRAME *aParent, ABOUT_APP_INFO& aAppInfo ) 
 {
     wxASSERT( aParent != nullptr );
 
+    // dpi fixes
+    m_notebook->SetMinSize( FromDIP( m_notebook->GetMinSize() ) );
+
     SetEvtHandlerEnabled( false );
 
-#ifdef __WXMAC__
-    // HiDPI-aware API; will be generally available in wxWidgets 3.4
+    const int                c_iconSize = 16;
     wxVector<wxBitmapBundle> images;
 
-    images.push_back( KiBitmapBundle( BITMAPS::info ) );              // INFORMATION
-    images.push_back( KiBitmapBundle( BITMAPS::recent ) );            // VERSION
-    images.push_back( KiBitmapBundle( BITMAPS::preference ) );        // DEVELOPERS
-    images.push_back( KiBitmapBundle( BITMAPS::editor ) );            // DOCWRITERS
-    images.push_back( KiBitmapBundle( BITMAPS::library ) );           // LIBRARIANS
-    images.push_back( KiBitmapBundle( BITMAPS::color_materials ) );   // ARTISTS
-    images.push_back( KiBitmapBundle( BITMAPS::language ) );          // TRANSLATORS
-    images.push_back( KiBitmapBundle( BITMAPS::zip ) );               // PACKAGERS
-    images.push_back( KiBitmapBundle( BITMAPS::tools ) );             // LICENSE
+    images.push_back( KiBitmapBundleDef( BITMAPS::info, c_iconSize ) );              // INFORMATION
+    images.push_back( KiBitmapBundleDef( BITMAPS::recent, c_iconSize ) );            // VERSION
+    images.push_back( KiBitmapBundleDef( BITMAPS::preference, c_iconSize ) );        // DEVELOPERS
+    images.push_back( KiBitmapBundleDef( BITMAPS::editor, c_iconSize ) );            // DOCWRITERS
+    images.push_back( KiBitmapBundleDef( BITMAPS::library, c_iconSize ) );           // LIBRARIANS
+    images.push_back( KiBitmapBundleDef( BITMAPS::color_materials, c_iconSize ) );   // ARTISTS
+    images.push_back( KiBitmapBundleDef( BITMAPS::language, c_iconSize ) );          // TRANSLATORS
+    images.push_back( KiBitmapBundleDef( BITMAPS::zip, c_iconSize ) );               // PACKAGERS
+    images.push_back( KiBitmapBundleDef( BITMAPS::tools, c_iconSize ) );             // LICENSE
 
     m_notebook->SetImages( images );
-#else
-    // TODO: Change these to 16x16 versions when available
-    m_images = new wxImageList( 24, 24, false, 9 );
-
-    m_images->Add( KiBitmap( BITMAPS::info ) );              // INFORMATION
-    m_images->Add( KiBitmap( BITMAPS::recent ) );            // VERSION
-    m_images->Add( KiBitmap( BITMAPS::preference ) );        // DEVELOPERS
-    m_images->Add( KiBitmap( BITMAPS::editor ) );            // DOCWRITERS
-    m_images->Add( KiBitmap( BITMAPS::library ) );           // LIBRARIANS
-    m_images->Add( KiBitmap( BITMAPS::color_materials ) );   // ARTISTS
-    m_images->Add( KiBitmap( BITMAPS::language ) );          // TRANSLATORS
-    m_images->Add( KiBitmap( BITMAPS::zip ) );               // PACKAGERS
-    m_images->Add( KiBitmap( BITMAPS::tools ) );             // LICENSE
-
-    m_notebook->SetImageList( m_images );
-#endif
 
     if( m_info.GetAppIcon().IsOk() )
     {
@@ -108,8 +97,20 @@ DIALOG_ABOUT::DIALOG_ABOUT( EDA_BASE_FRAME *aParent, ABOUT_APP_INFO& aAppInfo ) 
     m_titleName = aParent->GetAboutTitle();
     m_untranslatedTitleName = aParent->GetUntranslatedAboutTitle();
     m_staticTextAppTitle->SetLabel( m_titleName );
+
+    // On windows, display the number of GDI objects in use. Can be useful when some GDI objects
+    // are not displayed because the max count of GDI objects (usually 10000) is reached
+    // So displaying this number can help to diagnose strange display issues
+    wxString extraInfo;
+
+    #if defined( _WIN32 )
+    uint32_t gdi_count = GetGuiResources( GetCurrentProcess(), GR_GDIOBJECTS );
+    extraInfo.Printf( _( "GDI objects in use %u" ), gdi_count );
+    extraInfo.Prepend( wxT( "\n" ) );
+    #endif
+
     m_staticTextBuildVersion->SetLabel( wxS( "Version: " ) + m_info.GetBuildVersion() );
-    m_staticTextLibVersion->SetLabel( m_info.GetLibVersion() );
+    m_staticTextLibVersion->SetLabel( m_info.GetLibVersion() + extraInfo );
 
     SetTitle( wxString::Format( _( "About %s" ), m_titleName ) );
     createNotebooks();

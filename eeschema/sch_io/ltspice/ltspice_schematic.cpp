@@ -29,11 +29,13 @@
 #include <sch_screen.h>
 #include <wx/log.h>
 #include <wx/dir.h>
+#include <wx/tokenzr.h>
 #include <wildcards_and_files_ext.h>
 #include <sch_sheet.h>
 #include <schematic.h>
 #include <project.h>
 #include <richio.h>
+#include <algorithm>
 
 
 void LTSPICE_SCHEMATIC::Load( SCHEMATIC* aSchematic, SCH_SHEET* aRootSheet,
@@ -81,7 +83,7 @@ void LTSPICE_SCHEMATIC::Load( SCHEMATIC* aSchematic, SCH_SHEET* aRootSheet,
 
         std::vector<LTSPICE_FILE> newSubSchematicElements = GetSchematicElements( buffer );
 
-        alg::delete_if( newSubSchematicElements,
+        std::erase_if( newSubSchematicElements,
                         [&mapOfAscFiles]( const LTSPICE_FILE& ii )
                         {
                             return mapOfAscFiles[ii.ElementName].IsEmpty();
@@ -170,7 +172,7 @@ void LTSPICE_SCHEMATIC::Load( SCHEMATIC* aSchematic, SCH_SHEET* aRootSheet,
 
             ascFiles[ascFiles[i].ParentIndex].Sheet->GetScreen()->Append( curSheet );
 
-            curSheet->GetScreen()->SetFileName( m_schematic->Prj().GetProjectPath() + sheetName + ".kicad_sch" );
+            curSheet->GetScreen()->SetFileName( m_schematic->Project().GetProjectPath() + sheetName + ".kicad_sch" );
         }
         else
         {
@@ -439,10 +441,10 @@ LTSPICE_SCHEMATIC::POLARITY LTSPICE_SCHEMATIC::getPolarity( const wxString& aVal
 {
     std::map<wxString, POLARITY> polarityMap;
 
-    polarityMap["I"] = POLARITY::INPUT;
+    polarityMap["I"] = POLARITY::PIN_INPUT;
     polarityMap["O"] = POLARITY::OUTPUT;
     polarityMap["B"] = POLARITY::BIDIR;
-    polarityMap["IN"] = POLARITY::INPUT;
+    polarityMap["IN"] = POLARITY::PIN_INPUT;
     polarityMap["OUT"] = POLARITY::OUTPUT;
     polarityMap["BIDIR"] = POLARITY::BIDIR;
 

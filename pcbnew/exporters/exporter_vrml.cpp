@@ -33,7 +33,7 @@
 #include "3d_cache/3d_info.h"
 #include "board.h"
 #include "board_design_settings.h"
-#include <fp_lib_table.h>
+#include <footprint_library_adapter.h>
 #include "footprint.h"
 #include "pad.h"
 #include "pcb_text.h"
@@ -776,7 +776,7 @@ void EXPORTER_PCB_VRML::ExportVrmlPolygonSet( VRML_LAYER* aVlayer, const SHAPE_P
 
 void EXPORTER_PCB_VRML::ExportVrmlBoard()
 {
-    if( !m_board->GetBoardPolygonOutlines( m_pcbOutlines ) )
+    if( !m_board->GetBoardPolygonOutlines( m_pcbOutlines, true ) )
     {
         wxLogWarning( _( "Board outline is malformed. Run DRC for a full analysis." ) );
     }
@@ -1000,19 +1000,10 @@ void EXPORTER_PCB_VRML::ExportVrmlFootprint( FOOTPRINT* aFootprint, std::ostream
 
     if( m_board->GetProject() )
     {
-        const FP_LIB_TABLE_ROW* fpRow = nullptr;
-
-        try
-        {
-            fpRow = PROJECT_PCB::PcbFootprintLibs( m_board->GetProject() )->FindRow( libraryName, false );
-        }
-        catch( ... )
-        {
-            // Not found: do nothing
-        }
-
+        std::optional<LIBRARY_TABLE_ROW*> fpRow =
+                            PROJECT_PCB::FootprintLibAdapter( m_board->GetProject() )->GetRow( libraryName );
         if( fpRow )
-            footprintBasePath = fpRow->GetFullURI( true );
+            footprintBasePath = LIBRARY_MANAGER::GetFullURI( *fpRow, true );
     }
 
 
@@ -1026,7 +1017,8 @@ void EXPORTER_PCB_VRML::ExportVrmlFootprint( FOOTPRINT* aFootprint, std::ostream
         return;
     }
 
-    if( !m_includeDNP && aFootprint->IsDNP() )
+    if( !m_includeDNP
+            && aFootprint->GetDNPForVariant( m_board ? m_board->GetCurrentVariant() : wxString() ) )
         return;
 
     std::vector<const EMBEDDED_FILES*> embeddedFilesStack;
@@ -1049,13 +1041,8 @@ void EXPORTER_PCB_VRML::ExportVrmlFootprint( FOOTPRINT* aFootprint, std::ostream
         embeddedFilesStack.push_back( aFootprint->GetEmbeddedFiles() );
         embeddedFilesStack.push_back( m_board->GetEmbeddedFiles() );
 
-        SGNODE* mod3d = (SGNODE*) m_Cache3Dmodels->Load( sM->m_Filename, footprintBasePath, embeddedFilesStack );
-
-        if( nullptr == mod3d )
-        {
-            ++sM;
-            continue;
-        }
+        SGNODE* mod3d = (SGNODE*) m_Cache3Dmodels->Load( sM->m_Filename, footprintBasePath,
+                                                         std::move( embeddedFilesStack ) );
 
         /* Calculate 3D shape rotation:
          * this is the rotation parameters, with an additional 180 deg rotation
@@ -1119,7 +1106,13 @@ void EXPORTER_PCB_VRML::ExportVrmlFootprint( FOOTPRINT* aFootprint, std::ostream
             embeddedFilesStack.push_back( m_board->GetEmbeddedFiles() );
 
             wxFileName srcFile = m_Cache3Dmodels->GetResolver()->ResolvePath( sM->m_Filename, footprintBasePath,
-                                                                              embeddedFilesStack );
+                                                                              std::move( embeddedFilesStack ) );
+            if( !srcFile.FileExists() ) {
+		// skip model where the file cannot be resolved
+                ++sM;
+                continue;
+            }
+
             wxFileName dstFile;
             dstFile.SetPath( m_Subdir3DFpModels );
             dstFile.SetName( srcFile.GetName() );
@@ -1170,8 +1163,10 @@ void EXPORTER_PCB_VRML::ExportVrmlFootprint( FOOTPRINT* aFootprint, std::ostream
                 }
                 else
                 {
-                    if( !S3D::WriteVRML( dstFile.GetFullPath().ToUTF8(), true, mod3d, m_ReuseDef,
-                                         true ) )
+
+                    if( ( nullptr == mod3d) ||
+                        ( !S3D::WriteVRML( dstFile.GetFullPath().ToUTF8(), true, mod3d, m_ReuseDef,
+                                         true ) ) )
                     {
                         ++sM;
                         continue;
@@ -1218,6 +1213,12 @@ void EXPORTER_PCB_VRML::ExportVrmlFootprint( FOOTPRINT* aFootprint, std::ostream
         }
         else
         {
+	    if( nullptr == mod3d )
+	    {
+		++sM;
+		continue;
+	    }
+
             IFSG_TRANSFORM* modelShape = new IFSG_TRANSFORM( m_OutputPCB.GetRawPtr() );
 
             // only write a rotation if it is >= 0.1 deg

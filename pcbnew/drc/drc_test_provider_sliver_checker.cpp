@@ -119,8 +119,11 @@ bool DRC_TEST_PROVIDER_SLIVER_CHECKER::Run()
                             {
                                 if( !zone->GetIsRuleArea() )
                                 {
-                                    fill = zone->GetFill( layer )->CloneDropTriangulation();
-                                    poly.Append( fill );
+                                    if( SHAPE_POLY_SET* zoneFill = zone->GetFill( layer ) )
+                                    {
+                                        fill = zoneFill->CloneDropTriangulation();
+                                        poly.Append( fill );
+                                    }
 
                                     // Report progress on board zones only.  Everything else is
                                     // in the noise.
@@ -149,14 +152,10 @@ bool DRC_TEST_PROVIDER_SLIVER_CHECKER::Run()
             };
 
     thread_pool& tp = GetKiCadThreadPool();
-    std::vector<std::future<size_t>> returns;
 
-    returns.reserve( copperLayers.size() );
+    auto returns = tp.submit_loop( 0, copperLayers.size(), build_layer_polys );
 
-    for( size_t ii = 0; ii < copperLayers.size(); ++ii )
-        returns.emplace_back( tp.submit( build_layer_polys, ii ) );
-
-    for( const std::future<size_t>& ret : returns )
+    for( auto& ret : returns )
     {
         std::future_status status = ret.wait_for( std::chrono::milliseconds( 250 ) );
 
@@ -260,7 +259,7 @@ bool DRC_TEST_PROVIDER_SLIVER_CHECKER::Run()
                 if( cos_ang > cosangleTol && 2.0 - cos_ang > std::numeric_limits<float>::epsilon() && opp > squared_width )
                 {
                     std::shared_ptr<DRC_ITEM> drce = DRC_ITEM::Create( DRCE_COPPER_SLIVER );
-                    drce->SetErrorMessage( drce->GetErrorText() + wxS( " " ) + layerDesc( layer ) );
+                    drce->SetErrorDetail( layerDesc( layer ) );
                     reportViolation( drce, pt, layer );
                 }
             }

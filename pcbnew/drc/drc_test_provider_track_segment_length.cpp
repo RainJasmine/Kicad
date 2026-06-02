@@ -67,8 +67,9 @@ bool DRC_TEST_PROVIDER_TRACK_SEGMENT_LENGTH::Run()
         return false;       // DRC cancelled
 
     auto checkTrackSegmentLength =
-            [&]( BOARD_ITEM* item ) -> bool
+            [&]( const int idx ) -> bool
             {
+                BOARD_ITEM* item = m_drcEngine->GetBoard()->Tracks()[idx];
                 if( m_drcEngine->IsErrorLimitExceeded( DRCE_TRACK_SEGMENT_LENGTH ) )
                     return false;
 
@@ -119,27 +120,25 @@ bool DRC_TEST_PROVIDER_TRACK_SEGMENT_LENGTH::Run()
                 {
                     std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_TRACK_SEGMENT_LENGTH );
                     wxString constraintName = constraint.GetName();
-                    wxString msg;
 
                     if( fail_min )
                     {
                         if( constraint.m_ImplicitMin )
                             constraintName = _( "board setup constraints" );
 
-                        msg = formatMsg( _( "(%s min length %s; actual %s)" ),
-                                         constraintName,
-                                         constraintLength,
-                                         actual );
+                        drcItem->SetErrorDetail( formatMsg( _( "(%s min length %s; actual %s)" ),
+                                                            constraintName,
+                                                            constraintLength,
+                                                            actual ) );
                     }
                     else
                     {
-                        msg = formatMsg( _( "(%s max length %s; actual %s)" ),
-                                         constraintName,
-                                         constraintLength,
-                                         actual );
+                        drcItem->SetErrorDetail( formatMsg( _( "(%s max length %s; actual %s)" ),
+                                                            constraintName,
+                                                            constraintLength,
+                                                            actual ) );
                     }
 
-                    drcItem->SetErrorMessage( drcItem->GetErrorText() + wxS( " " ) + msg );
                     drcItem->SetItems( item );
                     drcItem->SetViolatingRule( constraint.GetParentRule() );
 
@@ -153,16 +152,9 @@ bool DRC_TEST_PROVIDER_TRACK_SEGMENT_LENGTH::Run()
     int       ii = 0;
 
     thread_pool&                   tp = GetKiCadThreadPool();
-    std::vector<std::future<bool>> returns;
+    auto futures = tp.submit_loop( 0, m_drcEngine->GetBoard()->Tracks().size(), checkTrackSegmentLength );
 
-    returns.reserve( m_drcEngine->GetBoard()->Tracks().size() );
-
-    for( PCB_TRACK* item : m_drcEngine->GetBoard()->Tracks() )
-    {
-        returns.emplace_back( tp.submit( checkTrackSegmentLength, item ) );
-    }
-
-    for( std::future<bool>& ret : returns )
+    for( auto& ret : futures )
     {
         std::future_status status = ret.wait_for( std::chrono::milliseconds( 250 ) );
 

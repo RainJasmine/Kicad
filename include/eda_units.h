@@ -129,13 +129,22 @@ namespace EDA_UNIT_UTILS
      *       on how KiCad is built.
      *
      * @param aValue A coordinate value to convert.
+     * @param aDataType The EDA_UNITS data type for @param aValue
      * @return A std::string object containing the converted value.
      */
-    KICOMMON_API std::string FormatInternalUnits( const EDA_IU_SCALE& aIuScale, int aValue );
+    KICOMMON_API std::string FormatInternalUnits( const EDA_IU_SCALE& aIuScale, int aValue,
+                                                  EDA_DATA_TYPE aDataType = EDA_DATA_TYPE::DISTANCE );
     KICOMMON_API std::string FormatInternalUnits( const EDA_IU_SCALE& aIuScale,
                                                   const VECTOR2I&     aPoint );
 
-#if 0   // No support for std::from_chars on MacOS yet
+    /**
+     * Returns the scaling parameter for the given units data type
+     *
+     * This should only be used when scaling for writing to files as it assumes metric distances are being used
+     */
+    KICOMMON_API double GetScaleForInternalUnitType( const EDA_IU_SCALE& aIuScale, EDA_DATA_TYPE aDataType );
+
+#if 0 // No support for std::from_chars on MacOS yet
     /**
      * Convert \a aInput string to internal units when reading from a file.
      *
@@ -255,6 +264,9 @@ namespace EDA_UNIT_UTILS
                                                    EDA_DATA_TYPE aType = EDA_DATA_TYPE::DISTANCE );
 
         KICOMMON_API double DoubleValueFromString( const wxString& aTextValue );
+
+        KICOMMON_API bool DoubleValueFromString( const EDA_IU_SCALE& aIuScale, const wxString& aTextValue,
+                                                 double& aDoubleValue );
 
         /**
          * Convert \a aTextValue in \a aUnits to internal units used by the application.

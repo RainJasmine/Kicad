@@ -327,7 +327,8 @@ bool EURN::IsValid() const
         "footprint",
         "library",
         "package",
-        "symbol"
+        "symbol",
+        "fs.file"
     };
 
     if( validAssetTypes.count( assetType ) == 0 )
@@ -417,14 +418,13 @@ EROT Convert<EROT>( const wxString& aRot )
     }
 
     // Calculate the offset after 'R', 'S', and 'M'
-    size_t offset = rPos + 1;
+    size_t offset;
 
-    if( value.spin )
-        ++offset;
-
-    if( value.mirror )
-        ++offset;
-
+    for( offset = 0; offset < aRot.size(); offset++ )
+    {
+        if( wxIsdigit( aRot[offset] ) )
+            break;
+    }
 
     wxString degreesStr = aRot.Mid( offset );
 
@@ -1476,7 +1476,7 @@ EELEMENT::EELEMENT( wxXmlNode* aElement, IO_BASE* aIo ) :
     library = parseRequiredAttribute<wxString>( aElement, "library" );
     value   = parseRequiredAttribute<wxString>( aElement, "value" );
     std::string p = parseRequiredAttribute<std::string>( aElement, "package" );
-    ReplaceIllegalFileNameChars( &p, '_' );
+    ReplaceIllegalFileNameChars( p, '_' );
     package = wxString::FromUTF8( p.c_str() );
 
     x       = parseRequiredAttribute<ECOORD>( aElement, "x" );
@@ -1732,7 +1732,7 @@ EDEVICE::EDEVICE( wxXmlNode* aDevice, IO_BASE* aIo ) :
     if( pack )
     {
         std::string p( pack->c_str() );
-        ReplaceIllegalFileNameChars( &p, '_' );
+        ReplaceIllegalFileNameChars( p, '_' );
         package.Set( wxString::FromUTF8( p.c_str() ) );
     }
 

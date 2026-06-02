@@ -108,8 +108,8 @@ TOOL_ACTION SCH_ACTIONS::selectConnection( TOOL_ACTION_ARGS()
         .Scope( AS_GLOBAL )
         .DefaultHotkey( MD_CTRL + '4' )
         .LegacyHotkeyName( "Select Connection" )
-        .FriendlyName( _( "Select Connection" ) )
-        .Tooltip( _( "Select a complete connection" ) )
+        .FriendlyName( _( "Select/Expand Connection" ) )
+        .Tooltip( _( "Selects a connection or expands an existing selection to pins, symbols, or entire connections" ) )
         .Icon( BITMAPS::net_highlight_schematic ) );
 
 TOOL_ACTION SCH_ACTIONS::syncSelection( TOOL_ACTION_ARGS()
@@ -123,6 +123,13 @@ TOOL_ACTION SCH_ACTIONS::showDesignBlockPanel( TOOL_ACTION_ARGS()
         .FriendlyName( _( "Design Blocks" ) )
         .Tooltip( _( "Show/hide design blocks library" ) )
         .Icon( BITMAPS::search_tree ) );
+
+TOOL_ACTION SCH_ACTIONS::showRemoteSymbolPanel( TOOL_ACTION_ARGS()
+        .Name( "eeschema.RemoteSymbols.showPanel" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Remote Symbols" ) )
+        .Tooltip( _( "Show/hide the remote symbol panel" ) )
+        .Icon( BITMAPS::library_browser ) );
 
 TOOL_ACTION SCH_ACTIONS::saveSheetAsDesignBlock( TOOL_ACTION_ARGS()
         .Name( "eeschema.SchDesignBlockControl.saveSheetAsDesignBlock" )
@@ -138,22 +145,22 @@ TOOL_ACTION SCH_ACTIONS::saveSelectionAsDesignBlock( TOOL_ACTION_ARGS()
         .Tooltip( _( "Create a new design block from the current selection" ) )
         .Icon( BITMAPS::new_component ) );
 
-TOOL_ACTION SCH_ACTIONS::saveSheetToDesignBlock( TOOL_ACTION_ARGS()
-        .Name( "eeschema.SchDesignBlockControl.saveSheetToDesignBlock" )
+TOOL_ACTION SCH_ACTIONS::updateDesignBlockFromSheet( TOOL_ACTION_ARGS()
+        .Name( "eeschema.SchDesignBlockControl.updateDesignBlockFromSheet" )
         .Scope( AS_GLOBAL )
-        .FriendlyName( _( "Save Current Sheet to Design Block..." ) )
-        .Tooltip( _( "Add current sheet to design block" ) )
+        .FriendlyName( _( "Update Design Block from Current Sheet" ) )
+        .Tooltip( _( "Set design block schematic to current sheet" ) )
         .Icon( BITMAPS::save ) );
 
-TOOL_ACTION SCH_ACTIONS::saveSelectionToDesignBlock( TOOL_ACTION_ARGS()
-        .Name( "eeschema.SchDesignBlockControl.saveSelectionToDesignBlock" )
+TOOL_ACTION SCH_ACTIONS::updateDesignBlockFromSelection( TOOL_ACTION_ARGS()
+        .Name( "eeschema.SchDesignBlockControl.updateDesignBlockFromSelection" )
         .Scope( AS_GLOBAL )
-        .FriendlyName( _( "Save Selection to Design Block..." ) )
-        .Tooltip( _( "Add current selection to design block" ) )
+        .FriendlyName( _( "Update Design Block from Selection" ) )
+        .Tooltip( _( "Set design block schematic to current selection" ) )
         .Icon( BITMAPS::save ) );
 
 TOOL_ACTION SCH_ACTIONS::deleteDesignBlock( TOOL_ACTION_ARGS()
-        .Name( "eeschema.SchDesignBlockControl.saveDeleteDesignBlock" )
+        .Name( "eeschema.SchDesignBlockControl.deleteDesignBlock" )
         .Scope( AS_GLOBAL )
         .FriendlyName( _( "Delete Design Block" ) )
         .Tooltip( _( "Remove the selected design block from its library" ) )
@@ -163,7 +170,7 @@ TOOL_ACTION SCH_ACTIONS::editDesignBlockProperties( TOOL_ACTION_ARGS()
         .Name( "eeschema.SchDesignBlockControl.editDesignBlockProperties" )
         .Scope( AS_GLOBAL )
         .FriendlyName( _( "Properties..." ) )
-        .Tooltip( _( "Edit properies of design block" ) )
+        .Tooltip( _( "Edit properties of design block" ) )
         .Icon( BITMAPS::edit ) );
 
 // SYMBOL_EDITOR_CONTROL
@@ -270,11 +277,25 @@ TOOL_ACTION SCH_ACTIONS::updateSymbolFields( TOOL_ACTION_ARGS()
         .Tooltip( _( "Update symbol to match changes made in parent symbol" ) )
         .Icon( BITMAPS::refresh ) );
 
-TOOL_ACTION SCH_ACTIONS::setUnitDisplayName( TOOL_ACTION_ARGS()
-        .Name( "eeschema.SymbolLibraryControl.setUnitDisplayName" )
+TOOL_ACTION SCH_ACTIONS::flattenSymbol( TOOL_ACTION_ARGS()
+        .Name( "eeschema.SymbolLibraryControl.flattenSymbol" )
         .Scope( AS_GLOBAL )
-        .FriendlyName( _( "Set Unit Display Name..." ) )
-        .Tooltip( _( "Set the display name for a particular unit in a multi-unit symbol" ) ) );
+        .FriendlyName( _( "Flatten Symbol" ) )
+        .Tooltip( _( "Remove inheritance from symbol" ) ) );
+
+TOOL_ACTION SCH_ACTIONS::showLibFieldsTable( TOOL_ACTION_ARGS()
+        .Name( "eeschema.SymbolLibraryControl.showLibraryFieldsTable" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Bulk Edit Symbol Fields..." ) )
+        .Tooltip( _( "Edit a table of fields from all symbols in the library" ) )
+        .Icon( BITMAPS::table ) );
+
+TOOL_ACTION SCH_ACTIONS::showRelatedLibFieldsTable( TOOL_ACTION_ARGS()
+        .Name( "eeschema.SymbolLibraryControl.showRelatedLibraryFieldsTable" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Bulk Edit Related Symbol Fields..." ) )
+        .Tooltip( _( "Edit a table of fields from all symbols related to the selected symbol" ) )
+        .Icon( BITMAPS::table ) );
 
 TOOL_ACTION SCH_ACTIONS::addSymbolToSchematic( TOOL_ACTION_ARGS()
         .Name( "eeschema.SymbolLibraryControl.addSymbolToSchematic" )
@@ -336,6 +357,18 @@ TOOL_ACTION SCH_ACTIONS::showHiddenFields( TOOL_ACTION_ARGS()
         .FriendlyName( _( "Show Hidden Fields" ) )
         .ToolbarState( TOOLBAR_STATE::TOGGLE )
         .Icon( BITMAPS::text_sketch ) );
+
+TOOL_ACTION SCH_ACTIONS::previousSymbol( TOOL_ACTION_ARGS()
+        .Name( "eeschema.SymbolLibraryControl.previousSymbol" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Display previous symbol" ) )
+        .Icon( BITMAPS::lib_previous ) );
+
+TOOL_ACTION SCH_ACTIONS::nextSymbol( TOOL_ACTION_ARGS()
+        .Name( "eeschema.SymbolLibraryControl.nextSymbol" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Display next symbol" ) )
+        .Icon( BITMAPS::lib_next ) );
 
 
 // SYMBOL_EDITOR_DRAWING_TOOLS
@@ -438,8 +471,8 @@ TOOL_ACTION SCH_ACTIONS::placeNextSymbolUnit( TOOL_ACTION_ARGS()
         .FriendlyName( _( "Place Next Symbol Unit" ) )
         .Tooltip( _( "Place the next unit of the current symbol that is missing from the schematic" ) )
         .Flags( AF_ACTIVATE )
-        // The symbol to use as a reference for the next unit
-        .Parameter<SCH_SYMBOL*>( nullptr ) );
+        // The symbol to use as a reference for the next unit and optionally the unit number
+        .Parameter<SCH_ACTIONS::PLACE_SYMBOL_UNIT_PARAMS>( {} ) );
 
 TOOL_ACTION SCH_ACTIONS::placePower( TOOL_ACTION_ARGS()
         .Name( "eeschema.InteractiveDrawing.placePowerSymbol" )
@@ -484,7 +517,7 @@ TOOL_ACTION SCH_ACTIONS::placeNoConnect( TOOL_ACTION_ARGS()
         .Scope( AS_GLOBAL )
         .DefaultHotkey( 'Q' )
         .LegacyHotkeyName( "Add No Connect Flag" )
-        .FriendlyName( _( "Place No Connect Flags" ) )
+        .FriendlyName( _( "Place/Remove No Connect Flags" ) )
         .ToolbarState( TOOLBAR_STATE::TOGGLE )
         .Icon( BITMAPS::noconn )
         .Flags( AF_ACTIVATE )
@@ -572,7 +605,8 @@ TOOL_ACTION SCH_ACTIONS::drawSheetFromDesignBlock( TOOL_ACTION_ARGS()
 TOOL_ACTION SCH_ACTIONS::placeSheetPin( TOOL_ACTION_ARGS()
         .Name( "eeschema.InteractiveDrawing.placeSheetPin" )
         .Scope( AS_GLOBAL )
-        .FriendlyName( _( "Place Sheet Pins" ) )
+        .FriendlyName( _( "Place Pins from Sheet" ) )
+        .Tooltip( _( "Add sheet pins from existing hierarchical labels found on that sheet" ) )
         .ToolbarState( TOOLBAR_STATE::TOGGLE )
         .Icon( BITMAPS::add_hierar_pin )
         .Flags( AF_ACTIVATE ) );
@@ -586,16 +620,16 @@ TOOL_ACTION SCH_ACTIONS::autoplaceAllSheetPins( TOOL_ACTION_ARGS()
 TOOL_ACTION SCH_ACTIONS::syncSheetPins( TOOL_ACTION_ARGS()
         .Name( "eeschema.InteractiveDrawing.syncSheetPins" )
         .Scope( AS_GLOBAL )
-        .FriendlyName( _( "Sync Sheet Pins..." ) )
-        .Tooltip( _( "Synchronize sheet pins and hierarchical labels" ) )
+        .FriendlyName( _( "Sync Selected Sheet Pins..." ) )
+        .Tooltip( _( "Synchronize selected sheet pins and hierarchical labels" ) )
         .Icon( BITMAPS::import_hierarchical_label )
         .Flags( AF_ACTIVATE ) );
 
 TOOL_ACTION SCH_ACTIONS::syncAllSheetsPins( TOOL_ACTION_ARGS()
         .Name( "eeschema.InteractiveDrawing.syncAllSheetsPins" )
         .Scope( AS_GLOBAL )
-        .FriendlyName( _( "Sync Sheet Pins..." ) )
-        .Tooltip( _( "Synchronize sheet pins and hierarchical labels" ) )
+        .FriendlyName( _( "Sync All Sheet Pins..." ) )
+        .Tooltip( _( "Synchronize all sheet pins and hierarchical labels" ) )
         .Icon( BITMAPS::import_hierarchical_label )
         .Flags( AF_ACTIVATE ) );
 
@@ -769,6 +803,49 @@ TOOL_ACTION SCH_ACTIONS::swap( TOOL_ACTION_ARGS()
         .Tooltip( _( "Swap positions of selected items" ) )
         .Icon( BITMAPS::swap ) );
 
+// Separate action so "real" pin swaps are not conflated with the generic position swap.
+TOOL_ACTION SCH_ACTIONS::swapPins( TOOL_ACTION_ARGS()
+        .Name( "eeschema.InteractiveEdit.swapPins" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Swap Pins" ) )
+        .Tooltip( _( "Swap the selected symbol pins' positions" ) )
+        .Icon( BITMAPS::swap ) );
+
+TOOL_ACTION SCH_ACTIONS::swapPinLabels( TOOL_ACTION_ARGS()
+        .Name( "eeschema.InteractiveEdit.swapPinLabels" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Swap Pin Labels" ) )
+        .Tooltip( _( "Swap the labels attached to selected pins" ) )
+        .Icon( BITMAPS::swap ) );
+
+TOOL_ACTION SCH_ACTIONS::swapUnitLabels( TOOL_ACTION_ARGS()
+        .Name( "eeschema.InteractiveEdit.swapUnitLabels" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Swap Unit Labels" ) )
+        .Tooltip( _( "Swap labels between selected units" ) )
+        .Icon( BITMAPS::swap ) );
+
+TOOL_ACTION SCH_ACTIONS::toggleLock( TOOL_ACTION_ARGS()
+        .Name( "eeschema.InteractiveEdit.toggleLock" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Toggle Lock" ) )
+        .Tooltip( _( "Lock or unlock selected items" ) )
+        .Icon( BITMAPS::lock_unlock ) );
+
+TOOL_ACTION SCH_ACTIONS::lock( TOOL_ACTION_ARGS()
+        .Name( "eeschema.InteractiveEdit.lock" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Lock" ) )
+        .Tooltip( _( "Prevent items from being moved and/or resized on the canvas" ) )
+        .Icon( BITMAPS::locked ) );
+
+TOOL_ACTION SCH_ACTIONS::unlock( TOOL_ACTION_ARGS()
+        .Name( "eeschema.InteractiveEdit.unlock" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Unlock" ) )
+        .Tooltip( _( "Allow items to be moved and/or resized on the canvas" ) )
+        .Icon( BITMAPS::unlocked ) );
+
 TOOL_ACTION SCH_ACTIONS::properties( TOOL_ACTION_ARGS()
         .Name( "eeschema.InteractiveEdit.properties" )
         .Scope( AS_GLOBAL )
@@ -845,27 +922,17 @@ TOOL_ACTION SCH_ACTIONS::assignNetclass( TOOL_ACTION_ARGS()
         .Tooltip( _( "Assign a netclass to nets matching a pattern" ) )
         .Icon( BITMAPS::netlist ) );
 
-TOOL_ACTION SCH_ACTIONS::toggleDeMorgan( TOOL_ACTION_ARGS()
+TOOL_ACTION SCH_ACTIONS::findNetInInspector( TOOL_ACTION_ARGS()
+        .Name( "eeschema.InteractiveEdit.findNetInInspector" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Find in Net Navigator" ) )
+        .Tooltip( _( "Locate the selected net in the net navigator" ) ) );
+
+TOOL_ACTION SCH_ACTIONS::cycleBodyStyle( TOOL_ACTION_ARGS()
         .Name( "eeschema.InteractiveEdit.toggleDeMorgan" )
         .Scope( AS_GLOBAL )
-        .FriendlyName( _( "De Morgan Conversion" ) )
-        .Tooltip( _( "Switch between De Morgan representations" ) )
-        .Icon( BITMAPS::morgan2 ) );
-
-TOOL_ACTION SCH_ACTIONS::showDeMorganStandard( TOOL_ACTION_ARGS()
-        .Name( "eeschema.InteractiveEdit.showDeMorganStandard" )
-        .Scope( AS_GLOBAL )
-        .FriendlyName( _( "De Morgan Standard" ) )
-        .Tooltip( _( "Switch to standard De Morgan representation" ) )
-        .ToolbarState( TOOLBAR_STATE::TOGGLE )
-        .Icon( BITMAPS::morgan1 ) );
-
-TOOL_ACTION SCH_ACTIONS::showDeMorganAlternate( TOOL_ACTION_ARGS()
-        .Name( "eeschema.InteractiveEdit.showDeMorganAlternate" )
-        .Scope( AS_GLOBAL )
-        .FriendlyName( _( "De Morgan Alternate" ) )
-        .Tooltip( _( "Switch to alternate De Morgan representation" ) )
-        .ToolbarState( TOOLBAR_STATE::TOGGLE )
+        .FriendlyName( _( "Cycle Body Style" ) )
+        .Tooltip( _( "Switch between De Morgan (or other) representations" ) )
         .Icon( BITMAPS::morgan2 ) );
 
 TOOL_ACTION SCH_ACTIONS::toLabel( TOOL_ACTION_ARGS()
@@ -877,8 +944,10 @@ TOOL_ACTION SCH_ACTIONS::toLabel( TOOL_ACTION_ARGS()
         .Flags( AF_NONE )
         .Parameter( SCH_LABEL_T ) );
 
-TOOL_ACTION SCH_ACTIONS::toCLabel( TOOL_ACTION_ARGS()
-        .Name( "eeschema.InteractiveEdit.toCLabel" )
+TOOL_ACTION SCH_ACTIONS::toDLabel(TOOL_ACTION_ARGS()
+        .Name( "eeschema.InteractiveEdit.toCLabel" )    // Old name based on netClass label.
+                                                        // There's no sense losing hotkey assignments, so we
+                                                        // leave it as-is)
         .Scope( AS_GLOBAL )
         .FriendlyName( _( "Change to Directive Label" ) )
         .Tooltip( _( "Change existing item to a directive label" ) )
@@ -947,6 +1016,20 @@ TOOL_ACTION SCH_ACTIONS::pinTable( TOOL_ACTION_ARGS()
         .FriendlyName( _( "Pin Table..." ) )
         .Tooltip( _( "Displays pin table for bulk editing of pins" ) )
         .Icon( BITMAPS::pin_table ) );
+
+TOOL_ACTION SCH_ACTIONS::convertStackedPins( TOOL_ACTION_ARGS()
+        .Name( "eeschema.InteractiveEdit.convertStackedPins" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Convert Stacked Pins" ) )
+        .Tooltip( _( "Convert multiple pins at the same location to a single pin with stacked notation" ) )
+        .Icon( BITMAPS::pin ) );
+
+TOOL_ACTION SCH_ACTIONS::explodeStackedPin( TOOL_ACTION_ARGS()
+        .Name( "eeschema.InteractiveEdit.explodeStackedPin" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Explode Stacked Pin" ) )
+        .Tooltip( _( "Convert a pin with stacked notation to multiple individual pins" ) )
+        .Icon( BITMAPS::pin ) );
 
 TOOL_ACTION SCH_ACTIONS::breakWire( TOOL_ACTION_ARGS()
         .Name( "eeschema.InteractiveEdit.breakWire" )
@@ -1017,7 +1100,7 @@ TOOL_ACTION SCH_ACTIONS::setExcludeFromBOM( TOOL_ACTION_ARGS()
         .FriendlyName( _( "Exclude from Bill of Materials" ) )
         .Tooltip( _( "Set the exclude from bill of materials attribute" ) ) );
 
-TOOL_ACTION SCH_ACTIONS::setExcludeFromSimulation( TOOL_ACTION_ARGS()
+TOOL_ACTION SCH_ACTIONS::setExcludeFromSim( TOOL_ACTION_ARGS()
         .Name( "eeschema.EditorControl.setExcludeFromSimulation" )
         .Scope( AS_GLOBAL )
         .FriendlyName( _( "Exclude from Simulation" ) )
@@ -1046,15 +1129,15 @@ TOOL_ACTION SCH_ACTIONS::editLibSymbolWithLibEdit( TOOL_ACTION_ARGS()
 TOOL_ACTION SCH_ACTIONS::editSymbolFields( TOOL_ACTION_ARGS()
         .Name( "eeschema.EditorControl.editSymbolFields" )
         .Scope( AS_GLOBAL )
-        .FriendlyName( _( "Edit Symbol Fields..." ) )
-        .Tooltip( _( "Bulk-edit fields of all symbols in schematic" ) )
+        .FriendlyName( _( "Bulk Edit Symbol Fields..." ) )
+        .Tooltip( _( "Edit a table of fields from all symbols in the schematic" ) )
         .Icon( BITMAPS::spreadsheet ) );
 
 TOOL_ACTION SCH_ACTIONS::editSymbolLibraryLinks( TOOL_ACTION_ARGS()
         .Name( "eeschema.EditorControl.editSymbolLibraryLinks" )
         .Scope( AS_GLOBAL )
-        .FriendlyName( _( "Edit Symbol Library Links..." ) )
-        .Tooltip( _( "Edit links between schematic and library symbols" ) )
+        .FriendlyName( _( "Bulk Edit Symbol Library Links..." ) )
+        .Tooltip( _( "Edit a table of links between schematic and library symbols" ) )
         .Icon( BITMAPS::edit_cmp_symb_links ) );
 
 TOOL_ACTION SCH_ACTIONS::assignFootprints( TOOL_ACTION_ARGS()
@@ -1144,6 +1227,13 @@ TOOL_ACTION SCH_ACTIONS::importGraphics( TOOL_ACTION_ARGS()
         .Icon( BITMAPS::import_vector )
         .Flags( AF_ACTIVATE ) );
 
+TOOL_ACTION SCH_ACTIONS::importNonKicadSchematic( TOOL_ACTION_ARGS()
+        .Name( "eeschema.EditorControl.importNonKicadSchematic" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Import Non-KiCad Schematic..." ) )
+        .Tooltip( _( "Replace current schematic sheet with one imported from another application" ) )
+        .Icon( BITMAPS::import_document ) );
+
 TOOL_ACTION SCH_ACTIONS::showPcbNew( TOOL_ACTION_ARGS()
         .Name( "eeschema.EditorControl.showPcbNew" )
         .Scope( AS_GLOBAL )
@@ -1183,18 +1273,10 @@ TOOL_ACTION SCH_ACTIONS::generateBOMExternal( TOOL_ACTION_ARGS()
 TOOL_ACTION SCH_ACTIONS::exportSymbolsToLibrary( TOOL_ACTION_ARGS()
        .Name( "eeschema.EditorControl.exportSymbolsToLibrary" )
        .Scope( AS_GLOBAL )
-       .FriendlyName( _( "Export Symbols to Library..." ) )
-       .Tooltip( _( "Add symbols used in schematic to an existing symbol library\n"
+       .FriendlyName( _( "Export Symbols..." ) )
+       .Tooltip( _( "Add symbols from schematic to a new or an existing symbol library\n"
                     "(does not remove other symbols from this library)" ) )
        .Icon( BITMAPS::library_archive ) );
-
-TOOL_ACTION SCH_ACTIONS::exportSymbolsToNewLibrary( TOOL_ACTION_ARGS()
-       .Name( "eeschema.EditorControl.exportSymbolsToNewLibrary" )
-       .Scope( AS_GLOBAL )
-       .FriendlyName( _( "Export Symbols to New Library..." ) )
-       .Tooltip( _( "Create a new symbol library using the symbols used in the schematic\n"
-                    "(if the library already exists it will be replaced)" ) )
-       .Icon( BITMAPS::library_archive_as ) );
 
 TOOL_ACTION SCH_ACTIONS::selectOnPCB( TOOL_ACTION_ARGS()
         .Name( "eeschema.EditorControl.selectOnPCB" )
@@ -1276,7 +1358,6 @@ TOOL_ACTION SCH_ACTIONS::lineModeFree( TOOL_ACTION_ARGS()
         .Scope( AS_GLOBAL )
         .FriendlyName( _( "Line Mode for Wires and Buses" ) )
         .Tooltip( _( "Draw and drag at any angle" ) )
-        .ToolbarState( TOOLBAR_STATE::TOGGLE )
         .Icon( BITMAPS::lines_any )
         .Flags( AF_NONE )
         .Parameter( LINE_MODE::LINE_MODE_FREE ) );
@@ -1286,7 +1367,6 @@ TOOL_ACTION SCH_ACTIONS::lineMode90( TOOL_ACTION_ARGS()
         .Scope( AS_GLOBAL )
         .FriendlyName( _( "Line Mode for Wires and Buses" ) )
         .Tooltip( _( "Constrain drawing and dragging to horizontal or vertical motions" ) )
-        .ToolbarState( TOOLBAR_STATE::TOGGLE )
         .Icon( BITMAPS::lines90 )
         .Flags( AF_NONE )
         .Parameter( LINE_MODE::LINE_MODE_90) );
@@ -1296,7 +1376,6 @@ TOOL_ACTION SCH_ACTIONS::lineMode45( TOOL_ACTION_ARGS()
         .Scope( AS_GLOBAL )
         .FriendlyName( _( "Line Mode for Wires and Buses" ) )
         .Tooltip( _( "Constrain drawing and dragging to horizontal, vertical, or 45-degree angle motions" ) )
-        .ToolbarState( TOOLBAR_STATE::TOGGLE )
         .Icon( BITMAPS::hv45mode )
         .Flags( AF_NONE )
         .Parameter( LINE_MODE::LINE_MODE_45 ) );
@@ -1306,7 +1385,12 @@ TOOL_ACTION SCH_ACTIONS::lineModeNext( TOOL_ACTION_ARGS()
         .Scope( AS_GLOBAL )
         .DefaultHotkey( MD_SHIFT + static_cast<int>( WXK_SPACE ) )
         .FriendlyName( _( "Line Mode for Wires and Buses" ) )
-        .Tooltip( _( "Switch to next line mode" ) ) );
+        .Tooltip( _( "Switch to next angle snapping mode" ) ) );
+
+TOOL_ACTION SCH_ACTIONS::angleSnapModeChanged( TOOL_ACTION_ARGS()
+        .Name( "eeschema.EditorControl.angleSnapModeChanged" )
+        .Scope( AS_GLOBAL )
+        .Flags( AF_NOTIFY ) );
 
 TOOL_ACTION SCH_ACTIONS::toggleAnnotateAuto( TOOL_ACTION_ARGS()
         .Name( "eeschema.EditorControl.annotateAutomatically" )
@@ -1315,13 +1399,6 @@ TOOL_ACTION SCH_ACTIONS::toggleAnnotateAuto( TOOL_ACTION_ARGS()
         .Tooltip( _( "Toggle automatic annotation of new symbols" ) )
         .ToolbarState( TOOLBAR_STATE::TOGGLE )
         .Icon( BITMAPS::annotate ) );
-
-TOOL_ACTION SCH_ACTIONS::repairSchematic( TOOL_ACTION_ARGS()
-        .Name( "eeschema.EditorControl.repairSchematic" )
-        .Scope( AS_GLOBAL )
-        .FriendlyName( _( "Repair Schematic" ) )
-        .Tooltip( _( "Run various diagnostics and attempt to repair schematic" ) )
-        .Icon( BITMAPS::rescue ) );
 
 TOOL_ACTION SCH_ACTIONS::previousUnit( TOOL_ACTION_ARGS()
         .Name( "eeschema.EditorControl.previousUnit" )
@@ -1506,6 +1583,54 @@ TOOL_ACTION SCH_ACTIONS::alignToGrid( TOOL_ACTION_ARGS()
         .Icon( BITMAPS::align_elements_to_grid )
         .Flags( AF_ACTIVATE ) );
 
+TOOL_ACTION SCH_ACTIONS::alignTop( TOOL_ACTION_ARGS()
+        .Name( "eeschema.Align.alignTop" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Align to Top" ) )
+        .Tooltip( _( "Aligns selected items to the top edge of the item under the cursor" ) )
+        .Icon( BITMAPS::align_items_top )
+        .Flags( AF_ACTIVATE ) );
+
+TOOL_ACTION SCH_ACTIONS::alignBottom( TOOL_ACTION_ARGS()
+        .Name( "eeschema.Align.alignBottom" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Align to Bottom" ) )
+        .Tooltip( _( "Aligns selected items to the bottom edge of the item under the cursor" ) )
+        .Icon( BITMAPS::align_items_bottom )
+        .Flags( AF_ACTIVATE ) );
+
+TOOL_ACTION SCH_ACTIONS::alignLeft( TOOL_ACTION_ARGS()
+        .Name( "eeschema.Align.alignLeft" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Align to Left" ) )
+        .Tooltip( _( "Aligns selected items to the left edge of the item under the cursor" ) )
+        .Icon( BITMAPS::align_items_left )
+        .Flags( AF_ACTIVATE ) );
+
+TOOL_ACTION SCH_ACTIONS::alignRight( TOOL_ACTION_ARGS()
+        .Name( "eeschema.Align.alignRight" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Align to Right" ) )
+        .Tooltip( _( "Aligns selected items to the right edge of the item under the cursor" ) )
+        .Icon( BITMAPS::align_items_right )
+        .Flags( AF_ACTIVATE ) );
+
+TOOL_ACTION SCH_ACTIONS::alignCenterX( TOOL_ACTION_ARGS()
+        .Name( "eeschema.Align.alignCenterX" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Align to Horizontal Center" ) )
+        .Tooltip( _( "Aligns selected items to the horizontal center of the item under the cursor" ) )
+        .Icon( BITMAPS::align_items_middle )
+        .Flags( AF_ACTIVATE ) );
+
+TOOL_ACTION SCH_ACTIONS::alignCenterY( TOOL_ACTION_ARGS()
+        .Name( "eeschema.Align.alignCenterY" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Align to Vertical Center" ) )
+        .Tooltip( _( "Aligns selected items to the vertical center of the item under the cursor" ) )
+        .Icon( BITMAPS::align_items_center )
+        .Flags( AF_ACTIVATE ) );
+
 // Schematic editor save copy curr sheet command
 TOOL_ACTION SCH_ACTIONS::saveCurrSheetCopyAs( TOOL_ACTION_ARGS()
         .Name( "eeschema.EditorControl.saveCurrSheetCopyAs" )
@@ -1517,6 +1642,14 @@ TOOL_ACTION SCH_ACTIONS::saveCurrSheetCopyAs( TOOL_ACTION_ARGS()
 // Drag and drop
 TOOL_ACTION SCH_ACTIONS::ddAppendFile( TOOL_ACTION_ARGS()
         .Name( "eeschema.EditorControl.ddAppendFile" )
+        .Scope( AS_GLOBAL ) );
+
+TOOL_ACTION SCH_ACTIONS::ddAddImage( TOOL_ACTION_ARGS()
+        .Name( "eeschema.EditorControl.ddAddImage" )
+        .Scope( AS_GLOBAL ) );
+
+TOOL_ACTION SCH_ACTIONS::ddImportGraphics( TOOL_ACTION_ARGS()
+        .Name( "eeschema.EditorControl.ddImportGraphics" )
         .Scope( AS_GLOBAL ) );
 
 // SIMULATOR
@@ -1656,5 +1789,23 @@ TOOL_ACTION SCH_ACTIONS::showNetlist( TOOL_ACTION_ARGS()
         .Scope( AS_GLOBAL )
         .FriendlyName( _( "Show SPICE Netlist" ) )
         .Icon( BITMAPS::netlist ) );
+
+TOOL_ACTION SCH_ACTIONS::addVariant( TOOL_ACTION_ARGS()
+        .Name( "eeschema.EditorControl.addVariant" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Add Design Variant..." ) )
+        .Tooltip( _( "Add new design variant to the schematic." ) ) );
+
+TOOL_ACTION SCH_ACTIONS::removeVariant( TOOL_ACTION_ARGS()
+        .Name( "eeschema.EditorControl.removeVariant" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Remove Design Variant..." ) )
+        .Tooltip( _( "Remove an existing design variant from the schematic." ) ) );
+
+TOOL_ACTION SCH_ACTIONS::editVariantDescription( TOOL_ACTION_ARGS()
+        .Name( "eeschema.EditorControl.editVariantDescription" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Edit Variant Description..." ) )
+        .Tooltip( _( "Edit the description of an existing design variant." ) ) );
 
 // clang-format on

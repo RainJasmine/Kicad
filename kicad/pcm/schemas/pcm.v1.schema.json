@@ -33,7 +33,6 @@
                     "enum": [
                         "plugin",
                         "library",
-                        "fab",
                         "colortheme"
                     ],
                     "description": "Type of the package"
@@ -48,10 +47,6 @@
                 },
                 "category": {
                     "type": "string",
-                    "enum": [
-                        "general",
-                        "fab"
-                    ],
                     "description": "Category of the package"
                 },
                 "license": {

@@ -40,6 +40,7 @@
 
 using namespace APP_MONITOR;
 
+
 SENTRY::SENTRY() :
         m_isOptedIn( false )
 {
@@ -131,9 +132,12 @@ const wxString& SENTRY::GetSentryId()
 
 void SENTRY::readOrCreateUid()
 {
-    wxFFile sentryInitFile( m_sentry_uid_fn.GetFullPath() );
-    sentryInitFile.ReadAll( &m_sentryUid );
-    sentryInitFile.Close();
+    if( m_sentry_optin_fn.Exists() )
+    {
+        wxFFile sentryInitFile( m_sentry_uid_fn.GetFullPath() );
+        sentryInitFile.ReadAll( &m_sentryUid );
+        sentryInitFile.Close();
+    }
 
     if( m_sentryUid.IsEmpty() || m_sentryUid.length() != 36 )
     {
@@ -162,6 +166,13 @@ void SENTRY::sentryInit()
         // only capture 5% of transactions
         sentry_options_set_traces_sample_rate( options, 0.05 );
         sentry_options_set_dsn( options, KICAD_SENTRY_DSN );
+
+#ifdef __WXMAC__
+        wxString handlerPath = PATHS::GetExecutablePath() + wxT( "Contents/MacOS/crashpad_handler" );
+
+        if( wxFileExists( handlerPath ) )
+            sentry_options_set_handler_path( options, handlerPath.c_str() );
+#endif
 
         wxFileName tmp;
         tmp.AssignDir( PATHS::GetUserCachePath() );
@@ -247,7 +258,7 @@ void SENTRY::LogAssert( const ASSERT_CACHE_KEY& aKey, const wxString& aAssertMsg
 }
 
 
-void SENTRY::LogException( const wxString& aMsg )
+void SENTRY::LogException( const wxString& aMsg, bool aUnhandled )
 {
 #ifdef KICAD_USE_SENTRY
     if( !APP_MONITOR::SENTRY::Instance()->IsOptedIn() )
@@ -255,12 +266,15 @@ void SENTRY::LogException( const wxString& aMsg )
         return;
     }
 
+    sentry_scope_t* local_scope = sentry_local_scope_new();
+    sentry_scope_set_tag( local_scope, "unhandled", aUnhandled ? "true" : "false" );
+
     sentry_value_t exc = sentry_value_new_exception( "exception", aMsg.c_str() );
     sentry_value_set_stacktrace( exc, NULL, 0 );
 
     sentry_value_t sentryEvent = sentry_value_new_event();
     sentry_event_add_exception( sentryEvent, exc );
-    sentry_capture_event( sentryEvent );
+    sentry_capture_event_with_scope( sentryEvent, local_scope );
 #endif
 }
 
@@ -314,7 +328,16 @@ SENTRY* SENTRY::m_instance = nullptr;
 
 bool operator<( const ASSERT_CACHE_KEY& aKey1, const ASSERT_CACHE_KEY& aKey2 )
 {
-    return aKey1.file < aKey2.file || aKey1.line < aKey2.line || aKey1.func < aKey2.func || aKey1.cond < aKey2.cond;
+    if( aKey1.file != aKey2.file )
+        return aKey1.file < aKey2.file;
+
+    if( aKey1.line != aKey2.line )
+        return aKey1.line < aKey2.line;
+
+    if( aKey1.func != aKey2.func )
+        return aKey1.func < aKey2.func;
+
+    return aKey1.cond < aKey2.cond;
 }
 
 

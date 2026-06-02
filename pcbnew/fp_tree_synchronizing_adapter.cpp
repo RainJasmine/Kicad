@@ -28,19 +28,22 @@
 #include <fp_tree_synchronizing_adapter.h>
 #include <footprint_edit_frame.h>
 #include <footprint_preview_panel.h>
-#include <fp_lib_table.h>
-#include <footprint_info_impl.h>
+#include <footprint_library_adapter.h>
 #include <gal/graphics_abstraction_layer.h>
+#include <project_pcb.h>
 #include <string_utils.h>
 #include <board.h>
 #include <footprint.h>
 #include <tool/tool_manager.h>
 #include <tools/footprint_editor_control.h>
+
+#include <map>
+
 #include <wx/settings.h>
 
 
 wxObjectDataPtr<LIB_TREE_MODEL_ADAPTER>
-FP_TREE_SYNCHRONIZING_ADAPTER::Create( FOOTPRINT_EDIT_FRAME* aFrame, FP_LIB_TABLE* aLibs )
+FP_TREE_SYNCHRONIZING_ADAPTER::Create( FOOTPRINT_EDIT_FRAME* aFrame, FOOTPRINT_LIBRARY_ADAPTER* aLibs )
 {
     auto* adapter = new FP_TREE_SYNCHRONIZING_ADAPTER( aFrame, aLibs );
     return wxObjectDataPtr<LIB_TREE_MODEL_ADAPTER>( adapter );
@@ -48,7 +51,7 @@ FP_TREE_SYNCHRONIZING_ADAPTER::Create( FOOTPRINT_EDIT_FRAME* aFrame, FP_LIB_TABL
 
 
 FP_TREE_SYNCHRONIZING_ADAPTER::FP_TREE_SYNCHRONIZING_ADAPTER( FOOTPRINT_EDIT_FRAME* aFrame,
-                                                              FP_LIB_TABLE* aLibs ) :
+                                                              FOOTPRINT_LIBRARY_ADAPTER* aLibs ) :
         FP_TREE_MODEL_ADAPTER( aFrame, aLibs ),
         m_frame( aFrame )
 {
@@ -68,9 +71,7 @@ bool FP_TREE_SYNCHRONIZING_ADAPTER::IsContainer( const wxDataViewItem& aItem ) c
 }
 
 
-#define PROGRESS_INTERVAL_MILLIS 33     // 30 FPS refresh rate
-
-void FP_TREE_SYNCHRONIZING_ADAPTER::Sync( FP_LIB_TABLE* aLibs )
+void FP_TREE_SYNCHRONIZING_ADAPTER::Sync( FOOTPRINT_LIBRARY_ADAPTER* aLibs )
 {
     m_libs = aLibs;
 
@@ -81,16 +82,23 @@ void FP_TREE_SYNCHRONIZING_ADAPTER::Sync( FP_LIB_TABLE* aLibs )
 
         try
         {
-            // Remove the library if it no longer exists or it exists in both the global and the
-            // project library but the project library entry is disabled.
-            if( !m_libs->HasLibrary( name, true )
-                || m_libs->FindRow( name, true ) != m_libs->FindRow( name, false ) )
+            // Check the table row directly
+            std::optional<LIBRARY_TABLE_ROW*> optRow    = m_libs->GetRow( name );
+            std::optional<LIB_STATUS>         libStatus = m_libs->GetLibraryStatus( name );
+
+            bool loadFailed = libStatus.has_value()
+                            && libStatus->load_status == LOAD_STATUS::LOAD_ERROR;
+
+            if( !optRow.has_value()
+                || ( *optRow )->Disabled()
+                || ( *optRow )->Hidden()
+                || loadFailed )
             {
                 it = deleteLibrary( it );
                 continue;
             }
 
-            updateLibrary( *(LIB_TREE_NODE_LIBRARY*) it->get() );
+            updateLibrary( *static_cast<LIB_TREE_NODE_LIBRARY*>( it->get() ) );
         }
         catch( ... )
         {
@@ -107,73 +115,80 @@ void FP_TREE_SYNCHRONIZING_ADAPTER::Sync( FP_LIB_TABLE* aLibs )
     PROJECT_FILE&    project = m_frame->Prj().GetProjectFile();
     size_t           count = m_libMap.size();
 
-    for( const wxString& libName : m_libs->GetLogicalLibs() )
+    for( const auto& [libName, status] : m_libs->GetLibraryStatuses() )
     {
-        if( m_libMap.count( libName ) == 0 )
-        {
-            try
-            {
-                const FP_LIB_TABLE_ROW* library = m_libs->FindRow( libName, true );
-                bool pinned = alg::contains( cfg->m_Session.pinned_fp_libs, libName )
-                                || alg::contains( project.m_PinnedFootprintLibs, libName );
+        if( status.load_status != LOAD_STATUS::LOADED || status.error )
+            continue;
 
-                DoAddLibrary( libName, library->GetDescr(), getFootprints( libName ), pinned, true );
-                m_libMap.insert( libName  );
-            }
-            catch( ... )
-            {
-                // do nothing if libname is not found. Just skip it
-            }
-        }
+        if( m_libMap.count( libName ) != 0 )
+            continue;
+
+        std::optional<LIBRARY_TABLE_ROW*> optRow = m_libs->GetRow( libName );
+
+        if( !optRow.has_value() || ( *optRow )->Disabled() || ( *optRow )->Hidden() )
+            continue;
+
+        bool pinned = alg::contains( cfg->m_Session.pinned_fp_libs, libName )
+                        || alg::contains( project.m_PinnedFootprintLibs, libName );
+
+        std::vector<FOOTPRINT*> footprints = m_libs->GetFootprints( libName, true );
+        std::vector<LIB_TREE_ITEM*> treeItems;
+        treeItems.reserve( footprints.size() );
+
+        for( FOOTPRINT* fp : footprints )
+            treeItems.push_back( fp );
+
+        DoAddLibrary( libName, ( *optRow )->Description(), treeItems, pinned, true );
+        m_libMap.insert( libName );
     }
 
     if( m_libMap.size() > count )
-        m_tree.AssignIntrinsicRanks();
+        m_tree.AssignIntrinsicRanks( m_shownColumns );
 }
 
 
 int FP_TREE_SYNCHRONIZING_ADAPTER::GetLibrariesCount() const
 {
-    return GFootprintTable.GetCount();
+    return m_libs->GetLibraryNames().size();
 }
 
 
 void FP_TREE_SYNCHRONIZING_ADAPTER::updateLibrary( LIB_TREE_NODE_LIBRARY& aLibNode )
 {
-    std::vector<LIB_TREE_ITEM*> footprints = getFootprints( aLibNode.m_Name );
+    // Re-enumerate from disk if the library has changed since it was last preloaded.
+    // This picks up external modifications such as git branch switches.
+    m_libs->RefreshLibraryIfChanged( aLibNode.m_Name );
 
-    // remove the common part from the footprints list
-    for( auto nodeIt = aLibNode.m_Children.begin(); nodeIt != aLibNode.m_Children.end();  )
+    std::vector<FOOTPRINT*> footprints = m_libs->GetFootprints( aLibNode.m_Name, true );
+
+    // Build a map of footprint names for quick lookup
+    std::map<wxString, FOOTPRINT*> fpMap;
+
+    for( FOOTPRINT* fp : footprints )
+        fpMap[fp->GetFPID().GetLibItemName()] = fp;
+
+    // Remove items that no longer exist
+    for( auto nodeIt = aLibNode.m_Children.begin(); nodeIt != aLibNode.m_Children.end(); )
     {
-        // Since the list is sorted we can use a binary search to speed up searches within
-        // libraries with lots of footprints.
-        FOOTPRINT_INFO_IMPL dummy( wxEmptyString, (*nodeIt)->m_Name );
-        auto footprintIt = std::lower_bound( footprints.begin(), footprints.end(), &dummy,
-                []( LIB_TREE_ITEM* a, LIB_TREE_ITEM* b )
-                {
-                    return StrNumCmp( a->GetName(), b->GetName(), false ) < 0;
-                } );
+        auto fpIt = fpMap.find( (*nodeIt)->m_Name );
 
-        if( footprintIt != footprints.end() && dummy.GetName() == (*footprintIt)->GetName() )
+        if( fpIt != fpMap.end() )
         {
-            // footprint exists both in the lib tree and the footprint info list; just
-            // update the node data
-            static_cast<LIB_TREE_NODE_ITEM*>( nodeIt->get() )->Update( *footprintIt );
-            footprints.erase( footprintIt );
+            static_cast<LIB_TREE_NODE_ITEM*>( nodeIt->get() )->Update( fpIt->second );
+            fpMap.erase( fpIt );
             ++nodeIt;
         }
         else
         {
-            // node does not exist in the library manager, remove the corresponding node
             nodeIt = aLibNode.m_Children.erase( nodeIt );
         }
     }
 
-    // now the footprint list contains only new aliases that need to be added to the tree
-    for( LIB_TREE_ITEM* footprint : footprints )
-        aLibNode.AddItem( footprint );
+    // Add new items
+    for( auto& [name, fp] : fpMap )
+        aLibNode.AddItem( fp );
 
-    aLibNode.AssignIntrinsicRanks();
+    aLibNode.AssignIntrinsicRanks( m_shownColumns );
     m_libMap.insert( aLibNode.m_Name );
 }
 
@@ -241,16 +256,10 @@ void FP_TREE_SYNCHRONIZING_ADAPTER::GetValue( wxVariant& aVariant, wxDataViewIte
         }
         else if( node->m_Type == LIB_TREE_NODE::TYPE::LIBRARY )
         {
-            try
+            if( std::optional<wxString> optDesc = PROJECT_PCB::FootprintLibAdapter( &m_frame->Prj() )->
+                    GetLibraryDescription( node->m_LibId.GetLibNickname() ) )
             {
-                const FP_LIB_TABLE_ROW* lib =
-                        GFootprintTable.FindRow( node->m_LibId.GetLibNickname() );
-
-                if( lib )
-                    node->m_Desc = lib->GetDescr();
-            }
-            catch( IO_ERROR& )
-            {
+                node->m_Desc = *optDesc;
             }
         }
 

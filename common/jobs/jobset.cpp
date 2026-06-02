@@ -30,6 +30,7 @@
 #include <jobs/jobs_output_archive.h>
 #include <kiid.h>
 #include <reporter.h>
+#include <wx/filename.h>
 
 #include <algorithm>
 #include <memory>
@@ -135,15 +136,6 @@ JOBSET_DESTINATION::JOBSET_DESTINATION( const wxString& id, JOBSET_DESTINATION_T
 }
 
 
-JOBSET_DESTINATION::~JOBSET_DESTINATION()
-{
-    for( auto& [name, reporter] : m_lastRunReporters )
-        delete reporter;
-
-    m_lastRunReporters.clear();
-}
-
-
 void JOBSET_DESTINATION::InitOutputHandler()
 {
     if( m_type == JOBSET_DESTINATION_T::FOLDER )
@@ -167,7 +159,6 @@ wxString JOBSET_DESTINATION::GetPathInfo() const
 {
     return m_outputHandler->GetOutputPath();
 }
-
 
 void JOBSET_DESTINATION::SetDescription( const wxString& aDescription )
 {

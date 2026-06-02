@@ -32,6 +32,7 @@
 #include <settings/color_settings.h>
 #include <drawing_sheet/ds_draw_item.h>
 #include <gal/graphics_abstraction_layer.h>
+#include <text_eval/text_eval_wrapper.h>
 
 #include <drawing_sheet/ds_painter.h>
 #include <drawing_sheet/ds_data_item.h>
@@ -106,6 +107,8 @@ void DS_DRAW_ITEM_LIST::GetTextVars( wxArrayString* aVars )
     aVars->push_back( wxT( "PROJECTNAME" ) );
     aVars->push_back( wxT( "PAPER" ) );
     aVars->push_back( wxT( "LAYER" ) );
+    aVars->push_back( wxT( "VARIANT" ) );
+    aVars->push_back( wxT( "VARIANT_DESC" ) );
     TITLE_BLOCK::GetContextualTextVars( aVars );
 }
 
@@ -164,6 +167,16 @@ wxString DS_DRAW_ITEM_LIST::BuildFullText( const wxString& aTextbase )
                     *token = m_sheetLayer;
                     tokenUpdated = true;
                 }
+                else if( token->IsSameAs( wxT( "VARIANT" ) ) )
+                {
+                    *token = m_variantName;
+                    tokenUpdated = true;
+                }
+                else if( token->IsSameAs( wxT( "VARIANT_DESC" ) ) )
+                {
+                    *token = m_variantDesc;
+                    tokenUpdated = true;
+                }
                 else if( m_titleBlock )
                 {
                     if( m_titleBlock->TextVarResolver( token, m_project, m_flags ) )
@@ -203,7 +216,17 @@ wxString DS_DRAW_ITEM_LIST::BuildFullText( const wxString& aTextbase )
                 return false;
             };
 
-    return ExpandTextVars( aTextbase, &wsResolver, m_flags );
+    wxString retv = ExpandTextVars( aTextbase, &wsResolver, m_flags );
+
+    if( retv.Contains( wxS( "@{" ) ) )
+    {
+        // Must not be static. Painting can run on parallel workers and a shared
+        // evaluator races on its internal error collector.
+        EXPRESSION_EVALUATOR evaluator;
+        retv = evaluator.Evaluate( retv );
+    }
+
+    return retv;
 }
 
 
@@ -315,15 +338,15 @@ void KIGFX::DS_PAINTER::draw( const DS_DRAW_ITEM_BITMAP* aItem, int aLayer ) con
 
 #if 0   // For bounding box debug purpose only
     BOX2I bbox = aItem->GetBoundingBox();
-    m_gal->SetIsFill( true );
-    m_gal->SetIsStroke( true );
-    m_gal->SetFillColor( COLOR4D( 1, 1, 1, 0.4 ) );
-    m_gal->SetStrokeColor( COLOR4D( 0, 0, 0, 1 ) );
+    m_canvas->SetIsFill( true );
+    m_canvas->SetIsStroke( true );
+    m_canvas->SetFillColor( COLOR4D( 1, 1, 1, 0.4 ) );
+    m_canvas->SetStrokeColor( COLOR4D( 0, 0, 0, 1 ) );
 
     if( img_scale != 1.0 )
-        m_gal->Scale( VECTOR2D( 1.0, 1.0 ) );
+        m_canvas->Scale( VECTOR2D( 1.0, 1.0 ) );
 
-    m_gal->DrawRectangle( VECTOR2D( bbox.GetOrigin() ) - position,
+    m_canvas->DrawRectangle( VECTOR2D( bbox.GetOrigin() ) - position,
                           VECTOR2D( bbox.GetEnd() ) - position );
 #endif
 

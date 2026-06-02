@@ -46,7 +46,10 @@ void formatFill( OUTPUTFORMATTER* aFormatter, FILL_T aFillMode, const COLOR4D& a
     case FILL_T::CROSS_HATCH:              fillType = "cross_hatch";   break;
     }
 
-    if( aFillMode == FILL_T::FILLED_WITH_COLOR )
+    if( aFillMode == FILL_T::FILLED_WITH_COLOR
+            || aFillMode == FILL_T::HATCH
+            || aFillMode == FILL_T::REVERSE_HATCH
+            || aFillMode == FILL_T::CROSS_HATCH )
     {
         aFormatter->Print( "(fill (type %s) (color %d %d %d %s))",
                            fillType,
@@ -224,7 +227,7 @@ std::string formatIU( const VECTOR2I& aPt, bool aInvertY )
 
 void formatArc( OUTPUTFORMATTER* aFormatter, EDA_SHAPE* aArc, bool aIsPrivate,
                 const STROKE_PARAMS& aStroke, FILL_T aFillMode, const COLOR4D& aFillColor,
-                bool aInvertY, const KIID& aUuid )
+                bool aInvertY, const KIID& aUuid, bool aLocked )
 {
     aFormatter->Print( "(arc %s (start %s) (mid %s) (end %s)",
                        aIsPrivate ? "private" : "",
@@ -236,7 +239,10 @@ void formatArc( OUTPUTFORMATTER* aFormatter, EDA_SHAPE* aArc, bool aIsPrivate,
     formatFill( aFormatter, aFillMode, aFillColor );
 
     if( aUuid != niluuid )
-        aFormatter->Print( "(uuid %s)", TO_UTF8( aUuid.AsString() ) );
+        aFormatter->Print( "(uuid %s)", aFormatter->Quotew( aUuid.AsString() ).c_str() );
+
+    if( aLocked )
+        KICAD_FORMAT::FormatBool( aFormatter, "locked", true );
 
     aFormatter->Print( ")" );
 }
@@ -244,7 +250,7 @@ void formatArc( OUTPUTFORMATTER* aFormatter, EDA_SHAPE* aArc, bool aIsPrivate,
 
 void formatCircle( OUTPUTFORMATTER* aFormatter, EDA_SHAPE* aCircle, bool aIsPrivate,
                    const STROKE_PARAMS& aStroke, FILL_T aFillMode, const COLOR4D& aFillColor,
-                   bool aInvertY, const KIID& aUuid )
+                   bool aInvertY, const KIID& aUuid, bool aLocked )
 {
     aFormatter->Print( "(circle %s (center %s) (radius %s)",
                        aIsPrivate ? "private" : "",
@@ -255,7 +261,10 @@ void formatCircle( OUTPUTFORMATTER* aFormatter, EDA_SHAPE* aCircle, bool aIsPriv
     formatFill( aFormatter, aFillMode, aFillColor );
 
     if( aUuid != niluuid )
-        aFormatter->Print( "(uuid %s)", TO_UTF8( aUuid.AsString() ) );
+        aFormatter->Print( "(uuid %s)", aFormatter->Quotew( aUuid.AsString() ).c_str() );
+
+    if( aLocked )
+        KICAD_FORMAT::FormatBool( aFormatter, "locked", true );
 
     aFormatter->Print( ")" );
 }
@@ -263,17 +272,23 @@ void formatCircle( OUTPUTFORMATTER* aFormatter, EDA_SHAPE* aCircle, bool aIsPriv
 
 void formatRect( OUTPUTFORMATTER* aFormatter, EDA_SHAPE* aRect, bool aIsPrivate,
                  const STROKE_PARAMS& aStroke, FILL_T aFillMode, const COLOR4D& aFillColor,
-                 bool aInvertY, const KIID& aUuid )
+                 bool aInvertY, const KIID& aUuid, bool aLocked )
 {
     aFormatter->Print( "(rectangle %s (start %s) (end %s)",
                        aIsPrivate ? "private" : "",
                        formatIU( aRect->GetStart(), aInvertY ).c_str(),
                        formatIU( aRect->GetEnd(), aInvertY ).c_str() );
+    if( aRect->GetCornerRadius() > 0 )
+        aFormatter->Print( "(radius %s)",
+                           formatIU( aRect->GetCornerRadius() ).c_str() );
     aStroke.Format( aFormatter, schIUScale );
     formatFill( aFormatter, aFillMode, aFillColor );
 
     if( aUuid != niluuid )
-        aFormatter->Print( "(uuid %s)", TO_UTF8( aUuid.AsString() ) );
+        aFormatter->Print( "(uuid %s)", aFormatter->Quotew( aUuid.AsString() ).c_str() );
+
+    if( aLocked )
+        KICAD_FORMAT::FormatBool( aFormatter, "locked", true );
 
     aFormatter->Print( ")" );
 }
@@ -281,7 +296,7 @@ void formatRect( OUTPUTFORMATTER* aFormatter, EDA_SHAPE* aRect, bool aIsPrivate,
 
 void formatBezier( OUTPUTFORMATTER* aFormatter, EDA_SHAPE* aBezier, bool aIsPrivate,
                    const STROKE_PARAMS& aStroke, FILL_T aFillMode, const COLOR4D& aFillColor,
-                   bool aInvertY, const KIID& aUuid )
+                   bool aInvertY, const KIID& aUuid, bool aLocked )
 {
     aFormatter->Print( "(bezier %s (pts ",
                        aIsPrivate ? "private" : "" );
@@ -298,7 +313,10 @@ void formatBezier( OUTPUTFORMATTER* aFormatter, EDA_SHAPE* aBezier, bool aIsPriv
     formatFill( aFormatter, aFillMode, aFillColor );
 
     if( aUuid != niluuid )
-        aFormatter->Print( "(uuid %s)", TO_UTF8( aUuid.AsString() ) );
+        aFormatter->Print( "(uuid %s)", aFormatter->Quotew( aUuid.AsString() ).c_str() );
+
+    if( aLocked )
+        KICAD_FORMAT::FormatBool( aFormatter, "locked", true );
 
     aFormatter->Print( ")" );
 }
@@ -306,7 +324,7 @@ void formatBezier( OUTPUTFORMATTER* aFormatter, EDA_SHAPE* aBezier, bool aIsPriv
 
 void formatPoly( OUTPUTFORMATTER* aFormatter, EDA_SHAPE* aPolyLine, bool aIsPrivate,
                  const STROKE_PARAMS& aStroke, FILL_T aFillMode, const COLOR4D& aFillColor,
-                 bool aInvertY, const KIID& aUuid )
+                 bool aInvertY, const KIID& aUuid, bool aLocked )
 {
     aFormatter->Print( "(polyline %s (pts ",
                        aIsPrivate ? "private" : "" );
@@ -331,7 +349,10 @@ void formatPoly( OUTPUTFORMATTER* aFormatter, EDA_SHAPE* aPolyLine, bool aIsPriv
     formatFill( aFormatter, aFillMode, aFillColor );
 
     if( aUuid != niluuid )
-        aFormatter->Print( "(uuid %s)", TO_UTF8( aUuid.AsString() ) );
+        aFormatter->Print( "(uuid %s)", aFormatter->Quotew( aUuid.AsString() ).c_str() );
+
+    if( aLocked )
+        KICAD_FORMAT::FormatBool( aFormatter, "locked", true );
 
     aFormatter->Print( ")" );
 }

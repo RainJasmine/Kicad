@@ -40,7 +40,8 @@ enum class SCH_PLOT_FORMAT
     POST,
     DXF,
     PDF,
-    SVG
+    SVG,
+    PNG
 };
 
 
@@ -53,6 +54,7 @@ public:
     wxString              m_filename;
     wxString              m_drawingSheet;
     wxString              m_defaultFont;
+    wxString              m_variant;
 
     bool                  m_plotAll;
     bool                  m_plotDrawingSheet;
@@ -67,13 +69,16 @@ public:
     bool                  m_PDFHierarchicalLinks;
     bool                  m_PDFMetadata;
     wxString              m_theme;
+
+    // Variant names to export. Empty vector means default variant only.
+    std::vector<wxString> m_variantNames;
 };
 
 
 class KICOMMON_API JOB_EXPORT_SCH_PLOT_PDF : public JOB_EXPORT_SCH_PLOT
 {
 public:
-    JOB_EXPORT_SCH_PLOT_PDF( bool aOutputIsDirectory = true );
+    JOB_EXPORT_SCH_PLOT_PDF( bool aOutputIsDirectory = false );
     wxString GetDefaultDescription() const override;
     wxString GetSettingsDialogTitle() const override;
 };
@@ -111,6 +116,18 @@ class KICOMMON_API JOB_EXPORT_SCH_PLOT_HPGL : public JOB_EXPORT_SCH_PLOT
 public:
     JOB_EXPORT_SCH_PLOT_HPGL();
     wxString GetDefaultDescription() const override;
+};
+
+
+class KICOMMON_API JOB_EXPORT_SCH_PLOT_PNG : public JOB_EXPORT_SCH_PLOT
+{
+public:
+    JOB_EXPORT_SCH_PLOT_PNG();
+    wxString GetDefaultDescription() const override;
+    wxString GetSettingsDialogTitle() const override;
+
+    int  m_dpi;
+    bool m_antialias;
 };
 
 #endif

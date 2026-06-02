@@ -96,8 +96,10 @@ void ROUTER::SyncWorld()
 {
     ClearWorld();
 
-    m_world = std::make_unique<NODE>( );
+    m_world = std::make_unique<NODE>();
+    m_world->BeginBulkAdd();
     m_iface->SyncWorld( m_world.get() );
+    m_world->FinalizeBulkAdd();
     m_world->FixupVirtualVias();
 }
 
@@ -351,6 +353,29 @@ bool ROUTER::isStartingPointRoutable( const VECTOR2I& aWhere, ITEM* aStartItem, 
         {
             SetFailureReason( errorMsg );
             return false;
+        }
+
+        // Check if the gap at the start point is compatible with the configured diff pair settings.
+        // This only applies when starting from track segments, where the gap between existing
+        // tracks should match the configured diff pair gap. When starting from pads or vias,
+        // the anchor-to-anchor distance is determined by pad/via placement, not routing rules.
+        if( aStartItem->OfKind( ITEM::SEGMENT_T | ITEM::ARC_T ) )
+        {
+            int actualGap = ( dpPair.AnchorP() - dpPair.AnchorN() ).EuclideanNorm();
+            int configuredGap = m_sizes.DiffPairGap() + m_sizes.DiffPairWidth();
+
+            // Allow some tolerance (10%) for minor differences, but warn about significant mismatches
+            int tolerance = configuredGap / 10;
+
+            if( std::abs( actualGap - configuredGap ) > tolerance )
+            {
+                SetFailureReason(
+                        _( "The differential pair gap at the start point does not match "
+                           "the configured gap. This can occur in neckdown areas where tracks "
+                           "have narrower width and spacing. Adjust the differential pair "
+                           "settings or start from a location with the correct gap." ) );
+                return false;
+            }
         }
 
         SHAPE_LINE_CHAIN dummyStartSegA;
@@ -721,7 +746,15 @@ void ROUTER::updateView( NODE* aNode, ITEM_SET& aCurrent, bool aDragging )
     if( !aNode )
         return;
 
-    markViolations( aNode, aCurrent, removed );
+    // hack: we only mark violations when routing, not when length tuning - as the length tuner
+    // by design can never generate clearance violations. Since markViolations() calls multiple
+    // collision/clearance queries, it can be extremely expensive with certain custom DRC rules
+    // (rule area/courtyard-based, see issue #24052 for examples)
+    if( m_mode == PNS_MODE_ROUTE_SINGLE ||
+        m_mode == PNS_MODE_ROUTE_DIFF_PAIR )
+    {
+        markViolations( aNode, aCurrent, removed );
+    }
 
     aNode->GetUpdatedItems( removed, added );
 

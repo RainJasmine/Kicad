@@ -55,7 +55,7 @@ struct SCH_SYMBOL_INSTANCE;
 class SCH_SELECTION;
 class SCH_IO_KICAD_SEXPR_LIB_CACHE;
 class LIB_SYMBOL;
-class SYMBOL_LIB;
+class LEGACY_SYMBOL_LIB;
 class BUS_ALIAS;
 
 /**
@@ -101,6 +101,13 @@ public:
 
     void SaveSchematicFile( const wxString& aFileName, SCH_SHEET* aSheet, SCHEMATIC* aSchematic,
                             const std::map<std::string, UTF8>* aProperties = nullptr ) override;
+
+    /** Serialize a schematic sheet to an OUTPUTFORMATTER without file I/O or Prettify.
+     *  Handles init() and Format().
+     *  Skips GroupsSanityCheck and SetFileExists side effects. */
+    void FormatSchematicToFormatter( OUTPUTFORMATTER* aOut, SCH_SHEET* aSheet,
+                                     SCHEMATIC* aSchematic,
+                                     const std::map<std::string, UTF8>* aProperties = nullptr );
 
     void Format( SCH_SHEET* aSheet );
 
@@ -160,7 +167,6 @@ private:
     void saveTextBox( SCH_TEXTBOX* aText );
     void saveTable( SCH_TABLE* aTable );
     void saveGroup( SCH_GROUP* aGroup );
-    void saveBusAlias( std::shared_ptr<BUS_ALIAS> aAlias );
     void saveInstances( const std::vector<SCH_SHEET_INSTANCE>& aSheets );
 
     void cacheLib( const wxString& aLibraryFileName, const std::map<std::string, UTF8>* aProperties );
@@ -175,6 +181,9 @@ protected:
     wxString                m_path;             ///< Root project path for loading child sheets.
     std::stack<wxString>    m_currentPath;      ///< Stack to maintain nested sheet paths
     SCH_SHEET*              m_rootSheet;        ///< The root sheet of the schematic being loaded.
+    std::vector<SCH_SHEET*> m_loadedRootSheets; ///< Root sheets from previous LoadSchematicFile()
+                                                ///< calls, enabling screen reuse across top-level
+                                                ///< sheets that share sub-sheet files.
     SCH_SHEET_PATH          m_currentSheetPath;
     SCHEMATIC*              m_schematic;
     OUTPUTFORMATTER*        m_out;              ///< The formatter for saving SCH_SCREEN objects.

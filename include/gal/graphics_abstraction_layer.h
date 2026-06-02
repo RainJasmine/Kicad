@@ -40,6 +40,8 @@
 #include <gal/gal_display_options.h>
 #include <font/stroke_font.h>
 #include <geometry/eda_angle.h>
+#include <pgm_base.h>
+#include <settings/common_settings.h>
 
 class SHAPE_LINE_CHAIN;
 class SHAPE_POLY_SET;
@@ -143,6 +145,16 @@ public:
     virtual void DrawCircle( const VECTOR2D& aCenterPoint, double aRadius ) {};
 
     /**
+     * Draw a hole wall ring.
+     *
+     * @param aCenterPoint is the center point of the hole.
+     * @param aHoleRadius is the radius of the hole.
+     * @param aWallWidth is the wall thickness.
+     */
+    virtual void DrawHoleWall( const VECTOR2D& aCenterPoint, double aHoleRadius,
+                               double aWallWidth ) {};
+
+    /**
      * Draw an arc.
      *
      * @param aCenterPoint  is the center point of the arc.
@@ -200,8 +212,25 @@ public:
      */
     virtual void DrawGlyphs( const std::vector<std::unique_ptr<KIFONT::GLYPH>>& aGlyphs )
     {
+        COLOR4D fillColor = GetFillColor();
+        COLOR4D strokeColor = GetStrokeColor();
+
         for( size_t i = 0; i < aGlyphs.size(); i++ )
+        {
+            if( aGlyphs[i]->IsHover() )
+            {
+                SetFillColor( m_hoverColor );
+                SetStrokeColor( m_hoverColor );
+            }
+
             DrawGlyph( *aGlyphs[i], i, aGlyphs.size() );
+
+            if( aGlyphs[i]->IsHover() )
+            {
+                SetFillColor( fillColor );
+                SetStrokeColor( strokeColor );
+            }
+        }
     }
 
 
@@ -349,6 +378,11 @@ public:
         m_strokeColor = aColor;
     }
 
+    virtual void SetHoverColor( const COLOR4D& aColor )
+    {
+        m_hoverColor = aColor;
+    }
+
     /**
      * Get the stroke color.
      *
@@ -370,6 +404,16 @@ public:
     }
 
     /**
+     * Set the minimum line width in pixels.
+     *
+     * @param aLineWidth is the minimum line width.
+     */
+    virtual void SetMinLineWidth( float aLineWidth )
+    {
+        m_minLineWidth = aLineWidth;
+    }
+
+    /**
      * Get the line width.
      *
      * @return the actual line width.
@@ -377,6 +421,16 @@ public:
     inline float GetLineWidth() const
     {
         return m_lineWidth;
+    }
+
+    /**
+     * Get the minimum line width in pixels.
+     *
+     * @return the minimum line width.
+     */
+    inline float GetMinLineWidth() const
+    {
+        return m_minLineWidth;
     }
 
     /**
@@ -612,6 +666,7 @@ public:
      * For instance a typical notebook with HD+ resolution (1600x900) has 106 DPI.
      */
     void SetScreenDPI( double aScreenDPI ) { m_screenDPI = aScreenDPI; }
+    double GetScreenDPI() const            { return m_screenDPI; }
 
     /**
      * Get/set the Point in world space to look at.
@@ -823,6 +878,8 @@ public:
     inline VECTOR2D GetVisibleGridSize() const
     {
         VECTOR2D gridScreenSize( m_gridSize );
+        gridScreenSize.x = std::max( 100.0, gridScreenSize.x );
+        gridScreenSize.y = std::max( 100.0, gridScreenSize.y );
 
         double gridThreshold = computeMinGridSpacing() / m_worldScale;
 
@@ -1009,6 +1066,11 @@ protected:
     inline void computeWorldScale()
     {
         m_worldScale = m_screenDPI * m_worldUnitLength * m_zoomFactor;
+
+        PGM_BASE* pgm = PgmOrNull();
+
+        if( pgm && pgm->GetCommonSettings() )
+            m_worldScale *= pgm->GetCommonSettings()->m_Appearance.zoom_correction_factor;
     }
 
     /**
@@ -1082,6 +1144,7 @@ protected:
     bool                 m_globalFlipY;        ///< Flag for Y axis flipping
 
     float                m_lineWidth;          ///< The line width
+    float                m_minLineWidth;       ///< Minimum line width in pixels
 
     bool                 m_isFillEnabled;      ///< Is filling of graphic objects enabled ?
     bool                 m_isStrokeEnabled;    ///< Are the outlines stroked ?
@@ -1089,6 +1152,7 @@ protected:
     COLOR4D              m_fillColor;          ///< The fill color
     COLOR4D              m_strokeColor;        ///< The color of the outlines
     COLOR4D              m_clearColor;
+    COLOR4D              m_hoverColor;         ///< Color for hovered (active) links
 
     double               m_layerDepth;         ///< The actual layer depth
     VECTOR2D             m_depthRange;         ///< Range of the depth
@@ -1111,7 +1175,7 @@ protected:
     bool                 m_isCursorEnabled;    ///< Is the cursor enabled?
     bool                 m_forceDisplayCursor; ///< Always show cursor
     COLOR4D              m_cursorColor;        ///< Cursor color
-    bool                 m_fullscreenCursor;   ///< Shape of the cursor (fullscreen or small cross)
+    KIGFX::CROSS_HAIR_MODE m_crossHairMode;    ///< Crosshair drawing mode
     VECTOR2D             m_cursorPosition;     ///< Current cursor position (world coordinates)
 
     KICURSOR             m_currentNativeCursor; ///< Current cursor

@@ -23,21 +23,25 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include "tracks_cleaner.h"
+
 #include <atomic>
 #include <bit>
 
-#include <reporter.h>
 #include <board_commit.h>
 #include <cleanup_item.h>
 #include <connectivity/connectivity_algo.h>
 #include <connectivity/connectivity_data.h>
+#include <drc/drc_rtree.h>
+#include <reporter.h>
 #include <thread_pool.h>
 #include <lset.h>
+#include <pad.h>
+#include <pcb_track.h>
 #include <tool/tool_manager.h>
 #include <tools/pcb_actions.h>
 #include <tools/global_edit_tool.h>
-#include <drc/drc_rtree.h>
-#include <tracks_cleaner.h>
+
 
 TRACKS_CLEANER::TRACKS_CLEANER( BOARD* aPcb, BOARD_COMMIT& aCommit ) :
         m_brd( aPcb ),
@@ -386,6 +390,8 @@ void TRACKS_CLEANER::cleanup( bool aDeleteDuplicateVias, bool aDeleteNullSegment
         rtree.Insert( track, track->GetLayer() );
     }
 
+    rtree.Build();
+
     std::set<BOARD_ITEM*> toRemove;
 
     for( PCB_TRACK* track : m_brd->Tracks() )
@@ -525,7 +531,9 @@ void TRACKS_CLEANER::cleanup( bool aDeleteDuplicateVias, bool aDeleteNullSegment
                     continue;
 
                 // for each end of the segment:
-                for( CN_ITEM* citem : connectivity->ItemEntry( segment ).GetItems() )
+                auto& cnItems = connectivity->ItemEntry( segment ).GetItems();
+
+                for( CN_ITEM* citem : cnItems )
                 {
                     // Do not merge an end which has different width tracks attached -- it's a
                     // common use-case for necking-down a track between pads.
@@ -581,25 +589,31 @@ void TRACKS_CLEANER::cleanup( bool aDeleteDuplicateVias, bool aDeleteNullSegment
         // and extract all of the pairs of segments that might be merged.  Then, perform
         // the actual merge in the main loop.
         thread_pool& tp = GetKiCadThreadPool();
-        auto merge_returns = tp.parallelize_loop( 0, m_brd->Tracks().size(), track_loop );
+        auto merge_returns = tp.submit_blocks( 0, m_brd->Tracks().size(), track_loop );
         bool retval = false;
 
-        for( size_t ii = 0; ii < merge_returns.size(); ++ii )
-        {
-            std::future<std::vector<std::pair<PCB_TRACK*, PCB_TRACK*>>>& ret = merge_returns[ii];
+        // Drain every worker before mutating any track flags.  mergeCollinearSegments writes
+        // IS_DELETED on aSeg2, and worker threads still in track_loop read the same flags via
+        // HasFlag and via the PCB_TRACK copy constructor in testMergeCollinearSegments.
+        std::vector<std::pair<PCB_TRACK*, PCB_TRACK*>> mergePairs;
 
+        for( auto& ret : merge_returns )
+        {
             if( ret.valid() )
             {
-                for( auto& [seg1, seg2] : ret.get() )
-                {
-                    retval = true;
-
-                    if( seg1->HasFlag( IS_DELETED ) || seg2->HasFlag( IS_DELETED ) )
-                        continue;
-
-                    mergeCollinearSegments( seg1, seg2 );
-                }
+                std::vector<std::pair<PCB_TRACK*, PCB_TRACK*>> pairs = ret.get();
+                mergePairs.insert( mergePairs.end(), pairs.begin(), pairs.end() );
             }
+        }
+
+        for( auto& [seg1, seg2] : mergePairs )
+        {
+            retval = true;
+
+            if( seg1->HasFlag( IS_DELETED ) || seg2->HasFlag( IS_DELETED ) )
+                continue;
+
+            mergeCollinearSegments( seg1, seg2 );
         }
 
         return retval;
@@ -611,6 +625,11 @@ void TRACKS_CLEANER::cleanup( bool aDeleteDuplicateVias, bool aDeleteNullSegment
         {
             while( !m_brd->BuildConnectivity() )
                 wxSafeYield();
+
+            // BuildConnectivity adds items but doesn't establish connections between them.
+            // RecalculateRatsnest triggers searchConnections which actually finds and links
+            // connected items in the connectivity graph.
+            m_brd->GetConnectivity()->RecalculateRatsnest();
 
             std::lock_guard lock( m_mutex );
             m_connectedItemsCache.clear();

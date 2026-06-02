@@ -27,21 +27,25 @@
  * 3d models that come in the original data from the files without any transformations.
  */
 
-#include <gal/opengl/kiglew.h>    // Must be included first
+#include <kicad_gl/kiglu.h> // Must be included first
+#include <kicad_gl/gl_utils.h>
+#include <kicad_gl/gl_context_mgr.h>
+
 #include <iostream>
-#include "3d_rendering/opengl/3d_model.h"
-#include "eda_3d_model_viewer.h"
-#include "../3d_rendering/opengl/opengl_utils.h"
-#include "../3d_cache/3d_cache.h"
 #include <wx/dcclient.h>
+
 #include <base_units.h>
 #include <build_version.h>
-#include <gal/opengl/gl_context_mgr.h>
-#include <settings/common_settings.h>
-#include <pgm_base.h>
-#include <dpi_scaling_common.h>
 #include <class_draw_panel_gal.h>
+#include <dpi_scaling_common.h>
 #include <macros.h>
+#include <pgm_base.h>
+#include <settings/common_settings.h>
+
+#include "3d_rendering/opengl/3d_model.h"
+#include "3d_rendering/opengl/opengl_utils.h"
+#include "3d_cache/3d_cache.h"
+#include "eda_3d_model_viewer.h"
 
 /**
  * Scale conversion from 3d model units to pcb units
@@ -110,8 +114,9 @@ EDA_3D_MODEL_VIEWER::~EDA_3D_MODEL_VIEWER()
 {
     wxLogTrace( m_logTrace, wxT( "EDA_3D_MODEL_VIEWER::~EDA_3D_MODEL_VIEWER" ) );
     GL_CONTEXT_MANAGER* gl_mgr = Pgm().GetGLContextManager();
+    wxASSERT( gl_mgr );
 
-    if( m_glRC )
+    if( m_glRC && gl_mgr )
     {
         gl_mgr->LockCtx( m_glRC, this );
 
@@ -183,18 +188,18 @@ void EDA_3D_MODEL_VIEWER::Clear3DModel()
 
 void EDA_3D_MODEL_VIEWER::ogl_initialize()
 {
-    const GLenum err = glewInit();
+    SetOpenGLBackendInfo( GL_UTILS::DetectGLBackend( this ) );
 
-    if( GLEW_OK != err )
+    const int glVersion = gladLoaderLoadGL();
+
+    if( glVersion == 0 )
     {
-        const wxString msgError = (const char*) glewGetErrorString( err );
-
-        wxLogMessage( msgError );
+        wxLogMessage( wxT( "Failed to load OpenGL via loader" ) );
     }
     else
     {
-        wxLogTrace( m_logTrace, wxT( "EDA_3D_MODEL_VIEWER::ogl_initialize Using GLEW version %s" ),
-                    From_UTF8( (char*) glewGetString( GLEW_VERSION ) ) );
+        wxLogTrace( m_logTrace, wxT( "EDA_3D_MODEL_VIEWER::ogl_initialize Using OpenGL version %s" ),
+                    From_UTF8( (char*) glGetString( GL_VERSION ) ) );
     }
 
     SetOpenGLInfo( (const char*) glGetString( GL_VENDOR ), (const char*) glGetString( GL_RENDERER ),
@@ -256,8 +261,13 @@ void EDA_3D_MODEL_VIEWER::OnPaint( wxPaintEvent& event )
     // "Makes the OpenGL state that is represented by the OpenGL rendering
     //  context context current, i.e. it will be used by all subsequent OpenGL calls.
     //  This function may only be called when the window is shown on screen"
+    GL_CONTEXT_MANAGER* gl_mgr = Pgm().GetGLContextManager();
+
+    if( !gl_mgr )
+        return;
+
     if( m_glRC == nullptr )
-        m_glRC = Pgm().GetGLContextManager()->CreateCtx( this );
+        m_glRC = gl_mgr->CreateCtx( this );
 
     // CreateCtx could and does fail per sentry crash events, lets be graceful
     if( m_glRC == nullptr )
@@ -266,7 +276,7 @@ void EDA_3D_MODEL_VIEWER::OnPaint( wxPaintEvent& event )
         return;
     }
 
-    Pgm().GetGLContextManager()->LockCtx( m_glRC, this );
+    gl_mgr->LockCtx( m_glRC, this );
 
     // Set the OpenGL viewport according to the client size of this canvas.
     // This is done here rather than in a wxSizeEvent handler because our
@@ -384,7 +394,7 @@ void EDA_3D_MODEL_VIEWER::OnPaint( wxPaintEvent& event )
     //  commands is displayed on the window."
     SwapBuffers();
 
-    Pgm().GetGLContextManager()->UnlockCtx( m_glRC );
+    gl_mgr->UnlockCtx( m_glRC );
 }
 
 

@@ -42,7 +42,7 @@ public:
     {
     }
 
-    wxFileName GetSchematicPath( const wxString& aBaseName ) override
+    wxFileName SchematicQAPath( const wxString& aBaseName ) override
     {
         wxFileName fn( KI_TEST::GetEeschemaTestDataDir() );
         fn.SetName( aBaseName );
@@ -53,7 +53,7 @@ public:
 
     wxString GetNetlistPath( bool aTest = false ) override
     {
-        wxFileName netFile = m_schematic->Prj().GetProjectFullName();
+        wxFileName netFile = m_schematic->Project().GetProjectFullName();
 
         if( aTest )
             netFile.SetName( netFile.GetName() + "_test" );
@@ -91,8 +91,8 @@ BOOST_FIXTURE_TEST_CASE( WindowsPaths, TEST_SIM_REGRESSIONS_FIXTURE )
 {
     LOCALE_IO dummy;
 
-    const MOCK_PGM_BASE& program = static_cast<MOCK_PGM_BASE&>( Pgm() );
-    MOCK_EXPECT( program.GetLocalEnvVariables ).returns( ENV_VAR_MAP() );
+    // const MOCK_PGM_BASE& program = static_cast<MOCK_PGM_BASE&>( Pgm() );
+    // MOCK_EXPECT( program.GetLocalEnvVariables ).returns( ENV_VAR_MAP() );
 
     TestNetlist( "issue13591" );
     TestTranPoint( 100e-6, { { "I(R1)", 0 }, { "I(R2)", 0 } }, 0.00001 );
@@ -133,8 +133,8 @@ BOOST_FIXTURE_TEST_CASE( DualNMOSAmp, TEST_SIM_REGRESSIONS_FIXTURE )
 {
     LOCALE_IO dummy;
 
-    const MOCK_PGM_BASE& program = static_cast<MOCK_PGM_BASE&>( Pgm() );
-    MOCK_EXPECT( program.GetLocalEnvVariables ).returns( ENV_VAR_MAP() );
+    // const MOCK_PGM_BASE& program = static_cast<MOCK_PGM_BASE&>( Pgm() );
+    // MOCK_EXPECT( program.GetLocalEnvVariables ).returns( ENV_VAR_MAP() );
 
     TestNetlist( "issue13162" );
     TestTranPoint( 0.030, { { "V(out)", 0.000829682 } } );
@@ -146,8 +146,8 @@ BOOST_FIXTURE_TEST_CASE( VariableSubstitutions, TEST_SIM_REGRESSIONS_FIXTURE )
 {
     LOCALE_IO dummy;
 
-    const MOCK_PGM_BASE& program = static_cast<MOCK_PGM_BASE&>( Pgm() );
-    MOCK_EXPECT( program.GetLocalEnvVariables ).returns( ENV_VAR_MAP() );
+    // const MOCK_PGM_BASE& program = static_cast<MOCK_PGM_BASE&>( Pgm() );
+    // MOCK_EXPECT( program.GetLocalEnvVariables ).returns( ENV_VAR_MAP() );
 
     TestNetlist( "issue12505" );
     TestTranPoint( 0.015, { { "V(Net-_R1-Pad2_)", -311 } } );
@@ -159,8 +159,8 @@ BOOST_FIXTURE_TEST_CASE( IBISSim, TEST_SIM_REGRESSIONS_FIXTURE )
 {
     LOCALE_IO dummy;
 
-    const MOCK_PGM_BASE& program = static_cast<MOCK_PGM_BASE&>( Pgm() );
-    MOCK_EXPECT( program.GetLocalEnvVariables ).returns( ENV_VAR_MAP() );
+    // const MOCK_PGM_BASE& program = static_cast<MOCK_PGM_BASE&>( Pgm() );
+    // MOCK_EXPECT( program.GetLocalEnvVariables ).returns( ENV_VAR_MAP() );
 
     TestNetlist( "issue16223" );
     TestTranPoint( 0.0, { { "V(PRBS_OUTPUT)", 5.114 } } );

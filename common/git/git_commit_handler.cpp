@@ -22,6 +22,7 @@
  */
 
 #include "git_commit_handler.h"
+#include "git_backend.h"
 
 GIT_COMMIT_HANDLER::GIT_COMMIT_HANDLER( git_repository* aRepo ) :
     KIGIT_COMMON( aRepo )
@@ -32,21 +33,23 @@ GIT_COMMIT_HANDLER::~GIT_COMMIT_HANDLER()
 {}
 
 
-GIT_COMMIT_HANDLER::CommitResult
-GIT_COMMIT_HANDLER::PerformCommit( const std::vector<std::string>& aFilesToCommit )
+CommitResult
+GIT_COMMIT_HANDLER::PerformCommit( const std::vector<wxString>& aFiles,
+                                   const wxString&              aMessage,
+                                   const wxString&              aAuthorName,
+                                   const wxString&              aAuthorEmail )
 {
-    return CommitResult::Success;
+    return GetGitBackend()->Commit( this, aFiles, aMessage, aAuthorName, aAuthorEmail );
 }
 
 
-std::string GIT_COMMIT_HANDLER::GetErrorString() const
+wxString GIT_COMMIT_HANDLER::GetErrorString() const
 {
     return m_errorString;
 }
 
 
-void GIT_COMMIT_HANDLER::AddErrorString( const std::string& aErrorString )
+void GIT_COMMIT_HANDLER::AddErrorString( const wxString& aErrorString )
 {
     m_errorString += aErrorString;
 }
-

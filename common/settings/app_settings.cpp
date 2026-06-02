@@ -18,9 +18,11 @@
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <advanced_config.h>
 #include <class_draw_panel_gal.h>
 #include <common.h>
 #include <eda_units.h>
+#include <gal/gal_display_options.h>
 #include <layer_ids.h>
 #include <pgm_base.h>
 #include <settings/app_settings.h>
@@ -29,6 +31,8 @@
 #include <settings/common_settings.h>
 #include <settings/grid_settings.h>
 #include <settings/parameters.h>
+
+#include <nlohmann/json.hpp>
 #include <zoom_defines.h>
 
 
@@ -47,9 +51,6 @@ APP_SETTINGS_BASE::APP_SETTINGS_BASE( const std::string& aFilename, int aSchemaV
         m_CustomToolbars( false ),
         m_appSettingsSchemaVersion( aSchemaVersion )
 {
-    // Make Coverity happy:
-    m_Graphics.canvas_type = EDA_DRAW_PANEL_GAL::GAL_TYPE_OPENGL;
-
     // Build parameters list:
     m_params.emplace_back(
             new PARAM<int>( "find_replace.match_mode", &m_FindReplace.match_mode, 0 ) );
@@ -93,6 +94,9 @@ APP_SETTINGS_BASE::APP_SETTINGS_BASE( const std::string& aFilename, int aSchemaV
     m_params.emplace_back( new PARAM<bool>( "design_block_chooser.place_as_sheet",
             &m_DesignBlockChooserPanel.place_as_sheet, false ) );
 
+    m_params.emplace_back( new PARAM<bool>( "design_block_chooser.place_as_group",
+            &m_DesignBlockChooserPanel.place_as_group, true ) );
+
     m_params.emplace_back( new PARAM<bool>( "design_block_chooser.keep_annotations",
             &m_DesignBlockChooserPanel.keep_annotations, false ) );
 
@@ -123,10 +127,6 @@ APP_SETTINGS_BASE::APP_SETTINGS_BASE( const std::string& aFilename, int aSchemaV
                 }
             },
             {} ) );
-
-
-    m_params.emplace_back( new PARAM<int>( "graphics.canvas_type",
-            &m_Graphics.canvas_type, EDA_DRAW_PANEL_GAL::GAL_TYPE_OPENGL ) );
 
     m_params.emplace_back( new PARAM<float>( "graphics.highlight_factor",
             &m_Graphics.highlight_factor, 0.5f, 0.0, 1.0f ) );
@@ -190,6 +190,21 @@ APP_SETTINGS_BASE::APP_SETTINGS_BASE( const std::string& aFilename, int aSchemaV
     m_params.emplace_back( new PARAM_LIST<int>( "printing.layers",
             &m_Printing.layers, {} ) );
 
+    m_params.emplace_back( new PARAM<bool>( "printing.mirror",
+            &m_Printing.mirror, false ) );
+
+    m_params.emplace_back( new PARAM<int>( "printing.drill_marks",
+            &m_Printing.drill_marks, 1 ) );
+
+    m_params.emplace_back( new PARAM<int>( "printing.pagination",
+            &m_Printing.pagination, 1 ) );
+
+    m_params.emplace_back( new PARAM<bool>( "printing.edge_cuts_on_all_pages",
+            &m_Printing.edge_cuts_on_all_pages, true ) );
+
+    m_params.emplace_back( new PARAM<bool>( "printing.as_item_checkboxes",
+            &m_Printing.as_item_checkboxes, false ) );
+
     m_params.emplace_back( new PARAM<int>( "search_pane.selection_zoom",
             reinterpret_cast<int*>( &m_SearchPane.selection_zoom ),
             static_cast<int>( SEARCH_PANE::SELECTION_ZOOM::PAN ) ) );
@@ -206,6 +221,7 @@ APP_SETTINGS_BASE::APP_SETTINGS_BASE( const std::string& aFilename, int aSchemaV
     m_params.emplace_back( new PARAM<int>( "system.max_undo_items",
             &m_System.max_undo_items, 0 ) );
 
+    // WARNING: "system.file_history" is a "known" key (see JSON_SETTINGS::GetFileHistories())
     m_params.emplace_back( new PARAM_LIST<wxString>( "system.file_history",
             &m_System.file_history, {} ) );
 
@@ -282,6 +298,9 @@ APP_SETTINGS_BASE::APP_SETTINGS_BASE( const std::string& aFilename, int aSchemaV
 
     m_params.emplace_back( new PARAM<bool>( "cross_probing.auto_highlight",
             &m_CrossProbing.auto_highlight, true ) );
+
+    m_params.emplace_back( new PARAM<bool>( "cross_probing.flash_selection",
+            &m_CrossProbing.flash_selection, false ) );
 }
 
 
@@ -295,8 +314,6 @@ bool APP_SETTINGS_BASE::MigrateFromLegacy( wxConfigBase* aCfg )
     ret &= fromLegacyString(   aCfg, "LastReplaceString",   "find_replace.replace_string" );
 
     migrateFindReplace( aCfg );
-
-    ret &= fromLegacy<int>(    aCfg, "canvas_type",         "graphics.canvas_type" );
 
     ret &= fromLegacy<int>(    aCfg, "P22LIB_TREE_MODEL_ADAPTERSelectorColumnWidth",
                                                             "lib_tree.column_width" );
@@ -391,8 +408,8 @@ bool APP_SETTINGS_BASE::migrateWindowConfig( wxConfigBase* aCfg, const std::stri
 
     ret &= fromLegacy<bool>( aCfg, frameGDO + "ForceDisplayCursor",
                              cursorPath + ".always_show_cursor" );
-    ret &= fromLegacy<bool>( aCfg, frameGDO + "CursorFullscreen",
-                             cursorPath + ".fullscreen_cursor" );
+    ret &= fromLegacy<int>( aCfg, frameGDO + "CursorFullscreen",
+                             cursorPath + ".cross_hair_mode" );
 
     ret &= fromLegacy<int>(  aCfg, aFrame + "_LastGridSize",        gridPath + ".last_size" );
 
@@ -410,7 +427,8 @@ bool APP_SETTINGS_BASE::migrateWindowConfig( wxConfigBase* aCfg, const std::stri
 }
 
 
-void APP_SETTINGS_BASE::addParamsForWindow( WINDOW_SETTINGS* aWindow, const std::string& aJsonPath )
+void APP_SETTINGS_BASE::addParamsForWindow( WINDOW_SETTINGS* aWindow, const std::string& aJsonPath,
+                                            int aDefaultWidth, int aDefaultHeight )
 {
     m_params.emplace_back( new PARAM<bool>( aJsonPath + ".maximized",
             &aWindow->state.maximized, false ) );
@@ -418,19 +436,22 @@ void APP_SETTINGS_BASE::addParamsForWindow( WINDOW_SETTINGS* aWindow, const std:
     m_params.emplace_back( new PARAM<wxString>( aJsonPath + ".mru_path",
             &aWindow->mru_path, wxS( "" ) ) );
 
-    m_params.emplace_back( new PARAM<int>( aJsonPath + ".size_x", &aWindow->state.size_x, 0 ) );
+    m_params.emplace_back( new PARAM<int>( aJsonPath + ".size_x", &aWindow->state.size_x, aDefaultWidth ) );
 
-    m_params.emplace_back( new PARAM<int>( aJsonPath + ".size_y", &aWindow->state.size_y, 0 ) );
+    m_params.emplace_back( new PARAM<int>( aJsonPath + ".size_y", &aWindow->state.size_y, aDefaultHeight ) );
 
     m_params.emplace_back( new PARAM<wxString>( aJsonPath + ".perspective",
             &aWindow->perspective, wxS( "" ) ) );
+
+    m_params.emplace_back( new PARAM<nlohmann::json>( aJsonPath + ".aui_state",
+            &aWindow->aui_state, nlohmann::json() ) );
 
     m_params.emplace_back( new PARAM<int>( aJsonPath + ".pos_x", &aWindow->state.pos_x, 0 ) );
 
     m_params.emplace_back( new PARAM<int>( aJsonPath + ".pos_y", &aWindow->state.pos_y, 0 ) );
 
     m_params.emplace_back( new PARAM<unsigned int>( aJsonPath + ".display",
-                                                    &aWindow->state.display, 0 ) );
+            &aWindow->state.display, 0 ) );
 
     m_params.emplace_back( new PARAM_LIST<double>( aJsonPath + ".zoom_factors",
             &aWindow->zoom_factors, DefaultZoomList(), true /* resetIfEmpty */ ) );
@@ -543,8 +564,8 @@ void APP_SETTINGS_BASE::addParamsForWindow( WINDOW_SETTINGS* aWindow, const std:
     m_params.emplace_back( new PARAM<bool>( aJsonPath + ".cursor.always_show_cursor",
             &aWindow->cursor.always_show_cursor, true ) );
 
-    m_params.emplace_back( new PARAM<bool>( aJsonPath + ".cursor.fullscreen_cursor",
-            &aWindow->cursor.fullscreen_cursor, false ) );
+    m_params.emplace_back( new PARAM<KIGFX::CROSS_HAIR_MODE>( aJsonPath + ".cursor.cross_hair_mode",
+            &aWindow->cursor.cross_hair_mode, KIGFX::CROSS_HAIR_MODE::SMALL_CROSS ) );
 }
 
 

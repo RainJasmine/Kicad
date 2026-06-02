@@ -327,6 +327,7 @@
  William Lin
  Huanyin Liu
  Alexis Lockwood
+ Magnus Lundmark
  Lukas Heiligenbrunner
  Lukasz Iwaszkiewicz
  Alexander Lunev
@@ -359,7 +360,7 @@
  Eryk Michalak
  Michal Jahelka
  Dmitry Mikhirev
- Mojca Miklavec
+ Mojca Miklavec Groenhuis
  Ashley Mills
  Michael Misirlis
  Michail Misirlis

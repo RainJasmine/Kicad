@@ -253,6 +253,12 @@ wxSize FILTER_COMBOPOPUP::updateSize()
 
 void FILTER_COMBOPOPUP::onIdle( wxIdleEvent& aEvent )
 {
+    // Only process when the popup is actually visible to avoid ClientToScreen warnings.
+    // Use IsShownOnScreen() instead of IsShown() because wx may report the window as shown
+    // before GTK has fully realized it, causing ClientToScreen to fail.
+    if( !IsShownOnScreen() )
+        return;
+
     // Generate synthetic (but reliable) MouseMoved events
     static wxPoint lastPos;
     wxPoint screenPos = KIPLATFORM::UI::GetMousePosition();
@@ -445,6 +451,12 @@ FILTER_COMBOBOX::FILTER_COMBOBOX( wxWindow *parent, wxWindowID id, const wxPoint
     UseAltPopupWindow();
     Connect( wxEVT_CHAR_HOOK, wxKeyEventHandler( FILTER_COMBOBOX::onKeyDown ), nullptr, this );
 
+#ifdef __WXMSW__
+    // On Windows the listbox background doesn't have the right colour in dark mode
+    if( KIPLATFORM::UI::IsDarkTheme() )
+        SetBackgroundColour( wxSystemSettings::GetColour( wxSYS_COLOUR_WINDOW ) );
+    else
+#endif
     SetBackgroundColour( wxSystemSettings::GetColour( wxSYS_COLOUR_LISTBOX ) );
 }
 

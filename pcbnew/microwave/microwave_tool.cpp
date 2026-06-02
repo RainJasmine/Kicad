@@ -33,6 +33,7 @@
 #include <preview_items/centreline_rect_item.h>
 #include <tool/tool_manager.h>
 #include <tools/pcb_actions.h>
+#include <tools/pcb_selection.h>
 #include <view/view_controls.h>
 #include <view/view.h>
 
@@ -209,7 +210,7 @@ int MICROWAVE_TOOL::drawMicrowaveInductor( const TOOL_EVENT& aEvent )
         // the end point
         else if( originSet && ( evt->IsMotion() || evt->IsDrag( BUT_LEFT ) ) )
         {
-            tpGeomMgr.SetAngleSnap( Is45Limited() );
+            tpGeomMgr.SetAngleSnap( GetAngleSnapMode() );
             tpGeomMgr.SetEnd( cursorPos );
 
             view.SetVisible( &previewRect, true );

@@ -25,6 +25,8 @@
 
 #include "board_editor_control.h"
 
+#include <algorithm>
+#include <climits>
 #include <functional>
 #include <memory>
 
@@ -37,6 +39,8 @@
 #include <board.h>
 #include <board_commit.h>
 #include <board_design_settings.h>
+#include <collectors.h>
+#include <project/net_settings.h>
 #include <pcb_generator.h>
 #include <footprint.h>
 #include <pad.h>
@@ -49,6 +53,8 @@
 #include <dialogs/dialog_update_pcb.h>
 #include <dialogs/dialog_assign_netclass.h>
 #include <dialog_plot.h>
+#include <dialogs/rule_editor_dialog_base.h>
+#include <dialogs/dialog_find_by_properties.h>
 #include <kiface_base.h>
 #include <kiway.h>
 #include <netlist_reader/pcb_netlist.h>
@@ -57,6 +63,9 @@
 #include <pcbnew_id.h>
 #include <project.h>
 #include <project/project_file.h> // LAST_PATH_TYPE
+#include <settings/settings_manager.h>
+#include <kiplatform/ui.h>
+#include <pcbnew_settings.h>
 #include <tool/tool_manager.h>
 #include <tool/tool_event.h>
 #include <tools/drawing_tool.h>
@@ -84,6 +93,176 @@
 using namespace std::placeholders;
 
 
+namespace
+{
+
+using ZonePriorityMap = std::map<unsigned, std::vector<ZONE*>>;
+
+
+std::vector<ZONE*> getOverlappingZones( BOARD* aBoard, ZONE* aZone )
+{
+    std::vector<ZONE*> overlapping;
+    BOX2I              bbox = aZone->GetBoundingBox();
+
+    for( ZONE* candidate : aBoard->Zones() )
+    {
+        if( candidate == aZone )
+            continue;
+
+        if( candidate->GetIsRuleArea() || candidate->IsTeardropArea() )
+            continue;
+
+        if( !( candidate->GetLayerSet() & aZone->GetLayerSet() ).any() )
+            continue;
+
+        if( !candidate->GetBoundingBox().Intersects( bbox ) )
+            continue;
+
+        // Check edge collision and containment (one zone entirely inside another)
+        if( aZone->Outline()->Collide( candidate->Outline() )
+            || ( candidate->Outline()->TotalVertices() > 0
+                 && aZone->Outline()->Contains( candidate->Outline()->CVertex( 0 ) ) )
+            || ( aZone->Outline()->TotalVertices() > 0
+                 && candidate->Outline()->Contains( aZone->Outline()->CVertex( 0 ) ) ) )
+        {
+            overlapping.push_back( candidate );
+        }
+    }
+
+    return overlapping;
+}
+
+
+ZonePriorityMap buildPriorityMap( BOARD* aBoard, ZONE* aExclude )
+{
+    ZonePriorityMap byPriority;
+
+    for( ZONE* z : aBoard->Zones() )
+    {
+        if( z == aExclude || z->GetIsRuleArea() || z->IsTeardropArea() )
+            continue;
+
+        byPriority[z->GetAssignedPriority()].push_back( z );
+    }
+
+    return byPriority;
+}
+
+
+/**
+ * Find the contiguous chain of zones that must shift to free a priority slot.
+ *
+ * Starting at aFromPriority, walks in the given direction collecting all zones
+ * at each consecutive occupied priority until an empty slot is found. Each
+ * collected zone would need its priority adjusted by +1 (up) or -1 (down)
+ * to open the starting slot.
+ *
+ * @param aViable set to true if the cascade terminates at a gap, false if it
+ *                hits the unsigned boundary (0 or UINT_MAX) while still occupied.
+ *                A non-viable cascade cannot be executed without underflow/overflow.
+ */
+std::vector<ZONE*> findCascadeZones( const ZonePriorityMap& aByPriority,
+                                     unsigned aFromPriority, bool aCascadeUp,
+                                     bool& aViable )
+{
+    std::vector<ZONE*> result;
+    unsigned           p = aFromPriority;
+    aViable = true;
+
+    for( auto it = aByPriority.find( p ); it != aByPriority.end();
+         it = aByPriority.find( p ) )
+    {
+        for( ZONE* z : it->second )
+            result.push_back( z );
+
+        if( aCascadeUp )
+        {
+            if( p == UINT_MAX )
+            {
+                aViable = false;
+                break;
+            }
+
+            p++;
+        }
+        else
+        {
+            if( p == 0 )
+            {
+                aViable = false;
+                break;
+            }
+
+            p--;
+        }
+    }
+
+    return result;
+}
+
+} // anonymous namespace
+
+
+class ZONE_PRIORITY_CONTEXT_MENU : public ACTION_MENU
+{
+public:
+    ZONE_PRIORITY_CONTEXT_MENU() :
+        ACTION_MENU( true )
+    {
+        SetIcon( BITMAPS::swap );
+        SetTitle( _( "Zone Priority" ) );
+
+        Add( PCB_ACTIONS::zonePriorityMoveToTop );
+        Add( PCB_ACTIONS::zonePriorityRaise );
+        Add( PCB_ACTIONS::zonePriorityLower );
+        Add( PCB_ACTIONS::zonePriorityMoveToBottom );
+    }
+
+protected:
+    ACTION_MENU* create() const override
+    {
+        return new ZONE_PRIORITY_CONTEXT_MENU();
+    }
+
+    void update() override
+    {
+        PCB_SELECTION_TOOL* selTool = getToolManager()->GetTool<PCB_SELECTION_TOOL>();
+
+        if( !selTool )
+            return;
+
+        const PCB_SELECTION& selection = selTool->GetSelection();
+        bool                 canRaise = false;
+        bool                 canLower = false;
+
+        if( selection.Size() == 1 )
+        {
+            ZONE* zone = dynamic_cast<ZONE*>( selection[0] );
+
+            if( zone && !zone->GetIsRuleArea() && !zone->IsTeardropArea() )
+            {
+                BOARD*              board = zone->GetBoard();
+                std::vector<ZONE*>  overlapping = getOverlappingZones( board, zone );
+
+                for( ZONE* other : overlapping )
+                {
+                    if( other->GetAssignedPriority() > zone->GetAssignedPriority() )
+                        canRaise = true;
+
+                    if( other->GetAssignedPriority() < zone->GetAssignedPriority() )
+                        canLower = true;
+                }
+            }
+        }
+
+        Enable( PCB_ACTIONS::zonePriorityMoveToTop.GetUIId(), canRaise );
+        Enable( PCB_ACTIONS::zonePriorityRaise.GetUIId(), canRaise );
+        Enable( PCB_ACTIONS::zonePriorityLower.GetUIId(), canLower );
+        Enable( PCB_ACTIONS::zonePriorityMoveToBottom.GetUIId(), canLower );
+    }
+};
+
+
 class ZONE_CONTEXT_MENU : public ACTION_MENU
 {
 public:
@@ -104,6 +283,10 @@ public:
         Add( PCB_ACTIONS::zoneDuplicate );
         Add( PCB_ACTIONS::drawZoneCutout );
         Add( PCB_ACTIONS::drawSimilarZone );
+
+        AppendSeparator();
+
+        Add( new ZONE_PRIORITY_CONTEXT_MENU() );
 
         AppendSeparator();
 
@@ -165,6 +348,36 @@ void BOARD_EDITOR_CONTROL::Reset( RESET_REASON aReason )
         getView()->Remove( m_placeOrigin.get() );
         getView()->Add( m_placeOrigin.get() );
     }
+}
+
+// Update left-toolbar Line modes group icon based on current settings
+int BOARD_EDITOR_CONTROL::OnAngleSnapModeChanged( const TOOL_EVENT& aEvent )
+{
+    PCB_EDIT_FRAME* f = getEditFrame<PCB_EDIT_FRAME>();
+
+    if( !f )
+        return 0;
+
+    LEADER_MODE mode = GetAppSettings<PCBNEW_SETTINGS>( "pcbnew" )->m_AngleSnapMode;
+
+    switch( mode )
+    {
+    case LEADER_MODE::DIRECT: f->SelectToolbarAction( PCB_ACTIONS::lineModeFree ); break;
+    case LEADER_MODE::DEG90:  f->SelectToolbarAction( PCB_ACTIONS::lineMode90 );   break;
+    default:
+    case LEADER_MODE::DEG45:  f->SelectToolbarAction( PCB_ACTIONS::lineMode45 );   break;
+    }
+
+    return 0;
+}
+
+int BOARD_EDITOR_CONTROL::ChangeLineMode( const TOOL_EVENT& aEvent )
+{
+    LEADER_MODE mode = aEvent.Parameter<LEADER_MODE>();
+    GetAppSettings<PCBNEW_SETTINGS>( "pcbnew" )->m_AngleSnapMode = mode;
+    m_toolMgr->PostAction( ACTIONS::refreshPreview );
+    m_toolMgr->RunAction( PCB_ACTIONS::angleSnapModeChanged );
+    return 0;
 }
 
 
@@ -250,12 +463,35 @@ bool BOARD_EDITOR_CONTROL::Init()
         menu.AddMenu( zoneMenu.get(), toolActiveFunctor( DRAWING_TOOL::MODE::ZONE ), 300 );
     }
 
+    // Ensure the left toolbar's Line modes group reflects the current setting at startup
+    if( m_toolMgr )
+        m_toolMgr->RunAction( PCB_ACTIONS::angleSnapModeChanged );
+
     return true;
 }
 
 
 int BOARD_EDITOR_CONTROL::Save( const TOOL_EVENT& aEvent )
 {
+    wxWindow* focus = wxWindow::FindFocus();
+
+    if( focus )
+    {
+        wxWindow* topLevel = focus;
+
+        while( topLevel && !topLevel->IsTopLevel() )
+            topLevel = topLevel->GetParent();
+
+        RULE_EDITOR_DIALOG_BASE* reDlg = dynamic_cast<RULE_EDITOR_DIALOG_BASE*>( topLevel );
+
+        if( reDlg )
+        {
+            wxCommandEvent evt;
+            reDlg->OnSave( evt );
+            return 0;
+        }
+    }
+
     m_frame->SaveBoard();
     return 0;
 }
@@ -278,13 +514,6 @@ int BOARD_EDITOR_CONTROL::SaveCopy( const TOOL_EVENT& aEvent )
 int BOARD_EDITOR_CONTROL::ExportFootprints( const TOOL_EVENT& aEvent )
 {
     m_frame->ExportFootprintsToLibrary( false );
-    return 0;
-}
-
-
-int BOARD_EDITOR_CONTROL::ExportFootprintsAs( const TOOL_EVENT& aEvent )
-{
-    m_frame->ExportFootprintsToLibrary( true );
     return 0;
 }
 
@@ -356,6 +585,13 @@ int BOARD_EDITOR_CONTROL::Find( const TOOL_EVENT& aEvent )
 int BOARD_EDITOR_CONTROL::FindNext( const TOOL_EVENT& aEvent )
 {
     m_frame->FindNext( aEvent.IsAction( &ACTIONS::findPrevious ) );
+    return 0;
+}
+
+
+int BOARD_EDITOR_CONTROL::FindByProperties( const TOOL_EVENT& aEvent )
+{
+    m_frame->ShowFindByPropertiesDialog();
     return 0;
 }
 
@@ -441,6 +677,8 @@ int BOARD_EDITOR_CONTROL::ExportNetlist( const TOOL_EVENT& aEvent )
 
     dlg.SetExtraControlCreator( &LEGACYFILEDLG_NETLIST_OPTIONS::Create );
 
+    KIPLATFORM::UI::AllowNetworkFileSystems( &dlg );
+
     if( dlg.ShowModal() == wxID_CANCEL )
         return 0;
 
@@ -448,10 +686,8 @@ int BOARD_EDITOR_CONTROL::ExportNetlist( const TOOL_EVENT& aEvent )
 
     if( !fn.IsDirWritable() )
     {
-        wxString msg;
-
-        msg.Printf( _( "Path `%s` is read only." ), fn.GetPath() );
-        wxMessageDialog( m_frame, msg, _( "I/O Error" ), wxOK | wxCENTER | wxICON_EXCLAMATION );
+        DisplayErrorMessage( m_frame, wxString::Format( _( "Insufficient permissions to folder '%s'." ),
+                                                        fn.GetPath() ) );
         return 0;
     }
 
@@ -472,25 +708,35 @@ int BOARD_EDITOR_CONTROL::ExportNetlist( const TOOL_EVENT& aEvent )
             const wxString& netname = pad->GetShortNetname();
 
             if( !netname.IsEmpty() )
-            {
-                component->AddNet( pad->GetNumber(), netname, pad->GetPinFunction(),
-                                   pad->GetPinType() );
-            }
+                component->AddNet( pad->GetNumber(), netname, pad->GetPinFunction(), pad->GetPinType() );
         }
 
         nlohmann::ordered_map<wxString, wxString> fields;
 
         for( PCB_FIELD* field : footprint->GetFields() )
+        {
+            wxCHECK2( field, continue );
+
             fields[field->GetCanonicalName()] = field->GetText();
+        }
 
         component->SetFields( fields );
 
         netlist.AddComponent( component );
     }
 
-    FILE_OUTPUTFORMATTER formatter( fn.GetFullPath() );
+    try
+    {
+        FILE_OUTPUTFORMATTER formatter( fn.GetFullPath() );
 
-    netlist.Format( "pcb_netlist", &formatter, 0, noh->GetNetlistOptions() );
+        netlist.Format( "pcb_netlist", &formatter, 0, noh->GetNetlistOptions() );
+        formatter.Finish();
+    }
+    catch( const IO_ERROR& ioe )
+    {
+        DisplayErrorMessage( m_frame, wxString::Format( _( "Failed to export netlist to '%s': %s" ),
+                                                        fn.GetFullPath(), ioe.What() ) );
+    }
 
     return 0;
 }
@@ -517,89 +763,53 @@ int BOARD_EDITOR_CONTROL::RepairBoard( const TOOL_EVENT& aEvent )
     wxString details;
     bool     quiet = aEvent.Parameter<bool>();
 
-    // Repair duplicate IDs and missing nets.
-    std::set<KIID> ids;
-    int            duplicates = 0;
-
-    auto processItem =
-            [&]( EDA_ITEM* aItem )
-            {
-                if( ids.count( aItem->m_Uuid ) )
-                {
-                    duplicates++;
-                    const_cast<KIID&>( aItem->m_Uuid ) = KIID();
-                }
-
-                ids.insert( aItem->m_Uuid );
-
-                BOARD_CONNECTED_ITEM* cItem = dynamic_cast<BOARD_CONNECTED_ITEM*>( aItem );
-
-                if( cItem && cItem->GetNetCode() )
-                {
-                    NETINFO_ITEM* netinfo = cItem->GetNet();
-
-                    if( netinfo && !board()->FindNet( netinfo->GetNetname() ) )
-                    {
-                        board()->Add( netinfo );
-
-                        details += wxString::Format( _( "Orphaned net %s re-parented.\n" ),
-                                                     netinfo->GetNetname() );
-                        errors++;
-                    }
-                }
-            };
-
-    // Footprint IDs are the most important, so give them the first crack at "claiming" a
-    // particular KIID.
-
-    for( FOOTPRINT* footprint : board()->Footprints() )
-        processItem( footprint );
-
-    // After that the principal use is for DRC marker pointers, which are most likely to pads
-    // or tracks.
-
-    for( FOOTPRINT* footprint : board()->Footprints() )
-    {
-        for( PAD* pad : footprint->Pads() )
-            processItem( pad );
-    }
-
-    for( PCB_TRACK* track : board()->Tracks() )
-        processItem( track );
-
-    // From here out I don't think order matters much.
-
-    for( FOOTPRINT* footprint : board()->Footprints() )
-    {
-        processItem( &footprint->Reference() );
-        processItem( &footprint->Value() );
-
-        for( BOARD_ITEM* item : footprint->GraphicalItems() )
-            processItem( item );
-
-        for( ZONE* zone : footprint->Zones() )
-            processItem( zone );
-
-        for( PCB_GROUP* group : footprint->Groups() )
-            processItem( group );
-    }
-
-    for( BOARD_ITEM* drawing : board()->Drawings() )
-        processItem( drawing );
-
-    for( ZONE* zone : board()->Zones() )
-        processItem( zone );
-
-    for( PCB_MARKER* marker : board()->Markers() )
-        processItem( marker );
-
-    for( PCB_GROUP* group : board()->Groups() )
-        processItem( group );
+    int duplicates = board()->RepairDuplicateItemUuids();
 
     if( duplicates )
     {
         errors += duplicates;
         details += wxString::Format( _( "%d duplicate IDs replaced.\n" ), duplicates );
+    }
+
+    for( FOOTPRINT* footprint : board()->Footprints() )
+    {
+        for( PAD* pad : footprint->Pads() )
+        {
+            BOARD_CONNECTED_ITEM* cItem = pad;
+
+            if( cItem->GetNetCode() )
+            {
+                NETINFO_ITEM* netinfo = cItem->GetNet();
+
+                if( netinfo && !board()->FindNet( netinfo->GetNetname() ) )
+                {
+                    board()->Add( netinfo );
+
+                    details += wxString::Format( _( "Orphaned net %s re-parented.\n" ),
+                                                 netinfo->GetNetname() );
+                    errors++;
+                }
+            }
+        }
+    }
+
+    for( PCB_TRACK* track : board()->Tracks() )
+    {
+        BOARD_CONNECTED_ITEM* cItem = track;
+
+        if( cItem->GetNetCode() )
+        {
+            NETINFO_ITEM* netinfo = cItem->GetNet();
+
+            if( netinfo && !board()->FindNet( netinfo->GetNetname() ) )
+            {
+                board()->Add( netinfo );
+
+                details += wxString::Format( _( "Orphaned net %s re-parented.\n" ),
+                                             netinfo->GetNetname() );
+                errors++;
+            }
+        }
     }
 
     /*******************************
@@ -631,9 +841,16 @@ int BOARD_EDITOR_CONTROL::RepairBoard( const TOOL_EVENT& aEvent )
 int BOARD_EDITOR_CONTROL::UpdatePCBFromSchematic( const TOOL_EVENT& aEvent )
 {
     NETLIST netlist;
+    bool    fetched = false;
 
-    if( m_frame->FetchNetlistFromSchematic( netlist, _( "Updating PCB requires a fully annotated "
-                                                        "schematic." ) ) )
+    RunMainStack(
+            [&]()
+            {
+                fetched = m_frame->FetchNetlistFromSchematic(
+                        netlist, _( "Updating PCB requires a fully annotated schematic." ) );
+            } );
+
+    if( fetched )
     {
         DIALOG_UPDATE_PCB updateDialog( m_frame, &netlist );
         updateDialog.ShowModal();
@@ -702,56 +919,60 @@ int BOARD_EDITOR_CONTROL::ShowEeschema( const TOOL_EVENT& aEvent )
     }
     else
     {
-        KIWAY_PLAYER* frame = m_frame->Kiway().Player( FRAME_SCH, false );
+        RunMainStack(
+                [&]()
+                {
+                    KIWAY_PLAYER* frame = m_frame->Kiway().Player( FRAME_SCH, false );
 
-        // Please: note: DIALOG_EDIT_LIBENTRY_FIELDS_IN_LIB::initBuffers() calls
-        // Kiway.Player( FRAME_SCH, true )
-        // therefore, the schematic editor is sometimes running, but the schematic project
-        // is not loaded, if the library editor was called, and the dialog field editor was used.
-        // On Linux, it happens the first time the schematic editor is launched, if
-        // library editor was running, and the dialog field editor was open
-        // On Windows, it happens always after the library editor was called,
-        // and the dialog field editor was used
-        if( !frame )
-        {
-            try
-            {
-                frame = boardFrame->Kiway().Player( FRAME_SCH, true );
-            }
-            catch( const IO_ERROR& err )
-            {
+                    // Please: note: DIALOG_EDIT_LIBENTRY_FIELDS_IN_LIB::initBuffers() calls
+                    // Kiway.Player( FRAME_SCH, true )
+                    // therefore, the schematic editor is sometimes running, but the schematic project
+                    // is not loaded, if the library editor was called, and the dialog field editor was used.
+                    // On Linux, it happens the first time the schematic editor is launched, if
+                    // library editor was running, and the dialog field editor was open
+                    // On Windows, it happens always after the library editor was called,
+                    // and the dialog field editor was used
+                    if( !frame )
+                    {
+                        try
+                        {
+                            frame = boardFrame->Kiway().Player( FRAME_SCH, true );
+                        }
+                        catch( const IO_ERROR& err )
+                        {
+                            DisplayErrorMessage( boardFrame,
+                                                 _( "Eeschema failed to load." ) + wxS( "\n" ) + err.What() );
+                            return;
+                        }
+                    }
 
-                DisplayErrorMessage( boardFrame, _( "Eeschema failed to load." ) + wxS( "\n" ) + err.What() );
-                return 0;
-            }
-        }
+                    wxEventBlocker blocker( boardFrame );
 
-        wxEventBlocker blocker( boardFrame );
+                    // If Kiway() cannot create the eeschema frame, it shows a error message, and
+                    // frame is null
+                    if( !frame )
+                        return;
 
-        // If Kiway() cannot create the eeschema frame, it shows a error message, and
-        // frame is null
-        if( !frame )
-            return 0;
+                    if( !frame->IsShownOnScreen() ) // the frame exists, (created by the dialog field editor)
+                                                    // but no project loaded.
+                    {
+                        frame->OpenProjectFiles( std::vector<wxString>( 1, schematic.GetFullPath() ) );
+                        frame->Show( true );
+                    }
 
-        if( !frame->IsShownOnScreen() ) // the frame exists, (created by the dialog field editor)
-                                        // but no project loaded.
-        {
-            frame->OpenProjectFiles( std::vector<wxString>( 1, schematic.GetFullPath() ) );
-            frame->Show( true );
-        }
+                    // On Windows, Raise() does not bring the window on screen, when iconized or not shown
+                    // On Linux, Raise() brings the window on screen, but this code works fine
+                    if( frame->IsIconized() )
+                    {
+                        frame->Iconize( false );
 
-        // On Windows, Raise() does not bring the window on screen, when iconized or not shown
-        // On Linux, Raise() brings the window on screen, but this code works fine
-        if( frame->IsIconized() )
-        {
-            frame->Iconize( false );
+                        // If an iconized frame was created by Pcbnew, Iconize( false ) is not enough
+                        // to show the frame at its normal size: Maximize should be called.
+                        frame->Maximize( false );
+                    }
 
-            // If an iconized frame was created by Pcbnew, Iconize( false ) is not enough
-            // to show the frame at its normal size: Maximize should be called.
-            frame->Maximize( false );
-        }
-
-        frame->Raise();
+                    frame->Raise();
+                } );
     }
 
     return 0;
@@ -789,13 +1010,6 @@ int BOARD_EDITOR_CONTROL::ToggleLibraryTree( const TOOL_EVENT& aEvent )
 int BOARD_EDITOR_CONTROL::ToggleSearch( const TOOL_EVENT& aEvent )
 {
     getEditFrame<PCB_EDIT_FRAME>()->ToggleSearch();
-    return 0;
-}
-
-
-int BOARD_EDITOR_CONTROL::TogglePythonConsole( const TOOL_EVENT& aEvent )
-{
-    m_frame->ScriptingConsoleEnableDisable();
     return 0;
 }
 
@@ -843,7 +1057,7 @@ int BOARD_EDITOR_CONTROL::TrackWidthInc( const TOOL_EVENT& aEvent )
     if( routerTool && routerTool->IsToolActive()
         && routerTool->Router()->Mode() == PNS::PNS_MODE_ROUTE_DIFF_PAIR )
     {
-        int widthIndex = (int) bds.GetDiffPairIndex() + 1;
+        int widthIndex = bds.GetDiffPairIndex() + 1;
 
         // If we go past the last track width entry in the list, start over at the beginning
         if( widthIndex >= (int) bds.m_DiffPairDimensionsList.size() )
@@ -856,7 +1070,7 @@ int BOARD_EDITOR_CONTROL::TrackWidthInc( const TOOL_EVENT& aEvent )
     }
     else
     {
-        int widthIndex = (int) bds.GetTrackWidthIndex();
+        int widthIndex = bds.GetTrackWidthIndex();
 
         if( routerTool && routerTool->IsToolActive()
             && routerTool->Router()->GetState() == PNS::ROUTER::RouterState::ROUTE_TRACK
@@ -925,11 +1139,11 @@ int BOARD_EDITOR_CONTROL::TrackWidthDec( const TOOL_EVENT& aEvent )
     if( routerTool && routerTool->IsToolActive()
             && routerTool->Router()->Mode() == PNS::PNS_MODE_ROUTE_DIFF_PAIR )
     {
-        int widthIndex = (int) bds.GetDiffPairIndex() - 1;
+        int widthIndex = bds.GetDiffPairIndex() - 1;
 
         // If we get to the lowest entry start over at the highest
         if( widthIndex < 0 )
-            widthIndex = (int) bds.m_DiffPairDimensionsList.size() - 1;
+            widthIndex = bds.m_DiffPairDimensionsList.size() - 1;
 
         bds.SetDiffPairIndex( widthIndex );
         bds.UseCustomDiffPairDimensions( false );
@@ -938,7 +1152,7 @@ int BOARD_EDITOR_CONTROL::TrackWidthDec( const TOOL_EVENT& aEvent )
     }
     else
     {
-        int widthIndex = (int) bds.GetTrackWidthIndex();
+        int widthIndex = bds.GetTrackWidthIndex();
 
         if( routerTool && routerTool->IsToolActive()
             && routerTool->Router()->GetState() == PNS::ROUTER::RouterState::ROUTE_TRACK
@@ -1005,7 +1219,7 @@ int BOARD_EDITOR_CONTROL::ViaSizeInc( const TOOL_EVENT& aEvent )
     }
     else
     {
-        int sizeIndex = (int) bds.GetViaSizeIndex() + 1;
+        int sizeIndex = bds.GetViaSizeIndex() + 1;
 
         // If we go past the last via entry in the list, start over at the beginning
         if( sizeIndex >= (int) bds.m_ViasDimensionsList.size() )
@@ -1066,11 +1280,11 @@ int BOARD_EDITOR_CONTROL::ViaSizeDec( const TOOL_EVENT& aEvent )
         // If there are more, cycle through them backwards
         if( bds.m_ViasDimensionsList.size() > 0 )
         {
-            sizeIndex = (int) bds.GetViaSizeIndex() - 1;
+            sizeIndex = bds.GetViaSizeIndex() - 1;
 
             // If we get to the lowest entry start over at the highest
             if( sizeIndex < 0 )
-                sizeIndex = (int) bds.m_ViasDimensionsList.size() - 1;
+                sizeIndex = bds.m_ViasDimensionsList.size() - 1;
         }
 
         bds.SetViaSizeIndex( sizeIndex );
@@ -1399,7 +1613,7 @@ int BOARD_EDITOR_CONTROL::modifyLockSelected( MODIFY_MODE aMode )
 
     if( !commit.Empty() )
     {
-        commit.Push( aMode == ON ? _( "Lock" ) : _( "Unlock" ) );
+        commit.Push( aMode == ON ? _( "Lock" ) : _( "Unlock" ), SKIP_TEARDROPS );
 
         m_toolMgr->PostEvent( EVENTS::SelectedEvent );
         m_frame->OnModify();
@@ -1435,8 +1649,17 @@ static bool mergeZones( EDA_DRAW_FRAME* aFrame, BOARD_COMMIT& aCommit,
         return false;
     }
 
+    // Adopt the highest priority from all merged zones so the result maintains
+    // the most aggressive fill ordering.
+    unsigned highestPriority = aOriginZones[0]->GetAssignedPriority();
+
     for( unsigned int i = 1; i < aOriginZones.size(); i++ )
+    {
+        highestPriority = std::max( highestPriority, aOriginZones[i]->GetAssignedPriority() );
         aCommit.Remove( aOriginZones[i] );
+    }
+
+    aOriginZones[0]->SetAssignedPriority( highestPriority );
 
     aMergedZones.push_back( aOriginZones[0] );
 
@@ -1477,12 +1700,6 @@ int BOARD_EDITOR_CONTROL::ZoneMerge( const TOOL_EVENT& aEvent )
         if( firstZone->GetNetCode() != netcode )
         {
             wxLogMessage( _( "Some zone netcodes did not match and were not merged." ) );
-            continue;
-        }
-
-        if( curr_area->GetAssignedPriority() != firstZone->GetAssignedPriority() )
-        {
-            wxLogMessage( _( "Some zone priorities did not match and were not merged." ) );
             continue;
         }
 
@@ -1557,7 +1774,7 @@ int BOARD_EDITOR_CONTROL::ZoneDuplicate( const TOOL_EVENT& aEvent )
     if( oldZone->GetIsRuleArea() )
         dialogResult = InvokeRuleAreaEditor( m_frame, &zoneSettings, board() );
     else if( oldZone->IsOnCopperLayer() )
-        dialogResult = InvokeCopperZonesEditor( m_frame, &zoneSettings );
+        dialogResult = InvokeCopperZonesEditor( m_frame, nullptr, &zoneSettings );
     else
         dialogResult = InvokeNonCopperZonesEditor( m_frame, &zoneSettings );
 
@@ -1584,6 +1801,273 @@ int BOARD_EDITOR_CONTROL::ZoneDuplicate( const TOOL_EVENT& aEvent )
 }
 
 
+int BOARD_EDITOR_CONTROL::ZonePriorityMoveToTop( const TOOL_EVENT& aEvent )
+{
+    const PCB_SELECTION& selection = m_toolMgr->GetTool<PCB_SELECTION_TOOL>()->GetSelection();
+
+    if( selection.Size() != 1 )
+        return 0;
+
+    ZONE* zone = dynamic_cast<ZONE*>( selection[0] );
+
+    if( !zone || zone->GetIsRuleArea() || zone->IsTeardropArea() )
+        return 0;
+
+    std::vector<ZONE*> overlapping = getOverlappingZones( board(), zone );
+
+    unsigned maxOverlapping = zone->GetAssignedPriority();
+
+    for( ZONE* other : overlapping )
+        maxOverlapping = std::max( maxOverlapping, other->GetAssignedPriority() );
+
+    if( zone->GetAssignedPriority() >= maxOverlapping )
+        return 0;
+
+    // Two options to place our zone above all overlapping zones.
+    // Pick whichever viable option displaces fewer other zones.
+    ZonePriorityMap byPriority = buildPriorityMap( board(), zone );
+
+    // Option A: take maxOverlapping, cascade displaced zones down
+    bool               cascadeDownViable = false;
+    std::vector<ZONE*> cascadeDown =
+            findCascadeZones( byPriority, maxOverlapping, false, cascadeDownViable );
+
+    // Option B: take maxOverlapping + 1, cascade displaced zones up
+    bool               cascadeUpViable = false;
+    std::vector<ZONE*> cascadeUp;
+    bool               canCascadeUp = ( maxOverlapping < UINT_MAX );
+
+    if( canCascadeUp )
+        cascadeUp = findCascadeZones( byPriority, maxOverlapping + 1, true, cascadeUpViable );
+
+    if( !cascadeDownViable && !cascadeUpViable )
+        return 0;
+
+    BOARD_COMMIT commit( m_frame );
+    commit.Modify( zone );
+
+    bool useDown = cascadeDownViable
+                   && ( !cascadeUpViable || cascadeDown.size() <= cascadeUp.size() );
+
+    if( useDown )
+    {
+        zone->SetAssignedPriority( maxOverlapping );
+
+        for( ZONE* z : cascadeDown )
+        {
+            commit.Modify( z );
+            z->SetAssignedPriority( z->GetAssignedPriority() - 1 );
+            z->SetNeedRefill( true );
+        }
+    }
+    else
+    {
+        zone->SetAssignedPriority( maxOverlapping + 1 );
+
+        for( ZONE* z : cascadeUp )
+        {
+            commit.Modify( z );
+            z->SetAssignedPriority( z->GetAssignedPriority() + 1 );
+            z->SetNeedRefill( true );
+        }
+    }
+
+    zone->SetNeedRefill( true );
+    commit.Push( _( "Move Zone to Top Priority" ) );
+
+    return 0;
+}
+
+
+int BOARD_EDITOR_CONTROL::ZonePriorityRaise( const TOOL_EVENT& aEvent )
+{
+    const PCB_SELECTION& selection = m_toolMgr->GetTool<PCB_SELECTION_TOOL>()->GetSelection();
+
+    if( selection.Size() != 1 )
+        return 0;
+
+    ZONE* zone = dynamic_cast<ZONE*>( selection[0] );
+
+    if( !zone || zone->GetIsRuleArea() || zone->IsTeardropArea() )
+        return 0;
+
+    std::vector<ZONE*> overlapping = getOverlappingZones( board(), zone );
+
+    // Find the overlapping zone with the lowest priority still above ours
+    ZONE*    target = nullptr;
+    unsigned zonePriority = zone->GetAssignedPriority();
+
+    for( ZONE* other : overlapping )
+    {
+        if( other->GetAssignedPriority() > zonePriority )
+        {
+            if( !target || other->GetAssignedPriority() < target->GetAssignedPriority() )
+                target = other;
+        }
+    }
+
+    if( !target )
+        return 0;
+
+    BOARD_COMMIT commit( m_frame );
+    commit.Modify( zone );
+
+    // Place our zone just above the target without modifying any other zone
+    if( target->GetAssignedPriority() < UINT_MAX )
+    {
+        zone->SetAssignedPriority( target->GetAssignedPriority() + 1 );
+    }
+    else
+    {
+        // Can't go above UINT_MAX; swap as last resort
+        commit.Modify( target );
+        zone->SetAssignedPriority( UINT_MAX );
+        target->SetAssignedPriority( zonePriority );
+        target->SetNeedRefill( true );
+    }
+
+    zone->SetNeedRefill( true );
+    commit.Push( _( "Raise Zone Priority" ) );
+
+    return 0;
+}
+
+
+int BOARD_EDITOR_CONTROL::ZonePriorityLower( const TOOL_EVENT& aEvent )
+{
+    const PCB_SELECTION& selection = m_toolMgr->GetTool<PCB_SELECTION_TOOL>()->GetSelection();
+
+    if( selection.Size() != 1 )
+        return 0;
+
+    ZONE* zone = dynamic_cast<ZONE*>( selection[0] );
+
+    if( !zone || zone->GetIsRuleArea() || zone->IsTeardropArea() )
+        return 0;
+
+    std::vector<ZONE*> overlapping = getOverlappingZones( board(), zone );
+
+    // Find the overlapping zone with the highest priority still below ours
+    ZONE*    target = nullptr;
+    unsigned zonePriority = zone->GetAssignedPriority();
+
+    for( ZONE* other : overlapping )
+    {
+        if( other->GetAssignedPriority() < zonePriority )
+        {
+            if( !target || other->GetAssignedPriority() > target->GetAssignedPriority() )
+                target = other;
+        }
+    }
+
+    if( !target )
+        return 0;
+
+    BOARD_COMMIT commit( m_frame );
+    commit.Modify( zone );
+
+    // Place our zone just below the target without modifying any other zone
+    if( target->GetAssignedPriority() > 0 )
+    {
+        zone->SetAssignedPriority( target->GetAssignedPriority() - 1 );
+    }
+    else
+    {
+        // Can't go below 0; swap as last resort
+        commit.Modify( target );
+        zone->SetAssignedPriority( 0 );
+        target->SetAssignedPriority( zonePriority );
+        target->SetNeedRefill( true );
+    }
+
+    zone->SetNeedRefill( true );
+    commit.Push( _( "Lower Zone Priority" ) );
+
+    return 0;
+}
+
+
+int BOARD_EDITOR_CONTROL::ZonePriorityMoveToBottom( const TOOL_EVENT& aEvent )
+{
+    const PCB_SELECTION& selection = m_toolMgr->GetTool<PCB_SELECTION_TOOL>()->GetSelection();
+
+    if( selection.Size() != 1 )
+        return 0;
+
+    ZONE* zone = dynamic_cast<ZONE*>( selection[0] );
+
+    if( !zone || zone->GetIsRuleArea() || zone->IsTeardropArea() )
+        return 0;
+
+    std::vector<ZONE*> overlapping = getOverlappingZones( board(), zone );
+
+    unsigned minOverlapping = zone->GetAssignedPriority();
+
+    for( ZONE* other : overlapping )
+        minOverlapping = std::min( minOverlapping, other->GetAssignedPriority() );
+
+    if( zone->GetAssignedPriority() <= minOverlapping )
+        return 0;
+
+    // Two options to place our zone below all overlapping zones.
+    // Pick whichever viable option displaces fewer other zones.
+    ZonePriorityMap byPriority = buildPriorityMap( board(), zone );
+
+    // Option A: take minOverlapping, cascade displaced zones up
+    bool               cascadeUpViable = false;
+    std::vector<ZONE*> cascadeUp =
+            findCascadeZones( byPriority, minOverlapping, true, cascadeUpViable );
+
+    // Option B: take minOverlapping - 1, cascade displaced zones down
+    bool               cascadeDownViable = false;
+    std::vector<ZONE*> cascadeDown;
+    bool               canCascadeDown = ( minOverlapping > 0 );
+
+    if( canCascadeDown )
+    {
+        cascadeDown =
+                findCascadeZones( byPriority, minOverlapping - 1, false, cascadeDownViable );
+    }
+
+    if( !cascadeUpViable && !cascadeDownViable )
+        return 0;
+
+    BOARD_COMMIT commit( m_frame );
+    commit.Modify( zone );
+
+    bool useUp = cascadeUpViable
+                 && ( !cascadeDownViable || cascadeUp.size() <= cascadeDown.size() );
+
+    if( useUp )
+    {
+        zone->SetAssignedPriority( minOverlapping );
+
+        for( ZONE* z : cascadeUp )
+        {
+            commit.Modify( z );
+            z->SetAssignedPriority( z->GetAssignedPriority() + 1 );
+            z->SetNeedRefill( true );
+        }
+    }
+    else
+    {
+        zone->SetAssignedPriority( minOverlapping - 1 );
+
+        for( ZONE* z : cascadeDown )
+        {
+            commit.Modify( z );
+            z->SetAssignedPriority( z->GetAssignedPriority() - 1 );
+            z->SetNeedRefill( true );
+        }
+    }
+
+    zone->SetNeedRefill( true );
+    commit.Push( _( "Move Zone to Bottom Priority" ) );
+
+    return 0;
+}
+
+
 int BOARD_EDITOR_CONTROL::CrossProbeToSch( const TOOL_EVENT& aEvent )
 {
     doCrossProbePcbToSch( aEvent, false );
@@ -1601,7 +2085,7 @@ int BOARD_EDITOR_CONTROL::ExplicitCrossProbeToSch( const TOOL_EVENT& aEvent )
 void BOARD_EDITOR_CONTROL::doCrossProbePcbToSch( const TOOL_EVENT& aEvent, bool aForce )
 {
     // Don't get in an infinite loop PCB -> SCH -> PCB -> SCH -> ...
-    if( m_frame->m_probingSchToPcb )
+    if( m_frame->m_ProbingSchToPcb )
         return;
 
     PCB_SELECTION_TOOL*  selTool = m_toolMgr->GetTool<PCB_SELECTION_TOOL>();
@@ -1631,35 +2115,38 @@ int BOARD_EDITOR_CONTROL::AssignNetclass( const TOOL_EVENT& aEvent )
                     if( !dynamic_cast<BOARD_CONNECTED_ITEM*>( aCollector[ i ] ) )
                         aCollector.Remove( aCollector[ i ] );
                 }
-            },
-            true /* prompt user regarding locked items */ );
 
-    int netCode = -1;
-    wxString netName;
+                sTool->FilterCollectorForLockedItems( aCollector );
+            } );
+
+    std::set<wxString> netNames;
+    std::set<int>      netCodes;
 
     for( EDA_ITEM* item : selection )
     {
-        NETINFO_ITEM* net = static_cast<BOARD_CONNECTED_ITEM*>( item )->GetNet();
+        const NETINFO_ITEM& net = *static_cast<BOARD_CONNECTED_ITEM*>( item )->GetNet();
 
-        if( !net->HasAutoGeneratedNetname() )
+        if( !net.HasAutoGeneratedNetname() )
         {
-            netCode = net->GetNetCode();
-            netName = net->GetNetname();
-            break;
+            netNames.insert( net.GetNetname() );
+            netCodes.insert( net.GetNetCode() );
         }
     }
 
-    if( netName.IsEmpty() )
+    if( netNames.empty() )
     {
         m_frame->ShowInfoBarError( _( "Selection contains no items with labeled nets." ) );
         return 0;
     }
 
     selectionTool->ClearSelection();
-    m_toolMgr->RunAction( PCB_ACTIONS::selectNet, netCode );
+    for( const int& code : netCodes )
+    {
+        m_toolMgr->RunAction( PCB_ACTIONS::selectNet, code );
+    }
     canvas()->ForceRefresh();
 
-    DIALOG_ASSIGN_NETCLASS dlg( m_frame, netName, board()->GetNetClassAssignmentCandidates(),
+    DIALOG_ASSIGN_NETCLASS dlg( m_frame, netNames, board()->GetNetClassAssignmentCandidates(),
             [this]( const std::vector<wxString>& aNetNames )
             {
                 PCB_SELECTION_TOOL*  selTool = m_toolMgr->GetTool<PCB_SELECTION_TOOL>();
@@ -1794,11 +2281,10 @@ void BOARD_EDITOR_CONTROL::setTransitions()
     Go( &BOARD_EDITOR_CONTROL::Find,                   ACTIONS::find.MakeEvent() );
     Go( &BOARD_EDITOR_CONTROL::FindNext,               ACTIONS::findNext.MakeEvent() );
     Go( &BOARD_EDITOR_CONTROL::FindNext,               ACTIONS::findPrevious.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::FindByProperties, PCB_ACTIONS::findByProperties.MakeEvent() );
 
-    Go( &BOARD_EDITOR_CONTROL::RescueAutosave,         PCB_ACTIONS::rescueAutosave.MakeEvent() );
     Go( &BOARD_EDITOR_CONTROL::OpenNonKicadBoard,      PCB_ACTIONS::openNonKicadBoard.MakeEvent() );
     Go( &BOARD_EDITOR_CONTROL::ExportFootprints,       PCB_ACTIONS::exportFootprints.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::ExportFootprintsAs,     PCB_ACTIONS::exportFootprintsAs.MakeEvent() );
     Go( &BOARD_EDITOR_CONTROL::BoardSetup,             PCB_ACTIONS::boardSetup.MakeEvent() );
     Go( &BOARD_EDITOR_CONTROL::ImportNetlist,          PCB_ACTIONS::importNetlist.MakeEvent() );
     Go( &BOARD_EDITOR_CONTROL::ImportSpecctraSession,  PCB_ACTIONS::importSpecctraSession.MakeEvent() );
@@ -1833,6 +2319,10 @@ void BOARD_EDITOR_CONTROL::setTransitions()
     // Zone actions
     Go( &BOARD_EDITOR_CONTROL::ZoneMerge,              PCB_ACTIONS::zoneMerge.MakeEvent() );
     Go( &BOARD_EDITOR_CONTROL::ZoneDuplicate,          PCB_ACTIONS::zoneDuplicate.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ZonePriorityMoveToTop,  PCB_ACTIONS::zonePriorityMoveToTop.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ZonePriorityRaise,      PCB_ACTIONS::zonePriorityRaise.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ZonePriorityLower,      PCB_ACTIONS::zonePriorityLower.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ZonePriorityMoveToBottom, PCB_ACTIONS::zonePriorityMoveToBottom.MakeEvent() );
 
     // Placing tools
     Go( &BOARD_EDITOR_CONTROL::PlaceFootprint,         PCB_ACTIONS::placeFootprint.MakeEvent() );
@@ -1865,7 +2355,10 @@ void BOARD_EDITOR_CONTROL::setTransitions()
     Go( &BOARD_EDITOR_CONTROL::ToggleNetInspector,     PCB_ACTIONS::showNetInspector.MakeEvent() );
     Go( &BOARD_EDITOR_CONTROL::ToggleLibraryTree,      PCB_ACTIONS::showDesignBlockPanel.MakeEvent() );
     Go( &BOARD_EDITOR_CONTROL::ToggleSearch,           PCB_ACTIONS::showSearch.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::TogglePythonConsole,    PCB_ACTIONS::showPythonConsole.MakeEvent() );
     Go( &BOARD_EDITOR_CONTROL::RepairBoard,            PCB_ACTIONS::repairBoard.MakeEvent() );
+    // Line modes: explicit, next, and notification
+    Go( &BOARD_EDITOR_CONTROL::ChangeLineMode,        PCB_ACTIONS::lineModeFree.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ChangeLineMode,        PCB_ACTIONS::lineMode90.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::ChangeLineMode,        PCB_ACTIONS::lineMode45.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::OnAngleSnapModeChanged,PCB_ACTIONS::angleSnapModeChanged.MakeEvent() );
 }
-

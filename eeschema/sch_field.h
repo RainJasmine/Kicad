@@ -23,8 +23,7 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#ifndef CLASS_SCH_FIELD_H
-#define CLASS_SCH_FIELD_H
+#pragma once
 
 
 #include <eda_text.h>
@@ -33,9 +32,17 @@
 #include <general.h>
 #include <string_utils.h>
 #include "scintilla_tricks.h"
+#include <algorithm>
 
 class SCH_EDIT_FRAME;
 class SCH_TEXT;
+
+
+struct SCH_FIELD_RENDER_CACHE_DATA
+{
+    VECTOR2I                                    pos;
+    std::vector<std::unique_ptr<KIFONT::GLYPH>> glyphs;
+};
 
 
 class SCH_FIELD : public SCH_ITEM, public EDA_TEXT
@@ -49,6 +56,9 @@ public:
     SCH_FIELD( SCH_ITEM* aParent, SCH_TEXT* aText );
 
     SCH_FIELD( const SCH_FIELD& aText );
+
+    void Serialize( google::protobuf::Any& aContainer ) const override;
+    bool Deserialize( const google::protobuf::Any& aContainer ) override;
 
     ~SCH_FIELD() override
     { }
@@ -90,9 +100,9 @@ public:
         return _( "Field" );
     }
 
-    bool IsHypertext() const override;
+    bool HasHypertext() const override;
 
-    void DoHypertextAction( EDA_DRAW_FRAME* aFrame ) const override;
+    void DoHypertextAction( EDA_DRAW_FRAME* aFrame, const VECTOR2I& aMousePos ) const override;
 
     /**
      * Return the field name (not translated).
@@ -103,14 +113,19 @@ public:
     wxString GetName( bool aUseDefaultName = true ) const;
 
     /**
-     * Get a non-language-specific name for a field which can be used for storage, variable
-     * look-up, etc.
+     * Get a non-language-specific name for a field which can be used for storage, variable look-up, etc.
      */
     wxString GetCanonicalName() const;
 
     void SetName( const wxString& aName );
 
     void SetText( const wxString& aText ) override;
+
+    void SetText( const wxString& aText, const SCH_SHEET_PATH* aPath, const wxString& aVariantName = wxEmptyString );
+
+    virtual const wxString& GetText() const override { return EDA_TEXT::GetText(); }
+
+    wxString GetText( const SCH_SHEET_PATH* aPath, const wxString& aVariantName = wxEmptyString ) const;
 
     FIELD_T GetId() const { return m_id; }
 
@@ -130,8 +145,8 @@ public:
      * with the ${} stripped.
      */
     wxString GetShownName() const;
-    wxString GetShownText( const SCH_SHEET_PATH* aPath, bool aAllowExtraText,
-                           int aDepth = 0 ) const;
+    wxString GetShownText( const SCH_SHEET_PATH* aPath, bool aAllowExtraText, int aDepth = 0,
+                           const wxString& aVariantName = wxEmptyString ) const;
 
     wxString GetShownText( bool aAllowExtraText, int aDepth = 0 ) const override;
 
@@ -181,6 +196,8 @@ public:
      */
     EDA_ANGLE GetDrawRotation() const override;
 
+    KIFONT::FONT* GetDrawFont( const RENDER_SETTINGS* aSettings ) const override;
+
     const BOX2I GetBoundingBox() const override;
 
     /**
@@ -224,8 +241,7 @@ public:
     void ClearRenderCache() override;
 
     std::vector<std::unique_ptr<KIFONT::GLYPH>>*
-    GetRenderCache( const wxString& forResolvedText, const VECTOR2I& forPosition,
-                    TEXT_ATTRIBUTES& aAttrs ) const;
+    GetRenderCache( const wxString& forResolvedText, const VECTOR2I& forPosition, TEXT_ATTRIBUTES& aAttrs ) const;
 
     void Move( const VECTOR2I& aMoveVector ) override
     {
@@ -240,8 +256,7 @@ public:
     void BeginEdit( const VECTOR2I& aStartPoint ) override;
     void CalcEdit( const VECTOR2I& aPosition ) override;
 
-    void OnScintillaCharAdded( SCINTILLA_TRICKS* aScintillaTricks,
-                               wxStyledTextEvent &aEvent ) const;
+    void OnScintillaCharAdded( SCINTILLA_TRICKS* aScintillaTricks, wxStyledTextEvent &aEvent ) const;
 
     bool Matches( const EDA_SEARCH_DATA& aSearchData, void* aAuxData ) const override;
 
@@ -254,6 +269,8 @@ public:
 
     bool IsReplaceable() const override;
 
+    bool IsLocked() const override;
+
     VECTOR2I GetLibPosition() const { return EDA_TEXT::GetTextPos(); }
 
     VECTOR2I GetPosition() const override;
@@ -263,6 +280,7 @@ public:
 
     bool HitTest( const VECTOR2I& aPosition, int aAccuracy = 0 ) const override;
     bool HitTest( const BOX2I& aRect, bool aContained, int aAccuracy = 0 ) const override;
+    bool HitTest( const SHAPE_LINE_CHAIN& aPoly, bool aContained ) const override;
 
     void Plot( PLOTTER* aPlotter, bool aBackground, const SCH_PLOT_OPTS& aPlotOpts,
                int aUnit, int aBodyStyle, const VECTOR2I& aOffset, bool aDimmed ) override;
@@ -303,8 +321,6 @@ public:
 protected:
     friend class SCH_IO_KICAD_SEXPR_PARSER;
 
-    KIFONT::FONT* getDrawFont() const override;
-
     const KIFONT::METRICS& getFontMetrics() const override { return GetFontMetrics(); }
 
     /**
@@ -323,6 +339,9 @@ protected:
 
     void setId( FIELD_T aId );
 
+    wxString getUnescapedText( const SCH_SHEET_PATH* aPath = nullptr,
+                               const wxString& aVariantName = wxEmptyString ) const;
+
 private:
     FIELD_T  m_id;               ///< Field id, @see enum FIELD_T
     int      m_ordinal;          ///< Sort order for non-mandatory fields
@@ -336,9 +355,7 @@ private:
     bool     m_autoAdded;        ///< Was this field automatically added to a LIB_SYMBOL?
     bool     m_showInChooser;    ///< This field is available as a data column for the chooser
 
-    mutable bool                                        m_renderCacheValid;
-    mutable VECTOR2I                                    m_renderCachePos;
-    mutable std::vector<std::unique_ptr<KIFONT::GLYPH>> m_renderCache;
+    mutable std::unique_ptr<SCH_FIELD_RENDER_CACHE_DATA> m_renderCache;
 
     mutable COLOR4D                                     m_lastResolvedColor;
 };
@@ -369,13 +386,12 @@ inline const SCH_FIELD* FindField( const std::vector<SCH_FIELD>& aFields, FIELD_
 
 inline SCH_FIELD* FindField( std::vector<SCH_FIELD>& aFields, FIELD_T aFieldId )
 {
-    auto& constFields = const_cast<const std::vector<SCH_FIELD>&>( aFields );
+    const std::vector<SCH_FIELD>& constFields = const_cast<const std::vector<SCH_FIELD>&>( aFields );
     return const_cast<SCH_FIELD*>( FindField( constFields, aFieldId ) );
 }
 
 
-inline const SCH_FIELD* FindField( const std::vector<SCH_FIELD>& aFields,
-                                   const wxString& aFieldName )
+inline const SCH_FIELD* FindField( const std::vector<SCH_FIELD>& aFields, const wxString& aFieldName )
 {
     for( const SCH_FIELD& field : aFields )
     {
@@ -389,7 +405,7 @@ inline const SCH_FIELD* FindField( const std::vector<SCH_FIELD>& aFields,
 
 inline SCH_FIELD* FindField( std::vector<SCH_FIELD>& aFields, const wxString& aFieldName )
 {
-    auto& constFields = const_cast<const std::vector<SCH_FIELD>&>( aFields );
+    const std::vector<SCH_FIELD>& constFields = const_cast<const std::vector<SCH_FIELD>&>( aFields );
     return const_cast<SCH_FIELD*>( FindField( constFields, aFieldName ) );
 }
 
@@ -406,8 +422,8 @@ inline wxString GetFieldValue( const std::vector<SCH_FIELD>* aFields, FIELD_T aF
 }
 
 
-inline std::string GetFieldValue( const std::vector<SCH_FIELD>* aFields,
-                                  const wxString& aFieldName, bool aResolve, int aDepth )
+inline std::string GetFieldValue( const std::vector<SCH_FIELD>* aFields, const wxString& aFieldName,
+                                  bool aResolve, int aDepth )
 {
     if( !aFields )
         return "";
@@ -420,29 +436,49 @@ inline std::string GetFieldValue( const std::vector<SCH_FIELD>* aFields,
 
 
 inline void SetFieldValue( std::vector<SCH_FIELD>& aFields, const wxString& aFieldName,
-                           const std::string& aValue, bool aIsVisible = true )
+                           const std::string& aValue, bool aIsVisible = true,
+                           const SCH_SHEET_PATH* aSheetPath = nullptr, const wxString& aVariantName = wxEmptyString )
 {
-    if( aValue == "" )
+    if( !aSheetPath || aVariantName.empty() )
     {
-        alg::delete_if( aFields, [&]( const SCH_FIELD& field )
-                                 {
-                                     return field.GetName() == aFieldName;
-                                 } );
+        // Without a sheet path this is a local write (usually to the Symbol Properties dialog's copy of the
+        // fields).  Variant handling will apply only when the local fields are written back to the symbol.
+
+        if( aValue == "" )
+        {
+            std::erase_if( aFields, [&]( const SCH_FIELD& field )
+                                     {
+                                         return field.GetName() == aFieldName;
+                                     } );
+            return;
+        }
+
+        if( SCH_FIELD* field = FindField( aFields, aFieldName ) )
+        {
+            field->SetText( aValue );
+            return;
+        }
+
+        SCH_ITEM* parent = static_cast<SCH_ITEM*>( aFields.at( 0 ).GetParent() );
+        aFields.emplace_back( parent, FIELD_T::USER, aFieldName );
+
+        aFields.back().SetText( aValue );
+        aFields.back().SetVisible( aIsVisible );
         return;
     }
 
     if( SCH_FIELD* field = FindField( aFields, aFieldName ) )
     {
-        field->SetText( aValue );
+        field->SetText( aValue, aSheetPath, aVariantName );
         return;
     }
 
     SCH_ITEM* parent = static_cast<SCH_ITEM*>( aFields.at( 0 ).GetParent() );
     aFields.emplace_back( parent, FIELD_T::USER, aFieldName );
+
+    // Since the default variant doesn't have this field at all, we're going to set it to the same value
+    // and visibility as specified for the variant.  We therefore don't really have a variant at all, so we
+    // can ignore variant processing here.
     aFields.back().SetText( aValue );
     aFields.back().SetVisible( aIsVisible );
 }
-
-
-
-#endif /* CLASS_SCH_FIELD_H */

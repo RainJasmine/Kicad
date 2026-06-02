@@ -37,10 +37,9 @@ class SCH_SHEET;
 class SCH_SCREEN;
 class SCH_IO;
 class SCHEMATIC;
-class SYMBOL_LIB_TABLE;
 class KIWAY;
 class LIB_SYMBOL;
-class SYMBOL_LIB;
+class LEGACY_SYMBOL_LIB;
 class PROGRESS_REPORTER;
 
 
@@ -66,11 +65,14 @@ public:
         SCH_EAGLE,            ///< Autodesk Eagle file format
         SCH_EASYEDA,          ///< EasyEDA Std schematic file
         SCH_EASYEDAPRO,       ///< EasyEDA Pro archive
+        SCH_GEDA,             ///< gEDA/gschem schematic format
         SCH_LTSPICE,          ///< LtSpice Schematic format
         SCH_HTTP,             ///< KiCad HTTP library
+        SCH_PADS,             ///< PADS Logic schematic format
 
         // Add your schematic type here.
-        SCH_FILE_UNKNOWN
+        SCH_FILE_UNKNOWN,
+        SCH_NESTED_TABLE
     } )
     // clang-format on
 

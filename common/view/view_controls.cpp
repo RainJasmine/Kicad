@@ -58,6 +58,7 @@ void VIEW_CONTROLS::Reset()
 void VC_SETTINGS::Reset()
 {
     m_showCursor                      = false;
+    m_forcedPosition                  = { 0.0, 0.0 };
     m_forceCursorPosition             = false;
     m_cursorCaptured                  = false;
     m_snappingEnabled                 = true;
@@ -76,6 +77,7 @@ void VC_SETTINGS::Reset()
     m_scrollModifierZoom              = 0;
     m_scrollModifierPanH              = WXK_CONTROL;
     m_scrollModifierPanV              = WXK_SHIFT;
+    m_motionPanModifier               = 0;
     m_dragLeft                        = MOUSE_DRAG_ACTION::NONE;
     m_dragMiddle                      = MOUSE_DRAG_ACTION::PAN;
     m_dragRight                       = MOUSE_DRAG_ACTION::PAN;

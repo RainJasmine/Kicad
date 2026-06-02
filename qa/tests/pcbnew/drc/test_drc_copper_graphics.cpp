@@ -25,15 +25,16 @@
 #include <pcbnew_utils/board_test_utils.h>
 #include <board.h>
 #include <board_design_settings.h>
+#include <drc/drc_engine.h>
 #include <pcb_marker.h>
+#include <drc/drc_engine.h>
 #include <drc/drc_item.h>
 #include <settings/settings_manager.h>
 
 
 struct DRC_COPPER_GRAPHICS_TEST_FIXTURE
 {
-    DRC_COPPER_GRAPHICS_TEST_FIXTURE() :
-            m_settingsManager( true /* headless */ )
+    DRC_COPPER_GRAPHICS_TEST_FIXTURE()
     { }
 
     SETTINGS_MANAGER       m_settingsManager;
@@ -63,8 +64,8 @@ BOOST_FIXTURE_TEST_CASE( DRCCopperGraphicsTest, DRC_COPPER_GRAPHICS_TEST_FIXTURE
     bds.m_DRCSeverities[ DRCE_NONMIRRORED_TEXT_ON_BACK_LAYER ] = SEVERITY::RPT_SEVERITY_IGNORE;
 
     bds.m_DRCEngine->SetViolationHandler(
-            [&]( const std::shared_ptr<DRC_ITEM>& aItem, VECTOR2I aPos, int aLayer,
-                 DRC_CUSTOM_MARKER_HANDLER* aCustomHandler )
+            [&]( const std::shared_ptr<DRC_ITEM>& aItem, const VECTOR2I& aPos, int aLayer,
+                 const std::function<void( PCB_MARKER* )>& aPathGenerator )
             {
                 PCB_MARKER temp( aItem, aPos );
 
@@ -90,12 +91,19 @@ BOOST_FIXTURE_TEST_CASE( DRCCopperGraphicsTest, DRC_COPPER_GRAPHICS_TEST_FIXTURE
 
         UNITS_PROVIDER unitsProvider( pcbIUScale, EDA_UNITS::INCH );
 
+        wxString report;
         std::map<KIID, EDA_ITEM*> itemMap;
         m_board->FillItemMap( itemMap );
 
         for( const DRC_ITEM& item : violations )
-            BOOST_TEST_MESSAGE( item.ShowReport( &unitsProvider, RPT_SEVERITY_ERROR, itemMap ) );
+            report += item.ShowReport( &unitsProvider, RPT_SEVERITY_ERROR, itemMap );
 
-        BOOST_ERROR( wxString::Format( "DRC copper graphics test failed board <%s>", brd_name ) );
+        BOOST_ERROR( wxString::Format( "DRC copper graphics: %s\n"
+                                       "%d violations found (expected %d)\n"
+                                       "%s",
+                                       brd_name,
+                                       (int) violations.size(),
+                                       expected_err_cnt,
+                                       report ) );
     }
 }

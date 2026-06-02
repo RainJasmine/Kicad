@@ -81,25 +81,17 @@ private:
     /// Handles mouse related events (click, motion, dragging).
     bool handleMouseButton( wxEvent& aEvent, int aIndex, bool aMotion );
 
+    /// Processes any pending mouse clicks that have been physically completed but not yet
+    /// dispatched. This ensures clicks are processed before cancel events when both happen
+    /// in quick succession.
+    void flushPendingClicks();
+
     /// Returns the instance of VIEW, used by the application.
     KIGFX::VIEW* getView();
 
-    /// Saves the state of key modifiers (Alt, Ctrl and so on).
-    static int decodeModifiers( const wxKeyboardState* aState )
-    {
-        int mods = 0;
-
-        if( aState->ControlDown() )
-            mods |= MD_CTRL;
-
-        if( aState->AltDown() )
-            mods |= MD_ALT;
-
-        if( aState->ShiftDown() )
-            mods |= MD_SHIFT;
-
-        return mods;
-    }
+    /// Returns the state of key modifiers (Alt, Ctrl and so on) as OR'ed list
+    /// of bits (MD_CTRL, MD_ALT ...)
+    static int decodeModifiers( const wxKeyboardState* aState );
 
 private:
     /// The time threshold for a mouse button press that distinguishes between a single mouse

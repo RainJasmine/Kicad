@@ -24,6 +24,7 @@
  */
 
 #include <unordered_set>
+#include <deque>
 
 #include <trigo.h>
 #include <macros.h>
@@ -36,9 +37,13 @@
 #include <convert_basic_shapes_to_polygon.h>
 #include <geometry/shape_poly_set.h>
 #include <geometry/geometry_utils.h>
+#include <geometry/roundrect.h>
 #include <convert_shape_list_to_polygon.h>
 #include <board.h>
+#include <board_design_settings.h>
 #include <collectors.h>
+
+#include <nanoflann.hpp>
 
 #include <wx/log.h>
 
@@ -96,61 +101,6 @@ static bool closer_to_first( VECTOR2I aRef, VECTOR2I aFirst, VECTOR2I aSecond )
 }
 
 
-/**
- * Search for a #PCB_SHAPE matching a given end point or start point in a list.
- *
- * @param aShape The starting shape.
- * @param aPoint The starting or ending point to search for.
- * @param aList The list to remove from.
- * @param aLimit is the distance from \a aPoint that still constitutes a valid find.
- * @return The first #PCB_SHAPE that has a start or end point matching aPoint, otherwise nullptr.
- */
-static PCB_SHAPE* findNext( PCB_SHAPE* aShape, const VECTOR2I& aPoint,
-                            const std::vector<PCB_SHAPE*>& aList, unsigned aLimit )
-{
-    // Look for an unused, exact hit
-    for( PCB_SHAPE* graphic : aList )
-    {
-        if( graphic == aShape || ( graphic->GetFlags() & SKIP_STRUCT ) != 0 )
-            continue;
-
-        if( aPoint == graphic->GetStart() || aPoint == graphic->GetEnd() )
-            return graphic;
-    }
-
-    // Search again for anything that's close, even something already used.  (The latter is
-    // important for error reporting.)
-    VECTOR2I    pt( aPoint );
-    SEG::ecoord closest_dist_sq = SEG::Square( aLimit );
-    PCB_SHAPE*  closest_graphic = nullptr;
-    SEG::ecoord d_sq;
-
-    for( PCB_SHAPE* graphic : aList )
-    {
-        if( graphic == aShape )
-            continue;
-
-        d_sq = ( pt - graphic->GetStart() ).SquaredEuclideanNorm();
-
-        if( d_sq < closest_dist_sq )
-        {
-            closest_dist_sq = d_sq;
-            closest_graphic = graphic;
-        }
-
-        d_sq = ( pt - graphic->GetEnd() ).SquaredEuclideanNorm();
-
-        if( d_sq < closest_dist_sq )
-        {
-            closest_dist_sq = d_sq;
-            closest_graphic = graphic;
-        }
-    }
-
-    return closest_graphic;     // Note: will be nullptr if nothing within aLimit
-}
-
-
 static bool isCopperOutside( const FOOTPRINT* aFootprint, SHAPE_POLY_SET& aShape )
 {
     bool padOutside = false;
@@ -187,6 +137,615 @@ static bool isCopperOutside( const FOOTPRINT* aFootprint, SHAPE_POLY_SET& aShape
 }
 
 
+struct PCB_SHAPE_ENDPOINTS_ADAPTOR
+{
+    std::vector<std::pair<VECTOR2I, PCB_SHAPE*>> endpoints;
+
+    PCB_SHAPE_ENDPOINTS_ADAPTOR( const std::vector<PCB_SHAPE*>& shapes )
+    {
+        endpoints.reserve( shapes.size() * 2 );
+
+        for( PCB_SHAPE* shape : shapes )
+        {
+            endpoints.emplace_back( shape->GetStart(), shape );
+            endpoints.emplace_back( shape->GetEnd(), shape );
+        }
+    }
+
+    // Required by nanoflann
+    size_t kdtree_get_point_count() const { return endpoints.size(); }
+
+    // Returns the dim'th component of the idx'th point
+    double kdtree_get_pt( const size_t idx, const size_t dim ) const
+    {
+        if( dim == 0 )
+            return static_cast<double>( endpoints[idx].first.x );
+        else
+            return static_cast<double>( endpoints[idx].first.y );
+    }
+
+    template <class BBOX>
+    bool kdtree_get_bbox( BBOX& ) const
+    {
+        return false;
+    }
+};
+
+using KDTree = nanoflann::KDTreeSingleIndexAdaptor<nanoflann::L2_Simple_Adaptor<double, PCB_SHAPE_ENDPOINTS_ADAPTOR>,
+                                                   PCB_SHAPE_ENDPOINTS_ADAPTOR,
+                                                   2 /* dim */ >;
+
+static void processClosedShape( PCB_SHAPE* aShape, SHAPE_LINE_CHAIN& aContour,
+                                std::map<std::pair<VECTOR2I, VECTOR2I>, PCB_SHAPE*>& aShapeOwners,
+                                int aErrorMax, bool aAllowUseArcsInPolygons )
+{
+    switch( aShape->GetShape() )
+    {
+    case SHAPE_T::POLY:
+    {
+        VECTOR2I prevPt;
+        bool firstPt = true;
+
+        for( auto it = aShape->GetPolyShape().CIterate(); it; it++ )
+        {
+            VECTOR2I pt = *it;
+            aContour.Append( pt );
+
+            if( firstPt )
+                firstPt = false;
+            else
+                aShapeOwners[ std::make_pair( prevPt, pt ) ] = aShape;
+
+            prevPt = pt;
+        }
+
+        aContour.SetClosed( true );
+        break;
+    }
+    case SHAPE_T::CIRCLE:
+    {
+        VECTOR2I center = aShape->GetCenter();
+        int      radius = aShape->GetRadius();
+        VECTOR2I start = center;
+        start.x += radius;
+
+        SHAPE_ARC arc360( center, start, ANGLE_360, 0 );
+        aContour.Append( arc360, aErrorMax );
+        aContour.SetClosed( true );
+
+        for( int ii = 1; ii < aContour.PointCount(); ++ii )
+            aShapeOwners[ std::make_pair( aContour.CPoint( ii-1 ), aContour.CPoint( ii ) ) ] = aShape;
+
+        if( !aAllowUseArcsInPolygons )
+            aContour.ClearArcs();
+
+        break;
+    }
+    case SHAPE_T::RECTANGLE:
+    {
+        if( aShape->GetCornerRadius() > 0 )
+        {
+            ROUNDRECT rr( SHAPE_RECT( aShape->GetStart(), aShape->GetRectangleWidth(), aShape->GetRectangleHeight() ),
+                          aShape->GetCornerRadius(), true /* normalize */ );
+            SHAPE_POLY_SET poly;
+            rr.TransformToPolygon( poly, aShape->GetMaxError() );
+            aContour.Append( poly.Outline( 0 ) );
+
+            for( int ii = 1; ii < aContour.PointCount(); ++ii )
+                aShapeOwners[ std::make_pair( aContour.CPoint( ii - 1 ), aContour.CPoint( ii ) ) ] = aShape;
+
+            if( !aAllowUseArcsInPolygons )
+                aContour.ClearArcs();
+
+            aContour.SetClosed( true );
+            break;
+        }
+
+        std::vector<VECTOR2I> pts = aShape->GetRectCorners();
+        VECTOR2I prevPt;
+        bool firstPt = true;
+
+        for( const VECTOR2I& pt : pts )
+        {
+            aContour.Append( pt );
+
+            if( firstPt )
+                firstPt = false;
+            else
+                aShapeOwners[ std::make_pair( prevPt, pt ) ] = aShape;
+
+            prevPt = pt;
+        }
+
+        aContour.SetClosed( true );
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+static void processShapeSegment( PCB_SHAPE* aShape, SHAPE_LINE_CHAIN& aContour,
+                                VECTOR2I& aPrevPt,
+                                std::map<std::pair<VECTOR2I, VECTOR2I>, PCB_SHAPE*>& aShapeOwners,
+                                int aErrorMax, int aChainingEpsilon, bool aAllowUseArcsInPolygons )
+{
+    switch( aShape->GetShape() )
+    {
+    case SHAPE_T::SEGMENT:
+    {
+        VECTOR2I nextPt;
+
+        if( closer_to_first( aPrevPt, aShape->GetStart(), aShape->GetEnd() ) )
+            nextPt = aShape->GetEnd();
+        else
+            nextPt = aShape->GetStart();
+
+        aContour.Append( nextPt );
+        aShapeOwners[ std::make_pair( aPrevPt, nextPt ) ] = aShape;
+        aPrevPt = nextPt;
+        break;
+    }
+    case SHAPE_T::ARC:
+    {
+        VECTOR2I pstart = aShape->GetStart();
+        VECTOR2I pmid = aShape->GetArcMid();
+        VECTOR2I pend = aShape->GetEnd();
+
+        if( !close_enough( aPrevPt, pstart, aChainingEpsilon ) )
+        {
+            if( !close_enough( aPrevPt, aShape->GetEnd(), aChainingEpsilon ) )
+                return;
+
+            std::swap( pstart, pend );
+        }
+
+        pstart = aPrevPt;
+        SHAPE_ARC sarc( pstart, pmid, pend, 0 );
+        SHAPE_LINE_CHAIN arcChain;
+        arcChain.Append( sarc, aErrorMax );
+
+        if( !aAllowUseArcsInPolygons )
+            arcChain.ClearArcs();
+
+        for( int ii = 1; ii < arcChain.PointCount(); ++ii )
+        {
+            aShapeOwners[ std::make_pair( arcChain.CPoint( ii - 1 ),
+                                         arcChain.CPoint( ii ) ) ] = aShape;
+        }
+
+        aContour.Append( arcChain );
+        aPrevPt = pend;
+        break;
+    }
+    case SHAPE_T::BEZIER:
+    {
+        VECTOR2I nextPt;
+        bool     reverse = false;
+
+        if( closer_to_first( aPrevPt, aShape->GetStart(), aShape->GetEnd() ) )
+        {
+            nextPt = aShape->GetEnd();
+        }
+        else
+        {
+            nextPt = aShape->GetStart();
+            reverse = true;
+        }
+
+        aShape->RebuildBezierToSegmentsPointsList( aErrorMax );
+
+        if( reverse )
+        {
+            for( int jj = aShape->GetBezierPoints().size() - 1; jj >= 0; jj-- )
+            {
+                const VECTOR2I& pt = aShape->GetBezierPoints()[jj];
+
+                if( aPrevPt == pt )
+                    continue;
+
+                aContour.Append( pt );
+                aShapeOwners[ std::make_pair( aPrevPt, pt ) ] = aShape;
+                aPrevPt = pt;
+            }
+        }
+        else
+        {
+            for( const VECTOR2I& pt : aShape->GetBezierPoints() )
+            {
+                if( aPrevPt == pt )
+                    continue;
+
+                aContour.Append( pt );
+                aShapeOwners[ std::make_pair( aPrevPt, pt ) ] = aShape;
+                aPrevPt = pt;
+            }
+        }
+
+        aPrevPt = nextPt;
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+static std::map<int, std::vector<int>> buildContourHierarchy( const std::vector<SHAPE_LINE_CHAIN>& aContours )
+{
+    std::map<int, std::vector<int>> contourToParentIndexesMap;
+
+    for( size_t ii = 0; ii < aContours.size(); ++ii )
+    {
+        if( aContours[ii].PointCount() < 1 )  // malformed/empty SHAPE_LINE_CHAIN
+            continue;
+
+        VECTOR2I         firstPt = aContours[ii].GetPoint( 0 );
+        std::vector<int> parents;
+
+        for( size_t jj = 0; jj < aContours.size(); ++jj )
+        {
+            if( jj == ii )
+                continue;
+
+            const SHAPE_LINE_CHAIN& parentCandidate = aContours[jj];
+
+            if( parentCandidate.PointInside( firstPt, 0, true ) )
+                parents.push_back( jj );
+        }
+
+        contourToParentIndexesMap[ii] = std::move( parents );
+    }
+
+    return contourToParentIndexesMap;
+}
+
+static bool addOutlinesToPolygon( const std::vector<SHAPE_LINE_CHAIN>& aContours,
+                                  const std::map<int, std::vector<int>>& aContourHierarchy,
+                                  SHAPE_POLY_SET& aPolygons, bool aAllowDisjoint,
+                                  OUTLINE_ERROR_HANDLER* aErrorHandler,
+                                  const std::function<PCB_SHAPE*(const SEG&)>& aFetchOwner,
+                                  std::map<int, int>& aContourToOutlineIdxMap )
+{
+    for( const auto& [ contourIndex, parentIndexes ] : aContourHierarchy )
+    {
+        if( parentIndexes.size() % 2 == 0 )
+        {
+            // Even number of parents; top-level outline
+            if( !aAllowDisjoint && !aPolygons.IsEmpty() )
+            {
+                if( aErrorHandler )
+                {
+                    BOARD_ITEM* a = aFetchOwner( aPolygons.Outline( 0 ).GetSegment( 0 ) );
+                    BOARD_ITEM* b = aFetchOwner( aContours[ contourIndex ].GetSegment( 0 ) );
+
+                    if( a && b )
+                    {
+                        (*aErrorHandler)( _( "(multiple board outlines not supported)" ), a, b,
+                                          aContours[ contourIndex ].GetPoint( 0 ) );
+                        return false;
+                    }
+                }
+            }
+
+            aPolygons.AddOutline( aContours[ contourIndex ] );
+            aContourToOutlineIdxMap[ contourIndex ] = aPolygons.OutlineCount() - 1;
+        }
+    }
+    return true;
+}
+
+static void addHolesToPolygon( const std::vector<SHAPE_LINE_CHAIN>&   aContours,
+                               const std::map<int, std::vector<int>>& aContourHierarchy,
+                               const std::map<int, int>& aContourToOutlineIdxMap, SHAPE_POLY_SET& aPolygons,
+                               bool aAllowUseArcsInPolygons, bool aHasMalformedOverlap )
+{
+    if( aAllowUseArcsInPolygons || !aHasMalformedOverlap )
+    {
+        for( const auto& [contourIndex, parentIndexes] : aContourHierarchy )
+        {
+            if( parentIndexes.size() % 2 == 1 )
+            {
+                // Odd number of parents; we're a hole in the parent which has one fewer parents
+                const SHAPE_LINE_CHAIN& hole = aContours[contourIndex];
+
+                for( int parentContourIdx : parentIndexes )
+                {
+                    if( aContourHierarchy.at( parentContourIdx ).size() == parentIndexes.size() - 1 )
+                    {
+                        int outlineIdx = aContourToOutlineIdxMap.at( parentContourIdx );
+                        aPolygons.AddHole( hole, outlineIdx );
+                        break;
+                    }
+                }
+            }
+        }
+
+        return;
+    }
+
+    // Malformed overlapping contours in the polygonized path.
+    SHAPE_POLY_SET cutoutCandidates;
+    SHAPE_POLY_SET islandCandidates;
+
+    for( const auto& [contourIndex, parentIndexes] : aContourHierarchy )
+    {
+        if( parentIndexes.empty() )
+            continue;
+
+        if( parentIndexes.size() % 2 == 1 )
+            cutoutCandidates.AddOutline( aContours[contourIndex] );
+        else
+            islandCandidates.AddOutline( aContours[contourIndex] );
+    }
+
+    if( cutoutCandidates.OutlineCount() )
+    {
+        cutoutCandidates.Simplify();
+        aPolygons.BooleanSubtract( cutoutCandidates );
+    }
+
+    if( islandCandidates.OutlineCount() )
+    {
+        islandCandidates.Simplify();
+        aPolygons.BooleanAdd( islandCandidates );
+    }
+}
+
+static bool checkSelfIntersections( SHAPE_POLY_SET& aPolygons,
+                                   OUTLINE_ERROR_HANDLER* aErrorHandler,
+                                   const std::function<PCB_SHAPE*(const SEG&)>& aFetchOwner )
+{
+    bool selfIntersecting = false;
+    std::vector<SEG> segments;
+    size_t total = 0;
+
+    for( int ii = 0; ii < aPolygons.OutlineCount(); ++ii )
+    {
+        const SHAPE_LINE_CHAIN& contour = aPolygons.Outline( ii );
+        total += contour.SegmentCount();
+
+        for( int jj = 0; jj < aPolygons.HoleCount( ii ); ++jj )
+        {
+            const SHAPE_LINE_CHAIN& hole = aPolygons.Hole( ii, jj );
+            total += hole.SegmentCount();
+        }
+    }
+
+    segments.reserve( total );
+
+    for( auto seg = aPolygons.IterateSegmentsWithHoles(); seg; seg++ )
+    {
+        SEG segment = *seg;
+
+        if( LexicographicalCompare( segment.A, segment.B ) > 0 )
+            std::swap( segment.A, segment.B );
+
+        segments.push_back( segment );
+    }
+
+    std::sort( segments.begin(), segments.end(),
+               []( const SEG& a, const SEG& b )
+               {
+                   if( a.A != b.A )
+                       return LexicographicalCompare( a.A, b.A ) < 0;
+                   return LexicographicalCompare( a.B, b.B ) < 0;
+               } );
+
+    for( size_t i = 0; i < segments.size(); ++i )
+    {
+        const SEG& seg1 = segments[i];
+
+        for( size_t j = i + 1; j < segments.size(); ++j )
+        {
+            const SEG& seg2 = segments[j];
+
+            if( seg2.A > seg1.B )
+                break;
+
+            if( seg1 == seg2 || ( seg1.A == seg2.B && seg1.B == seg2.A ) )
+            {
+                if( aErrorHandler )
+                {
+                    BOARD_ITEM* a = aFetchOwner( seg1 );
+                    BOARD_ITEM* b = aFetchOwner( seg2 );
+                    (*aErrorHandler)( _( "(self-intersecting)" ), a, b, seg1.A );
+                }
+                selfIntersecting = true;
+            }
+            else if( OPT_VECTOR2I pt = seg1.Intersect( seg2, true ) )
+            {
+                if( aErrorHandler )
+                {
+                    BOARD_ITEM* a = aFetchOwner( seg1 );
+                    BOARD_ITEM* b = aFetchOwner( seg2 );
+                    (*aErrorHandler)( _( "(self-intersecting)" ), a, b, *pt );
+                }
+                selfIntersecting = true;
+            }
+        }
+    }
+
+    return !selfIntersecting;
+}
+
+// Helper function to find next shape using KD-tree
+static PCB_SHAPE* findNext( PCB_SHAPE* aShape, const VECTOR2I& aPoint, const KDTree& kdTree,
+                            const PCB_SHAPE_ENDPOINTS_ADAPTOR& adaptor, double aChainingEpsilon )
+{
+    const double query_pt[2] = { static_cast<double>( aPoint.x ), static_cast<double>( aPoint.y ) };
+
+    uint32_t indices[2];
+    double distances[2];
+    kdTree.knnSearch( query_pt, 2, indices, distances );
+
+    if( distances[0] == std::numeric_limits<double>::max() )
+        return nullptr;
+
+    // Find the closest valid candidate
+    PCB_SHAPE* closest_graphic = nullptr;
+    double closest_dist_sq = aChainingEpsilon * aChainingEpsilon;
+
+    for( size_t i = 0; i < 2; ++i )
+    {
+        if( distances[i] == std::numeric_limits<double>::max() )
+            continue;
+
+        PCB_SHAPE* candidate = adaptor.endpoints[indices[i]].second;
+
+        if( candidate == aShape )
+            continue;
+
+        if( distances[i] < closest_dist_sq )
+        {
+            closest_dist_sq = distances[i];
+            closest_graphic = candidate;
+        }
+    }
+
+    return closest_graphic;
+}
+
+
+static bool hasOverlappingClosedContours( const std::vector<SHAPE_LINE_CHAIN>& aContours )
+{
+    for( size_t ii = 0; ii < aContours.size(); ++ii )
+    {
+        for( size_t jj = ii + 1; jj < aContours.size(); ++jj )
+        {
+            SHAPE_LINE_CHAIN::INTERSECTIONS intersections;
+
+            if( aContours[ii].Intersect( aContours[jj], intersections, true ) != 0 )
+                return true;
+        }
+    }
+
+    return false;
+}
+
+
+// Walk a chain of open shapes (segments/arcs/beziers) starting from aStart, and produce a
+// closed SHAPE_LINE_CHAIN if the chain forms a closed loop. Shapes that are consumed are
+// removed from aRemaining. Returns true and populates aContour and aOwnerShape only if a
+// closed contour is produced. Used to detect cross-contour intersections of bezier-bounded
+// slots which would otherwise be missed by the closed-shape-only intersection test.
+static bool buildChainedClosedContour( PCB_SHAPE* aStart, std::set<PCB_SHAPE*>& aRemaining,
+                                       const KDTree& aKdTree,
+                                       const PCB_SHAPE_ENDPOINTS_ADAPTOR& aAdaptor,
+                                       int aErrorMax, int aChainingEpsilon,
+                                       SHAPE_LINE_CHAIN& aContour, PCB_SHAPE*& aOwnerShape )
+{
+    std::deque<PCB_SHAPE*> chain;
+    chain.push_back( aStart );
+
+    bool     closed = false;
+    VECTOR2I frontPt = aStart->GetStart();
+    VECTOR2I backPt = aStart->GetEnd();
+
+    std::set<PCB_SHAPE*> visited;
+    visited.insert( aStart );
+
+    auto extendChain = [&]( bool forward )
+    {
+        PCB_SHAPE* curr = forward ? chain.back() : chain.front();
+        VECTOR2I   prev = forward ? backPt : frontPt;
+
+        for( ;; )
+        {
+            PCB_SHAPE* next = findNext( curr, prev, aKdTree, aAdaptor, aChainingEpsilon );
+
+            // The KD-tree spans the original openShapes set, so it still returns shapes
+            // already consumed by an earlier chain. Filter against aRemaining to avoid
+            // accidentally absorbing those into this chain.
+            if( next && aRemaining.find( next ) == aRemaining.end() )
+                next = nullptr;
+
+            if( next && visited.find( next ) == visited.end() )
+            {
+                visited.insert( next );
+
+                if( forward )
+                    chain.push_back( next );
+                else
+                    chain.push_front( next );
+
+                if( closer_to_first( prev, next->GetStart(), next->GetEnd() ) )
+                    prev = next->GetEnd();
+                else
+                    prev = next->GetStart();
+
+                curr = next;
+                continue;
+            }
+
+            if( next )
+            {
+                PCB_SHAPE* chainEnd = forward ? chain.front() : chain.back();
+                VECTOR2I   chainPt = forward ? frontPt : backPt;
+
+                if( next == chainEnd && close_enough( prev, chainPt, aChainingEpsilon ) )
+                    closed = true;
+            }
+
+            if( forward )
+                backPt = prev;
+            else
+                frontPt = prev;
+
+            break;
+        }
+    };
+
+    extendChain( true );
+
+    if( !closed )
+        extendChain( false );
+
+    if( !closed )
+        return false;
+
+    // Build the contour from the closed chain, mirroring doConvertOutlineToPolygon().
+    std::map<std::pair<VECTOR2I, VECTOR2I>, PCB_SHAPE*> shapeOwners;
+    PCB_SHAPE*                                          first = chain.front();
+    VECTOR2I                                            startPt;
+
+    if( chain.size() > 1 )
+    {
+        PCB_SHAPE* second = *( std::next( chain.begin() ) );
+
+        if( close_enough( first->GetStart(), second->GetStart(), aChainingEpsilon )
+            || close_enough( first->GetStart(), second->GetEnd(), aChainingEpsilon ) )
+            startPt = first->GetEnd();
+        else
+            startPt = first->GetStart();
+    }
+    else
+    {
+        startPt = first->GetStart();
+    }
+
+    aContour.Clear();
+    aContour.Append( startPt );
+    VECTOR2I prevPt = startPt;
+
+    for( PCB_SHAPE* shapeInChain : chain )
+        processShapeSegment( shapeInChain, aContour, prevPt, shapeOwners, aErrorMax, aChainingEpsilon, false );
+
+    if( aContour.PointCount() < 3 )
+        return false;
+
+    if( aContour.CPoint( 0 ) != aContour.CLastPoint() )
+        aContour.SetPoint( -1, aContour.CPoint( 0 ) );
+
+    aContour.SetClosed( true );
+
+    for( PCB_SHAPE* consumed : chain )
+        aRemaining.erase( consumed );
+
+    aOwnerShape = first;
+    return true;
+}
+
+
 bool doConvertOutlineToPolygon( std::vector<PCB_SHAPE*>& aShapeList, SHAPE_POLY_SET& aPolygons,
                                 int aErrorMax, int aChainingEpsilon, bool aAllowDisjoint,
                                 OUTLINE_ERROR_HANDLER* aErrorHandler, bool aAllowUseArcsInPolygons,
@@ -200,8 +759,11 @@ bool doConvertOutlineToPolygon( std::vector<PCB_SHAPE*>& aShapeList, SHAPE_POLY_
 
     std::set<PCB_SHAPE*> startCandidates( aShapeList.begin(), aShapeList.end() );
 
-    // Keep a list of where the various shapes came from so after doing our combined-polygon
-    // tests we can still report errors against the individual graphic items.
+    // Pre-build KD-tree
+    PCB_SHAPE_ENDPOINTS_ADAPTOR adaptor( aShapeList );
+    KDTree                      kdTree( 2, adaptor );
+
+    // Keep a list of where the various shapes came from
     std::map<std::pair<VECTOR2I, VECTOR2I>, PCB_SHAPE*> shapeOwners;
 
     auto fetchOwner =
@@ -211,424 +773,245 @@ bool doConvertOutlineToPolygon( std::vector<PCB_SHAPE*>& aShapeList, SHAPE_POLY_
                 return it == shapeOwners.end() ? nullptr : it->second;
             };
 
-    PCB_SHAPE* prevGraphic = nullptr;
-    VECTOR2I   prevPt;
-
+    std::set<std::pair<PCB_SHAPE*, PCB_SHAPE*>> reportedGaps;
     std::vector<SHAPE_LINE_CHAIN> contours;
+    contours.reserve( startCandidates.size() );
 
     for( PCB_SHAPE* shape : startCandidates )
         shape->ClearFlags( SKIP_STRUCT );
 
+    // Process each shape to build contours
     while( startCandidates.size() )
     {
-        graphic = (PCB_SHAPE*) *startCandidates.begin();
+        graphic = *startCandidates.begin();
         graphic->SetFlags( SKIP_STRUCT );
         aCleaner.insert( graphic );
         startCandidates.erase( startCandidates.begin() );
 
         contours.emplace_back();
-
         SHAPE_LINE_CHAIN& currContour = contours.back();
         currContour.SetWidth( graphic->GetWidth() );
-        bool firstPt = true;
 
-        // Circles, rects and polygons are closed shapes unto themselves (and do not combine
-        // with other shapes), so process them separately.
-        if( graphic->GetShape() == SHAPE_T::POLY )
+        // Handle closed shapes (circles, rects, polygons)
+        if( graphic->GetShape() == SHAPE_T::POLY || graphic->GetShape() == SHAPE_T::CIRCLE
+            || graphic->GetShape() == SHAPE_T::RECTANGLE )
         {
-            for( auto it = graphic->GetPolyShape().CIterate(); it; it++ )
-            {
-                VECTOR2I pt = *it;
-
-                currContour.Append( pt );
-
-                if( firstPt )
-                    firstPt = false;
-                else
-                    shapeOwners[ std::make_pair( prevPt, pt ) ] = graphic;
-
-                prevPt = pt;
-            }
-
-            currContour.SetClosed( true );
-        }
-        else if( graphic->GetShape() == SHAPE_T::CIRCLE )
-        {
-            VECTOR2I center = graphic->GetCenter();
-            int      radius  = graphic->GetRadius();
-            VECTOR2I start = center;
-            start.x += radius;
-
-            // Add 360 deg Arc in currContour
-            SHAPE_ARC arc360( center, start, ANGLE_360, 0 );
-            currContour.Append( arc360, aErrorMax );
-            currContour.SetClosed( true );
-
-            // set shapeOwners for currContour points created by appending the arc360:
-            for( int ii = 1; ii < currContour.PointCount(); ++ii )
-            {
-                shapeOwners[ std::make_pair( currContour.CPoint( ii-1 ),
-                                             currContour.CPoint( ii ) ) ] = graphic;
-            }
-
-            if( !aAllowUseArcsInPolygons )
-                currContour.ClearArcs();
-        }
-        else if( graphic->GetShape() == SHAPE_T::RECTANGLE )
-        {
-            std::vector<VECTOR2I> pts = graphic->GetRectCorners();
-
-            for( const VECTOR2I& pt : pts )
-            {
-                currContour.Append( pt );
-
-                if( firstPt )
-                    firstPt = false;
-                else
-                    shapeOwners[ std::make_pair( prevPt, pt ) ] = graphic;
-
-                prevPt = pt;
-            }
-
-            currContour.SetClosed( true );
+            processClosedShape( graphic, currContour, shapeOwners, aErrorMax, aAllowUseArcsInPolygons );
         }
         else
         {
-            // Polygon start point. Arbitrarily chosen end of the segment and build the poly
-            // from here.
-            VECTOR2I startPt = graphic->GetEnd();
-            prevPt = startPt;
-            currContour.Append( prevPt );
+            // Build chains for open shapes
+            std::deque<PCB_SHAPE*> chain;
+            chain.push_back( graphic );
 
-            // do not append the other end point yet, this first 'graphic' might be an arc
-            for(;;)
+            bool     closed = false;
+            VECTOR2I frontPt = graphic->GetStart();
+            VECTOR2I backPt = graphic->GetEnd();
+
+            auto extendChain = [&]( bool forward )
             {
-                switch( graphic->GetShape() )
+                PCB_SHAPE* curr = forward ? chain.back() : chain.front();
+                VECTOR2I   prev = forward ? backPt : frontPt;
+
+                for( ;; )
                 {
-                case SHAPE_T::RECTANGLE:
-                case SHAPE_T::CIRCLE:
-                {
-                    // As a non-first item, closed shapes can't be anything but self-intersecting
-                    if( aErrorHandler )
+                    PCB_SHAPE* next = findNext( curr, prev, kdTree, adaptor, aChainingEpsilon );
+
+                    if( next && !( next->GetFlags() & SKIP_STRUCT ) )
                     {
-                        wxASSERT( prevGraphic );
-                        (*aErrorHandler)( _( "(self-intersecting)" ), prevGraphic, graphic,
-                                          prevPt );
+                        next->SetFlags( SKIP_STRUCT );
+                        aCleaner.insert( next );
+                        startCandidates.erase( next );
+
+                        if( forward )
+                            chain.push_back( next );
+                        else
+                            chain.push_front( next );
+
+                        if( closer_to_first( prev, next->GetStart(), next->GetEnd() ) )
+                            prev = next->GetEnd();
+                        else
+                            prev = next->GetStart();
+
+                        curr = next;
+                        continue;
                     }
 
-                    selfIntersecting = true;
-
-                    // A closed shape will finish where it started, so no point in updating prevPt
-                    break;
-                }
-
-                case SHAPE_T::SEGMENT:
-                {
-                    VECTOR2I nextPt;
-
-                    // Use the line segment end point furthest away from prevPt as we assume
-                    // the other end to be ON prevPt or very close to it.
-                    if( closer_to_first( prevPt, graphic->GetStart(), graphic->GetEnd()) )
-                        nextPt = graphic->GetEnd();
-                    else
-                        nextPt = graphic->GetStart();
-
-                    currContour.Append( nextPt );
-                    shapeOwners[ std::make_pair( prevPt, nextPt ) ] = graphic;
-                    prevPt = nextPt;
-                }
-                break;
-
-                case SHAPE_T::ARC:
-                {
-                    VECTOR2I  pstart = graphic->GetStart();
-                    VECTOR2I  pmid = graphic->GetArcMid();
-                    VECTOR2I  pend = graphic->GetEnd();
-
-                    if( !close_enough( prevPt, pstart, aChainingEpsilon ) )
+                    if( next )
                     {
-                        wxASSERT( close_enough( prevPt, graphic->GetEnd(), aChainingEpsilon ) );
+                        PCB_SHAPE* chainEnd = forward ? chain.front() : chain.back();
+                        VECTOR2I   chainPt = forward ? frontPt : backPt;
 
-                        std::swap( pstart, pend );
-                    }
-
-                    // Snap the arc start point to avoid potential self-intersections
-                    pstart = prevPt;
-
-                    SHAPE_ARC sarc( pstart, pmid, pend, 0 );
-
-                    SHAPE_LINE_CHAIN arcChain;
-                    arcChain.Append( sarc, aErrorMax );
-
-                    if( !aAllowUseArcsInPolygons )
-                        arcChain.ClearArcs();
-
-                    // set shapeOwners for arcChain points created by appending the sarc:
-                    for( int ii = 1; ii < arcChain.PointCount(); ++ii )
-                    {
-                        shapeOwners[std::make_pair( arcChain.CPoint( ii - 1 ),
-                                                    arcChain.CPoint( ii ) )] = graphic;
-                    }
-
-                    currContour.Append( arcChain );
-
-                    prevPt = pend;
-                }
-                break;
-
-                case SHAPE_T::BEZIER:
-                {
-                    // We do not support Bezier curves in polygons, so approximate with a series
-                    // of short lines and put those line segments into the !same! PATH.
-                    VECTOR2I nextPt;
-                    bool    reverse = false;
-
-                    // Use the end point furthest away from  prevPt as we assume the other
-                    // end to be ON prevPt or very close to it.
-                    if( closer_to_first( prevPt, graphic->GetStart(), graphic->GetEnd()) )
-                    {
-                        nextPt = graphic->GetEnd();
-                    }
-                    else
-                    {
-                        nextPt = graphic->GetStart();
-                        reverse = true;
-                    }
-
-                    // Ensure the approximated Bezier shape is built
-                    graphic->RebuildBezierToSegmentsPointsList( aErrorMax );
-
-                    if( reverse )
-                    {
-                        for( int jj = graphic->GetBezierPoints().size()-1; jj >= 0; jj-- )
+                        if( next == chainEnd && close_enough( prev, chainPt, aChainingEpsilon ) )
                         {
-                            const VECTOR2I& pt = graphic->GetBezierPoints()[jj];
-
-                            if( prevPt == pt )
-                                continue;
-
-                            currContour.Append( pt );
-                            shapeOwners[ std::make_pair( prevPt, pt ) ] = graphic;
-                            prevPt = pt;
-                        }
-                    }
-                    else
-                    {
-                        for( const VECTOR2I& pt : graphic->GetBezierPoints() )
-                        {
-                            if( prevPt == pt )
-                                continue;
-
-                            currContour.Append( pt );
-                            shapeOwners[ std::make_pair( prevPt, pt ) ] = graphic;
-                            prevPt = pt;
-                        }
-                    }
-
-                    prevPt = nextPt;
-                }
-                break;
-
-                default:
-                    UNIMPLEMENTED_FOR( graphic->SHAPE_T_asString() );
-                    return false;
-                }
-
-                // Get next closest segment.
-                PCB_SHAPE* nextGraphic = findNext( graphic, prevPt, aShapeList, aChainingEpsilon );
-
-                if( nextGraphic && !( nextGraphic->GetFlags() & SKIP_STRUCT ) )
-                {
-                    prevGraphic = graphic;
-                    graphic = nextGraphic;
-                    graphic->SetFlags( SKIP_STRUCT );
-                    aCleaner.insert( graphic );
-                    startCandidates.erase( graphic );
-                    continue;
-                }
-
-                // Finished, or ran into trouble...
-                if( close_enough( startPt, prevPt, aChainingEpsilon ) )
-                {
-                    if( startPt != prevPt && currContour.PointCount() > 2 )
-                    {
-                        // Snap the last shape's endpoint to the outline startpoint
-                        PCB_SHAPE* owner = fetchOwner( currContour.CSegment( -1 ) );
-
-                        if( currContour.IsArcEnd( currContour.PointCount() - 1 ) )
-                        {
-                            SHAPE_ARC arc = currContour.Arc(
-                                    currContour.ArcIndex( currContour.PointCount() - 1 ) );
-
-                            // Snap the arc endpoint
-                            SHAPE_ARC sarc( arc.GetP0(), arc.GetArcMid(), startPt, 0 );
-
-                            SHAPE_LINE_CHAIN arcChain;
-                            arcChain.Append( sarc, aErrorMax );
-
-                            if( !aAllowUseArcsInPolygons )
-                                arcChain.ClearArcs();
-
-                            // Set shapeOwners for arcChain points created by appending the sarc:
-                            for( int ii = 1; ii < arcChain.PointCount(); ++ii )
-                            {
-                                shapeOwners[std::make_pair( arcChain.CPoint( ii - 1 ),
-                                                            arcChain.CPoint( ii ) )] = owner;
-                            }
-
-                            currContour.RemoveShape( currContour.PointCount() - 1 );
-                            currContour.Append( arcChain );
+                            closed = true;
                         }
                         else
                         {
-                            // Snap the segment endpoint
-                            currContour.SetPoint( -1, startPt );
+                            if( aErrorHandler )
+                                ( *aErrorHandler )( _( "(self-intersecting)" ), curr, next, prev );
 
-                            shapeOwners[std::make_pair( currContour.CPoint( -2 ),
-                                                        currContour.CPoint( -1 ) )] = owner;
+                            selfIntersecting = true;
                         }
-
-                        prevPt = startPt;
                     }
 
-                    currContour.SetClosed( true );
-                    break;
-                }
-                else if( nextGraphic )  // encountered already-used segment, but not at the start
-                {
-                    if( aErrorHandler )
-                        (*aErrorHandler)( _( "(self-intersecting)" ), graphic, nextGraphic,
-                                          prevPt );
+                    if( forward )
+                        backPt = prev;
+                    else
+                        frontPt = prev;
 
                     break;
                 }
-                else                    // encountered discontinuity
-                {
-                    if( aErrorHandler )
-                        (*aErrorHandler)( _( "(not a closed shape)" ), graphic, nullptr, prevPt );
+            };
 
-                    break;
+            extendChain( true );
+
+            if( !closed )
+                extendChain( false );
+
+            // Process the chain to build the contour
+            PCB_SHAPE* first = chain.front();
+            VECTOR2I   startPt;
+
+            if( chain.size() > 1 )
+            {
+                PCB_SHAPE* second = *( std::next( chain.begin() ) );
+
+                if( close_enough( first->GetStart(), second->GetStart(), aChainingEpsilon )
+                        || close_enough( first->GetStart(), second->GetEnd(), aChainingEpsilon ) )
+                    startPt = first->GetEnd();
+                else
+                    startPt = first->GetStart();
+            }
+            else
+            {
+                startPt = first->GetStart();
+            }
+
+            currContour.Append( startPt );
+            VECTOR2I prevPt = startPt;
+
+            for( PCB_SHAPE* shapeInChain : chain )
+            {
+                processShapeSegment( shapeInChain, currContour, prevPt, shapeOwners,
+                                   aErrorMax, aChainingEpsilon, aAllowUseArcsInPolygons );
+            }
+
+            // Handle contour closure
+            if( close_enough( currContour.CPoint( 0 ), currContour.CLastPoint(), aChainingEpsilon ) )
+            {
+                if( currContour.CPoint( 0 ) != currContour.CLastPoint() && currContour.PointCount() > 2 )
+                {
+                    PCB_SHAPE* owner = fetchOwner( currContour.CSegment( -1 ) );
+
+                    if( currContour.IsArcEnd( currContour.PointCount() - 1 ) )
+                    {
+                        SHAPE_ARC arc = currContour.Arc( currContour.ArcIndex( currContour.PointCount() - 1 ) );
+
+                        SHAPE_ARC sarc( arc.GetP0(), arc.GetArcMid(), currContour.CPoint( 0 ), 0 );
+
+                        SHAPE_LINE_CHAIN arcChain;
+                        arcChain.Append( sarc, aErrorMax );
+
+                        if( !aAllowUseArcsInPolygons )
+                            arcChain.ClearArcs();
+
+                        for( int ii = 1; ii < arcChain.PointCount(); ++ii )
+                            shapeOwners[std::make_pair( arcChain.CPoint( ii - 1 ), arcChain.CPoint( ii ) )] = owner;
+
+                        currContour.RemoveShape( currContour.PointCount() - 1 );
+                        currContour.Append( arcChain );
+                    }
+                    else
+                    {
+                        currContour.SetPoint( -1, currContour.CPoint( 0 ) );
+
+                        shapeOwners[ std::make_pair( currContour.CPoints()[currContour.PointCount() - 2],
+                                                     currContour.CLastPoint() ) ] = owner;
+                    }
                 }
+
+                currContour.SetClosed( true );
+            }
+            else
+            {
+                auto report_gap = [&]( const VECTOR2I& pt )
+                {
+                    if( !aErrorHandler )
+                        return;
+
+                    const double query_pt[2] = { static_cast<double>( pt.x ), static_cast<double>( pt.y ) };
+                    uint32_t    indices[2] = { 0, 0 };      // make gcc quiet
+                    double      dists[2];
+
+                    // Find the two closest items to the given point using kdtree
+                    kdTree.knnSearch( query_pt, 2, indices, dists );
+
+                    PCB_SHAPE* shapeA = adaptor.endpoints[indices[0]].second;
+                    PCB_SHAPE* shapeB = adaptor.endpoints[indices[1]].second;
+
+                    // Avoid reporting the same pair twice
+                    auto key = std::minmax( shapeA, shapeB );
+
+                    if( !reportedGaps.insert( key ).second )
+                        return;
+
+                    // Find the nearest points between the two shapes and calculate midpoint
+                    std::shared_ptr<SHAPE> effectiveShapeA = shapeA->GetEffectiveShape();
+                    std::shared_ptr<SHAPE> effectiveShapeB = shapeB->GetEffectiveShape();
+                    VECTOR2I               ptA, ptB;
+                    VECTOR2I               midpoint = pt; // fallback to original point
+
+                    if( effectiveShapeA && effectiveShapeB
+                        && effectiveShapeA->NearestPoints( effectiveShapeB.get(), ptA, ptB ) )
+                    {
+                        midpoint = ( ptA + ptB ) / 2;
+                    }
+
+                    ( *aErrorHandler )( _( "(not a closed shape)" ), shapeA, shapeB, midpoint );
+                };
+
+                report_gap( currContour.CPoint( 0 ) );
+                report_gap( currContour.CLastPoint() );
             }
         }
     }
 
+    // Ensure all contours are closed
     for( const SHAPE_LINE_CHAIN& contour : contours )
     {
         if( !contour.IsClosed() )
             return false;
     }
 
-    // First, collect the parents of each contour
-    std::map<int, std::vector<int>> contourToParentIndexesMap;
-
+    // Generate bounding boxes for hierarchy calculations
     for( size_t ii = 0; ii < contours.size(); ++ii )
     {
-        VECTOR2I         firstPt = contours[ii].GetPoint( 0 );
-        std::vector<int> parents;
+        SHAPE_LINE_CHAIN& contour = contours[ii];
 
-        for( size_t jj = 0; jj < contours.size(); ++jj )
-        {
-            if( jj == ii )
-                continue;
-
-            const SHAPE_LINE_CHAIN& parentCandidate = contours[jj];
-
-            if( parentCandidate.PointInside( firstPt ) )
-                parents.push_back( jj );
-        }
-
-        contourToParentIndexesMap[ii] = std::move( parents );
+        if( !contour.GetCachedBBox()->IsValid() )
+            contour.GenerateBBoxCache();
     }
 
-    // Next add those that are top-level outlines to the SHAPE_POLY_SET
+    // Build contour hierarchy
+    auto contourHierarchy = buildContourHierarchy( contours );
+
+    bool hasMalformedOverlap = !aAllowUseArcsInPolygons && hasOverlappingClosedContours( contours );
+
+    // Add outlines to polygon set
     std::map<int, int> contourToOutlineIdxMap;
-
-    for( const auto& [ contourIndex, parentIndexes ] : contourToParentIndexesMap )
+    if( !addOutlinesToPolygon( contours, contourHierarchy, aPolygons, aAllowDisjoint, aErrorHandler, fetchOwner,
+                               contourToOutlineIdxMap ) )
     {
-        if( parentIndexes.size() %2 == 0 )
-        {
-            // Even number of parents; top-level outline
-            if( !aAllowDisjoint && !aPolygons.IsEmpty() )
-            {
-                if( aErrorHandler )
-                {
-                    BOARD_ITEM* a = fetchOwner( aPolygons.Outline( 0 ).GetSegment( 0 ) );
-                    BOARD_ITEM* b = fetchOwner( contours[ contourIndex ].GetSegment( 0 ) );
-
-                    if( a && b )
-                    {
-                        (*aErrorHandler)( _( "(multiple board outlines not supported)" ), a, b,
-                                          contours[ contourIndex ].GetPoint( 0 ) );
-
-                        return false;
-                    }
-                }
-            }
-
-            aPolygons.AddOutline( contours[ contourIndex ] );
-            contourToOutlineIdxMap[ contourIndex ] = aPolygons.OutlineCount() - 1;
-        }
+        return false;
     }
 
-    // And finally add the holes
-    for( const auto& [ contourIndex, parentIndexes ] : contourToParentIndexesMap )
-    {
-        if( parentIndexes.size() %2 == 1 )
-        {
-            // Odd number of parents; we're a hole in the parent which has one fewer parents
-            // than we have.
-            const SHAPE_LINE_CHAIN& hole = contours[ contourIndex ];
+    // Add holes to polygon set
+    addHolesToPolygon( contours, contourHierarchy, contourToOutlineIdxMap, aPolygons, aAllowUseArcsInPolygons,
+                       hasMalformedOverlap );
 
-            for( int parentContourIdx : parentIndexes )
-            {
-                if( contourToParentIndexesMap[ parentContourIdx ].size() == parentIndexes.size() - 1 )
-                {
-                    int outlineIdx = contourToOutlineIdxMap[ parentContourIdx ];
-                    aPolygons.AddHole( hole, outlineIdx );
-                    break;
-                }
-            }
-        }
-    }
-
-    // All of the silliness that follows is to work around the segment iterator while checking
-    // for collisions.
-    // TODO: Implement proper segment and point iterators that follow std
-    for( auto seg1 = aPolygons.IterateSegmentsWithHoles(); seg1; seg1++ )
-    {
-        auto seg2 = seg1;
-
-        for( ++seg2; seg2; seg2++ )
-        {
-            // Check for exact overlapping segments.
-            if( *seg1 == *seg2 || ( ( *seg1 ).A == ( *seg2 ).B && ( *seg1 ).B == ( *seg2 ).A ) )
-            {
-                if( aErrorHandler )
-                {
-                    BOARD_ITEM* a = fetchOwner( *seg1 );
-                    BOARD_ITEM* b = fetchOwner( *seg2 );
-                    (*aErrorHandler)( _( "(self-intersecting)" ), a, b, ( *seg1 ).A );
-                }
-
-                selfIntersecting = true;
-            }
-
-            if( OPT_VECTOR2I pt = seg1.Get().Intersect( seg2.Get(), true ) )
-            {
-                if( aErrorHandler )
-                {
-                    BOARD_ITEM* a = fetchOwner( *seg1 );
-                    BOARD_ITEM* b = fetchOwner( *seg2 );
-                    (*aErrorHandler)( _( "(self-intersecting)" ), a, b, *pt );
-                }
-
-                selfIntersecting = true;
-            }
-        }
-    }
-
-    return !selfIntersecting;
+    // Check for self-intersections
+    return checkSelfIntersections( aPolygons, aErrorHandler, fetchOwner );
 }
 
 
@@ -760,13 +1143,104 @@ bool TestBoardOutlinesGraphicItems( BOARD* aBoard, int aMinDist,
         }
     }
 
+    std::vector<std::pair<PCB_SHAPE*, SHAPE_LINE_CHAIN>> closedContours;
+    closedContours.reserve( shapeList.size() );
+
+    std::set<PCB_SHAPE*> openShapes;
+
+    for( PCB_SHAPE* shape : shapeList )
+    {
+        if( shape->GetShape() == SHAPE_T::POLY || shape->GetShape() == SHAPE_T::CIRCLE
+            || shape->GetShape() == SHAPE_T::RECTANGLE )
+        {
+            SHAPE_LINE_CHAIN                                    contour;
+            std::map<std::pair<VECTOR2I, VECTOR2I>, PCB_SHAPE*> shapeOwners;
+
+            processClosedShape( shape, contour, shapeOwners, shape->GetMaxError(), true );
+            closedContours.emplace_back( shape, std::move( contour ) );
+        }
+        else if( shape->GetShape() == SHAPE_T::SEGMENT || shape->GetShape() == SHAPE_T::ARC
+                 || shape->GetShape() == SHAPE_T::BEZIER )
+        {
+            openShapes.insert( shape );
+        }
+    }
+
+    // Gather closed contours from chained open shapes (slots formed by segments/arcs/beziers).
+    // Without this, malformed-outline detection misses overlaps involving such slots.
+    if( !openShapes.empty() )
+    {
+        std::vector<PCB_SHAPE*> openShapeList( openShapes.begin(), openShapes.end() );
+        PCB_SHAPE_ENDPOINTS_ADAPTOR adaptor( openShapeList );
+        KDTree                      kdTree( 2, adaptor );
+
+        int chainingEpsilon = aBoard->GetOutlinesChainingEpsilon();
+        int maxError = aBoard->GetDesignSettings().m_MaxError;
+
+        while( !openShapes.empty() )
+        {
+            PCB_SHAPE*       start = *openShapes.begin();
+            SHAPE_LINE_CHAIN contour;
+            PCB_SHAPE*       owner = nullptr;
+
+            if( buildChainedClosedContour( start, openShapes, kdTree, adaptor, maxError,
+                                           chainingEpsilon, contour, owner ) )
+            {
+                closedContours.emplace_back( owner, std::move( contour ) );
+            }
+            else
+            {
+                openShapes.erase( start );
+            }
+        }
+    }
+
+    for( size_t ii = 0; ii < closedContours.size(); ++ii )
+    {
+        const SHAPE_LINE_CHAIN& contourA = closedContours[ii].second;
+
+        for( size_t jj = ii + 1; jj < closedContours.size(); ++jj )
+        {
+            const SHAPE_LINE_CHAIN&         contourB = closedContours[jj].second;
+            SHAPE_LINE_CHAIN::INTERSECTIONS intersections;
+
+            // Ignore touching-only cases; report only real overlap/crossing.
+            if( contourA.Intersect( contourB, intersections, true ) == 0 )
+                continue;
+
+            success = false;
+
+            if( aErrorHandler )
+            {
+                PCB_SHAPE* shapeA = closedContours[ii].first;
+                PCB_SHAPE* shapeB = closedContours[jj].first;
+
+                VECTOR2I               midpoint = intersections.front().p;
+                std::shared_ptr<SHAPE> effectiveShapeA = shapeA->GetEffectiveShape();
+                std::shared_ptr<SHAPE> effectiveShapeB = shapeB->GetEffectiveShape();
+
+                if( effectiveShapeA && effectiveShapeB )
+                {
+                    BOX2I bboxA = effectiveShapeA->BBox();
+                    BOX2I bboxB = effectiveShapeB->BBox();
+                    BOX2I overlapBox = bboxA.Intersect( bboxB );
+
+                    if( overlapBox.GetWidth() > 0 && overlapBox.GetHeight() > 0 )
+                        midpoint = overlapBox.Centre();
+                }
+
+                ( *aErrorHandler )( _( "(self-intersecting)" ), shapeA, shapeB, midpoint );
+            }
+        }
+    }
+
     return success;
 }
 
 
 bool BuildBoardPolygonOutlines( BOARD* aBoard, SHAPE_POLY_SET& aOutlines, int aErrorMax,
-                                int aChainingEpsilon, OUTLINE_ERROR_HANDLER* aErrorHandler,
-                                bool aAllowUseArcsInPolygons )
+                                int aChainingEpsilon, bool aInferOutlineIfNecessary,
+                                OUTLINE_ERROR_HANDLER* aErrorHandler, bool aAllowUseArcsInPolygons )
 {
     PCB_TYPE_COLLECTOR items;
     SHAPE_POLY_SET     fpHoles;
@@ -800,9 +1274,10 @@ bool BuildBoardPolygonOutlines( BOARD* aBoard, SHAPE_POLY_SET& aOutlines, int aE
             SHAPE_POLY_SET fpOutlines;
             success = doConvertOutlineToPolygon( fpSegList, fpOutlines, aErrorMax, aChainingEpsilon,
                                                  false,
-                                                 // don't report errors here; the second pass also
-                                                 // gets an opportunity to use these segments
-                                                 nullptr, aAllowUseArcsInPolygons, cleaner );
+                                                 nullptr, // don't report errors here; the second pass also
+                                                          // gets an opportunity to use these segments
+                                                 aAllowUseArcsInPolygons,
+                                                 cleaner );
 
             // Test to see if we should make holes or outlines.  Holes are made if the footprint
             // has copper outside of a single, closed outline.  If there are multiple outlines,
@@ -844,7 +1319,7 @@ bool BuildBoardPolygonOutlines( BOARD* aBoard, SHAPE_POLY_SET& aOutlines, int aE
                                              aErrorHandler, aAllowUseArcsInPolygons, cleaner );
     }
 
-    if( !success || !aOutlines.OutlineCount() )
+    if( ( !success || !aOutlines.OutlineCount() ) && aInferOutlineIfNecessary )
     {
         // Couldn't create a valid polygon outline.  Use the board edge cuts bounding box to
         // create a rectangular outline, or, failing that, the bounding box of the items on
@@ -853,7 +1328,7 @@ bool BuildBoardPolygonOutlines( BOARD* aBoard, SHAPE_POLY_SET& aOutlines, int aE
 
         // If null area, uses the global bounding box.
         if( ( bbbox.GetWidth() ) == 0 || ( bbbox.GetHeight() == 0 ) )
-            bbbox = aBoard->ComputeBoundingBox( false );
+            bbbox = aBoard->ComputeBoundingBox( false, true );
 
         // Ensure non null area. If happen, gives a minimal size.
         if( ( bbbox.GetWidth() ) == 0 || ( bbbox.GetHeight() == 0 ) )
@@ -876,18 +1351,26 @@ bool BuildBoardPolygonOutlines( BOARD* aBoard, SHAPE_POLY_SET& aOutlines, int aE
         aOutlines.Append( corner );
     }
 
-    for( int ii = 0; ii < fpHoles.OutlineCount(); ++ii )
+    if( aAllowUseArcsInPolygons )
     {
-        const VECTOR2I holePt = fpHoles.Outline( ii ).CPoint( 0 );
-
-        for( int jj = 0; jj < aOutlines.OutlineCount(); ++jj )
+        for( int ii = 0; ii < fpHoles.OutlineCount(); ++ii )
         {
-            if( aOutlines.Outline( jj ).PointInside( holePt ) )
+            const VECTOR2I holePt = fpHoles.Outline( ii ).CPoint( 0 );
+
+            for( int jj = 0; jj < aOutlines.OutlineCount(); ++jj )
             {
-                aOutlines.AddHole( fpHoles.Outline( ii ), jj );
-                break;
+                if( aOutlines.Outline( jj ).PointInside( holePt ) )
+                {
+                    aOutlines.AddHole( fpHoles.Outline( ii ), jj );
+                    break;
+                }
             }
         }
+    }
+    else
+    {
+        fpHoles.Simplify();
+        aOutlines.BooleanSubtract( fpHoles );
     }
 
     return success;
@@ -913,7 +1396,7 @@ void buildBoardBoundingBoxPoly( const BOARD* aBoard, SHAPE_POLY_SET& aOutline )
 
     // If null area, uses the global bounding box.
     if( ( bbbox.GetWidth() ) == 0 || ( bbbox.GetHeight() == 0 ) )
-        bbbox = aBoard->ComputeBoundingBox( false );
+        bbbox = aBoard->ComputeBoundingBox( false, true );
 
     // Ensure non null area. If happen, gives a minimal size.
     if( ( bbbox.GetWidth() ) == 0 || ( bbbox.GetHeight() == 0 ) )
@@ -1079,7 +1562,7 @@ bool BuildFootprintPolygonOutlines( BOARD* aBoard, SHAPE_POLY_SET& aOutlines, in
         else
         {
             wxLogTrace( traceBoardOutline, wxT( "Treating outline as board edge" ) );
-            aOutlines = outlines;
+            aOutlines = std::move( outlines );
         }
 
         return true;
@@ -1143,7 +1626,7 @@ bool BuildFootprintPolygonOutlines( BOARD* aBoard, SHAPE_POLY_SET& aOutlines, in
         {
             // Something is wrong, bail out with the overall footprint bounding box
             wxLogTrace( traceBoardOutline, wxT( "No line segments in provided outline" ) );
-            aOutlines = bbox;
+            aOutlines = std::move( bbox );
             return true;
         }
         else if( chain.SegmentCount() == 1 )
@@ -1163,8 +1646,7 @@ bool BuildFootprintPolygonOutlines( BOARD* aBoard, SHAPE_POLY_SET& aOutlines, in
             if( inter0 && inter2 && !inter1 && !inter3 )
             {
                 // Intersects the vertical rectangle sides only
-                wxLogTrace( traceBoardOutline, wxT( "Segment intersects only vertical bbox "
-                                                    "sides" ) );
+                wxLogTrace( traceBoardOutline, wxT( "Segment intersects only vertical bbox sides" ) );
 
                 // The upper half
                 upper.Append( *inter0 );
@@ -1183,8 +1665,7 @@ bool BuildFootprintPolygonOutlines( BOARD* aBoard, SHAPE_POLY_SET& aOutlines, in
             else if( inter1 && inter3 && !inter0 && !inter2 )
             {
                 // Intersects the horizontal rectangle sides only
-                wxLogTrace( traceBoardOutline, wxT( "Segment intersects only horizontal bbox "
-                                                    "sides" ) );
+                wxLogTrace( traceBoardOutline, wxT( "Segment intersects only horizontal bbox sides" ) );
 
                 // The left half
                 upper.Append( *inter1 );
@@ -1203,8 +1684,7 @@ bool BuildFootprintPolygonOutlines( BOARD* aBoard, SHAPE_POLY_SET& aOutlines, in
             else
             {
                 // Angled line segment that cuts across a corner
-                wxLogTrace( traceBoardOutline, wxT( "Segment intersects two perpendicular bbox "
-                                                    "sides" ) );
+                wxLogTrace( traceBoardOutline, wxT( "Segment intersects two perpendicular bbox sides" ) );
 
                 // Figure out which actual lines are intersected, since IntersectLines assumes
                 // an infinite line
@@ -1297,7 +1777,7 @@ bool BuildFootprintPolygonOutlines( BOARD* aBoard, SHAPE_POLY_SET& aOutlines, in
             wxLogTrace( traceBoardOutline, wxT( "Multiple segments in outline" ) );
 
             // Just a temporary thing
-            aOutlines = bbox;
+            aOutlines = std::move( bbox );
             return true;
         }
 
@@ -1314,12 +1794,12 @@ bool BuildFootprintPolygonOutlines( BOARD* aBoard, SHAPE_POLY_SET& aOutlines, in
         if( isCopperOutside( footprint, poly1 ) )
         {
             wxLogTrace( traceBoardOutline, wxT( "Using lower shape" ) );
-            aOutlines = poly2;
+            aOutlines = std::move( poly2 );
         }
         else
         {
             wxLogTrace( traceBoardOutline, wxT( "Using upper shape" ) );
-            aOutlines = poly1;
+            aOutlines = std::move( poly1 );
         }
 
         // Add all closed polys as holes to the main outline

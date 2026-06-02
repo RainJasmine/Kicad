@@ -78,7 +78,8 @@
                     "schematic",
                     "footprint",
                     "symbol",
-                    "project_manager"
+                    "project_manager",
+                    "footprint_wizard"
                   ]
                 }
               },

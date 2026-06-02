@@ -19,6 +19,7 @@
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <algorithm>
 #include <erc/erc_item.h>
 #include <erc/erc_settings.h>
 #include <schematic.h>
@@ -100,9 +101,11 @@ ERC_SETTINGS::ERC_SETTINGS( JSON_SETTINGS* aParent, const std::string& aPath ) :
     m_ERCSeverities[ERCE_SIMILAR_LABELS]          = RPT_SEVERITY_WARNING;
     m_ERCSeverities[ERCE_SIMILAR_POWER]           = RPT_SEVERITY_WARNING;
     m_ERCSeverities[ERCE_SIMILAR_LABEL_AND_POWER] = RPT_SEVERITY_WARNING;
-    m_ERCSeverities[ERCE_SINGLE_GLOBAL_LABEL]     = RPT_SEVERITY_IGNORE;
+    m_ERCSeverities[ERCE_SINGLE_GLOBAL_LABEL] = RPT_SEVERITY_IGNORE;
     m_ERCSeverities[ERCE_SAME_LOCAL_GLOBAL_LABEL] = RPT_SEVERITY_WARNING;
-    m_ERCSeverities[ERCE_GLOBLABEL_DANGLING]      = RPT_SEVERITY_WARNING;
+    m_ERCSeverities[ERCE_SAME_LOCAL_GLOBAL_POWER] = RPT_SEVERITY_WARNING;
+    m_ERCSeverities[ERCE_GROUND_PIN_NOT_GROUND]   = RPT_SEVERITY_WARNING;
+    m_ERCSeverities[ERCE_LABEL_SINGLE_PIN]        = RPT_SEVERITY_WARNING;
     m_ERCSeverities[ERCE_DRIVER_CONFLICT]         = RPT_SEVERITY_WARNING;
     m_ERCSeverities[ERCE_BUS_ENTRY_CONFLICT]      = RPT_SEVERITY_WARNING;
     m_ERCSeverities[ERCE_LIB_SYMBOL_ISSUES]       = RPT_SEVERITY_WARNING;
@@ -118,6 +121,8 @@ ERC_SETTINGS::ERC_SETTINGS( JSON_SETTINGS* aParent, const std::string& aPath ) :
     m_ERCSeverities[ERCE_FOUR_WAY_JUNCTION]       = RPT_SEVERITY_IGNORE;
     m_ERCSeverities[ERCE_LABEL_MULTIPLE_WIRES]    = RPT_SEVERITY_WARNING;
     m_ERCSeverities[ERCE_UNCONNECTED_WIRE_ENDPOINT] = RPT_SEVERITY_WARNING;
+    m_ERCSeverities[ERCE_STACKED_PIN_SYNTAX]      = RPT_SEVERITY_WARNING;
+    m_ERCSeverities[ERCE_FIELD_NAME_WHITESPACE]   = RPT_SEVERITY_WARNING;
 
     m_params.emplace_back( new PARAM_LAMBDA<nlohmann::json>( "rule_severities",
             [&]() -> nlohmann::json
@@ -264,8 +269,8 @@ ERC_SETTINGS::~ERC_SETTINGS()
 
 SEVERITY ERC_SETTINGS::GetSeverity( int aErrorCode ) const
 {
-    // Special-case duplicate pin error.  Unique pin names are required by KiCad, so this
-    // is always an error.
+    // Special-case duplicate pin error. Multiple pins with the same number are allowed
+    // if they share the same net, but having them on different nets is always an error.
     if( aErrorCode == ERCE_DUPLICATE_PIN_ERROR )
     {
         return RPT_SEVERITY_ERROR;
@@ -325,10 +330,16 @@ struct CompareMarkers
     {
         wxCHECK( item1 && item2, false );
 
-        if( item1->GetPosition() == item2->GetPosition() )
+        const VECTOR2I& p1 = item1->GetPosition();
+        const VECTOR2I& p2 = item2->GetPosition();
+
+        if( p1 == p2 )
             return item1->SerializeToString() < item2->SerializeToString();
 
-        return item1->GetPosition() < item2->GetPosition();
+        // VECTOR2::operator< orders by squared magnitude, which is not a strict
+        // weak ordering: mirrored points like (a, b) and (b, a) compare equal
+        // and collide in the std::set below, silently dropping one marker.
+        return p1.x < p2.x || ( p1.x == p2.x && p1.y < p2.y );
     }
 };
 
@@ -397,6 +408,19 @@ void SHEETLIST_ERC_ITEMS_PROVIDER::SetSeverities( int aSeverities )
                 if( markerSeverity & m_severities )
                     m_filteredMarkers.push_back( aMarker );
             } );
+
+    // Sort markers so that errors appear before warnings
+    std::stable_sort( m_filteredMarkers.begin(), m_filteredMarkers.end(),
+                      []( const SCH_MARKER* a, const SCH_MARKER* b )
+                      {
+                          return a->GetSeverity() > b->GetSeverity();
+                      } );
+}
+
+
+int SHEETLIST_ERC_ITEMS_PROVIDER::GetSeverities() const
+{
+    return m_severities;
 }
 
 
@@ -452,5 +476,4 @@ void SHEETLIST_ERC_ITEMS_PROVIDER::DeleteItem( int aIndex, bool aDeep )
         screens.DeleteMarker( marker );
     }
 }
-
 

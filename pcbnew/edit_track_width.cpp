@@ -23,6 +23,7 @@
  */
 
 #include <board_design_settings.h>
+#include <netclass.h>
 #include <pcb_edit_frame.h>
 #include <pcbnew_id.h>
 #include <pcb_track.h>
@@ -161,7 +162,16 @@ void PCB_EDIT_FRAME::Tracks_and_Vias_Size_Event( wxCommandEvent& event )
         else if( ii == int( m_SelTrackWidthBox->GetCount() - 1 ) )
         {
             m_SelTrackWidthBox->SetSelection( GetDesignSettings().GetTrackWidthIndex() );
-            ShowBoardSetupDialog( _( "Pre-defined Sizes" ) );
+
+            // Best-guess fix for issue #23708 (crash on dialog OK reported on
+            // Flatpak/FreeBSD, not reproduced locally). Suspected cause is that
+            // ReCreateAuxiliaryToolbar(), run on dialog OK, destroys this very
+            // wxChoice while its EVT_CHOICE handler is still on the GTK signal
+            // stack. Defer the dialog so the handler unwinds first.
+            CallAfter( [this]()
+                       {
+                           ShowBoardSetupDialog( _( "Pre-defined Sizes" ) );
+                       } );
         }
         else
         {
@@ -185,7 +195,12 @@ void PCB_EDIT_FRAME::Tracks_and_Vias_Size_Event( wxCommandEvent& event )
         else if( ii == int( m_SelViaSizeBox->GetCount() - 1 ) )
         {
             m_SelViaSizeBox->SetSelection( GetDesignSettings().GetViaSizeIndex() );
-            ShowBoardSetupDialog( _( "Pre-defined Sizes" ) );
+
+            // See the matching comment in the track-width case above.
+            CallAfter( [this]()
+                       {
+                           ShowBoardSetupDialog( _( "Pre-defined Sizes" ) );
+                       } );
         }
         else
         {

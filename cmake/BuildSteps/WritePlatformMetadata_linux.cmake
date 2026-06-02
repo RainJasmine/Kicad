@@ -29,14 +29,22 @@
 # SRC_PATH - The root directory for the source
 # BUILD_PATH - The root directory for the build directory
 
-message( STATUS "Creating linux metadata" )
+message( STATUS "Generating linux metainfo file" )
 
 # Create the KiCad version strings
 include( ${KICAD_CMAKE_MODULE_PATH}/KiCadVersion.cmake )
 include( ${KICAD_CMAKE_MODULE_PATH}/KiCadFullVersion.cmake )
 
 # Create the date of the configure
-string( TIMESTAMP KICAD_CONFIG_TIMESTAMP "%Y-%m-%d" )
+if( KICAD_COMMIT_DATE STREQUAL "0")
+    message(STATUS "  No git commit date found, using timestamp")
+    string( TIMESTAMP KICAD_CONFIG_TIMESTAMP "%Y-%m-%d" )
+else()
+    set( KICAD_CONFIG_TIMESTAMP "${KICAD_COMMIT_DATE}" )
+endif()
+
+message( STATUS "  date: ${KICAD_CONFIG_TIMESTAMP}" )
+message( STATUS "  version: ${KICAD_VERSION_FULL}" )
 
 # Configure the KiCad metainfo file
 configure_file( ${SRC_PATH}/resources/linux/metainfo/org.kicad.kicad.metainfo.xml.in

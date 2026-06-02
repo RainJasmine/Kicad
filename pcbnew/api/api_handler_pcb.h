@@ -21,10 +21,14 @@
 #ifndef KICAD_API_HANDLER_PCB_H
 #define KICAD_API_HANDLER_PCB_H
 
+#include <memory>
+
 #include <google/protobuf/empty.pb.h>
 
 #include <api/api_handler_editor.h>
+#include <api/board_context.h>
 #include <api/board/board_commands.pb.h>
+#include <api/board/board_jobs.pb.h>
 #include <api/board/board_types.pb.h>
 #include <api/common/commands/editor_commands.pb.h>
 #include <api/common/commands/project_commands.pb.h>
@@ -34,6 +38,7 @@
 using namespace kiapi;
 using namespace kiapi::common;
 using namespace kiapi::board::commands;
+using namespace kiapi::board::jobs;
 
 using google::protobuf::Empty;
 
@@ -51,6 +56,7 @@ class API_HANDLER_PCB : public API_HANDLER_EDITOR
 {
 public:
     API_HANDLER_PCB( PCB_EDIT_FRAME* aFrame );
+    API_HANDLER_PCB( std::shared_ptr<BOARD_CONTEXT> aContext, PCB_EDIT_FRAME* aFrame = nullptr );
 
 private:
     typedef std::map<std::string, PROPERTY_BASE*> PROTO_PROPERTY_MAP;
@@ -92,13 +98,34 @@ private:
     HANDLER_RESULT<BoardStackupResponse> handleGetStackup(
             const HANDLER_CONTEXT<GetBoardStackup>& aCtx );
 
+    HANDLER_RESULT<BoardEnabledLayersResponse> handleGetBoardEnabledLayers(
+            const HANDLER_CONTEXT<GetBoardEnabledLayers>& aCtx );
+
+    HANDLER_RESULT<BoardEnabledLayersResponse> handleSetBoardEnabledLayers(
+            const HANDLER_CONTEXT<SetBoardEnabledLayers>& aCtx );
+
     HANDLER_RESULT<GraphicsDefaultsResponse> handleGetGraphicsDefaults(
             const HANDLER_CONTEXT<GetGraphicsDefaults>& aCtx );
+
+    HANDLER_RESULT<BoardDesignRulesResponse> handleGetBoardDesignRules(
+            const HANDLER_CONTEXT<GetBoardDesignRules>& aCtx );
+
+    HANDLER_RESULT<BoardDesignRulesResponse> handleSetBoardDesignRules(
+            const HANDLER_CONTEXT<SetBoardDesignRules>& aCtx );
+
+    HANDLER_RESULT<CustomRulesResponse> handleGetCustomDesignRules(
+            const HANDLER_CONTEXT<GetCustomDesignRules>& aCtx );
+
+    HANDLER_RESULT<CustomRulesResponse> handleSetCustomDesignRules(
+            const HANDLER_CONTEXT<SetCustomDesignRules>& aCtx );
 
     HANDLER_RESULT<types::Vector2> handleGetBoardOrigin(
             const HANDLER_CONTEXT<GetBoardOrigin>& aCtx );
 
     HANDLER_RESULT<Empty> handleSetBoardOrigin( const HANDLER_CONTEXT<SetBoardOrigin>& aCtx );
+
+    HANDLER_RESULT<BoardLayerNameResponse> handleGetBoardLayerName(
+            const HANDLER_CONTEXT<GetBoardLayerName>& aCtx );
 
     HANDLER_RESULT<commands::GetBoundingBoxResponse> handleGetBoundingBox(
             const HANDLER_CONTEXT<commands::GetBoundingBox>& aCtx );
@@ -109,15 +136,21 @@ private:
     HANDLER_RESULT<PadstackPresenceResponse> handleCheckPadstackPresenceOnLayers(
             const HANDLER_CONTEXT<CheckPadstackPresenceOnLayers>& aCtx );
 
-    HANDLER_RESULT<types::TitleBlockInfo> handleGetTitleBlockInfo(
-            const HANDLER_CONTEXT<commands::GetTitleBlockInfo>& aCtx );
-
     HANDLER_RESULT<commands::ExpandTextVariablesResponse> handleExpandTextVariables(
             const HANDLER_CONTEXT<commands::ExpandTextVariables>& aCtx );
 
     HANDLER_RESULT<Empty> handleInteractiveMoveItems( const HANDLER_CONTEXT<InteractiveMoveItems>& aCtx );
 
     HANDLER_RESULT<NetsResponse> handleGetNets( const HANDLER_CONTEXT<GetNets>& aCtx );
+
+    HANDLER_RESULT<commands::GetItemsResponse> handleGetConnectedItems(
+            const HANDLER_CONTEXT<GetConnectedItems>& aCtx );
+
+    HANDLER_RESULT<commands::GetItemsResponse> handleGetItemsByNet(
+            const HANDLER_CONTEXT<GetItemsByNet>& aCtx );
+
+    HANDLER_RESULT<commands::GetItemsResponse> handleGetItemsByNetClass(
+            const HANDLER_CONTEXT<GetItemsByNetClass>& aCtx );
 
     HANDLER_RESULT<NetClassForNetsResponse> handleGetNetClassForNets(
             const HANDLER_CONTEXT<GetNetClassForNets>& aCtx );
@@ -145,6 +178,51 @@ private:
     HANDLER_RESULT<Empty> handleSetBoardEditorAppearanceSettings(
             const HANDLER_CONTEXT<SetBoardEditorAppearanceSettings>& aCtx );
 
+    HANDLER_RESULT<InjectDrcErrorResponse> handleInjectDrcError(
+            const HANDLER_CONTEXT<InjectDrcError>& aCtx );
+
+    HANDLER_RESULT<types::RunJobResponse> handleRunBoardJobExport3D(
+            const HANDLER_CONTEXT<RunBoardJobExport3D>& aCtx );
+
+    HANDLER_RESULT<types::RunJobResponse> handleRunBoardJobExportRender(
+            const HANDLER_CONTEXT<RunBoardJobExportRender>& aCtx );
+
+    HANDLER_RESULT<types::RunJobResponse> handleRunBoardJobExportSvg(
+            const HANDLER_CONTEXT<RunBoardJobExportSvg>& aCtx );
+
+    HANDLER_RESULT<types::RunJobResponse> handleRunBoardJobExportDxf(
+            const HANDLER_CONTEXT<RunBoardJobExportDxf>& aCtx );
+
+    HANDLER_RESULT<types::RunJobResponse> handleRunBoardJobExportPdf(
+            const HANDLER_CONTEXT<RunBoardJobExportPdf>& aCtx );
+
+    HANDLER_RESULT<types::RunJobResponse> handleRunBoardJobExportPs(
+            const HANDLER_CONTEXT<RunBoardJobExportPs>& aCtx );
+
+    HANDLER_RESULT<types::RunJobResponse> handleRunBoardJobExportGerbers(
+            const HANDLER_CONTEXT<RunBoardJobExportGerbers>& aCtx );
+
+    HANDLER_RESULT<types::RunJobResponse> handleRunBoardJobExportDrill(
+            const HANDLER_CONTEXT<RunBoardJobExportDrill>& aCtx );
+
+    HANDLER_RESULT<types::RunJobResponse> handleRunBoardJobExportPosition(
+            const HANDLER_CONTEXT<RunBoardJobExportPosition>& aCtx );
+
+    HANDLER_RESULT<types::RunJobResponse> handleRunBoardJobExportGencad(
+            const HANDLER_CONTEXT<RunBoardJobExportGencad>& aCtx );
+
+    HANDLER_RESULT<types::RunJobResponse> handleRunBoardJobExportIpc2581(
+            const HANDLER_CONTEXT<RunBoardJobExportIpc2581>& aCtx );
+
+    HANDLER_RESULT<types::RunJobResponse> handleRunBoardJobExportIpcD356(
+            const HANDLER_CONTEXT<RunBoardJobExportIpcD356>& aCtx );
+
+    HANDLER_RESULT<types::RunJobResponse> handleRunBoardJobExportODB(
+            const HANDLER_CONTEXT<RunBoardJobExportODB>& aCtx );
+
+    HANDLER_RESULT<types::RunJobResponse> handleRunBoardJobExportStats(
+            const HANDLER_CONTEXT<RunBoardJobExportStats>& aCtx );
+
 protected:
     std::unique_ptr<COMMIT> createCommit() override;
 
@@ -153,15 +231,39 @@ protected:
         return kiapi::common::types::DOCTYPE_PCB;
     }
 
-    bool validateDocumentInternal( const DocumentSpecifier& aDocument ) const override;
+    tl::expected<bool, ApiResponseStatus> validateDocumentInternal( const DocumentSpecifier& aDocument ) const override;
 
     void deleteItemsInternal( std::map<KIID, ItemDeletionStatus>& aItemsToDelete,
                               const std::string& aClientName ) override;
 
     std::optional<EDA_ITEM*> getItemFromDocument( const DocumentSpecifier& aDocument, const KIID& aId ) override;
 
+    std::optional<TITLE_BLOCK*> getTitleBlock() override;
+
+    std::optional<PAGE_INFO> getPageSettings() override;
+
+    bool setPageSettings( const PAGE_INFO& aPageInfo ) override;
+
+    wxString getDrawingSheetFileName() override;
+
+    void setDrawingSheetFileName( const wxString& aFileName ) override;
+
+    void onModified() override;
+
 private:
+    BOARD_CONTEXT* context() const { return m_context.get(); }
+
+    BOARD* board() const { return context()->GetBoard(); }
+
+    PROJECT& project() const { return context()->Prj(); }
+
+    TOOL_MANAGER* toolManager() const { return context()->GetToolManager(); }
+
     PCB_EDIT_FRAME* frame() const;
+
+    bool isHeadless() const { return frame() == nullptr; }
+
+    std::optional<ApiResponseStatus> checkForHeadless( const std::string& aCommandName ) const;
 
     void pushCurrentCommit( const std::string& aClientName, const wxString& aMessage ) override;
 
@@ -173,6 +275,8 @@ private:
             const google::protobuf::RepeatedPtrField<google::protobuf::Any>& aItems,
             std::function<void(commands::ItemStatus, google::protobuf::Any)> aItemHandler )
             override;
+
+    std::shared_ptr<BOARD_CONTEXT> m_context;
 };
 
 #endif //KICAD_API_HANDLER_PCB_H

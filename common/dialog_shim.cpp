@@ -25,32 +25,77 @@
 
 #include <app_monitor.h>
 #include <dialog_shim.h>
+#include <settings/common_settings.h>
+#include <settings/common_settings_internals.h>
 #include <core/ignore.h>
 #include <kiway_player.h>
 #include <kiway.h>
 #include <pgm_base.h>
+#include <project/project_local_settings.h>
+#include <property_holder.h>
+#include <settings/settings_manager.h>
 #include <tool/tool_manager.h>
 #include <kiplatform/ui.h>
+#include <widgets/unit_binder.h>
 
 #include <wx/display.h>
 #include <wx/evtloop.h>
 #include <wx/app.h>
 #include <wx/event.h>
 #include <wx/grid.h>
+#include <wx/propgrid/propgrid.h>
+#include <wx/checklst.h>
+#include <wx/dataview.h>
 #include <wx/bmpbuttn.h>
 #include <wx/textctrl.h>
 #include <wx/stc/stc.h>
+#include <wx/combobox.h>
+#include <wx/odcombo.h>
+#include <wx/choice.h>
+#include <wx/checkbox.h>
+#include <wx/spinctrl.h>
+#include <wx/splitter.h>
+#include <wx/radiobox.h>
+#include <wx/radiobut.h>
+#include <wx/variant.h>
 
 #include <algorithm>
+#include <functional>
+#include <nlohmann/json.hpp>
+#include <typeinfo>
 
 BEGIN_EVENT_TABLE( DIALOG_SHIM, wxDialog )
     EVT_CHAR_HOOK( DIALOG_SHIM::OnCharHook )
 END_EVENT_TABLE()
 
 
-DIALOG_SHIM::DIALOG_SHIM( wxWindow* aParent, wxWindowID id, const wxString& title,
-                          const wxPoint& pos, const wxSize& size, long style,
-                          const wxString& name ) :
+/**
+ * Strip parenthetical suffixes from dialog titles to create stable persistence keys.
+ *
+ * Dialog titles like "Choose Symbol (1234 items loaded)" would otherwise create unique
+ * keys for each item count, flooding the settings file with duplicate entries.
+ */
+static std::string getDialogKeyFromTitle( const wxString& aTitle )
+{
+    std::string title = aTitle.ToStdString();
+    size_t parenPos = title.rfind( '(' );
+
+    if( parenPos != std::string::npos && parenPos > 0 )
+    {
+        size_t end = parenPos;
+
+        while( end > 0 && title[end - 1] == ' ' )
+            end--;
+
+        return title.substr( 0, end );
+    }
+
+    return title;
+}
+
+
+DIALOG_SHIM::DIALOG_SHIM( wxWindow* aParent, wxWindowID id, const wxString& title, const wxPoint& pos,
+                          const wxSize& size, long style, const wxString& name ) :
         wxDialog( aParent, id, title, pos, size, style, name ),
         KIWAY_HOLDER( nullptr, KIWAY_HOLDER::DIALOG ),
         m_units( EDA_UNITS::MM ),
@@ -61,7 +106,11 @@ DIALOG_SHIM::DIALOG_SHIM( wxWindow* aParent, wxWindowID id, const wxString& titl
         m_qmodal_loop( nullptr ),
         m_qmodal_showing( false ),
         m_qmodal_parent_disabler( nullptr ),
-        m_parentFrame( nullptr )
+        m_parentFrame( nullptr ),
+        m_userPositioned( false ),
+        m_userResized( false ),
+        m_handlingUndoRedo( false ),
+        m_childReleased( false )
 {
     KIWAY_HOLDER* kiwayHolder = nullptr;
     m_initialSize = size;
@@ -102,6 +151,9 @@ DIALOG_SHIM::DIALOG_SHIM( wxWindow* aParent, wxWindowID id, const wxString& titl
 
     Bind( wxEVT_CLOSE_WINDOW, &DIALOG_SHIM::OnCloseWindow, this );
     Bind( wxEVT_BUTTON, &DIALOG_SHIM::OnButton, this );
+    Bind( wxEVT_SIZE, &DIALOG_SHIM::OnSize, this );
+    Bind( wxEVT_MOVE, &DIALOG_SHIM::OnMove, this );
+    Bind( wxEVT_INIT_DIALOG, &DIALOG_SHIM::onInitDialog, this );
 
 #ifdef __WINDOWS__
     // On Windows, the app top windows can be brought to the foreground (at least temporarily)
@@ -125,31 +177,102 @@ DIALOG_SHIM::~DIALOG_SHIM()
     Unbind( wxEVT_CLOSE_WINDOW, &DIALOG_SHIM::OnCloseWindow, this );
     Unbind( wxEVT_BUTTON, &DIALOG_SHIM::OnButton, this );
     Unbind( wxEVT_PAINT, &DIALOG_SHIM::OnPaint, this );
+    Unbind( wxEVT_SIZE, &DIALOG_SHIM::OnSize, this );
+    Unbind( wxEVT_MOVE, &DIALOG_SHIM::OnMove, this );
+    Unbind( wxEVT_INIT_DIALOG, &DIALOG_SHIM::onInitDialog, this );
 
-    std::function<void( wxWindowList& )> disconnectFocusHandlers = [&]( wxWindowList& children )
-    {
-        for( wxWindow* child : children )
-        {
-            if( wxTextCtrl* textCtrl = dynamic_cast<wxTextCtrl*>( child ) )
+    std::function<void( wxWindowList& )> disconnectFocusHandlers =
+            [&]( wxWindowList& children )
             {
-                textCtrl->Disconnect( wxEVT_SET_FOCUS,
-                                      wxFocusEventHandler( DIALOG_SHIM::onChildSetFocus ),
-                                      nullptr, this );
-            }
-            else if( wxStyledTextCtrl* scintilla = dynamic_cast<wxStyledTextCtrl*>( child ) )
-            {
-                scintilla->Disconnect( wxEVT_SET_FOCUS,
-                                       wxFocusEventHandler( DIALOG_SHIM::onChildSetFocus ),
-                                       nullptr, this );
-            }
-            else
-            {
-                disconnectFocusHandlers( child->GetChildren() );
-            }
-        }
-    };
+                for( wxWindow* child : children )
+                {
+                    if( wxTextCtrl* textCtrl = dynamic_cast<wxTextCtrl*>( child ) )
+                    {
+                        textCtrl->Disconnect( wxEVT_SET_FOCUS, wxFocusEventHandler( DIALOG_SHIM::onChildSetFocus ),
+                                              nullptr, this );
+                    }
+                    else if( wxStyledTextCtrl* scintilla = dynamic_cast<wxStyledTextCtrl*>( child ) )
+                    {
+                        scintilla->Disconnect( wxEVT_SET_FOCUS, wxFocusEventHandler( DIALOG_SHIM::onChildSetFocus ),
+                                               nullptr, this );
+                    }
+                    else
+                    {
+                        disconnectFocusHandlers( child->GetChildren() );
+                    }
+                }
+            };
 
     disconnectFocusHandlers( GetChildren() );
+
+    std::function<void( wxWindowList& )> disconnectUndoRedoHandlers =
+            [&]( wxWindowList& children )
+            {
+                for( wxWindow* child : children )
+                {
+                    if( wxTextCtrl* textCtrl = dynamic_cast<wxTextCtrl*>( child ) )
+                    {
+                        textCtrl->Unbind( wxEVT_TEXT, &DIALOG_SHIM::onCommandEvent, this );
+                    }
+                    else if( wxStyledTextCtrl* scintilla = dynamic_cast<wxStyledTextCtrl*>( child ) )
+                    {
+                        scintilla->Unbind( wxEVT_STC_CHANGE, &DIALOG_SHIM::onStyledTextChanged, this );
+                    }
+                    else if( wxComboBox* combo = dynamic_cast<wxComboBox*>( child ) )
+                    {
+                        combo->Unbind( wxEVT_TEXT, &DIALOG_SHIM::onCommandEvent, this );
+                        combo->Unbind( wxEVT_COMBOBOX, &DIALOG_SHIM::onCommandEvent, this );
+                    }
+                    else if( wxChoice* choice = dynamic_cast<wxChoice*>( child ) )
+                    {
+                        choice->Unbind( wxEVT_CHOICE, &DIALOG_SHIM::onCommandEvent, this );
+                    }
+                    else if( wxCheckBox* check = dynamic_cast<wxCheckBox*>( child ) )
+                    {
+                        check->Unbind( wxEVT_CHECKBOX, &DIALOG_SHIM::onCommandEvent, this );
+                    }
+                    else if( wxSpinCtrl* spin = dynamic_cast<wxSpinCtrl*>( child ) )
+                    {
+                        spin->Unbind( wxEVT_SPINCTRL, &DIALOG_SHIM::onSpinEvent, this );
+                        spin->Unbind( wxEVT_TEXT, &DIALOG_SHIM::onCommandEvent, this );
+                    }
+                    else if( wxSpinCtrlDouble* spinD = dynamic_cast<wxSpinCtrlDouble*>( child ) )
+                    {
+                        spinD->Unbind( wxEVT_SPINCTRLDOUBLE, &DIALOG_SHIM::onSpinDoubleEvent, this );
+                        spinD->Unbind( wxEVT_TEXT, &DIALOG_SHIM::onCommandEvent, this );
+                    }
+                    else if( wxRadioButton* radio = dynamic_cast<wxRadioButton*>( child ) )
+                    {
+                        radio->Unbind( wxEVT_RADIOBUTTON, &DIALOG_SHIM::onCommandEvent, this );
+                    }
+                    else if( wxRadioBox* radioBox = dynamic_cast<wxRadioBox*>( child ) )
+                    {
+                        radioBox->Unbind( wxEVT_RADIOBOX, &DIALOG_SHIM::onCommandEvent, this );
+                    }
+                    else if( wxGrid* grid = dynamic_cast<wxGrid*>( child ) )
+                    {
+                        grid->Unbind( wxEVT_GRID_CELL_CHANGED, &DIALOG_SHIM::onGridCellChanged, this );
+                    }
+                    else if( wxPropertyGrid* propGrid = dynamic_cast<wxPropertyGrid*>( child ) )
+                    {
+                        propGrid->Unbind( wxEVT_PG_CHANGED, &DIALOG_SHIM::onPropertyGridChanged, this );
+                    }
+                    else if( wxCheckListBox* checkList = dynamic_cast<wxCheckListBox*>( child ) )
+                    {
+                        checkList->Unbind( wxEVT_CHECKLISTBOX, &DIALOG_SHIM::onCommandEvent, this );
+                    }
+                    else if( wxDataViewListCtrl* dataList = dynamic_cast<wxDataViewListCtrl*>( child ) )
+                    {
+                        dataList->Unbind( wxEVT_DATAVIEW_ITEM_VALUE_CHANGED, &DIALOG_SHIM::onDataViewListChanged, this );
+                    }
+                    else
+                    {
+                        disconnectUndoRedoHandlers( child->GetChildren() );
+                    }
+                }
+            };
+
+    disconnectUndoRedoHandlers( GetChildren() );
 
     // if the dialog is quasi-modal, this will end its event loop
     if( IsQuasiModal() )
@@ -159,6 +282,22 @@ DIALOG_SHIM::~DIALOG_SHIM()
         Kiway().SetBlockingDialog( nullptr );
 
     delete m_qmodal_parent_disabler;
+}
+
+
+void DIALOG_SHIM::onInitDialog( wxInitDialogEvent& aEvent )
+{
+#ifdef __WXMAC__
+    CallAfter(
+            [this]
+            {
+                if( wxSizer* sz = GetSizer() )
+                    sz->Layout();
+            } );
+#endif
+
+    LoadControlState();
+    aEvent.Skip();
 }
 
 
@@ -197,56 +336,37 @@ int DIALOG_SHIM::vertPixelsFromDU( int y ) const
 // our hashtable is an implementation secret, don't need or want it in a header file
 #include <hashtables.h>
 #include <typeinfo>
-
-static std::unordered_map<std::string, wxRect> class_map;
+#include <grid_tricks.h>
 
 
 void DIALOG_SHIM::SetPosition( const wxPoint& aNewPosition )
 {
     wxDialog::SetPosition( aNewPosition );
+}
 
-    // Now update the stored position:
-    const char* hash_key;
 
-    if( m_hash_key.size() )
+void DIALOG_SHIM::focusParentCanvas()
+{
+    if( m_parentFrame )
     {
-        // a special case like EDA_LIST_DIALOG, which has multiple uses.
-        hash_key = m_hash_key.c_str();
+        wxWindow* canvas = m_parentFrame->GetToolCanvas();
+
+        if( canvas )
+        {
+            canvas->SetFocus();
+            return;
+        }
     }
-    else
-    {
-        hash_key = typeid(*this).name();
-    }
 
-    std::unordered_map<std::string, wxRect>::iterator it = class_map.find( hash_key );
-
-    if( it == class_map.end() )
-        return;
-
-    wxRect rect = it->second;
-    rect.SetPosition( aNewPosition );
-
-    class_map[ hash_key ] = rect;
+    if( m_parent )
+        m_parent->SetFocus();
 }
 
 
 bool DIALOG_SHIM::Show( bool show )
 {
-    bool        ret;
-    const char* hash_key;
+    bool ret;
 
-    if( m_hash_key.size() )
-    {
-        // a special case like EDA_LIST_DIALOG, which has multiple uses.
-        hash_key = m_hash_key.c_str();
-    }
-    else
-    {
-        hash_key = typeid(*this).name();
-    }
-
-    // Show or hide the window.  If hiding, save current position and size.
-    // If showing, use previous position and size.
     if( show )
     {
 #ifndef __WINDOWS__
@@ -254,11 +374,31 @@ bool DIALOG_SHIM::Show( bool show )
 #endif
         ret = wxDialog::Show( show );
 
-        // classname is key, returns a zeroed-out default wxRect if none existed before.
-        wxRect savedDialogRect = class_map[ hash_key ];
+        wxRect      savedDialogRect;
+        std::string key = m_hash_key.empty() ? getDialogKeyFromTitle( GetTitle() ) : m_hash_key;
+
+        if( COMMON_SETTINGS* settings = Pgm().GetCommonSettings() )
+        {
+            auto dlgIt = settings->CsInternals().m_dialogControlValues.find( key );
+
+            if( dlgIt != settings->CsInternals().m_dialogControlValues.end() )
+            {
+                auto geoIt = dlgIt->second.find( "__geometry" );
+
+                if( geoIt != dlgIt->second.end() && geoIt->second.is_object() )
+                {
+                    const nlohmann::json& g = geoIt->second;
+                    savedDialogRect.SetPosition( wxPoint( g.value( "x", 0 ), g.value( "y", 0 ) ) );
+                    savedDialogRect.SetSize( wxSize( g.value( "w", 500 ), g.value( "h", 300 ) ) );
+                }
+            }
+        }
 
         if( savedDialogRect.GetSize().x != 0 && savedDialogRect.GetSize().y != 0 )
         {
+            // Convert saved DIP size to logical pixels for the current monitor
+            wxSize restoredSize = FromDIP( savedDialogRect.GetSize() );
+
             if( m_useCalculatedSize )
             {
                 SetSize( savedDialogRect.GetPosition().x, savedDialogRect.GetPosition().y,
@@ -267,18 +407,29 @@ bool DIALOG_SHIM::Show( bool show )
             else
             {
                 SetSize( savedDialogRect.GetPosition().x, savedDialogRect.GetPosition().y,
-                         std::max( wxDialog::GetSize().x, savedDialogRect.GetSize().x ),
-                         std::max( wxDialog::GetSize().y, savedDialogRect.GetSize().y ),
-                         0 );
+                         std::max( wxDialog::GetSize().x, restoredSize.x ),
+                         std::max( wxDialog::GetSize().y, restoredSize.y ), 0 );
+
+                // Reset minimum size so the user can resize the dialog smaller than
+                // the saved size. We must clear the current minimum and invalidate
+                // the cached best size so GetBestSize() returns the true sizer
+                // minimum rather than being constrained by the restored size.
+                SetMinSize( wxDefaultSize );
+                InvalidateBestSize();
+                SetMinSize( GetBestSize() );
             }
+
 #ifdef __WXMAC__
             if( m_parent != nullptr )
             {
                 if( wxDisplay::GetFromPoint( m_parent->GetPosition() )
                     != wxDisplay::GetFromPoint( savedDialogRect.GetPosition() ) )
+                {
                     Centre();
+                }
             }
 #endif
+
         }
         else if( m_initialSize != wxDefaultSize )
         {
@@ -286,16 +437,16 @@ bool DIALOG_SHIM::Show( bool show )
             Centre();
         }
 
-        // Be sure that the dialog appears in a visible area
-        // (the dialog position might have been stored at the time when it was
-        // shown on another display)
         if( wxDisplay::GetFromWindow( this ) == wxNOT_FOUND )
             Centre();
+
+        m_userPositioned = false;
+        m_userResized = false;
+
+        KIPLATFORM::UI::EnsureVisible( this );
     }
     else
     {
-        // Save the dialog's position & size before hiding, using classname as key
-        class_map[ hash_key ] = wxRect( wxDialog::GetPosition(), wxDialog::GetSize() );
 
 #ifdef __WXMAC__
         if ( m_eventLoop )
@@ -304,8 +455,8 @@ bool DIALOG_SHIM::Show( bool show )
 
         ret = wxDialog::Show( show );
 
-        if( m_parent )
-            m_parent->SetFocus();
+        SaveControlState();
+        focusParentCanvas();
     }
 
     return ret;
@@ -314,26 +465,56 @@ bool DIALOG_SHIM::Show( bool show )
 
 void DIALOG_SHIM::resetSize()
 {
-    const char* hash_key;
-
-    if( m_hash_key.size() )
+    if( COMMON_SETTINGS* settings = Pgm().GetCommonSettings() )
     {
-        // a special case like EDA_LIST_DIALOG, which has multiple uses.
-        hash_key = m_hash_key.c_str();
+        std::string key = m_hash_key.empty() ? getDialogKeyFromTitle( GetTitle() ) : m_hash_key;
+
+        auto dlgIt = settings->CsInternals().m_dialogControlValues.find( key );
+
+        if( dlgIt == settings->CsInternals().m_dialogControlValues.end() )
+            return;
+
+        dlgIt->second.erase( "__geometry" );
     }
-    else
+}
+
+
+void DIALOG_SHIM::OnSize( wxSizeEvent& aEvent )
+{
+    m_userResized = true;
+    aEvent.Skip();
+}
+
+
+void DIALOG_SHIM::OnMove( wxMoveEvent& aEvent )
+{
+    m_userPositioned = true;
+
+#ifdef __WXMAC__
+    if( m_parent )
     {
-        hash_key = typeid(*this).name();
+        int parentDisplay = wxDisplay::GetFromWindow( m_parent );
+        int myDisplay = wxDisplay::GetFromWindow( this );
+
+        if( parentDisplay != wxNOT_FOUND && myDisplay != wxNOT_FOUND )
+        {
+            if( myDisplay != parentDisplay && !m_childReleased )
+            {
+                // Moving to different monitor - release child relationship
+                KIPLATFORM::UI::ReleaseChildWindow( this );
+                m_childReleased = true;
+            }
+            else if( myDisplay == parentDisplay && m_childReleased )
+            {
+                // Back on same monitor - restore child relationship
+                KIPLATFORM::UI::ReparentModal( this );
+                m_childReleased = false;
+            }
+        }
     }
+#endif
 
-    std::unordered_map<std::string, wxRect>::iterator it = class_map.find( hash_key );
-
-    if( it == class_map.end() )
-        return;
-
-    wxRect rect = it->second;
-    rect.SetSize( wxSize( 0, 0 ) );
-    class_map[ hash_key ] = rect;
+    aEvent.Skip();
 }
 
 
@@ -341,6 +522,332 @@ bool DIALOG_SHIM::Enable( bool enable )
 {
     // so we can do logging of this state change:
     return wxDialog::Enable( enable );
+}
+
+
+std::string DIALOG_SHIM::generateKey( const wxWindow* aWin ) const
+{
+    auto getSiblingIndex =
+            []( const wxWindow* parent, const wxWindow* child )
+            {
+                wxString childClass = child->GetClassInfo()->GetClassName();
+                int      index = 0;
+
+                for( const wxWindow* sibling : parent->GetChildren() )
+                {
+                    if( sibling->GetClassInfo()->GetClassName() != childClass )
+                        continue;
+
+                    if( sibling == child )
+                        break;
+
+                    index++;
+                }
+
+                return index;
+            };
+
+    auto makeKey =
+            [&]( const wxWindow* window )
+            {
+                std::string key = wxString( window->GetClassInfo()->GetClassName() ).ToStdString();
+
+                if( window->GetParent() )
+                    key += "_" + std::to_string( getSiblingIndex( window->GetParent(), window ) );
+
+                return key;
+            };
+
+    std::string key = makeKey( aWin );
+
+    for( const wxWindow* parent = aWin->GetParent(); parent && parent != this; parent = parent->GetParent() )
+        key = makeKey( parent ) + key;
+
+    return key;
+}
+
+
+void DIALOG_SHIM::SaveControlState()
+{
+    COMMON_SETTINGS* settings = Pgm().GetCommonSettings();
+
+    if( !settings )
+        return;
+
+    std::string dialogKey = m_hash_key.empty() ? getDialogKeyFromTitle( GetTitle() ) : m_hash_key;
+    std::map<std::string, nlohmann::json>& dlgMap = settings->CsInternals().m_dialogControlValues[ dialogKey ];
+
+    wxPoint pos = GetPosition();
+    wxSize  dipSize = ToDIP( GetSize() );
+    nlohmann::json geom;
+    geom[ "x" ] = pos.x;
+    geom[ "y" ] = pos.y;
+    geom[ "w" ] = dipSize.x;
+    geom[ "h" ] = dipSize.y;
+    dlgMap[ "__geometry" ] = geom;
+
+    std::function<void( wxWindow* )> saveFn =
+            [&]( wxWindow* win )
+            {
+                if( PROPERTY_HOLDER* props = PROPERTY_HOLDER::SafeCast( win->GetClientData() ) )
+                {
+                    if( !props->GetPropertyOr( "persist", false ) )
+                        return;
+                }
+
+                std::string key = generateKey( win );
+
+                if( !key.empty() )
+                {
+                    if( m_unitBinders.contains( win ) && !m_unitBinders[ win ]->UnitsInvariant() )
+                    {
+                        dlgMap[ key ] = m_unitBinders[ win ]->GetValue();
+                    }
+                    else if( wxComboBox* combo = dynamic_cast<wxComboBox*>( win ) )
+                    {
+                        dlgMap[ key ] = combo->GetValue();
+                    }
+                    else if( wxOwnerDrawnComboBox* od_combo = dynamic_cast<wxOwnerDrawnComboBox*>( win ) )
+                    {
+                        dlgMap[ key ] = od_combo->GetSelection();
+                    }
+                    else if( wxTextEntry* textEntry = dynamic_cast<wxTextEntry*>( win ) )
+                    {
+                        dlgMap[ key ] = textEntry->GetValue();
+                    }
+                    else if( wxChoice* choice = dynamic_cast<wxChoice*>( win ) )
+                    {
+                        dlgMap[ key ] = choice->GetSelection();
+                    }
+                    else if( wxCheckBox* check = dynamic_cast<wxCheckBox*>( win ) )
+                    {
+                        dlgMap[ key ] = check->GetValue();
+                    }
+                    else if( wxSpinCtrl* spin = dynamic_cast<wxSpinCtrl*>( win ) )
+                    {
+                        dlgMap[ key ] = spin->GetValue();
+                    }
+                    else if( wxRadioButton* radio = dynamic_cast<wxRadioButton*>( win ) )
+                    {
+                        dlgMap[ key ] = radio->GetValue();
+                    }
+                    else if( wxRadioBox* radioBox = dynamic_cast<wxRadioBox*>( win ) )
+                    {
+                        dlgMap[ key ] = radioBox->GetSelection();
+                    }
+                    else if( wxSplitterWindow* splitter = dynamic_cast<wxSplitterWindow*>( win ) )
+                    {
+                        dlgMap[ key ] = splitter->GetSashPosition();
+                    }
+                    else if( wxScrolledWindow* scrolled = dynamic_cast<wxScrolledWindow*>( win ) )
+                    {
+                        dlgMap[ key ] = scrolled->GetScrollPos( wxVERTICAL );
+                    }
+                    else if( wxNotebook* notebook = dynamic_cast<wxNotebook*>( win ) )
+                    {
+                        int index = notebook->GetSelection();
+
+                        if( index >= 0 && index < (int) notebook->GetPageCount() )
+                            dlgMap[ key ] = notebook->GetPageText( notebook->GetSelection() );
+                    }
+                    else if( wxAuiNotebook* auiNotebook = dynamic_cast<wxAuiNotebook*>( win ) )
+                    {
+                        int index = auiNotebook->GetSelection();
+
+                        if( index >= 0 && index < (int) auiNotebook->GetPageCount() )
+                            dlgMap[ key ] = auiNotebook->GetPageText( auiNotebook->GetSelection() );
+                    }
+                    else if( WX_GRID* grid = dynamic_cast<WX_GRID*>( win ) )
+                    {
+                        dlgMap[ key ] = grid->GetShownColumnsAsString();
+                    }
+                }
+
+                for( wxWindow* child : win->GetChildren() )
+                    saveFn( child );
+            };
+
+    if( PROPERTY_HOLDER* props = PROPERTY_HOLDER::SafeCast( GetClientData() ) )
+    {
+        if( !props->GetPropertyOr( "persist", false ) )
+            return;
+    }
+
+    for( wxWindow* child : GetChildren() )
+        saveFn( child );
+}
+
+
+void DIALOG_SHIM::LoadControlState()
+{
+    COMMON_SETTINGS* settings = Pgm().GetCommonSettings();
+
+    if( !settings )
+        return;
+
+    std::string dialogKey = m_hash_key.empty() ? getDialogKeyFromTitle( GetTitle() ) : m_hash_key;
+    auto        dlgIt = settings->CsInternals().m_dialogControlValues.find( dialogKey );
+
+    if( dlgIt == settings->CsInternals().m_dialogControlValues.end() )
+        return;
+
+    const std::map<std::string, nlohmann::json>& dlgMap = dlgIt->second;
+
+    std::function<void( wxWindow* )> loadFn =
+            [&]( wxWindow* win )
+            {
+                if( PROPERTY_HOLDER* props = PROPERTY_HOLDER::SafeCast( win->GetClientData() ) )
+                {
+                    if( !props->GetPropertyOr( "persist", false ) )
+                        return;
+                }
+
+                std::string key = generateKey( win );
+
+                if( !key.empty() )
+                {
+                    auto it = dlgMap.find( key );
+
+                    if( it != dlgMap.end() )
+                    {
+                        const nlohmann::json& j = it->second;
+
+                        if( m_unitBinders.contains( win ) && !m_unitBinders[ win ]->UnitsInvariant() )
+                        {
+                            if( j.is_number_integer() )
+                                m_unitBinders[ win ]->ChangeValue( j.get<int>() );
+                        }
+                        else if( wxComboBox* combo = dynamic_cast<wxComboBox*>( win ) )
+                        {
+                            if( j.is_string() )
+                                combo->SetValue( wxString::FromUTF8( j.get<std::string>().c_str() ) );
+                        }
+                        else if( wxOwnerDrawnComboBox* od_combo = dynamic_cast<wxOwnerDrawnComboBox*>( win ) )
+                        {
+                            if( j.is_number_integer() )
+                            {
+                                int index = j.get<int>();
+
+                                if( index >= 0 && index < (int) od_combo->GetCount() )
+                                    od_combo->SetSelection( index );
+                            }
+                        }
+                        else if( wxTextEntry* textEntry = dynamic_cast<wxTextEntry*>( win ) )
+                        {
+                            if( j.is_string() )
+                                textEntry->ChangeValue( wxString::FromUTF8( j.get<std::string>().c_str() ) );
+                        }
+                        else if( wxChoice* choice = dynamic_cast<wxChoice*>( win ) )
+                        {
+                            if( j.is_number_integer() )
+                            {
+                                int index = j.get<int>();
+
+                                if( index >= 0 && index < (int) choice->GetCount() )
+                                    choice->SetSelection( index );
+                            }
+                        }
+                        else if( wxCheckBox* check = dynamic_cast<wxCheckBox*>( win ) )
+                        {
+                            if( j.is_boolean() )
+                                check->SetValue( j.get<bool>() );
+                        }
+                        else if( wxSpinCtrl* spin = dynamic_cast<wxSpinCtrl*>( win ) )
+                        {
+                            if( j.is_number_integer() )
+                                spin->SetValue( j.get<int>() );
+                        }
+                        else if( wxRadioButton* radio = dynamic_cast<wxRadioButton*>( win ) )
+                        {
+                            if( j.is_boolean() )
+                            {
+                                // Only set active radio buttons.  Let wxWidgets handle unsetting the inactive
+                                // ones.  This prevents all from being unset, which trips up wxWidgets in some
+                                // cases.
+                                if( j.get<bool>() )
+                                    radio->SetValue( true );
+                            }
+                        }
+                        else if( wxRadioBox* radioBox = dynamic_cast<wxRadioBox*>( win ) )
+                        {
+                            if( j.is_number_integer() )
+                            {
+                                int index = j.get<int>();
+
+                                if( index >= 0 && index < (int) radioBox->GetCount() )
+                                    radioBox->SetSelection( index );
+                            }
+                        }
+                        else if( wxSplitterWindow* splitter = dynamic_cast<wxSplitterWindow*>( win ) )
+                        {
+                            if( j.is_number_integer() )
+                                splitter->SetSashPosition( j.get<int>() );
+                        }
+                        else if( wxScrolledWindow* scrolled = dynamic_cast<wxScrolledWindow*>( win ) )
+                        {
+                            if( j.is_number_integer() )
+                                scrolled->SetScrollPos( wxVERTICAL, j.get<int>() );
+                        }
+                        else if( wxNotebook* notebook = dynamic_cast<wxNotebook*>( win ) )
+                        {
+                            if( j.is_string() )
+                            {
+                                wxString pageTitle = wxString::FromUTF8( j.get<std::string>().c_str() );
+
+                                for( int page = 0; page < (int) notebook->GetPageCount(); ++page )
+                                {
+                                    if( notebook->GetPageText( page ) == pageTitle )
+                                        notebook->ChangeSelection( page );
+                                }
+                            }
+                        }
+                        else if( wxAuiNotebook* auiNotebook = dynamic_cast<wxAuiNotebook*>( win ) )
+                        {
+                            if( j.is_string() )
+                            {
+                                wxString pageTitle = wxString::FromUTF8( j.get<std::string>().c_str() );
+
+                                for( int page = 0; page < (int) auiNotebook->GetPageCount(); ++page )
+                                {
+                                    if( auiNotebook->GetPageText( page ) == pageTitle )
+                                        auiNotebook->ChangeSelection( page );
+                                }
+                            }
+                        }
+                        else if( WX_GRID* grid = dynamic_cast<WX_GRID*>( win ) )
+                        {
+                            if( j.is_string() )
+                                grid->ShowHideColumns( wxString::FromUTF8( j.get<std::string>().c_str() ) );
+                        }
+                    }
+                }
+
+                for( wxWindow* child : win->GetChildren() )
+                    loadFn( child );
+            };
+
+    if( PROPERTY_HOLDER* props = PROPERTY_HOLDER::SafeCast( GetClientData() ) )
+    {
+        if( !props->GetPropertyOr( "persist", false ) )
+            return;
+    }
+
+    for( wxWindow* child : GetChildren() )
+        loadFn( child );
+}
+
+
+void DIALOG_SHIM::OptOut( wxWindow* aWindow )
+{
+    PROPERTY_HOLDER* props = new PROPERTY_HOLDER();
+    props->SetProperty( "persist", false );
+    aWindow->SetClientData( props );
+}
+
+
+void DIALOG_SHIM::RegisterUnitBinder( UNIT_BINDER* aUnitBinder, wxWindow* aWindow )
+{
+    m_unitBinders[ aWindow ] = aUnitBinder;
 }
 
 
@@ -418,6 +925,373 @@ void DIALOG_SHIM::SelectAllInTextCtrls( wxWindowList& children )
 }
 
 
+void DIALOG_SHIM::registerUndoRedoHandlers( wxWindowList& children )
+{
+    for( wxWindow* child : children )
+    {
+        if( wxTextCtrl* textCtrl = dynamic_cast<wxTextCtrl*>( child ) )
+        {
+            textCtrl->Bind( wxEVT_TEXT, &DIALOG_SHIM::onCommandEvent, this );
+            m_currentValues[ textCtrl ] = textCtrl->GetValue();
+        }
+        else if( wxStyledTextCtrl* scintilla = dynamic_cast<wxStyledTextCtrl*>( child ) )
+        {
+            scintilla->Bind( wxEVT_STC_CHANGE, &DIALOG_SHIM::onStyledTextChanged, this );
+            m_currentValues[ scintilla ] = scintilla->GetText();
+        }
+        else if( wxComboBox* combo = dynamic_cast<wxComboBox*>( child ) )
+        {
+            combo->Bind( wxEVT_TEXT, &DIALOG_SHIM::onCommandEvent, this );
+            combo->Bind( wxEVT_COMBOBOX, &DIALOG_SHIM::onCommandEvent, this );
+            m_currentValues[ combo ] = combo->GetValue();
+        }
+        else if( wxChoice* choice = dynamic_cast<wxChoice*>( child ) )
+        {
+            choice->Bind( wxEVT_CHOICE, &DIALOG_SHIM::onCommandEvent, this );
+            m_currentValues[ choice ] = static_cast<long>( choice->GetSelection() );
+        }
+        else if( wxCheckBox* check = dynamic_cast<wxCheckBox*>( child ) )
+        {
+            check->Bind( wxEVT_CHECKBOX, &DIALOG_SHIM::onCommandEvent, this );
+            m_currentValues[ check ] = check->GetValue();
+        }
+        else if( wxSpinCtrl* spin = dynamic_cast<wxSpinCtrl*>( child ) )
+        {
+            spin->Bind( wxEVT_SPINCTRL, &DIALOG_SHIM::onSpinEvent, this );
+            spin->Bind( wxEVT_TEXT, &DIALOG_SHIM::onCommandEvent, this );
+            m_currentValues[ spin ] = static_cast<long>( spin->GetValue() );
+        }
+        else if( wxSpinCtrlDouble* spinD = dynamic_cast<wxSpinCtrlDouble*>( child ) )
+        {
+            spinD->Bind( wxEVT_SPINCTRLDOUBLE, &DIALOG_SHIM::onSpinDoubleEvent, this );
+            spinD->Bind( wxEVT_TEXT, &DIALOG_SHIM::onCommandEvent, this );
+            m_currentValues[ spinD ] = spinD->GetValue();
+        }
+        else if( wxRadioButton* radio = dynamic_cast<wxRadioButton*>( child ) )
+        {
+            radio->Bind( wxEVT_RADIOBUTTON, &DIALOG_SHIM::onCommandEvent, this );
+            m_currentValues[ radio ] = radio->GetValue();
+        }
+        else if( wxRadioBox* radioBox = dynamic_cast<wxRadioBox*>( child ) )
+        {
+            radioBox->Bind( wxEVT_RADIOBOX, &DIALOG_SHIM::onCommandEvent, this );
+            m_currentValues[ radioBox ] = static_cast<long>( radioBox->GetSelection() );
+        }
+        else if( wxGrid* grid = dynamic_cast<wxGrid*>( child ) )
+        {
+            grid->Bind( wxEVT_GRID_CELL_CHANGED, &DIALOG_SHIM::onGridCellChanged, this );
+            m_currentValues[ grid ] = getControlValue( grid );
+        }
+        else if( wxPropertyGrid* propGrid = dynamic_cast<wxPropertyGrid*>( child ) )
+        {
+            propGrid->Bind( wxEVT_PG_CHANGED, &DIALOG_SHIM::onPropertyGridChanged, this );
+            m_currentValues[ propGrid ] = getControlValue( propGrid );
+        }
+        else if( wxCheckListBox* checkList = dynamic_cast<wxCheckListBox*>( child ) )
+        {
+            checkList->Bind( wxEVT_CHECKLISTBOX, &DIALOG_SHIM::onCommandEvent, this );
+            m_currentValues[ checkList ] = getControlValue( checkList );
+        }
+        else if( wxDataViewListCtrl* dataList = dynamic_cast<wxDataViewListCtrl*>( child ) )
+        {
+            dataList->Bind( wxEVT_DATAVIEW_ITEM_VALUE_CHANGED, &DIALOG_SHIM::onDataViewListChanged, this );
+            m_currentValues[ dataList ] = getControlValue( dataList );
+        }
+        else
+        {
+            registerUndoRedoHandlers( child->GetChildren() );
+        }
+    }
+}
+
+
+void DIALOG_SHIM::recordControlChange( wxWindow* aCtrl )
+{
+    wxVariant before = m_currentValues[ aCtrl ];
+    wxVariant after = getControlValue( aCtrl );
+
+    if( before != after )
+    {
+        m_undoStack.push_back( { aCtrl, before, after } );
+        m_redoStack.clear();
+        m_currentValues[ aCtrl ] = after;
+    }
+}
+
+
+void DIALOG_SHIM::onCommandEvent( wxCommandEvent& aEvent )
+{
+    if( !m_handlingUndoRedo )
+        recordControlChange( static_cast<wxWindow*>( aEvent.GetEventObject() ) );
+
+    aEvent.Skip();
+}
+
+
+void DIALOG_SHIM::onSpinEvent( wxSpinEvent& aEvent )
+{
+    if( !m_handlingUndoRedo )
+        recordControlChange( static_cast<wxWindow*>( aEvent.GetEventObject() ) );
+
+    aEvent.Skip();
+}
+
+
+void DIALOG_SHIM::onSpinDoubleEvent( wxSpinDoubleEvent& aEvent )
+{
+    if( !m_handlingUndoRedo )
+        recordControlChange( static_cast<wxWindow*>( aEvent.GetEventObject() ) );
+
+    aEvent.Skip();
+}
+
+
+void DIALOG_SHIM::onStyledTextChanged( wxStyledTextEvent& aEvent )
+{
+    if( !m_handlingUndoRedo )
+        recordControlChange( static_cast<wxWindow*>( aEvent.GetEventObject() ) );
+
+    aEvent.Skip();
+}
+
+
+void DIALOG_SHIM::onGridCellChanged( wxGridEvent& aEvent )
+{
+    if( !m_handlingUndoRedo )
+        recordControlChange( static_cast<wxWindow*>( aEvent.GetEventObject() ) );
+
+    aEvent.Skip();
+}
+
+void DIALOG_SHIM::onPropertyGridChanged( wxPropertyGridEvent& aEvent )
+{
+    if( !m_handlingUndoRedo )
+        recordControlChange( static_cast<wxWindow*>( aEvent.GetEventObject() ) );
+
+    aEvent.Skip();
+}
+
+void DIALOG_SHIM::onDataViewListChanged( wxDataViewEvent& aEvent )
+{
+    if( !m_handlingUndoRedo )
+        recordControlChange( static_cast<wxWindow*>( aEvent.GetEventObject() ) );
+
+    aEvent.Skip();
+}
+
+wxVariant DIALOG_SHIM::getControlValue( wxWindow* aCtrl )
+{
+    if( wxTextCtrl* textCtrl = dynamic_cast<wxTextCtrl*>( aCtrl ) )
+        return wxVariant( textCtrl->GetValue() );
+    else if( wxStyledTextCtrl* scintilla = dynamic_cast<wxStyledTextCtrl*>( aCtrl ) )
+        return wxVariant( scintilla->GetText() );
+    else if( wxComboBox* combo = dynamic_cast<wxComboBox*>( aCtrl ) )
+        return wxVariant( combo->GetValue() );
+    else if( wxChoice* choice = dynamic_cast<wxChoice*>( aCtrl ) )
+        return wxVariant( (long) choice->GetSelection() );
+    else if( wxCheckBox* check = dynamic_cast<wxCheckBox*>( aCtrl ) )
+        return wxVariant( check->GetValue() );
+    else if( wxSpinCtrl* spin = dynamic_cast<wxSpinCtrl*>( aCtrl ) )
+        return wxVariant( (long) spin->GetValue() );
+    else if( wxSpinCtrlDouble* spinD = dynamic_cast<wxSpinCtrlDouble*>( aCtrl ) )
+        return wxVariant( spinD->GetValue() );
+    else if( wxRadioButton* radio = dynamic_cast<wxRadioButton*>( aCtrl ) )
+        return wxVariant( radio->GetValue() );
+    else if( wxRadioBox* radioBox = dynamic_cast<wxRadioBox*>( aCtrl ) )
+        return wxVariant( (long) radioBox->GetSelection() );
+    else if( wxGrid* grid = dynamic_cast<wxGrid*>( aCtrl ) )
+    {
+        nlohmann::json j = nlohmann::json::array();
+        int rows = grid->GetNumberRows();
+        int cols = grid->GetNumberCols();
+
+        for( int r = 0; r < rows; ++r )
+        {
+            nlohmann::json row = nlohmann::json::array();
+
+            for( int c = 0; c < cols; ++c )
+                row.push_back( std::string( grid->GetCellValue( r, c ).ToUTF8() ) );
+
+            j.push_back( row );
+        }
+
+        return wxVariant( wxString( j.dump() ) );
+    }
+    else if( wxPropertyGrid* propGrid = dynamic_cast<wxPropertyGrid*>( aCtrl ) )
+    {
+        nlohmann::json j;
+
+        for( wxPropertyGridIterator it = propGrid->GetIterator(); !it.AtEnd(); ++it )
+        {
+            wxPGProperty* prop = *it;
+            j[ prop->GetName().ToStdString() ] = prop->GetValueAsString().ToStdString();
+        }
+
+        return wxVariant( wxString( j.dump() ) );
+    }
+    else if( wxCheckListBox* checkList = dynamic_cast<wxCheckListBox*>( aCtrl ) )
+    {
+        nlohmann::json j = nlohmann::json::array();
+        unsigned int count = checkList->GetCount();
+
+        for( unsigned int i = 0; i < count; ++i )
+        {
+            if( checkList->IsChecked( i ) )
+                j.push_back( i );
+        }
+
+        return wxVariant( wxString( j.dump() ) );
+    }
+    else if( wxDataViewListCtrl* dataList = dynamic_cast<wxDataViewListCtrl*>( aCtrl ) )
+    {
+        nlohmann::json j = nlohmann::json::array();
+        unsigned int rows = dataList->GetItemCount();
+        unsigned int cols = dataList->GetColumnCount();
+
+        for( unsigned int r = 0; r < rows; ++r )
+        {
+            nlohmann::json row = nlohmann::json::array();
+
+            for( unsigned int c = 0; c < cols; ++c )
+            {
+                wxVariant val;
+                dataList->GetValue( val, r, c );
+                row.push_back( std::string( val.GetString().ToUTF8() ) );
+            }
+
+            j.push_back( row );
+        }
+
+        return wxVariant( wxString( j.dump() ) );
+    }
+    else
+        return wxVariant();
+}
+
+
+void DIALOG_SHIM::setControlValue( wxWindow* aCtrl, const wxVariant& aValue )
+{
+    if( wxTextCtrl* textCtrl = dynamic_cast<wxTextCtrl*>( aCtrl ) )
+        textCtrl->SetValue( aValue.GetString() );
+    else if( wxStyledTextCtrl* scintilla = dynamic_cast<wxStyledTextCtrl*>( aCtrl ) )
+        scintilla->SetText( aValue.GetString() );
+    else if( wxComboBox* combo = dynamic_cast<wxComboBox*>( aCtrl ) )
+        combo->SetValue( aValue.GetString() );
+    else if( wxChoice* choice = dynamic_cast<wxChoice*>( aCtrl ) )
+        choice->SetSelection( (int) aValue.GetLong() );
+    else if( wxCheckBox* check = dynamic_cast<wxCheckBox*>( aCtrl ) )
+        check->SetValue( aValue.GetBool() );
+    else if( wxSpinCtrl* spin = dynamic_cast<wxSpinCtrl*>( aCtrl ) )
+        spin->SetValue( (int) aValue.GetLong() );
+    else if( wxSpinCtrlDouble* spinD = dynamic_cast<wxSpinCtrlDouble*>( aCtrl ) )
+        spinD->SetValue( aValue.GetDouble() );
+    else if( wxRadioButton* radio = dynamic_cast<wxRadioButton*>( aCtrl ) )
+        radio->SetValue( aValue.GetBool() );
+    else if( wxRadioBox* radioBox = dynamic_cast<wxRadioBox*>( aCtrl ) )
+        radioBox->SetSelection( (int) aValue.GetLong() );
+    else if( wxGrid* grid = dynamic_cast<wxGrid*>( aCtrl ) )
+    {
+        nlohmann::json j = nlohmann::json::parse( aValue.GetString().ToStdString(), nullptr, false );
+
+        if( j.is_array() )
+        {
+            int rows = std::min( (int) j.size(), grid->GetNumberRows() );
+
+            for( int r = 0; r < rows; ++r )
+            {
+                nlohmann::json row = j[r];
+                int cols = std::min( (int) row.size(), grid->GetNumberCols() );
+
+                for( int c = 0; c < cols; ++c )
+                    grid->SetCellValue( r, c, wxString( row[c].get<std::string>() ) );
+            }
+        }
+    }
+    else if( wxPropertyGrid* propGrid = dynamic_cast<wxPropertyGrid*>( aCtrl ) )
+    {
+        nlohmann::json j = nlohmann::json::parse( aValue.GetString().ToStdString(), nullptr, false );
+
+        if( j.is_object() )
+        {
+            for( auto it = j.begin(); it != j.end(); ++it )
+                propGrid->SetPropertyValue( wxString( it.key() ), wxString( it.value().get<std::string>() ) );
+        }
+    }
+    else if( wxCheckListBox* checkList = dynamic_cast<wxCheckListBox*>( aCtrl ) )
+    {
+        nlohmann::json j = nlohmann::json::parse( aValue.GetString().ToStdString(), nullptr, false );
+
+        if( j.is_array() )
+        {
+            unsigned int count = checkList->GetCount();
+
+            for( unsigned int i = 0; i < count; ++i )
+                checkList->Check( i, false );
+
+            for( auto& idx : j )
+            {
+                unsigned int i = idx.get<unsigned int>();
+
+                if( i < count )
+                    checkList->Check( i, true );
+            }
+        }
+    }
+    else if( wxDataViewListCtrl* dataList = dynamic_cast<wxDataViewListCtrl*>( aCtrl ) )
+    {
+        nlohmann::json j = nlohmann::json::parse( aValue.GetString().ToStdString(), nullptr, false );
+
+        if( j.is_array() )
+        {
+            unsigned int rows = std::min( static_cast<unsigned int>( j.size() ),
+                                          static_cast<unsigned int>( dataList->GetItemCount() ) );
+
+            for( unsigned int r = 0; r < rows; ++r )
+            {
+                nlohmann::json row = j[r];
+                unsigned int cols = std::min( (unsigned int) row.size(), dataList->GetColumnCount() );
+
+                for( unsigned int c = 0; c < cols; ++c )
+                {
+                    wxVariant val( wxString( row[c].get<std::string>() ) );
+                    dataList->SetValue( val, r, c );
+                }
+            }
+        }
+    }
+}
+
+
+void DIALOG_SHIM::doUndo()
+{
+    if( m_undoStack.empty() )
+        return;
+
+    m_handlingUndoRedo = true;
+    UNDO_STEP step = m_undoStack.back();
+    m_undoStack.pop_back();
+    setControlValue( step.ctrl, step.before );
+    m_currentValues[ step.ctrl ] = step.before;
+    m_redoStack.push_back( step );
+    m_handlingUndoRedo = false;
+}
+
+
+void DIALOG_SHIM::doRedo()
+{
+    if( m_redoStack.empty() )
+        return;
+
+    m_handlingUndoRedo = true;
+    UNDO_STEP step = m_redoStack.back();
+    m_redoStack.pop_back();
+    setControlValue( step.ctrl, step.after );
+    m_currentValues[ step.ctrl ] = step.after;
+    m_undoStack.push_back( step );
+    m_handlingUndoRedo = false;
+}
+
+
 void DIALOG_SHIM::OnPaint( wxPaintEvent &event )
 {
     if( m_firstPaintEvent )
@@ -425,6 +1299,7 @@ void DIALOG_SHIM::OnPaint( wxPaintEvent &event )
         KIPLATFORM::UI::FixupCancelButtonCmdKeyCollision( this );
 
         SelectAllInTextCtrls( GetChildren() );
+        registerUndoRedoHandlers( GetChildren() );
 
         if( m_initialFocusTarget )
             KIPLATFORM::UI::ForceFocus( m_initialFocusTarget );
@@ -464,14 +1339,17 @@ int DIALOG_SHIM::ShowModal()
 }
 
 /*
-    Quasi-Modal Mode Explained:
+    QuasiModal Mode Explained:
 
     The gtk calls in wxDialog::ShowModal() cause event routing problems if that
     modal dialog then tries to use KIWAY_PLAYER::ShowModal().  The latter shows up
     and mostly works but does not respond to the window decoration close button.
     There is no way to get around this without reversing the gtk calls temporarily.
 
-    Quasi-Modal mode is our own almost modal mode which disables only the parent
+    There are also issues with the Scintilla text editor putting up autocomplete
+    popups, which appear behind the dialog window if QuasiModal is not used.
+
+    QuasiModal mode is our own almost modal mode which disables only the parent
     of the DIALOG_SHIM, leaving other frames operable and while staying captured in the
     nested event loop.  This avoids the gtk calls and leaves event routing pure
     and sufficient to operate the KIWAY_PLAYER::ShowModal() properly.  When using
@@ -493,15 +1371,13 @@ int DIALOG_SHIM::ShowQuasiModal()
     // release the mouse if it's currently captured as the window having it
     // will be disabled when this dialog is shown -- but will still keep the
     // capture making it impossible to do anything in the modal dialog itself
-    wxWindow* win = wxWindow::GetCapture();
-    if( win )
+    if( wxWindow* win = wxWindow::GetCapture() )
         win->ReleaseMouse();
 
     // Get the optimal parent
     wxWindow* parent = GetParentForModalDialog( GetParent(), GetWindowStyle() );
 
-    wxASSERT_MSG( !m_qmodal_parent_disabler, wxT( "Caller using ShowQuasiModal() twice on same "
-                                                  "window?" ) );
+    wxASSERT_MSG( !m_qmodal_parent_disabler, wxT( "Caller using ShowQuasiModal() twice on same window?" ) );
 
     // quasi-modal: disable only my "optimal" parent
     m_qmodal_parent_disabler = new WINDOW_DISABLER( parent );
@@ -523,9 +1399,7 @@ int DIALOG_SHIM::ShowQuasiModal()
     event_loop.Run();
 
     m_qmodal_showing = false;
-
-    if( parent )
-        parent->SetFocus();
+    focusParentCanvas();
 
     return GetReturnCode();
 }
@@ -556,8 +1430,7 @@ void DIALOG_SHIM::EndQuasiModal( int retCode )
 
     if( !IsQuasiModal() )
     {
-        wxFAIL_MSG( wxT( "Either DIALOG_SHIM::EndQuasiModal was called twice, or ShowQuasiModal"
-                         "wasn't called" ) );
+        wxFAIL_MSG( wxT( "Either DIALOG_SHIM::EndQuasiModal was called twice, or ShowQuasiModal wasn't called" ) );
         return;
     }
 
@@ -578,10 +1451,30 @@ void DIALOG_SHIM::EndQuasiModal( int retCode )
 }
 
 
+void DIALOG_SHIM::resetUndoRedoForNewContent( wxWindowList& aChildren )
+{
+    m_undoStack.clear();
+    m_redoStack.clear();
+    m_currentValues.clear();
+    registerUndoRedoHandlers( aChildren );
+}
+
+
+void DIALOG_SHIM::unregisterUnitBinders( wxWindow* aWindow )
+{
+    m_unitBinders.erase( aWindow );
+
+    for( wxWindow* child : aWindow->GetChildren() )
+        unregisterUnitBinders( child );
+}
+
+
 void DIALOG_SHIM::OnCloseWindow( wxCloseEvent& aEvent )
 {
     wxString msg = wxString::Format( "Closing dialog %s", GetTitle() );
     APP_MONITOR::AddNavigationBreadcrumb( msg, "dialog.close" );
+
+    SaveControlState();
 
     if( IsQuasiModal() )
     {
@@ -611,9 +1504,7 @@ void DIALOG_SHIM::OnButton( wxCommandEvent& aEvent )
             // (i.e. the dialog can't refuse to close as it might with OK, because it
             // isn't closing anyway)
             if( Validate() )
-            {
                 ignore_unused( TransferDataFromWindow() );
-            }
         }
         else if( id == wxID_CANCEL )
         {
@@ -650,6 +1541,30 @@ void DIALOG_SHIM::onChildSetFocus( wxFocusEvent& aEvent )
 
 void DIALOG_SHIM::OnCharHook( wxKeyEvent& aEvt )
 {
+    int key = aEvt.GetKeyCode();
+    int mods = 0;
+
+    if( aEvt.ControlDown() )
+        mods |= MD_CTRL;
+    if( aEvt.ShiftDown() )
+        mods |= MD_SHIFT;
+    if( aEvt.AltDown() )
+        mods |= MD_ALT;
+
+    int hotkey = key | mods;
+
+    // Check for standard undo/redo hotkeys
+    if( hotkey == (MD_CTRL + 'Z') )
+    {
+        doUndo();
+        return;
+    }
+    else if( hotkey == (MD_CTRL + MD_SHIFT + 'Z') || hotkey == (MD_CTRL + 'Y') )
+    {
+        doRedo();
+        return;
+    }
+
     if( aEvt.GetKeyCode() == 'U' && aEvt.GetModifiers() == wxMOD_CONTROL )
     {
         if( m_parentFrame )
@@ -686,11 +1601,12 @@ void DIALOG_SHIM::OnCharHook( wxKeyEvent& aEvt )
         else if( wxStyledTextCtrl* scintilla = dynamic_cast<wxStyledTextCtrl*>( eventSource ) )
         {
             wxString eol = "\n";
+
             switch( scintilla->GetEOLMode() )
             {
             case wxSTC_EOL_CRLF: eol = "\r\n"; break;
-            case wxSTC_EOL_CR: eol = "\r"; break;
-            case wxSTC_EOL_LF: eol = "\n"; break;
+            case wxSTC_EOL_CR:   eol = "\r";   break;
+            case wxSTC_EOL_LF:   eol = "\n";   break;
             }
 
             long pos = scintilla->GetCurrentPos();
@@ -722,7 +1638,10 @@ void DIALOG_SHIM::OnCharHook( wxKeyEvent& aEvt )
 
         for( size_t i = 0; i < m_tabOrder.size(); ++i )
         {
-            if( m_tabOrder[i] == currentWindow )
+            // Check for exact match or if currentWindow is a child of the control
+            // (e.g., the text entry inside a wxComboBox)
+            if( m_tabOrder[i] == currentWindow
+                || ( currentWindow && m_tabOrder[i]->IsDescendant( currentWindow ) ) )
             {
                 currentIdx = (int) i;
                 break;
@@ -732,6 +1651,17 @@ void DIALOG_SHIM::OnCharHook( wxKeyEvent& aEvt )
         if( currentIdx >= 0 )
         {
             advance( currentIdx );
+
+            // Skip hidden or disabled controls
+            int startIdx = currentIdx;
+
+            while( !m_tabOrder[currentIdx]->IsShown() || !m_tabOrder[currentIdx]->IsEnabled() )
+            {
+                advance( currentIdx );
+
+                if( currentIdx == startIdx )
+                    break;  // Avoid infinite loop if all controls are hidden
+            }
 
             //todo: We don't currently have non-textentry dialog boxes but this will break if
             // we add them.

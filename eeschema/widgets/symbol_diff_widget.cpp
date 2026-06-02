@@ -45,18 +45,18 @@ SYMBOL_DIFF_WIDGET::SYMBOL_DIFF_WIDGET( wxWindow* aParent,
     wxStaticText* libLabel = new wxStaticText( this, wxID_ANY, _( "Library" ) );
     m_slider = new wxSlider( this, wxID_ANY, 50, 0, 100 );
 
-    bottomSizer->Add( schLabel, 0, wxLEFT | wxRIGHT | wxBOTTOM | wxALIGN_CENTRE_VERTICAL, 6 );
-    bottomSizer->Add( m_slider, 1, wxLEFT | wxRIGHT | wxALIGN_BOTTOM, 30 );
-    bottomSizer->Add( libLabel, 0, wxLEFT | wxRIGHT | wxBOTTOM | wxALIGN_CENTRE_VERTICAL, 6 );
+    bottomSizer->Add( schLabel, 0, wxALIGN_CENTRE_VERTICAL, 6 );
+    bottomSizer->Add( m_slider, 1, wxLEFT | wxALIGN_CENTRE_VERTICAL, 6 );
+    bottomSizer->Add( libLabel, 0, wxLEFT | wxALIGN_CENTRE_VERTICAL, 6 );
 
     m_toggleButton = new wxBitmapButton( this, wxID_ANY, KiBitmapBundle( BITMAPS::swap ) );
     wxString toggleTooltip = _( "Toggle between A and B display" );
     toggleTooltip = AddHotkeyName( toggleTooltip, '/', HOTKEY_ACTION_TYPE::IS_COMMENT );
     m_toggleButton->SetToolTip( toggleTooltip );
 
-    bottomSizer->Add( m_toggleButton, 0, wxLEFT | wxRIGHT | wxALIGN_CENTRE_VERTICAL, 6 );
+    bottomSizer->Add( m_toggleButton, 0, wxLEFT | wxALIGN_CENTRE_VERTICAL, 6 );
 
-    m_outerSizer->Add( bottomSizer, 0, wxTOP | wxLEFT | wxRIGHT | wxEXPAND, 10 );
+    m_outerSizer->Add( bottomSizer, 0, wxTOP | wxEXPAND, 6 );
 
     Layout();
 
@@ -87,7 +87,7 @@ SYMBOL_DIFF_WIDGET::~SYMBOL_DIFF_WIDGET()
 
 
 void SYMBOL_DIFF_WIDGET::DisplayDiff( LIB_SYMBOL* aSchSymbol, LIB_SYMBOL* aLibSymbol, int aUnit,
-                                      int aConvert )
+                                      int aBodyStyle )
 {
     KIGFX::VIEW* view = m_preview->GetView();
 
@@ -111,19 +111,18 @@ void SYMBOL_DIFF_WIDGET::DisplayDiff( LIB_SYMBOL* aSchSymbol, LIB_SYMBOL* aLibSy
         // For symbols having a De Morgan body style, use the first style
         auto settings = static_cast<SCH_RENDER_SETTINGS*>( view->GetPainter()->GetSettings() );
 
-        settings->m_ShowUnit = ( m_previewItem->IsMulti() && !aUnit ) ? 1 : aUnit;
-        settings->m_ShowBodyStyle = ( m_previewItem->HasAlternateBodyStyle() && !aConvert ) ? 1 : aConvert;
+        settings->m_ShowUnit = ( m_previewItem->IsMultiUnit() && !aUnit ) ? 1 : aUnit;
+        settings->m_ShowBodyStyle = ( m_previewItem->IsMultiBodyStyle() && !aBodyStyle ) ? 1 : aBodyStyle;
 
         view->Add( m_previewItem );
 
         // Get the symbol size, in internal units
-        m_itemBBox = m_previewItem->GetUnitBoundingBox( settings->m_ShowUnit,
-                                                        settings->m_ShowBodyStyle );
+        m_itemBBox = m_previewItem->GetUnitBoundingBox( settings->m_ShowUnit, settings->m_ShowBodyStyle );
 
         // Calculate the draw scale to fit the drawing area
         fitOnDrawArea();
 
-        wxASSERT( aLibSymbol );
+        wxCHECK( aLibSymbol, /* void */ );
 
         m_libraryItem = aLibSymbol;
         view->Add( m_libraryItem );

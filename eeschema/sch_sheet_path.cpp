@@ -29,11 +29,11 @@
 #include <sch_marker.h>
 #include <sch_label.h>
 #include <sch_shape.h>
-#include <symbol_library.h>
 #include <sch_sheet_path.h>
 #include <sch_symbol.h>
 #include <sch_sheet.h>
 #include <schematic.h>
+#include <string_utils.h>
 #include <template_fieldnames.h>
 #include <trace_helpers.h>
 
@@ -96,6 +96,26 @@ public:
 };
 
 
+void SCH_SYMBOL_VARIANT::InitializeAttributes( const SCH_SYMBOL& aSymbol )
+{
+    m_DNP = aSymbol.GetDNP();
+    m_ExcludedFromBOM = aSymbol.GetExcludedFromBOM();
+    m_ExcludedFromSim = aSymbol.GetExcludedFromSim();
+    m_ExcludedFromBoard = aSymbol.GetExcludedFromBoard();
+    m_ExcludedFromPosFiles = aSymbol.GetExcludedFromPosFiles();
+}
+
+
+void SCH_SHEET_VARIANT::InitializeAttributes( const SCH_SHEET& aSheet )
+{
+    m_DNP = aSheet.GetDNP();
+    m_ExcludedFromBOM = aSheet.GetExcludedFromBOM();
+    m_ExcludedFromSim = aSheet.GetExcludedFromSim();
+    m_ExcludedFromBoard = aSheet.GetExcludedFromBoard();
+    m_ExcludedFromPosFiles = false;  // Sheets don't have position files exclusion
+}
+
+
 namespace std
 {
     size_t hash<SCH_SHEET_PATH>::operator()( const SCH_SHEET_PATH& path ) const
@@ -125,6 +145,21 @@ SCH_SHEET_PATH& SCH_SHEET_PATH::operator=( const SCH_SHEET_PATH& aOther )
 }
 
 
+// Move assignment operator
+SCH_SHEET_PATH& SCH_SHEET_PATH::operator=( SCH_SHEET_PATH&& aOther )
+{
+    m_sheets = std::move( aOther.m_sheets );
+
+    m_virtualPageNumber  = aOther.m_virtualPageNumber;
+    m_current_hash       = aOther.m_current_hash;
+    m_cached_page_number = aOther.m_cached_page_number;
+
+    m_recursion_test_cache = std::move( aOther.m_recursion_test_cache );
+
+    return *this;
+}
+
+
 SCH_SHEET_PATH SCH_SHEET_PATH::operator+( const SCH_SHEET_PATH& aOther )
 {
     SCH_SHEET_PATH retv = *this;
@@ -145,18 +180,10 @@ void SCH_SHEET_PATH::initFromOther( const SCH_SHEET_PATH& aOther )
     m_current_hash       = aOther.m_current_hash;
     m_cached_page_number = aOther.m_cached_page_number;
 
-    // Note: don't copy m_recursion_test_cache as it is slow and we want
-    // std::vector<SCH_SHEET_PATH> to be very fast to construct for use in
-    // the connectivity algorithm.
+    // Note: don't copy m_recursion_test_cache as it is slow and we want std::vector<SCH_SHEET_PATH>
+    // to be very fast to construct for use in the connectivity algorithm.
+    m_recursion_test_cache.clear();
 }
-
-
-bool SCH_SHEET_PATH::IsFullPath() const
-{
-    // The root sheet path is empty.  All other sheet paths must start with the root sheet path.
-    return ( m_sheets.size() == 0 ) || ( GetSheet( 0 )->IsRootSheet() );
-}
-
 
 void SCH_SHEET_PATH::Rehash()
 {
@@ -277,11 +304,51 @@ bool SCH_SHEET_PATH::GetExcludedFromSim() const
 }
 
 
+bool SCH_SHEET_PATH::GetExcludedFromSim( const wxString& aVariantName ) const
+{
+    if( aVariantName.IsEmpty() )
+        return GetExcludedFromSim();
+
+    SCH_SHEET_PATH copy = *this;
+
+    while( !copy.empty() )
+    {
+        SCH_SHEET* sheet = copy.Last();
+        copy.pop_back();
+
+        if( sheet->GetExcludedFromSim( &copy, aVariantName ) )
+            return true;
+    }
+
+    return false;
+}
+
+
 bool SCH_SHEET_PATH::GetExcludedFromBOM() const
 {
     for( SCH_SHEET* sheet : m_sheets )
     {
         if( sheet->GetExcludedFromBOM() )
+            return true;
+    }
+
+    return false;
+}
+
+
+bool SCH_SHEET_PATH::GetExcludedFromBOM( const wxString& aVariantName ) const
+{
+    if( aVariantName.IsEmpty() )
+        return GetExcludedFromBOM();
+
+    SCH_SHEET_PATH copy = *this;
+
+    while( !copy.empty() )
+    {
+        SCH_SHEET* sheet = copy.Last();
+        copy.pop_back();
+
+        if( sheet->GetExcludedFromBOM( &copy, aVariantName ) )
             return true;
     }
 
@@ -301,11 +368,51 @@ bool SCH_SHEET_PATH::GetExcludedFromBoard() const
 }
 
 
+bool SCH_SHEET_PATH::GetExcludedFromBoard( const wxString& aVariantName ) const
+{
+    if( aVariantName.IsEmpty() )
+        return GetExcludedFromBoard();
+
+    SCH_SHEET_PATH copy = *this;
+
+    while( !copy.empty() )
+    {
+        SCH_SHEET* sheet = copy.Last();
+        copy.pop_back();
+
+        if( sheet->GetExcludedFromBoard( &copy, aVariantName ) )
+            return true;
+    }
+
+    return false;
+}
+
+
 bool SCH_SHEET_PATH::GetDNP() const
 {
     for( SCH_SHEET* sheet : m_sheets )
     {
         if( sheet->GetDNP() )
+            return true;
+    }
+
+    return false;
+}
+
+
+bool SCH_SHEET_PATH::GetDNP( const wxString& aVariantName ) const
+{
+    if( aVariantName.IsEmpty() )
+        return GetDNP();
+
+    SCH_SHEET_PATH copy = *this;
+
+    while( !copy.empty() )
+    {
+        SCH_SHEET* sheet = copy.Last();
+        copy.pop_back();
+
+        if( sheet->GetDNP( &copy, aVariantName ) )
             return true;
     }
 
@@ -331,19 +438,40 @@ wxString SCH_SHEET_PATH::PathAsString() const
 KIID_PATH SCH_SHEET_PATH::Path() const
 {
     KIID_PATH path;
-    path.reserve( m_sheets.size() );
+    size_t size = m_sheets.size();
 
-    for( const SCH_SHEET* sheet : m_sheets )
-        path.push_back( sheet->m_Uuid );
+    if( m_sheets.empty() )
+        return path;
+
+    if( m_sheets[0]->m_Uuid != niluuid )
+    {
+        path.reserve( size );
+        path.push_back( m_sheets[0]->m_Uuid );
+    }
+    else
+    {
+        // Skip the virtual root
+        path.reserve( size - 1 );
+    }
+
+    for( size_t i = 1; i < size; i++ )
+        path.push_back( m_sheets[i]->m_Uuid );
 
     return path;
 }
 
 
 wxString SCH_SHEET_PATH::PathHumanReadable( bool aUseShortRootName,
-                                            bool aStripTrailingSeparator ) const
+                                            bool aStripTrailingSeparator,
+                                            bool aEscapeSheetNames ) const
 {
     wxString s;
+
+    // Determine the starting index - skip virtual root if present
+    size_t startIdx = 0;
+
+    if( !empty() && at( 0 )->IsVirtualRootSheet() )
+        startIdx = 1;
 
     if( aUseShortRootName )
     {
@@ -353,17 +481,24 @@ wxString SCH_SHEET_PATH::PathHumanReadable( bool aUseShortRootName,
     {
         wxString fileName;
 
-        if( !empty() && at( 0 )->GetScreen() )
-            fileName = at( 0 )->GetScreen()->GetFileName();
+        if( size() > startIdx && at( startIdx )->GetScreen() )
+            fileName = at( startIdx )->GetScreen()->GetFileName();
 
         wxFileName fn = fileName;
 
         s = fn.GetName() + wxS( "/" );
     }
 
-    // Start at 1 since we've already processed the root sheet.
-    for( unsigned i = 1; i < size(); i++ )
-        s << at( i )->GetField( FIELD_T::SHEET_NAME )->GetShownText( false ) << wxS( "/" );
+    // Start at startIdx + 1 since we've already processed the root sheet.
+    for( unsigned i = startIdx + 1; i < size(); i++ )
+    {
+        wxString sheetName = at( i )->GetField( FIELD_T::SHEET_NAME )->GetShownText( false );
+
+        if( aEscapeSheetNames )
+            sheetName = EscapeString( sheetName, CTX_NETNAME );
+
+        s << sheetName << wxS( "/" );
+    }
 
     if( aStripTrailingSeparator && s.EndsWith( "/" ) )
         s = s.Left( s.length() - 1 );
@@ -384,6 +519,12 @@ void SCH_SHEET_PATH::UpdateAllScreenReferences() const
                         || aItem->Type() == SCH_GLOBAL_LABEL_T
                         || aItem->Type() == SCH_SHAPE_T );
             } );
+
+    std::optional<wxString> variantName;
+    const SCHEMATIC* schematic = LastScreen()->Schematic();
+
+    if( schematic )
+        variantName = schematic->GetCurrentVariant();
 
     for( SCH_ITEM* item : items )
     {
@@ -421,54 +562,67 @@ void SCH_SHEET_PATH::UpdateAllScreenReferences() const
 }
 
 
-void SCH_SHEET_PATH::GetSymbols( SCH_REFERENCE_LIST& aReferences, bool aIncludePowerSymbols,
+static bool matchesSymbolFilter( const wxString& aReference, SYMBOL_FILTER aSymbolFilter )
+{
+    bool isPowerSymbol = !aReference.IsEmpty() && aReference[0] == wxT( '#' );
+
+    switch( aSymbolFilter )
+    {
+    case SYMBOL_FILTER_POWER: return isPowerSymbol;
+
+    case SYMBOL_FILTER_ALL: return true;
+
+    case SYMBOL_FILTER_NON_POWER:
+    default: return !isPowerSymbol;
+    }
+}
+
+
+void SCH_SHEET_PATH::GetSymbols( SCH_REFERENCE_LIST& aReferences, SYMBOL_FILTER aSymbolFilter,
                                  bool aForceIncludeOrphanSymbols ) const
 {
     for( SCH_ITEM* item : LastScreen()->Items().OfType( SCH_SYMBOL_T ) )
     {
         SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
-        AppendSymbol( aReferences, symbol, aIncludePowerSymbols, aForceIncludeOrphanSymbols );
+        AppendSymbol( aReferences, symbol, aSymbolFilter, aForceIncludeOrphanSymbols );
     }
 }
 
 
-void SCH_SHEET_PATH::AppendSymbol( SCH_REFERENCE_LIST& aReferences, SCH_SYMBOL* aSymbol,
-                                   bool aIncludePowerSymbols,
+void SCH_SHEET_PATH::AppendSymbol( SCH_REFERENCE_LIST& aReferences, SCH_SYMBOL* aSymbol, SYMBOL_FILTER aSymbolFilter,
                                    bool aForceIncludeOrphanSymbols ) const
 {
     // Skip pseudo-symbols, which have a reference starting with #.  This mainly
     // affects power symbols.
-    if( aIncludePowerSymbols || aSymbol->GetRef( this )[0] != wxT( '#' ) )
+    if( matchesSymbolFilter( aSymbol->GetRef( this ), aSymbolFilter ) )
     {
         if( aSymbol->GetLibSymbolRef() || aForceIncludeOrphanSymbols )
         {
             SCH_REFERENCE schReference( aSymbol, *this );
 
-            schReference.SetSheetNumber( m_virtualPageNumber );
+            schReference.SetSheetNumber( GetPageNumberAsInt() );
             aReferences.AddItem( schReference );
         }
     }
 }
 
 
-void SCH_SHEET_PATH::GetMultiUnitSymbols( SCH_MULTI_UNIT_REFERENCE_MAP& aRefList,
-                                          bool aIncludePowerSymbols ) const
+void SCH_SHEET_PATH::GetMultiUnitSymbols( SCH_MULTI_UNIT_REFERENCE_MAP& aRefList, SYMBOL_FILTER aSymbolFilter ) const
 {
     for( SCH_ITEM* item : LastScreen()->Items().OfType( SCH_SYMBOL_T ) )
     {
         SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
-        AppendMultiUnitSymbol( aRefList, symbol, aIncludePowerSymbols );
+        AppendMultiUnitSymbol( aRefList, symbol, aSymbolFilter );
     }
 }
 
 
-void SCH_SHEET_PATH::AppendMultiUnitSymbol( SCH_MULTI_UNIT_REFERENCE_MAP& aRefList,
-                                            SCH_SYMBOL* aSymbol,
-                                            bool aIncludePowerSymbols ) const
+void SCH_SHEET_PATH::AppendMultiUnitSymbol( SCH_MULTI_UNIT_REFERENCE_MAP& aRefList, SCH_SYMBOL* aSymbol,
+                                            SYMBOL_FILTER aSymbolFilter ) const
 {
     // Skip pseudo-symbols, which have a reference starting with #.  This mainly
     // affects power symbols.
-    if( !aIncludePowerSymbols && aSymbol->GetRef( this )[0] == wxT( '#' ) )
+    if( !matchesSymbolFilter( aSymbol->GetRef( this ), aSymbolFilter ) )
         return;
 
     LIB_SYMBOL* symbol = aSymbol->GetLibSymbolRef().get();
@@ -476,7 +630,7 @@ void SCH_SHEET_PATH::AppendMultiUnitSymbol( SCH_MULTI_UNIT_REFERENCE_MAP& aRefLi
     if( symbol && symbol->GetUnitCount() > 1 )
     {
         SCH_REFERENCE schReference = SCH_REFERENCE( aSymbol, *this );
-        schReference.SetSheetNumber( m_virtualPageNumber );
+        schReference.SetSheetNumber( GetPageNumberAsInt() );
         wxString reference_str = schReference.GetRef();
 
         // Never lock unassigned references
@@ -581,9 +735,24 @@ wxString SCH_SHEET_PATH::GetPageNumber() const
     wxCHECK( sheet, wxEmptyString );
 
     KIID_PATH tmpPath = Path();
-    tmpPath.pop_back();
+
+    if( !tmpPath.empty() )
+        tmpPath.pop_back();
+    else
+        return wxEmptyString;
 
     return sheet->getPageNumber( tmpPath );
+}
+
+int SCH_SHEET_PATH::GetPageNumberAsInt() const
+{
+    long page;
+    wxString pageStr = GetPageNumber();
+
+    if( pageStr.ToLong( &page ) )
+        return (int) page;
+
+    return GetVirtualPageNumber();
 }
 
 
@@ -595,7 +764,14 @@ void SCH_SHEET_PATH::SetPageNumber( const wxString& aPageNumber )
 
     KIID_PATH tmpPath = Path();
 
-    tmpPath.pop_back();
+    if( !tmpPath.empty() )
+    {
+        tmpPath.pop_back();
+    }
+    else
+    {
+        wxCHECK_MSG( false, /* void */, wxS( "Sheet paths must have a least one valid sheet." ) );
+    }
 
     sheet->addInstance( tmpPath );
     sheet->setPageNumber( tmpPath, aPageNumber );
@@ -673,7 +849,14 @@ void SCH_SHEET_PATH::RemoveSymbolInstances( const SCH_SHEET_PATH& aPrefixSheetPa
 
 void SCH_SHEET_PATH::CheckForMissingSymbolInstances( const wxString& aProjectName )
 {
-    wxCHECK( !aProjectName.IsEmpty() && LastScreen(), /* void */ );
+    // Skip sheet paths without screens (e.g., sheets that haven't been loaded yet or virtual root)
+    if( aProjectName.IsEmpty() || !LastScreen() )
+        return;
+
+    wxLogTrace( traceSchSheetPaths, "CheckForMissingSymbolInstances for path: %s (project: %s)",
+                PathHumanReadable( false ), aProjectName );
+    wxLogTrace( traceSchSheetPaths, "  Sheet path size=%zu, Path().AsString()='%s'",
+                size(), Path().AsString() );
 
     for( SCH_ITEM* item : LastScreen()->Items().OfType( SCH_SYMBOL_T ) )
     {
@@ -697,18 +880,51 @@ void SCH_SHEET_PATH::CheckForMissingSymbolInstances( const wxString& aProjectNam
                 SCH_FIELD* refField = symbol->GetField( FIELD_T::REFERENCE );
                 symbolInstance.m_Reference = refField->GetShownText( this, true );
                 symbolInstance.m_Unit = symbol->GetUnit();
+
+                wxLogTrace( traceSchSheetPaths,
+                           "  Legacy format: Using reference '%s' from field, unit %d",
+                           symbolInstance.m_Reference, symbolInstance.m_Unit );
+            }
+            else if( !symbol->GetInstances().empty() )
+            {
+                // When a schematic is opened as a different project (e.g., a subsheet opened
+                // directly from File Browser), use the first available instance data.
+                // This provides better UX than showing unannotated references.
+                const SCH_SYMBOL_INSTANCE& firstInstance = symbol->GetInstances()[0];
+                symbolInstance.m_Reference = firstInstance.m_Reference;
+                symbolInstance.m_Unit = firstInstance.m_Unit;
+
+                wxLogTrace( traceSchSheetPaths,
+                           "  Using first available instance: ref=%s, unit=%d",
+                           symbolInstance.m_Reference, symbolInstance.m_Unit );
             }
             else
             {
-                // When schematics are shared, we cannot know which instance the current symbol
-                // reference field and unit belong to.  In this case, we clear the reference
-                // annotation and set the unit to 1.
-                symbolInstance.m_Reference = UTIL::GetRefDesUnannotated( symbol->GetPrefix() );
+                // Fall back to the symbol's reference field and unit if no instance data exists.
+                SCH_FIELD* refField = symbol->GetField( FIELD_T::REFERENCE );
+                symbolInstance.m_Reference = refField->GetText();
+                symbolInstance.m_Unit = symbol->GetUnit();
+
+                wxLogTrace( traceSchSheetPaths,
+                           "  No instance data: Using reference '%s' from field, unit %d",
+                           symbolInstance.m_Reference, symbolInstance.m_Unit );
             }
 
             symbolInstance.m_ProjectName = aProjectName;
             symbolInstance.m_Path = Path();
             symbol->AddHierarchicalReference( symbolInstance );
+
+            wxLogTrace( traceSchSheetPaths,
+                       "  Created instance: ref=%s, path=%s",
+                       symbolInstance.m_Reference, symbolInstance.m_Path.AsString() );
+        }
+        else
+        {
+            wxLogTrace( traceSchSheetPaths,
+                       "  Symbol %s already has instance: ref=%s, path=%s",
+                       symbol->m_Uuid.AsString(),
+                       symbolInstance.m_Reference,
+                       symbolInstance.m_Path.AsString() );
         }
     }
 }
@@ -769,6 +985,32 @@ void SCH_SHEET_LIST::BuildSheetList( SCH_SHEET* aSheet, bool aCheckIntegrity )
 {
     if( !aSheet )
         return;
+
+    wxLogTrace( traceSchSheetPaths,
+               "BuildSheetList called with sheet '%s' (UUID=%s, isVirtualRoot=%d)",
+               aSheet->GetName(),
+               aSheet->m_Uuid.AsString(),
+               aSheet->m_Uuid == niluuid ? 1 : 0 );
+
+    // Special handling for virtual root: process its children without adding the root itself
+    if( aSheet->IsVirtualRootSheet() )
+    {
+        wxLogTrace( traceSchSheetPaths, "  Skipping virtual root, processing children only" );
+
+        if( aSheet->GetScreen() )
+        {
+            std::vector<SCH_ITEM*> childSheets;
+            aSheet->GetScreen()->GetSheets( &childSheets );
+
+            for( SCH_ITEM* item : childSheets )
+            {
+                SCH_SHEET* sheet = static_cast<SCH_SHEET*>( item );
+                BuildSheetList( sheet, aCheckIntegrity );
+            }
+        }
+
+        return;
+    }
 
     std::vector<SCH_SHEET*> badSheets;
 
@@ -847,16 +1089,13 @@ void SCH_SHEET_LIST::SortByHierarchicalPageNumbers( bool aUpdateVirtualPageNums 
             SCH_SHEET* sheet_b = b.at( common_len );
 
             // Create partial paths to get to these sheets for page number comparison
-            KIID_PATH path_a, path_b;
-            for( size_t i = 0; i <= common_len; i++ )
-            {
-                path_a.push_back( a.at( i )->m_Uuid );
-                path_b.push_back( b.at( i )->m_Uuid );
-            }
+            KIID_PATH ancestor;
+            for( size_t i = 0; i < common_len; i++ )
+                ancestor.push_back( a.at( i )->m_Uuid );
 
             // Compare page numbers - use the last sheet's page number
-            wxString page_a = sheet_a->getPageNumber( path_a );
-            wxString page_b = sheet_b->getPageNumber( path_b );
+            wxString page_a = sheet_a->getPageNumber( ancestor );
+            wxString page_b = sheet_b->getPageNumber( ancestor );
 
             int retval = SCH_SHEET::ComparePageNum( page_a, page_b );
 
@@ -956,6 +1195,33 @@ void SCH_SHEET_LIST::TrimToPageNumbers( const std::vector<wxString>& aPageInclus
 }
 
 
+wxString SCH_SHEET_LIST::GetNextPageNumber() const
+{
+    wxString pageNumber;
+
+    // Find the next available page number by checking all existing page numbers
+    std::set<int> usedPageNumbers;
+
+    for( const SCH_SHEET_PATH& path : *this )
+    {
+        wxString existingPageNum = path.GetPageNumber();
+        long pageNum = 0;
+
+        if( existingPageNum.ToLong( &pageNum ) && pageNum > 0 )
+            usedPageNumbers.insert( static_cast<int>( pageNum ) );
+    }
+
+    // Find the first available number starting from 1
+    int nextAvailable = 1;
+
+    while( usedPageNumbers.count( nextAvailable ) > 0 )
+        nextAvailable++;
+
+    pageNumber.Printf( wxT( "%d" ), nextAvailable );
+    return pageNumber;
+}
+
+
 bool SCH_SHEET_LIST::IsModified() const
 {
     for( const SCH_SHEET_PATH& sheet : *this )
@@ -1051,7 +1317,6 @@ void SCH_SHEET_LIST::AnnotatePowerSymbols()
 {
     // List of reference for power symbols
     SCH_REFERENCE_LIST references;
-    SCH_REFERENCE_LIST additionalreferences; // Todo: add as a parameter to this function
 
     // Map of locked symbols (not used, but needed by Annotate()
     SCH_MULTI_UNIT_REFERENCE_MAP lockedSymbols;
@@ -1079,6 +1344,9 @@ void SCH_SHEET_LIST::AnnotatePowerSymbols()
     {
         wxString curr_ref = references[ii].GetRef();
 
+        if( curr_ref.IsEmpty() )
+            continue;
+
         if( ref_list.find( curr_ref ) == ref_list.end() )
         {
             ref_list[curr_ref] = ii;
@@ -1090,7 +1358,7 @@ void SCH_SHEET_LIST::AnnotatePowerSymbols()
             continue;   // not annotated
 
         // Duplicate: clear annotation by removing the number ending the ref
-        while( curr_ref.Last() >= '0' && curr_ref.Last() <= '9' )
+        while( !curr_ref.IsEmpty() && curr_ref.Last() >= '0' && curr_ref.Last() <= '9' )
             curr_ref.RemoveLast();
 
         references[ii].SetRef( curr_ref );
@@ -1104,36 +1372,33 @@ void SCH_SHEET_LIST::AnnotatePowerSymbols()
     // (Not sure this is really useful)
     for( unsigned ii = 0; ii< references.GetCount(); ++ii )
     {
-        if( references[ii].GetRef()[0] != '#' )
+        SCH_REFERENCE& ref_unit = references[ii];
+
+        if( ref_unit.GetRef()[0] != '#' )
         {
-            wxString new_ref = "#" + references[ii].GetRef();
-            references[ii].SetRef( new_ref );
+            wxString new_ref = "#" + ref_unit.GetRef();
+            ref_unit.SetRef( new_ref );
+            ref_unit.SetRefNum( ii );
         }
     }
-
-    // Recalculate and update reference numbers in schematic
-    references.Annotate( false, 0, 100, lockedSymbols, additionalreferences );
-    references.UpdateAnnotation();
 }
 
 
-void SCH_SHEET_LIST::GetSymbols( SCH_REFERENCE_LIST& aReferences, bool aIncludePowerSymbols,
+void SCH_SHEET_LIST::GetSymbols( SCH_REFERENCE_LIST& aReferences, SYMBOL_FILTER aSymbolFilter,
                                  bool aForceIncludeOrphanSymbols ) const
 {
     for( const SCH_SHEET_PATH& sheet : *this )
-        sheet.GetSymbols( aReferences, aIncludePowerSymbols, aForceIncludeOrphanSymbols );
+        sheet.GetSymbols( aReferences, aSymbolFilter, aForceIncludeOrphanSymbols );
 }
 
 
-void SCH_SHEET_LIST::GetSymbolsWithinPath( SCH_REFERENCE_LIST&   aReferences,
-                                           const SCH_SHEET_PATH& aSheetPath,
-                                           bool                  aIncludePowerSymbols,
-                                           bool                  aForceIncludeOrphanSymbols ) const
+void SCH_SHEET_LIST::GetSymbolsWithinPath( SCH_REFERENCE_LIST& aReferences, const SCH_SHEET_PATH& aSheetPath,
+                                           SYMBOL_FILTER aSymbolFilter, bool aForceIncludeOrphanSymbols ) const
 {
     for( const SCH_SHEET_PATH& sheet : *this )
     {
         if( sheet.IsContainedWithin( aSheetPath ) )
-            sheet.GetSymbols( aReferences, aIncludePowerSymbols, aForceIncludeOrphanSymbols );
+            sheet.GetSymbols( aReferences, aSymbolFilter, aForceIncludeOrphanSymbols );
     }
 }
 
@@ -1167,13 +1432,12 @@ std::optional<SCH_SHEET_PATH> SCH_SHEET_LIST::GetSheetPathByKIIDPath( const KIID
 }
 
 
-void SCH_SHEET_LIST::GetMultiUnitSymbols( SCH_MULTI_UNIT_REFERENCE_MAP &aRefList,
-                                          bool aIncludePowerSymbols ) const
+void SCH_SHEET_LIST::GetMultiUnitSymbols( SCH_MULTI_UNIT_REFERENCE_MAP& aRefList, SYMBOL_FILTER aSymbolFilter ) const
 {
     for( auto it = begin(); it != end(); ++it )
     {
         SCH_MULTI_UNIT_REFERENCE_MAP tempMap;
-        ( *it ).GetMultiUnitSymbols( tempMap, aIncludePowerSymbols );
+        ( *it ).GetMultiUnitSymbols( tempMap, aSymbolFilter );
 
         for( SCH_MULTI_UNIT_REFERENCE_MAP::value_type& pair : tempMap )
         {
@@ -1396,6 +1660,9 @@ void SCH_SHEET_LIST::SetInitialPageNumbers()
 
     for( SCH_SHEET_PATH& instance : *this )
     {
+        if( instance.Last()->IsVirtualRootSheet() )
+            continue;
+
         tmp.Printf( "%d", pageNumber );
         instance.SetPageNumber( tmp );
         pageNumber += 1;
@@ -1490,8 +1757,19 @@ void SCH_SHEET_LIST::AddNewSheetInstances( const SCH_SHEET_PATH& aPrefixSheetPat
 
 void SCH_SHEET_LIST::CheckForMissingSymbolInstances( const wxString& aProjectName )
 {
+    wxLogTrace( traceSchSheetPaths,
+               "SCH_SHEET_LIST::CheckForMissingSymbolInstances: Processing %zu sheet paths",
+               size() );
+
     for( SCH_SHEET_PATH& sheetPath : *this )
+    {
+        wxLogTrace( traceSchSheetPaths,
+                   "  Processing sheet path: '%s' (size=%zu, KIID_PATH='%s')",
+                   sheetPath.PathHumanReadable( false ),
+                   sheetPath.size(),
+                   sheetPath.Path().AsString() );
         sheetPath.CheckForMissingSymbolInstances( aProjectName );
+    }
 }
 
 

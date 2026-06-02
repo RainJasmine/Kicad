@@ -26,6 +26,8 @@
 
 #include <gal/cursors.h>
 #include <kiplatform/ui.h>
+#include <pgm_base.h>
+#include <settings/common_settings.h>
 
 // Cursor files
 #include <cursors/cursor-add.xpm>
@@ -46,9 +48,16 @@
 #include <cursors/cursor-xor.xpm>
 #include <cursors/cursor-zoom-in.xpm>
 #include <cursors/cursor-zoom-out.xpm>
+// Under MSW, the standard cursor is white on black.  Elsewhere it is black on white
+#ifdef __WINDOWS__
 #include <cursors/cursor_tune.xpm>
-#include <cursors/voltage_probe.xpm>
-#include <cursors/current_probe.xpm>
+#include <cursors/voltage_probe_win.xpm>
+#include <cursors/current_probe_win.xpm>
+#else
+#include <cursors/cursor_tune_black.xpm>
+#include <cursors/voltage_probe_black.xpm>
+#include <cursors/current_probe_black.xpm>
+#endif
 
 // HiDPI cursor files
 #include <cursors/cursor-add64.xpm>
@@ -69,9 +78,15 @@
 #include <cursors/cursor-xor64.xpm>
 #include <cursors/cursor-zoom-in64.xpm>
 #include <cursors/cursor-zoom-out64.xpm>
+#ifdef __WINDOWS__
 #include <cursors/cursor_tune64.xpm>
-#include <cursors/voltage_probe64.xpm>
-#include <cursors/current_probe64.xpm>
+#include <cursors/voltage_probe_win64.xpm>
+#include <cursors/current_probe_win64.xpm>
+#else
+#include <cursors/cursor_tune_black64.xpm>
+#include <cursors/voltage_probe_black64.xpm>
+#include <cursors/current_probe_black64.xpm>
+#endif
 
 
 // Under MSW, the standard cursor is white on black.  Elsewhere it is black on white
@@ -80,11 +95,15 @@
 #include <cursors/cursor-place64.xpm>
 #include <cursors/cursor-select-m.xpm>
 #include <cursors/cursor-select-m64.xpm>
+#include <cursors/cursor-warning.xpm>
+#include <cursors/cursor-warning64.xpm>
 #else
 #include <cursors/cursor-place-black.xpm>
 #include <cursors/cursor-place-black64.xpm>
 #include <cursors/cursor-select-m-black.xpm>
 #include <cursors/cursor-select-m-black64.xpm>
+#include <cursors/cursor-warning-black.xpm>
+#include <cursors/cursor-warning-black64.xpm>
 #endif
 
 #include <wx/bitmap.h>
@@ -137,6 +156,27 @@ static const std::map<KICURSOR, std::vector<CURSOR_STORE::CURSOR_DEF>> cursors_d
                 cursor_select_m64_xpm,
 #else
                 cursor_select_m_black64_xpm,
+#endif
+                { 2, 2 }
+            }
+        }
+    },
+    {
+        KICURSOR::WARNING,
+        {
+            {
+#ifdef __WINDOWS__
+                cursor_warning_xpm,
+#else
+                cursor_warning_black_xpm,
+#endif
+                { 1, 1 }
+            },
+            {
+#ifdef __WINDOWS__
+                cursor_warning64_xpm,
+#else
+                cursor_warning_black64_xpm,
 #endif
                 { 2, 2 }
             }
@@ -294,7 +334,7 @@ CURSOR_STORE::CURSOR_STORE()
 #if wxCHECK_VERSION( 3, 3, 0 )
         // For wx 3.3+, create cursor bundles from the cursor definitions
         std::vector<wxBitmap> bitmaps;
-            
+
         for( const auto& [xpm, hotspot_def] : defs )
         {
             wxCHECK2( xpm, continue );
@@ -364,6 +404,21 @@ const WX_CURSOR_TYPE CURSOR_STORE::GetCursor( KICURSOR aCursorType, bool aHiDPI 
 {
     // Use a single cursor store instance
     static CURSOR_STORE store;
+
+    bool useCustomCursors = true;
+
+    if( COMMON_SETTINGS* commonSettings = Pgm().GetCommonSettings() )
+        useCustomCursors = commonSettings->m_Appearance.use_custom_cursors;
+
+    if( !useCustomCursors )
+    {
+        wxStockCursor stock = GetStockCursor( aCursorType );
+
+        if( stock == wxCURSOR_MAX )
+            stock = wxCURSOR_ARROW;
+
+        return WX_CURSOR_TYPE( stock );
+    }
 
     wxStockCursor stock = GetStockCursor( aCursorType );
 

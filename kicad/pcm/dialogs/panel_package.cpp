@@ -23,6 +23,9 @@
 
 #include "panel_package.h"
 
+#include <bitmaps/bitmap_types.h>
+#include <bitmaps/bitmaps_list.h>
+
 PANEL_PACKAGE::PANEL_PACKAGE( wxWindow* parent, const ActionCallback& aCallback,
                               const PinCallback& aPinCallback, const PACKAGE_VIEW_DATA& aData ) :
         PANEL_PACKAGE_BASE( parent ),
@@ -55,7 +58,13 @@ PANEL_PACKAGE::PANEL_PACKAGE( wxWindow* parent, const ActionCallback& aCallback,
 
     double descLineHeight = m_desc->GetTextExtent( wxT( "X" ) ).GetHeight() * 1.2 /* leading */;
     m_desc->SetLabelText( m_data.package.description );
+
+#if wxCHECK_VERSION( 3, 3, 2 )
+    m_desc->SetWindowStyle( wxST_WRAP );
+#else
     m_desc->Wrap( m_descSizer->GetSize().GetWidth() );
+#endif
+    
     descLineHeight = wxSplit( m_desc->GetLabel(), '\n' ).size() * descLineHeight;
 
     int    nameLineHeight = m_name->GetTextExtent( wxT( "X" ) ).GetHeight();
@@ -77,6 +86,11 @@ PANEL_PACKAGE::PANEL_PACKAGE( wxWindow* parent, const ActionCallback& aCallback,
 
     m_actionMenuItem = splitMenu->Append( wxID_ANY, _( "Uninstall" ) );
 
+    m_warningIcon->SetBitmap( KiBitmapBundle( BITMAPS::small_warning ) );
+    m_warningIcon->SetToolTip( _( "Warning: This plugin only supports the legacy Python API "
+                                  "and will not run in this KiCad version." ) );
+    m_warningIcon->Show( m_data.swig_warning );
+
     SetState( m_data.state, m_data.pinned );
 }
 
@@ -86,8 +100,12 @@ void PANEL_PACKAGE::OnSize( wxSizeEvent& event )
     Layout();
 
     double descLineHeight = m_desc->GetTextExtent( wxT( "X" ) ).GetHeight() * 1.2 /* leading */;
+
+#if !wxCHECK_VERSION( 3, 3, 2 )
     m_desc->SetLabelText( m_data.package.description );
     m_desc->Wrap( m_descSizer->GetSize().GetWidth() );
+#endif
+    
     descLineHeight = wxSplit( m_desc->GetLabel(), '\n' ).size() * descLineHeight;
 
     int    nameLineHeight = m_name->GetTextExtent( wxT( "X" ) ).GetHeight();

@@ -30,7 +30,10 @@
 #include <wx/log.h>
 #include <wx/stc/stc.h>
 #include <widgets/grid_text_helpers.h>
-
+#include <widgets/grid_icon_text_helpers.h>
+#include <widgets/grid_combobox.h>
+#include <search_stack.h>
+#include <widgets/grid_text_button_helpers.h>
 
 // It works for table data on clipboard for an Excel spreadsheet,
 // why not us too for now.
@@ -95,8 +98,21 @@ void GRID_TRICKS::init()
 bool GRID_TRICKS::isTextEntry( int aRow, int aCol )
 {
     wxGridCellEditor* editor = m_grid->GetCellEditor( aRow, aCol );
-    bool              retval = ( dynamic_cast<wxTextEntry*>( editor )
-                              || dynamic_cast<GRID_CELL_STC_EDITOR*>( editor ) );
+    bool              retval = ( dynamic_cast<wxGridCellTextEditor*>( editor )
+                              || dynamic_cast<GRID_CELL_STC_EDITOR*>( editor )
+                              || dynamic_cast<GRID_CELL_TEXT_BUTTON*>( editor ) );
+
+    editor->DecRef();
+    return retval;
+}
+
+
+bool GRID_TRICKS::isChoiceEditor( int aRow, int aCol )
+{
+    wxGridCellEditor* editor = m_grid->GetCellEditor( aRow, aCol );
+    bool              retval = ( dynamic_cast<wxGridCellChoiceEditor*>( editor )
+                              || dynamic_cast<GRID_CELL_ICON_TEXT_POPUP*>( editor )
+                              || dynamic_cast<GRID_CELL_COMBOBOX*>( editor ) );
 
     editor->DecRef();
     return retval;
@@ -327,6 +343,24 @@ void GRID_TRICKS::getSelectedArea()
 
 void GRID_TRICKS::onGridCellRightClick( wxGridEvent& aEvent  )
 {
+    m_grid->CommitPendingChanges( true );
+
+    // Select the right-clicked row if it is not already part of the current selection
+    int row = aEvent.GetRow();
+
+    if( m_grid->GetSelectionMode() == wxGrid::wxGridSelectRows )
+    {
+        wxArrayInt selectedRows = m_grid->GetSelectedRows();
+
+        if( selectedRows.Index( row ) == wxNOT_FOUND )
+            m_grid->SelectRow( row );
+    }
+    else
+    {
+        if( !m_grid->IsInSelection( row, aEvent.GetCol() ) )
+            m_grid->SetGridCursor( row, aEvent.GetCol() );
+    }
+
     wxMenu menu;
 
     showPopupMenu( menu, aEvent );
@@ -387,8 +421,11 @@ void GRID_TRICKS::showPopupMenu( wxMenu& menu, wxGridEvent& aEvent )
                 {
                     for( int col = m_sel_col_start; col < m_sel_col_start + m_sel_col_count; ++col )
                     {
-                        if( !isReadOnly( row, col ) && isTextEntry( row, col ) )
+                        if( !isReadOnly( row, col )
+                            && ( isTextEntry( row, col ) || isChoiceEditor( row, col ) ) )
+                        {
                             return true;
+                        }
                     }
                 }
 
@@ -490,37 +527,82 @@ void GRID_TRICKS::onCharHook( wxKeyEvent& ev )
             handled = true;
         }
     }
-    else if( ev.GetModifiers() == wxMOD_CONTROL && ev.GetKeyCode() == 'V' )
+    else if( ev.GetModifiers() == wxMOD_CONTROL && ev.GetKeyCode() == 'C' )
     {
-        if( m_grid->IsCellEditControlShown() && wxTheClipboard->Open() )
+        if( m_grid->IsCellEditControlShown() )
         {
-            if( wxTheClipboard->IsSupported( wxDF_TEXT )
-                || wxTheClipboard->IsSupported( wxDF_UNICODETEXT ) )
+            wxTextEntry* te = dynamic_cast<wxTextEntry*>( ev.GetEventObject() );
+
+            if( te )
             {
-                wxTextDataObject data;
-                wxTheClipboard->GetData( data );
+                wxString selectedText = te->GetStringSelection();
 
-                if( data.GetText().Contains( COL_SEP ) || data.GetText().Contains( ROW_SEP ) )
+                if( !selectedText.IsEmpty() )
                 {
-                    wxString stripped( data.GetText() );
-                    stripped.Replace( ROW_SEP, " " );
-                    stripped.Replace( ROW_SEP_R, " " );
-                    stripped.Replace( COL_SEP, " " );
+                    wxLogNull doNotLog;
 
-                    // Write to the CellEditControl if we can
-                    wxTextEntry* te = dynamic_cast<wxTextEntry*>( ev.GetEventObject() );
-
-                    if( te && te->IsEditable() )
-                        te->WriteText( stripped );
-                    else
-                        paste_text( stripped );
-
-                    handled = true;
+                    if( wxTheClipboard->Open() )
+                    {
+                        wxTheClipboard->SetData( new wxTextDataObject( selectedText ) );
+                        wxTheClipboard->Flush();
+                        wxTheClipboard->Close();
+                        handled = true;
+                    }
                 }
             }
 
-            wxTheClipboard->Close();
-            m_grid->ForceRefresh();
+            if( !handled )
+            {
+                m_grid->CancelPendingChanges();
+                getSelectedArea();
+                cutcopy( true, false );
+                handled = true;
+            }
+        }
+    }
+    else if( ev.GetModifiers() == wxMOD_CONTROL && ev.GetKeyCode() == 'V' )
+    {
+        if( m_grid->IsCellEditControlShown() )
+        {
+            wxLogNull doNotLog;
+
+            if( wxTheClipboard->Open() )
+            {
+                if( wxTheClipboard->IsSupported( wxDF_TEXT )
+                    || wxTheClipboard->IsSupported( wxDF_UNICODETEXT ) )
+                {
+                    wxTextDataObject data;
+                    wxTheClipboard->GetData( data );
+                    wxString         text = data.GetText();
+
+                    bool hasMultipleCells = text.Contains( COL_SEP ) || text.Contains( ROW_SEP );
+
+                    if( hasMultipleCells )
+                    {
+                        text.Replace( ROW_SEP, wxS( " " ) );
+                        text.Replace( ROW_SEP_R, wxS( " " ) );
+                        text.Replace( COL_SEP, wxS( " " ) );
+                    }
+
+                    wxTextEntry* te = dynamic_cast<wxTextEntry*>( ev.GetEventObject() );
+
+                    if( te && te->IsEditable() )
+                    {
+                        te->WriteText( text );
+                        handled = true;
+                    }
+                    else
+                    {
+                        m_grid->CancelPendingChanges();
+                        getSelectedArea();
+                        paste_text( text );
+                        handled = true;
+                    }
+                }
+
+                wxTheClipboard->Close();
+                m_grid->ForceRefresh();
+            }
         }
     }
     else if( ev.GetKeyCode() == WXK_ESCAPE )
@@ -699,7 +781,7 @@ void GRID_TRICKS::paste_clipboard()
 {
     wxLogNull doNotLog; // disable logging of failed clipboard actions
 
-    if( m_grid->IsEditable() && wxTheClipboard->Open() )
+    if( m_grid->IsEditable() && ( wxTheClipboard->IsOpened() || wxTheClipboard->Open() ) )
     {
         if( wxTheClipboard->IsSupported( wxDF_TEXT )
             || wxTheClipboard->IsSupported( wxDF_UNICODETEXT ) )
@@ -714,7 +796,7 @@ void GRID_TRICKS::paste_clipboard()
             // Some editors use windows linefeeds (\r\n), which wx re-writes to \n\n
             text.Replace( "\n\n", "\n" );
 #endif
-
+            m_grid->CommitPendingChanges( true );
             paste_text( text );
         }
 
@@ -912,4 +994,6 @@ void GRID_TRICKS::onUpdateUI( wxUpdateUIEvent& event )
         if( !cursorInSelectedRow && cursorRow >= 0 )
             m_grid->SelectRow( cursorRow );
     }
+
+    event.Skip();
 }

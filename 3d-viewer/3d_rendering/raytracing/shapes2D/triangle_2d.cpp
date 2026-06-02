@@ -125,7 +125,7 @@ void ConvertPolygonToTriangles( const SHAPE_POLY_SET& aPolyList, CONTAINER_2D_BA
     VECTOR2I b;
     VECTOR2I c;
 
-    const_cast<SHAPE_POLY_SET&>( aPolyList ).CacheTriangulation( false );
+    const_cast<SHAPE_POLY_SET&>( aPolyList ).CacheTriangulation();
     const double conver_d = (double)aBiuTo3dUnitsScale;
 
     for( unsigned int j = 0; j < aPolyList.TriangulatedPolyCount(); j++ )

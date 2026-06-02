@@ -34,7 +34,7 @@
 #include <sch_symbol.h>
 #include <sch_reference_list.h>
 #include <schematic.h>
-#include <symbol_lib_table.h>
+#include <libraries/symbol_library_adapter.h>
 #include <trace_helpers.h>
 #include <widgets/wx_grid.h>
 
@@ -131,7 +131,7 @@ void GRIDCELL_AUTOWRAP_STRINGRENDERER::BreakLine( wxDC& dc, const wxString& logi
     wxString line;
 
     // For each word
-    wxStringTokenizer wordTokenizer( logicalLine, wxS( " \t" ), wxTOKEN_RET_DELIMS );
+    wxStringTokenizer wordTokenizer( logicalLine, " \t", wxTOKEN_RET_DELIMS );
 
     while( wordTokenizer.HasMoreTokens() )
     {
@@ -398,9 +398,7 @@ void DIALOG_EDIT_SYMBOLS_LIBID::initDlg()
 
     // build the full list of symbols including symbol having no symbol in loaded libs
     // (orphan symbols)
-    GetParent()->Schematic().Hierarchy().GetSymbols( references,
-                                                     true /* include power symbols */,
-                                                     true /* include orphan symbols */ );
+    GetParent()->Schematic().Hierarchy().GetSymbols( references, SYMBOL_FILTER_ALL, true /* include orphan symbols */ );
 
     for( unsigned ii = 0; ii < references.GetCount(); ii++ )
     {
@@ -577,8 +575,8 @@ void DIALOG_EDIT_SYMBOLS_LIBID::onCellBrowseLib( wxGridEvent& event )
 
 void DIALOG_EDIT_SYMBOLS_LIBID::onClickOrphansButton( wxCommandEvent& event )
 {
-    std::vector<wxString> libs = PROJECT_SCH::SchSymbolLibTable( &Prj() )->GetLogicalLibs();
-    wxArrayString aliasNames;
+    std::vector<wxString> libs = PROJECT_SCH::SymbolLibAdapter( &Prj() )->GetLibraryNames();
+    std::vector<wxString> aliasNames;
     wxArrayString candidateSymbNames;
 
     unsigned fixesCount = 0;
@@ -602,21 +600,19 @@ void DIALOG_EDIT_SYMBOLS_LIBID::onClickOrphansButton( wxCommandEvent& event )
         // now try to find a candidate
         for( const wxString &lib : libs )
         {
-            aliasNames.Clear();
+            aliasNames.clear();
 
             try
             {
-                PROJECT_SCH::SchSymbolLibTable( &Prj() )->EnumerateSymbolLib( lib, aliasNames );
+                aliasNames = PROJECT_SCH::SymbolLibAdapter( &Prj() )->GetSymbolNames( lib );
             }
             catch( const IO_ERROR& ) {}   // ignore, it is handled below
 
-            if( aliasNames.IsEmpty() )
+            if( aliasNames.empty() )
                 continue;
 
             // Find a symbol name in symbols inside this library:
-            int index = aliasNames.Index( symbolName );
-
-            if( index != wxNOT_FOUND )
+            if( auto it = std::ranges::find( aliasNames, symbolName ); it != aliasNames.end() )
             {
                 // a candidate is found!
                 libIdCandidateCount++;
@@ -739,7 +735,7 @@ bool DIALOG_EDIT_SYMBOLS_LIBID::TransferDataFromWindow()
 
             try
             {
-                symbol = PROJECT_SCH::SchSymbolLibTable( &Prj() )->LoadSymbol( id );
+                symbol = PROJECT_SCH::SymbolLibAdapter( &Prj() )->LoadSymbol( id );
             }
             catch( const IO_ERROR& ioe )
             {
@@ -783,7 +779,7 @@ bool DIALOG_EDIT_SYMBOLS_LIBID::TransferDataFromWindow()
         }
     }
 
-    if( m_modified )
+    if( m_isModified )
         commit.Push( wxS( "Change Symbol Library Indentifier" ) );
 
     return true;

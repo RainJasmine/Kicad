@@ -21,6 +21,8 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include <core/profile.h>
+
 #include "pns_test_debug_decorator.h"
 #include "pns_log_file.h"
 #include "pns_log_player.h"
@@ -112,7 +114,6 @@ void PNS_LOG_PLAYER::ReplayLog( PNS_LOG_FILE* aLog, int aStartEventIndex, int aF
         auto  items = aLog->ItemsById( evt );
         PNS::ITEM_SET ritems;
 
-        printf("items: %zu\n", items.size() );
         ITEM* ritem = nullptr;
 
         if( items.size() && items[0] )
@@ -141,10 +142,13 @@ void PNS_LOG_PLAYER::ReplayLog( PNS_LOG_FILE* aLog, int aStartEventIndex, int aF
             m_debugDecorator->NewStage( "route-start", 0, PNSLOGINFO );
             m_viewTracker->SetStage( m_debugDecorator->GetStageCount() - 1 );
 
+            PROF_TIMER tmr("route-start");
             bool status = m_router->StartRouting( evt.p, ritem, routingLayer );
+            tmr.Stop();
+            double msecs = tmr.msecs();
 
-            msg = wxString::Format( "event [%d/%d]: route-start (%d, %d), layer %d, startitem %p status %d", eventIdx,
-                                         totalEvents, evt.p.x, evt.p.y, routingLayer, ritem, status ? 1 : 0 );
+            msg = wxString::Format( "event [%d/%d]: route-start (%d, %d), layer %d, startitem %p status %d time %.0f ms", eventIdx,
+                                         totalEvents, evt.p.x, evt.p.y, routingLayer, ritem, status ? 1 : 0, msecs);
 
             m_debugDecorator->Message( msg );
             m_reporter->Report( msg );
@@ -163,13 +167,21 @@ void PNS_LOG_PLAYER::ReplayLog( PNS_LOG_FILE* aLog, int aStartEventIndex, int aF
             m_debugDecorator->NewStage( "drag-start", 0, PNSLOGINFO );
             m_viewTracker->SetStage( m_debugDecorator->GetStageCount() - 1 );
 
-            auto msg = wxString::Format( "event [%d/%d]: drag-start (%d, %d)", eventIdx,
-                                         totalEvents, evt.p.x, evt.p.y );
+        
+
+            PROF_TIMER tmr("drag-start");
+            bool rv = m_router->StartDragging( evt.p, ritems, 0 );
+            tmr.Stop();
+            double msecs = tmr.msecs();
+
+
+
+            auto msg = wxString::Format( "event [%d/%d]: drag-start (%d, %d) time %.0f ms", eventIdx,
+                totalEvents, evt.p.x, evt.p.y, msecs );
 
             m_debugDecorator->Message( msg );
             m_reporter->Report( msg );
 
-            bool rv = m_router->StartDragging( evt.p, ritems, 0 );
             break;
         }
 
@@ -198,12 +210,16 @@ void PNS_LOG_PLAYER::ReplayLog( PNS_LOG_FILE* aLog, int aStartEventIndex, int aF
             m_debugDecorator->NewStage( "move", 0, PNSLOGINFO );
             m_viewTracker->SetStage( m_debugDecorator->GetStageCount() - 1 );
 
-            auto msg = wxString::Format( "event [%d/%d]: move (%d, %d)", eventIdx, totalEvents, evt.p.x, evt.p.y );
+
+            PROF_TIMER tmr("drag-start");
+            bool ret = m_router->Move( evt.p, ritem );
+            tmr.Stop();
+            double msecs = tmr.msecs();
+
+            auto msg = wxString::Format( "event [%d/%d]: move (%d, %d) time %.0f ms", eventIdx, totalEvents, evt.p.x, evt.p.y, msecs );
 
             m_debugDecorator->Message( msg );
             m_reporter->Report( msg );
-
-            bool ret = m_router->Move( evt.p, ritem );
             m_debugDecorator->SetCurrentStageStatus( ret );
             break;
         }
@@ -309,8 +325,6 @@ void PNS_LOG_PLAYER::ReplayLog( PNS_LOG_FILE* aLog, int aStartEventIndex, int aF
 bool PNS_LOG_PLAYER::CompareResults( PNS_LOG_FILE* aLog )
 {
     auto cstate = GetRouterUpdatedItems();
-
-    printf("Comparing %zu added/%zu removed items\n", cstate.m_addedItems.size(), cstate.m_removedIds.size() );
     return cstate.Compare( aLog->GetExpectedResult() );
 }
 

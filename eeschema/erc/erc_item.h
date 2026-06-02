@@ -213,9 +213,10 @@ private:
     static ERC_ITEM labelMultipleWires;
     static ERC_ITEM noConnectDangling;
     static ERC_ITEM labelDangling;
-    static ERC_ITEM globalLabelDangling;
+    static ERC_ITEM isolatedPinLabel;
     static ERC_ITEM singleGlobalLabel;
     static ERC_ITEM sameLocalGlobalLabel;
+    static ERC_ITEM sameLocalGlobalPower;
     static ERC_ITEM similarLabels;
     static ERC_ITEM similarPower;
     static ERC_ITEM similarLabelAndPower;
@@ -226,6 +227,9 @@ private:
     static ERC_ITEM netNotBusMember;
     static ERC_ITEM busToBusConflict;
     static ERC_ITEM busToNetConflict;
+    static ERC_ITEM groundPinNotGround;
+    static ERC_ITEM stackedPinName;
+    static ERC_ITEM fieldNameWhitespace;
     static ERC_ITEM unresolvedVariable;
     static ERC_ITEM undefinedNetclass;
     static ERC_ITEM simulationModelIssues;

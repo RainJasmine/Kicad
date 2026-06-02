@@ -27,6 +27,7 @@
 #include <zone.h>
 #include <footprint.h>
 #include <pad.h>
+#include <pcb_shape.h>
 #include <pcb_track.h>
 #include <thread_pool.h>
 
@@ -67,7 +68,6 @@ void DRC_TEST_PROVIDER_ZONE_CONNECTIONS::testZoneLayer( ZONE* aZone, PCB_LAYER_I
     BOARD_DESIGN_SETTINGS&             bds = board->GetDesignSettings();
     std::shared_ptr<CONNECTIVITY_DATA> connectivity = board->GetConnectivity();
     DRC_CONSTRAINT                     constraint;
-    wxString                           msg;
 
     const std::shared_ptr<SHAPE_POLY_SET>& zoneFill = aZone->GetFilledPolysList( aLayer );
     ISOLATED_ISLANDS                       isolatedIslands;
@@ -196,22 +196,21 @@ void DRC_TEST_PROVIDER_ZONE_CONNECTIONS::testZoneLayer( ZONE* aZone, PCB_LAYER_I
 
                     if( ignoredSpokes )
                     {
-                        msg = wxString::Format( _( "(layer %s; %d spokes connected to isolated island)" ),
-                                                board->GetLayerName( aLayer ),
-                                                ignoredSpokes );
+                        drce->SetErrorDetail( wxString::Format( _( "(layer %s; %d spokes connected to isolated island)" ),
+                                                                board->GetLayerName( aLayer ),
+                                                                ignoredSpokes ) );
                         pos = ignoredSpokePos;
                     }
                     else
                     {
-                        msg = wxString::Format( _( "(layer %s; %s custom spoke count %d; actual %d)" ),
-                                                board->GetLayerName( aLayer ),
-                                                constraint.GetName(),
-                                                customSpokes,
-                                                spokes );
+                        drce->SetErrorDetail( wxString::Format( _( "(layer %s; %s custom spoke count %d; actual %d)" ),
+                                                                board->GetLayerName( aLayer ),
+                                                                constraint.GetName(),
+                                                                customSpokes,
+                                                                spokes ) );
                         pos = pad->GetPosition();
                     }
 
-                    drce->SetErrorMessage( drce->GetErrorText() + wxS( " " ) + msg );
                     drce->SetItems( aZone, pad );
                     drce->SetViolatingRule( constraint.GetParentRule() );
 
@@ -242,6 +241,33 @@ void DRC_TEST_PROVIDER_ZONE_CONNECTIONS::testZoneLayer( ZONE* aZone, PCB_LAYER_I
                 }
             }
 
+            for( BOARD_CONNECTED_ITEM* item : connectivity->GetConnectedItems( pad, EXCLUDE_ZONES ) )
+            {
+                PCB_SHAPE* shape = dynamic_cast<PCB_SHAPE*>( item );
+
+                if( !shape || !shape->IsOnLayer( aLayer ) )
+                    continue;
+
+                std::vector<VECTOR2I> connectionPts = shape->GetConnectionPoints();
+
+                for( const VECTOR2I& pt : connectionPts )
+                {
+                    if( padOutline.PointInside( pt ) )
+                    {
+                        for( const VECTOR2I& other : connectionPts )
+                        {
+                            if( other != pt && zoneFill->Collide( other ) )
+                            {
+                                spokes++;
+                                break;
+                            }
+                        }
+
+                        break;
+                    }
+                }
+            }
+
             //
             // If we're *only* connected to isolated islands, then ignore the fact that they're
             // isolated.  (We leave that for the connectivity tester, which checks connections on
@@ -265,22 +291,21 @@ void DRC_TEST_PROVIDER_ZONE_CONNECTIONS::testZoneLayer( ZONE* aZone, PCB_LAYER_I
 
                 if( ignoredSpokes )
                 {
-                    msg = wxString::Format( _( "(layer %s; %d spokes connected to isolated island)" ),
-                                            board->GetLayerName( aLayer ),
-                                            ignoredSpokes );
+                    drce->SetErrorDetail( wxString::Format( _( "(layer %s; %d spokes connected to isolated island)" ),
+                                                            board->GetLayerName( aLayer ),
+                                                            ignoredSpokes ) );
                     pos = ignoredSpokePos;
                 }
                 else
                 {
-                    msg = wxString::Format( _( "(layer %s; %s min spoke count %d; actual %d)" ),
-                                            board->GetLayerName( aLayer ),
-                                            constraint.GetName(),
-                                            minCount,
-                                            spokes );
+                    drce->SetErrorDetail( wxString::Format( _( "(layer %s; %s min spoke count %d; actual %d)" ),
+                                                            board->GetLayerName( aLayer ),
+                                                            constraint.GetName(),
+                                                            minCount,
+                                                            spokes ) );
                     pos = pad->GetPosition();
                 }
 
-                drce->SetErrorMessage( drce->GetErrorText() + wxS( " " ) + msg );
                 drce->SetItems( aZone, pad );
                 drce->SetViolatingRule( constraint.GetParentRule() );
 
@@ -319,27 +344,17 @@ bool DRC_TEST_PROVIDER_ZONE_CONNECTIONS::Run()
     total_effort = std::max( (size_t) 1, total_effort );
 
     thread_pool& tp = GetKiCadThreadPool();
-    std::vector<std::future<int>> returns;
+    auto returns = tp.submit_loop( 0, zoneLayers.size(),
+                            [&]( const int ii )
+                            {
+                                if( !m_drcEngine->IsCancelled() )
+                                {
+                                    testZoneLayer( zoneLayers[ii].first, zoneLayers[ii].second );
+                                    done.fetch_add( zoneLayers[ii].first->GetFilledPolysList( zoneLayers[ii].second )->FullPointCount() );
+                                }
+                            } );
 
-    returns.reserve( zoneLayers.size() );
-
-    for( const std::pair<ZONE*, PCB_LAYER_ID>& zonelayer : zoneLayers )
-    {
-        returns.emplace_back( tp.submit(
-                [&]( ZONE* aZone, PCB_LAYER_ID aLayer ) -> int
-                {
-                    if( !m_drcEngine->IsCancelled() )
-                    {
-                        testZoneLayer( aZone, aLayer );
-                        done.fetch_add( aZone->GetFilledPolysList( aLayer )->FullPointCount() );
-                    }
-
-                    return 0;
-                },
-                zonelayer.first, zonelayer.second ) );
-    }
-
-    for( const std::future<int>& ret : returns )
+    for( auto& ret : returns )
     {
         std::future_status status = ret.wait_for( std::chrono::milliseconds( 250 ) );
 

@@ -25,10 +25,11 @@
 #define KICAD_GIT_ERRORS_H
 
 #include <vector>
+#include <import_export.h>
 
 #include <wx/translation.h>
 
-class KIGIT_ERRORS
+class APIEXPORT KIGIT_ERRORS
 {
 public:
 
@@ -40,7 +41,7 @@ public:
         return m_errorStrings;
     }
 
-    const wxString& PeekErrorString() const
+    wxString PeekErrorString() const
     {
         if( m_errorStrings.empty() )
             return _( "No error" );

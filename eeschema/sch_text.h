@@ -44,6 +44,9 @@ public:
 
     ~SCH_TEXT() override { }
 
+    void Serialize( google::protobuf::Any& aContainer ) const override;
+    bool Deserialize( const google::protobuf::Any& aContainer ) override;
+
     static bool ClassOf( const EDA_ITEM* aItem )
     {
         return aItem && SCH_TEXT_T == aItem->Type();
@@ -58,6 +61,8 @@ public:
     {
         return _( "Text" );
     }
+
+    KIFONT::FONT* GetDrawFont( const RENDER_SETTINGS* aSettings ) const override;
 
     virtual wxString GetShownText( const SCH_SHEET_PATH* aPath, bool aAllowExtraText,
                                    int aDepth = 0 ) const;
@@ -75,15 +80,21 @@ public:
     int GetSchTextSize() const { return GetTextWidth(); }
     void SetSchTextSize( int aSize ) { SetTextSize( VECTOR2I( aSize, aSize ) ); }
 
-    bool IsHypertext() const override
+    bool HasHypertext() const override;
+    bool HasHoveredHypertext() const override;
+    void DoHypertextAction( EDA_DRAW_FRAME* aFrame, const VECTOR2I& aMousePos ) const override;
+
+    void SetExcludedFromSim( bool aExclude, const SCH_SHEET_PATH* aInstance = nullptr,
+                             const wxString& aVariantName = wxEmptyString ) override
     {
-        return HasHyperlink();
+        m_excludedFromSim = aExclude;
     }
 
-    void DoHypertextAction( EDA_DRAW_FRAME* aFrame ) const override;
-
-    void SetExcludedFromSim( bool aExclude ) override { m_excludedFromSim = aExclude; }
-    bool GetExcludedFromSim() const override { return m_excludedFromSim; }
+    bool GetExcludedFromSim( const SCH_SHEET_PATH* aInstance = nullptr,
+                             const wxString& aVariantName = wxEmptyString ) const override
+    {
+        return m_excludedFromSim;
+    }
 
     /**
      * This offset depends on the orientation, the type of text, and the area required to
@@ -144,6 +155,9 @@ public:
 
     bool HitTest( const VECTOR2I& aPosition, int aAccuracy = 0 ) const override;
     bool HitTest( const BOX2I& aRect, bool aContained, int aAccuracy = 0 ) const override;
+    bool HitTest( const SHAPE_LINE_CHAIN& aPoly, bool aContained ) const override;
+
+    VECTOR2I GetOffsetToMatchSCH_FIELD( SCH_RENDER_SETTINGS* aRenderSettings ) const;
 
     void Plot( PLOTTER* aPlotter, bool aBackground, const SCH_PLOT_OPTS& aPlotOpts,
                int aUnit, int aBodyStyle, const VECTOR2I& aOffset, bool aDimmed ) override;
@@ -167,8 +181,6 @@ public:
 
 protected:
     void swapData( SCH_ITEM* aItem ) override;
-
-    KIFONT::FONT* getDrawFont() const override;
 
     const KIFONT::METRICS& getFontMetrics() const override { return GetFontMetrics(); }
 

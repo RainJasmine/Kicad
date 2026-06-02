@@ -38,7 +38,9 @@ struct COORDINATE
     double x;
     double y;
 };
+
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE( COORDINATE, x, y )
+
 
 struct AFFECTED_ITEM
 {
@@ -49,6 +51,7 @@ struct AFFECTED_ITEM
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE( AFFECTED_ITEM, uuid, description, pos )
 
+
 struct VIOLATION
 {
     wxString                   type;
@@ -56,6 +59,7 @@ struct VIOLATION
     wxString                   severity;
     std::vector<AFFECTED_ITEM> items;
     bool                       excluded;
+    wxString                   comment;     // exclusion comment; if any
 };
 
 inline void to_json( nlohmann::json& aJson, const VIOLATION& aViolation )
@@ -66,8 +70,12 @@ inline void to_json( nlohmann::json& aJson, const VIOLATION& aViolation )
     aJson["items"] = aViolation.items;
 
     if( aViolation.excluded )
+    {
         aJson["excluded"] = aViolation.excluded;
+        aJson["comment"] = aViolation.comment;
+    }
 }
+
 inline void from_json( const nlohmann::json& aJson, VIOLATION& aViolation )
 {
     aJson.at( "type" ).get_to( aViolation.type );
@@ -75,7 +83,18 @@ inline void from_json( const nlohmann::json& aJson, VIOLATION& aViolation )
     aJson.at( "severity" ).get_to( aViolation.severity );
     aJson.at( "items" ).get_to( aViolation.items );
     aJson.at( "excluded" ).get_to( aViolation.excluded );
+    aJson.at( "comment" ).get_to( aViolation.comment );
 }
+
+
+struct IGNORED_CHECK
+{
+    wxString key;
+    wxString description;
+};
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE( IGNORED_CHECK, key, description )
+
 
 struct REPORT_BASE
 {
@@ -87,6 +106,7 @@ struct REPORT_BASE
     wxString coordinate_units;
 };
 
+
 struct DRC_REPORT : REPORT_BASE
 {
     DRC_REPORT() { type = wxS( "drc" ); }
@@ -94,10 +114,14 @@ struct DRC_REPORT : REPORT_BASE
     std::vector<VIOLATION>                 violations;
     std::vector<VIOLATION>                 unconnected_items;
     std::vector<VIOLATION>                 schematic_parity;
+    std::vector<wxString>                  included_severities;
+    std::vector<IGNORED_CHECK>             ignored_checks;
 };
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE( DRC_REPORT, $schema, source, date, kicad_version, violations,
-                                    unconnected_items, schematic_parity, coordinate_units )
+                                    unconnected_items, schematic_parity, coordinate_units,
+                                    included_severities, ignored_checks )
+
 
 struct ERC_SHEET
 {
@@ -108,15 +132,18 @@ struct ERC_SHEET
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE( ERC_SHEET, uuid_path, path, violations )
 
+
 struct ERC_REPORT : REPORT_BASE
 {
     ERC_REPORT() { type = wxS( "erc" ); }
 
-    std::vector<ERC_SHEET> sheets;
+    std::vector<ERC_SHEET>     sheets;
+    std::vector<wxString>      included_severities;
+    std::vector<IGNORED_CHECK> ignored_checks;
 };
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE( ERC_REPORT, $schema, source, date, kicad_version, sheets,
-                                    coordinate_units )
+                                    coordinate_units, included_severities, ignored_checks )
 
 } // namespace RC_JSON
 

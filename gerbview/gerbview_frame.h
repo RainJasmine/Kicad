@@ -45,7 +45,12 @@ class LSET;
 class REPORTER;
 class SELECTION;
 class wxStaticText;
+
+#if defined(__linux__) || defined(__FreeBSD__)
+class SPNAV_2D_PLUGIN;
+#else
 class NL_GERBVIEW_PLUGIN;
+#endif
 
 
 /**
@@ -298,6 +303,10 @@ public:
      */
     bool LoadZipArchiveFile( const wxString& aFileName );
 
+    /**
+     * Remove all files from the file history.
+     */
+    void ClearFileHistory() override;
 
     /**
      * Load a Gerber job file, and load gerber files found in job files.
@@ -437,6 +446,8 @@ public:
         return m_gerberLayout->ViewBBox();
     }
 
+    void ClearToolbarControl( int aId ) override;
+
     DECLARE_EVENT_TABLE()
 
 protected:
@@ -517,7 +528,11 @@ private:
     wxStaticText*       m_dcodeText;        // a message on the auxiliary toolbar,
                                             // relative to the m_DCodeSelector
 
+#if defined(__linux__) || defined(__FreeBSD__)
+    std::unique_ptr<SPNAV_2D_PLUGIN> m_spaceMouse;
+#else
     std::unique_ptr<NL_GERBVIEW_PLUGIN> m_spaceMouse;
+#endif
 };
 
 #endif /* WX_GERBER_STRUCT_H */

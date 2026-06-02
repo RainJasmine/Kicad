@@ -26,17 +26,31 @@
 #define EDA_TEXT_H_
 
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include <eda_search_data.h>
 #include <font/glyph.h>
 #include <font/text_attributes.h>
 #include <api/serializable.h>
+#include <text_var_dependency.h>
 
 
 class OUTPUTFORMATTER;
 class SHAPE_COMPOUND;
 class SHAPE_POLY_SET;
+struct EDA_IU_SCALE;
+
+
+struct EDA_TEXT_RENDER_CACHE_DATA
+{
+    wxString                                    text;
+    const KIFONT::FONT*                         font = nullptr;
+    EDA_ANGLE                                   angle;
+    VECTOR2I                                    offset;
+    bool                                        mirrored = false;
+    std::vector<std::unique_ptr<KIFONT::GLYPH>> glyphs;
+};
 
 
 // These are only here for algorithmic safety, not to tell the user what to do.
@@ -89,6 +103,9 @@ public:
     void Serialize( google::protobuf::Any &aContainer ) const override;
     bool Deserialize( const google::protobuf::Any &aContainer ) override;
 
+    void Serialize( google::protobuf::Any &aContainer, const EDA_IU_SCALE& aScale ) const;
+    bool Deserialize( const google::protobuf::Any &aContainer, const EDA_IU_SCALE& aScale );
+
     /**
      * Return the string associated with the text object.
      *
@@ -115,7 +132,18 @@ public:
      */
     bool HasTextVars() const { return m_shown_text_has_text_var_refs; }
 
+    /**
+     * Return the set of `${...}` references extracted from the source text.
+     *
+     * The result is cached lazily and invalidated on SetText/CopyText/Replace. Consumers
+     * (the reactive dependency tracker) may call this at high frequency on items that
+     * rarely change; the cache avoids repeat lexing.
+     */
+    const std::vector<TEXT_VAR_REF_KEY>& GetTextVarReferences() const;
+
     virtual void SetText( const wxString& aText );
+
+    wxString EvaluateText( const wxString& aText ) const;
 
     /**
      * The TextThickness is that set by the user.  The EffectiveTextPenWidth also factors
@@ -248,8 +276,8 @@ public:
 
     wxString GetFontName() const;
 
-    void SetFontIndex( int aIdx );
-    int GetFontIndex() const;
+    void SetFontProp( const wxString& aFontName );
+    wxString GetFontProp() const;
 
     void SetLineSpacing( double aLineSpacing );
     double GetLineSpacing() const               { return m_attributes.m_LineSpacing; }
@@ -271,6 +299,8 @@ public:
 
     void SetTextX( int aX );
     void SetTextY( int aY );
+
+    inline void SetActiveUrl( const wxString& aUrl ) const { m_activeUrl = aUrl; }
 
     void Offset( const VECTOR2I& aOffset );
 
@@ -326,7 +356,7 @@ public:
      *         this rectangle is calculated for 0 orient text.
      *         If orientation is not 0 the rect must be rotated to match the physical area
      */
-    BOX2I GetTextBox( int aLine = -1 ) const;
+    BOX2I GetTextBox( const RENDER_SETTINGS* aSettings, int aLine = -1 ) const;
 
     /**
      * Return the distance between two lines of text.
@@ -335,7 +365,7 @@ public:
      * interline distance plus room for characters like j, {, and [.  It also used for single
      * line text, to calculate the text bounding box.
      */
-    int GetInterline() const;
+    int GetInterline( const RENDER_SETTINGS* aSettings ) const;
 
     /**
      * @return a wxString with the style name( Normal, Italic, Bold, Bold+Italic).
@@ -349,7 +379,8 @@ public:
      * @param aPositions is the list to populate by the VECTOR2I positions.
      * @param aLineCount is the number of lines (not recalculated here for efficiency reasons.
      */
-    void GetLinePositions( std::vector<VECTOR2I>& aPositions, int aLineCount ) const;
+    void GetLinePositions( const RENDER_SETTINGS* aSettings, std::vector<VECTOR2I>& aPositions,
+                           int aLineCount ) const;
 
     /**
      * Return the levenstein distance between two texts.
@@ -372,6 +403,8 @@ public:
 
     virtual EDA_ANGLE GetDrawRotation() const               { return GetTextAngle(); }
     virtual VECTOR2I GetDrawPos() const                     { return GetTextPos(); }
+
+    virtual KIFONT::FONT* GetDrawFont( const RENDER_SETTINGS* aSettings ) const;
 
     virtual void ClearRenderCache();
     virtual void ClearBoundingBoxCache();
@@ -423,8 +456,6 @@ public:
     static wxString GotoPageHref( const wxString& aDestination );
 
 protected:
-    virtual KIFONT::FONT* getDrawFont() const;
-
     virtual const KIFONT::METRICS& getFontMetrics() const;
 
     virtual void cacheShownText();
@@ -440,24 +471,30 @@ protected:
     void printOneLineOfText( const RENDER_SETTINGS* aSettings, const VECTOR2I& aOffset,
                              const COLOR4D& aColor, const wxString& aText, const VECTOR2I& aPos );
 
+    bool containsURL() const;
+
 protected:
     /**
      * A hyperlink URL.  If empty, this text object is not a hyperlink.
      */
     wxString m_hyperlink;
 
+    mutable wxString m_activeUrl;
+
 private:
     wxString         m_text;
     wxString         m_shown_text;           // Cache of unescaped text for efficient access
-    bool             m_shown_text_has_text_var_refs;
+    bool             m_shown_text_has_text_var_refs = false;
+
+    // Populated eagerly in cacheShownText() so reads from concurrent workers
+    // (connection graph, API server, painters) see immutable storage without a
+    // lock. Extracted from raw m_text (not m_shown_text) so backslash-escaped
+    // ${...} literals do not fabricate dependency edges.
+    std::vector<TEXT_VAR_REF_KEY> m_text_var_refs;
 
     std::reference_wrapper<const EDA_IU_SCALE>          m_IuScale;
 
-    mutable wxString                                    m_render_cache_text;
-    mutable const KIFONT::FONT*                         m_render_cache_font;
-    mutable EDA_ANGLE                                   m_render_cache_angle;
-    mutable VECTOR2I                                    m_render_cache_offset;
-    mutable std::vector<std::unique_ptr<KIFONT::GLYPH>> m_render_cache;
+    mutable std::unique_ptr<EDA_TEXT_RENDER_CACHE_DATA> m_render_cache;
 
     struct BBOX_CACHE_ENTRY
     {
@@ -466,6 +503,7 @@ private:
     };
 
     mutable std::map<int, BBOX_CACHE_ENTRY> m_bbox_cache;
+    mutable std::mutex m_bbox_cacheMutex;
 
     TEXT_ATTRIBUTES  m_attributes;
     wxString         m_unresolvedFontName;

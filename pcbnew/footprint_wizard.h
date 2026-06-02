@@ -1,204 +1,201 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2013 NBEE Embedded Systems SL, Miguel Angel Ajo <miguelangel@ajo.es>
+ * Copyright (C) 2026 Jon Evans <jon@craftyjon.com>
  * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
  *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
+ * This program is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the
+ * Free Software Foundation, either version 3 of the License, or (at your
+ * option) any later version.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, you may find one here:
- * http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
- * or you may search the http://www.gnu.org website for the version 2 license,
- * or you may write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
- */
-
-
-/**
- * @file  footprint_wizard.h
- * @brief Class FOOTPRINT_WIZARD and FOOTPRINT_WIZARDS
+ * You should have received a copy of the GNU General Public License along
+ * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #ifndef FOOTPRINT_WIZARD_H
 #define FOOTPRINT_WIZARD_H
 
-#include <vector>
-#include <pcb_edit_frame.h>
+#include <optional>
+#include <tl/expected.hpp>
 
-// Allowable parameter types for PCB wizards
-const wxString WIZARD_PARAM_UNITS_MM        = wxT( "mm" );          // Millimetres
-const wxString WIZARD_PARAM_UNITS_MILS      = wxT( "mils" );        // Mils / thou
-const wxString WIZARD_PARAM_UNITS_FLOAT     = wxT( "float" );       // Floating point (dimensionless)
-const wxString WIZARD_PARAM_UNITS_INTEGER   = wxT( "integer" );     // Integer (dimensionless)
-const wxString WIZARD_PARAM_UNITS_BOOL      = wxT( "bool" );        // Boolean option
-const wxString WIZARD_PARAM_UNITS_RADIANS   = wxT( "radians" );     // Angle (radians)
-const wxString WIZARD_PARAM_UNITS_DEGREES   = wxT( "degrees" );     // Angle (degrees)
-const wxString WIZARD_PARAM_UNITS_PERCENT   = wxT( "%" );           // Percent (0% -> 100%)
-const wxString WIZARD_PARAM_UNITS_STRING    = wxT( "string" );      // String
+#include <import_export.h>
+#include <api/common/types/wizards.pb.h>
 
-/**
- * The parent class from where any footprint wizard class must derive.
- */
+class FOOTPRINT;
+
+
+
+// Wrapper for WizardMetaInfo protobuf with UTF8-converted strings
+struct WIZARD_META_INFO
+{
+    wxString identifier;
+    wxString name;
+    wxString description;
+    std::set<kiapi::common::types::WizardContentType> types_generated;
+
+    void FromProto( const kiapi::common::types::WizardMetaInfo& aProto );
+};
+
+class WIZARD_PARAMETER
+{
+public:
+    WIZARD_PARAMETER() = default;
+    virtual ~WIZARD_PARAMETER() = default;
+
+    virtual void Reset() = 0;
+
+    /**
+     * Packs the current state of this parameter back into a protobuf message
+     * @param aCompact will only include the identifier and value if true
+     * @return a protobuf message describing this parameter
+     */
+    virtual kiapi::common::types::WizardParameter Pack( bool aCompact = true );
+
+    wxString identifier;
+    wxString name;
+    wxString description;
+    kiapi::common::types::WizardParameterCategory category = kiapi::common::types::WPC_UNKNOWN;
+    kiapi::common::types::WizardParameterDataType type = kiapi::common::types::WPDT_UNKNOWN;
+
+    static std::unique_ptr<WIZARD_PARAMETER> Create( const kiapi::common::types::WizardParameter& aProto );
+
+    static wxString ParameterCategoryName( kiapi::common::types::WizardParameterCategory aCategory );
+};
+
+class WIZARD_INT_PARAMETER : public WIZARD_PARAMETER
+{
+public:
+    void Reset() override { value = default_value; }
+    kiapi::common::types::WizardParameter Pack( bool aCompact = true ) override;
+
+    int value = 0;
+    int default_value = 0;
+    std::optional<int> min;
+    std::optional<int> max;
+    std::optional<int> multiple;
+
+    void FromProto( const kiapi::common::types::WizardIntParameter& aProto );
+};
+
+class WIZARD_REAL_PARAMETER : public WIZARD_PARAMETER
+{
+public:
+    void Reset() override { value = default_value; }
+    kiapi::common::types::WizardParameter Pack( bool aCompact = true ) override;
+
+    double value = 0.0;
+    double default_value = 0.0;
+    std::optional<double> min;
+    std::optional<double> max;
+
+    void FromProto( const kiapi::common::types::WizardRealParameter& aProto );
+};
+
+class WIZARD_BOOL_PARAMETER : public WIZARD_PARAMETER
+{
+public:
+    void Reset() override { value = default_value; }
+    kiapi::common::types::WizardParameter Pack( bool aCompact = true ) override;
+
+    bool value = false;
+    bool default_value = false;
+
+    void FromProto( const kiapi::common::types::WizardBoolParameter& aProto );
+};
+
+class WIZARD_STRING_PARAMETER : public WIZARD_PARAMETER
+{
+public:
+    void Reset() override { value = default_value; }
+    kiapi::common::types::WizardParameter Pack( bool aCompact = true ) override;
+
+    wxString value;
+    wxString default_value;
+    std::optional<wxString> validation_regex;
+
+    void FromProto( const kiapi::common::types::WizardStringParameter& aProto );
+};
+
+// Wrapper for WizardInfo protobuf
+struct WIZARD_INFO
+{
+    WIZARD_META_INFO meta;
+    std::vector<std::unique_ptr<WIZARD_PARAMETER>> parameters;
+
+    void FromProto( const kiapi::common::types::WizardInfo& aProto );
+};
+
+
 class FOOTPRINT_WIZARD
 {
 public:
     FOOTPRINT_WIZARD() {}
-    virtual ~FOOTPRINT_WIZARD();
+    ~FOOTPRINT_WIZARD() = default;
 
-    /**
-     * @return the name of the wizard.
-     */
-    virtual wxString GetName() = 0;
+    WIZARD_INFO& Info() { return m_info; }
+    const WIZARD_INFO& Info() const { return m_info; }
 
-    /**
-     * @return an svg image of the wizard to be rendered.
-     */
-    virtual wxString GetImage() = 0;
+    const wxString& Identifier() const { return m_identifier; }
+    void SetIdentifier( const wxString& aId ) { m_identifier = aId; }
 
-    /**
-     * @return a description of the footprint wizard.
-     */
-    virtual wxString GetDescription() = 0;
-
-    /**
-     * @return the number of parameter pages that this wizard will show to the user.
-     */
-    virtual int GetNumParameterPages() = 0;
-
-    /**
-     * @param aPage is the page we want the name of.
-     * @return a string with the page name.
-     */
-    virtual wxString GetParameterPageName( int aPage ) = 0;
-
-    /**
-     * @param aPage is the page we want the parameter names of.
-     * @return an array string with the parameter names on a certain page.
-     */
-    virtual wxArrayString GetParameterNames( int aPage ) = 0;
-
-    /**
-     * @param aPage is the page we want the parameter types of.
-     * @return an array string with the parameter types on a certain page
-     *          "IU" for internal units, "UNITS" for units (0,1,2,3...,N).
-     */
-    virtual wxArrayString GetParameterTypes( int aPage ) = 0;
-
-
-    /**
-     * @param aPage is the page we want the parameter values of.
-     * @return an array of parameter values.
-     */
-    virtual wxArrayString GetParameterValues( int aPage ) = 0;
-
-    /**
-     * @param aPage is the page we want to know the errors of.
-     * @return an array of errors (if any) for the parameters, empty strings for OK parameters.
-     */
-    virtual wxArrayString GetParameterErrors( int aPage ) = 0;
-
-    /**
-     * @param aPage is the page we want to know the hints of.
-     * @return an array of hints (if any) for the parameters, empty string for no hints.
-     */
-    virtual wxArrayString GetParameterHints( int aPage ) = 0;
-
-    /**
-     * @param aPage is the page we want to know the designators of.
-     * @return an array of designators (blank strings for no designators.
-     */
-    virtual wxArrayString GetParameterDesignators( int aPage ) = 0;
-
-    /**
-     * @param aPage is the page we want to set the parameters in.
-     * @param aValues are the values we want to set into the parameters.
-     * @return an array of parameter values.
-     */
-    virtual wxString SetParameterValues( int aPage, wxArrayString& aValues ) = 0;
-
-    /**
-     * Reset all wizard parameters to default values.
-     */
-    virtual void ResetParameters() = 0;
-
-    /**
-     * Build the footprint itself and returns it to the caller function.
-     *
-     * @param aMessage is storage for messages (if any) generated by the footprint generator.
-     * @return a footprint built from the parameters given to the class.
-     */
-    virtual FOOTPRINT* GetFootprint( wxString* aMessage ) = 0;
-
-    /**
-     * Get the object from where this wizard constructs.
-     *
-     * @return it's a void pointer as it could be a PyObject or any other.
-     */
-    virtual void* GetObject() = 0;
-
-    /**
-     * The standard method of a "FOOTPRINT_WIZARD" to register itself into
-     * the FOOTPRINT_WIZARD_LIST singleton manager
-     */
-    void register_wizard();
-};
-
-
-class FOOTPRINT_WIZARD_LIST
-{
-public:
-
-    /**
-     * A footprint wizard calls this static method when it wants to register itself
-     * into the system wizards.
-     *
-     * @note If it is already registered, this function does nothing if an existing wizard
-     * with the same name exists, this existing wizard will be unregistered.
-     *
-     * @param aWizard is the footprint wizard to be registered.
-     */
-    static void                 register_wizard( FOOTPRINT_WIZARD* aWizard );
-
-    /**
-     * Unregister an object which builds a wizard.
-     *
-     * Lookup in the vector calling GetObject until find, then removed and deleted.
-     *
-     * @param aObject is the footprint wizard object to be unregistered.
-     */
-    static bool                 deregister_object( void* aObject );
-
-    /**
-     * @param aName is the footprint wizard name.
-     * @return a wizard object by it's name or NULL if it isn't available.
-     */
-    static FOOTPRINT_WIZARD*    GetWizard( const wxString& aName );
-
-    /**
-     * @param aIndex is the wizard index in list.
-     * @return a wizard object by it's number or NULL if it isn't available.
-     */
-    static FOOTPRINT_WIZARD*    GetWizard( int aIndex );
-
-    /**
-     * @return the number of wizards available into the system
-     */
-    static int                  GetWizardsCount();
+    void ResetParameters();
 
 private:
-    /**
-     * FOOTPRINT_WIZARD system wide static list
-     */
-    static std::vector<FOOTPRINT_WIZARD*> m_FootprintWizards;
+    WIZARD_INFO m_info;
+
+    // Identifier of the plugin action
+    wxString m_identifier;
 };
 
-#endif /* PCBNEW_FOOTPRINT_WIZARDS_H */
+/**
+ * The footprint wizard manager interfaces with API_PLUGINs that can generate footprints.
+ * It uses API_PLUGIN_MANAGER to enumerate the loaded wizard plugins, and filters to those that
+ * generate footprints.  It then handles calling the plugin to query capabilities, generate
+ * footprints, and so on.
+ */
+class FOOTPRINT_WIZARD_MANAGER
+{
+public:
+    FOOTPRINT_WIZARD_MANAGER() {}
+    ~FOOTPRINT_WIZARD_MANAGER() = default;
+
+    /**
+     * Goes through the list of IPC API plugins that provide wizard actions and
+     * attempts to refresh the info of each one, placing the ones that work in to
+     * the internal list returned by Wizards().  Note that doing so clears the existing
+     * list and invalidates any existing pointers to wizards.
+     */
+    void ReloadWizards();
+
+    std::optional<FOOTPRINT_WIZARD*> GetWizard( const wxString& aIdentifier );
+
+    std::vector<FOOTPRINT_WIZARD*> Wizards() const;
+
+    /**
+     * Runs a wizard plugin with the --get-info argument, which should result in the plugin
+     * dumping a WizardInfo protobuf message in JSON format to stdout.
+     * @return true if the call succeeded
+     */
+    static bool RefreshInfo( FOOTPRINT_WIZARD* aWizard );
+
+    /**
+     * Generates a footprint using a given wizard
+     * @param aWizard is the wizard data instance (with parameters set) to feed into the wizard
+     * @return a generated footprint, or an error message if generation failed
+     */
+    tl::expected<FOOTPRINT*, wxString> Generate( FOOTPRINT_WIZARD* aWizard );
+
+private:
+
+    // Loaded wizards, mapped by identifier
+    std::map<wxString, std::unique_ptr<FOOTPRINT_WIZARD>> m_wizards;
+};
+
+
+#endif /* FOOTPRINT_WIZARD_H */

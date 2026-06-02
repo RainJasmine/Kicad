@@ -230,12 +230,29 @@ wxString LSET::Name( PCB_LAYER_ID aLayerId )
         else if( static_cast<int>( aLayerId ) & 1 )
         {
             int offset = ( aLayerId - Rescue ) / 2;
-            txt = wxString::Format( wxT( "User.%d" ), offset );
+
+#if wxUSE_UNICODE_WCHAR
+            std::wstring offsetStr = std::to_wstring( offset );
+#else
+            std::string offsetStr = std::to_string( offset );
+#endif
+
+            txt = wxS( "User." );
+            txt << offsetStr;
         }
         else
         {
             int offset = ( aLayerId - B_Cu ) / 2;
-            txt = wxString::Format( wxT( "In%d.Cu" ), offset );
+
+#if wxUSE_UNICODE_WCHAR
+            std::wstring offsetStr = std::to_wstring( offset );
+#else
+            std::string offsetStr = std::to_string( offset );
+#endif
+
+            txt = wxS( "In" );
+            txt << offsetStr;
+            txt << wxS( ".Cu" );
         }
     }
 
@@ -588,7 +605,7 @@ LSET LSET::AllCuMask( int aCuLayerCount )
 }
 
 
-LSET LSET::AllCuMask()
+const LSET& LSET::AllCuMask()
 {
     static LSET s_savedMax = allCuMask( MAX_CU_LAYERS );
 
@@ -723,13 +740,6 @@ const LSET& LSET::SideSpecificMask()
 }
 
 
-const LSET& LSET::ForbiddenFootprintLayers()
-{
-    static LSET saved = LSET( InternalCuMask() ).set( In1_Cu, false );
-    return saved;
-}
-
-
 LSEQ LSET::UIOrder() const
 {
     LSEQ order = CuStack();
@@ -778,7 +788,8 @@ GAL_SET GAL_SET::DefaultVisible()
     static const GAL_LAYER_ID visible[] = {
         LAYER_VIAS,
         LAYER_VIA_MICROVIA,
-        LAYER_VIA_BBLIND,
+        LAYER_VIA_BLIND,
+        LAYER_VIA_BURIED,
         LAYER_VIA_THROUGH,
         // LAYER_HIDDEN_TEXT,    // DEPCREATED SINCE 9.0. Invisible text hidden by default
         LAYER_ANCHOR,
@@ -798,8 +809,7 @@ GAL_SET GAL_SET::DefaultVisible()
         LAYER_VIA_HOLEWALLS,
         LAYER_DRC_ERROR,
         LAYER_DRC_WARNING,
-        LAYER_DRC_SHAPE1,
-        LAYER_DRC_SHAPE2,
+        LAYER_DRC_SHAPES,
         // LAYER_DRC_EXCLUSION,      // DRC exclusions hidden by default
         LAYER_DRAWINGSHEET,
         LAYER_GP_OVERLAY,
@@ -813,7 +823,8 @@ GAL_SET GAL_SET::DefaultVisible()
         LAYER_FILLED_SHAPES,
         LAYER_LOCKED_ITEM_SHADOW,
         // LAYER_BOARD_OUTLINE_AREA,    // currently hidden by default
-        LAYER_CONFLICTS_SHADOW
+        LAYER_CONFLICTS_SHADOW,
+        LAYER_POINTS
     };
 
     static const GAL_SET saved( visible, arrayDim( visible ) );
@@ -821,7 +832,6 @@ GAL_SET GAL_SET::DefaultVisible()
 }
 
 
-#ifndef SWIG // Skip SWIG generators for the iterators because it requires a default constructor
 // Custom iterators for Copper and Non-Copper layers
 
 LSET::copper_layers_iterator::copper_layers_iterator( const BASE_SET& set, size_t index ) :
@@ -953,5 +963,3 @@ LSET& LSET::ClearUserDefinedLayers()
 
     return *this;
 }
-
-#endif

@@ -26,6 +26,7 @@
 #include <array_options.h>
 #include <array_pad_number_provider.h>
 #include <dialogs/dialog_create_array.h>
+#include <footprint.h>
 #include <pad.h>
 #include <pcb_generator.h>
 #include <pcb_group.h>
@@ -122,34 +123,11 @@ void ARRAY_TOOL::onDialogClosed( wxCloseEvent& aEvent )
 
     wxCHECK( m_selection, /* void */ );
 
-    PCB_SELECTION& selection = *m_selection;
-
+    PCB_SELECTION&  selection = *m_selection;
     PCB_BASE_FRAME* editFrame = getEditFrame<PCB_BASE_FRAME>();
+    BOARD_COMMIT    commit( editFrame );
 
-    BOARD_COMMIT commit( editFrame );
-
-    FOOTPRINT* const fp = m_isFootprintEditor ? editFrame->GetBoard()->GetFirstFootprint()
-                                              : nullptr;
-
-    // Collect a list of pad numbers that will _not_ be counted as "used"
-    // when finding the next pad numbers.
-    // Things that are selected are fair game, as they'll give up their numbers.
-    // Keeps numbers used by both selected and unselected pads as "reserved".
-    std::set<wxString> unchangingPadNumbers;
-    if( fp )
-    {
-        for( PAD* pad : fp->Pads() )
-        {
-            if( !pad->IsSelected() )
-                unchangingPadNumbers.insert( pad->GetNumber() );
-        }
-    }
-
-    ARRAY_PAD_NUMBER_PROVIDER pad_number_provider( unchangingPadNumbers, *m_array_opts );
-
-    EDA_ITEMS all_added_items;
-
-    int arraySize = m_array_opts->GetArraySize();
+    const int arraySize = m_array_opts->GetArraySize();
 
     if( m_array_opts->ShouldArrangeSelection() )
     {
@@ -221,6 +199,28 @@ void ARRAY_TOOL::onDialogClosed( wxCloseEvent& aEvent )
         return;
     }
 
+    FOOTPRINT* const fp = m_isFootprintEditor ? editFrame->GetBoard()->GetFirstFootprint()
+                                              : nullptr;
+
+    // Collect a list of pad numbers that will _not_ be counted as "used"
+    // when finding the next pad numbers.
+    // Things that are selected are fair game, as they'll give up their numbers.
+    // Keeps numbers used by both selected and unselected pads as "reserved".
+    std::set<wxString> unchangingPadNumbers;
+    if( fp )
+    {
+        for( PAD* pad : fp->Pads() )
+        {
+            if( !pad->IsSelected() )
+                unchangingPadNumbers.insert( pad->GetNumber() );
+        }
+    }
+
+    ARRAY_PAD_NUMBER_PROVIDER pad_number_provider( unchangingPadNumbers, *m_array_opts );
+
+    const bool will_reannotate = !m_isFootprintEditor && m_array_opts->ShouldReannotateFootprints();
+    EDA_ITEMS  all_added_items;
+
     // Iterate in reverse so the original items go last, and we can
     // use them for the positions of the clones.
     for( int ptN = arraySize - 1; ptN >= 0; --ptN )
@@ -228,12 +228,13 @@ void ARRAY_TOOL::onDialogClosed( wxCloseEvent& aEvent )
         PCB_SELECTION        items_for_this_block;
         std::set<FOOTPRINT*> fpDeDupe;
 
-        for( int i = 0; i < m_selection->Size(); ++i )
+        for( EDA_ITEM* eda_item : selection )
+
         {
-            if( !selection[i]->IsBOARD_ITEM() )
+            if( !eda_item->IsBOARD_ITEM() )
                 continue;
 
-            BOARD_ITEM* item = static_cast<BOARD_ITEM*>( selection[i] );
+            BOARD_ITEM* item = static_cast<BOARD_ITEM*>( eda_item );
 
             FOOTPRINT* parentFootprint = item->GetParentFootprint();
 
@@ -286,6 +287,7 @@ void ARRAY_TOOL::onDialogClosed( wxCloseEvent& aEvent )
                     {
                     case PCB_FOOTPRINT_T:
                     case PCB_SHAPE_T:
+                    case PCB_BARCODE_T:
                     case PCB_REFERENCE_IMAGE_T:
                     case PCB_TEXT_T:
                     case PCB_TEXTBOX_T:
@@ -298,6 +300,7 @@ void ARRAY_TOOL::onDialogClosed( wxCloseEvent& aEvent )
                     case PCB_DIM_RADIAL_T:
                     case PCB_DIM_ORTHOGONAL_T:
                     case PCB_DIM_LEADER_T:
+                    case PCB_POINT_T:
                     case PCB_TARGET_T:
                     case PCB_ZONE_T:
                         this_item = item->Duplicate( true, &commit );
@@ -316,9 +319,6 @@ void ARRAY_TOOL::onDialogClosed( wxCloseEvent& aEvent )
                         break;
                     }
                 }
-
-                // Add new items to selection (footprints in the selection will be reannotated)
-                items_for_this_block.Add( this_item );
 
                 if( this_item )
                 {
@@ -352,6 +352,10 @@ void ARRAY_TOOL::onDialogClosed( wxCloseEvent& aEvent )
                 }
             }
 
+            // Add new items to selection (footprints in the selection will be reannotated)
+            if( this_item )
+                items_for_this_block.Add( this_item );
+
             // attempt to renumber items if the array parameters define
             // a complete numbering scheme to number by (as opposed to
             // implicit numbering by incrementing the items during creation
@@ -371,7 +375,9 @@ void ARRAY_TOOL::onDialogClosed( wxCloseEvent& aEvent )
             }
         }
 
-        if( !m_isFootprintEditor && m_array_opts->ShouldReannotateFootprints() )
+        // Do not reannotate the first item, or it will skip its own numbering and
+        // the array annotations will shift by one cell.
+        if( will_reannotate && ptN != arraySize - 1 )
         {
             m_toolMgr->GetTool<BOARD_REANNOTATE_TOOL>()->ReannotateDuplicates( items_for_this_block,
                                                                                all_added_items );
@@ -382,9 +388,9 @@ void ARRAY_TOOL::onDialogClosed( wxCloseEvent& aEvent )
     }
 
     // Make sure original items are selected (e.g. interactive point select may clear it)
-    for( int i = 0; i < m_selection->Size(); ++i )
+    for( EDA_ITEM* eda_item : selection )
     {
-        all_added_items.push_back( selection[i] );
+        all_added_items.push_back( eda_item );
     }
 
     m_toolMgr->RunAction( ACTIONS::selectionClear );

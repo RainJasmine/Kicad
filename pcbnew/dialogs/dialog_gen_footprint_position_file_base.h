@@ -20,6 +20,7 @@ class WX_HTML_REPORT_PANEL;
 #include <wx/font.h>
 #include <wx/colour.h>
 #include <wx/settings.h>
+#include <wx/choice.h>
 #include <wx/textctrl.h>
 #include <wx/bmpbuttn.h>
 #include <wx/bitmap.h>
@@ -27,7 +28,6 @@ class WX_HTML_REPORT_PANEL;
 #include <wx/icon.h>
 #include <wx/button.h>
 #include <wx/sizer.h>
-#include <wx/choice.h>
 #include <wx/checkbox.h>
 #include <wx/panel.h>
 #include <wx/dialog.h>
@@ -43,6 +43,8 @@ class DIALOG_GEN_FOOTPRINT_POSITION_BASE : public DIALOG_SHIM
 
 	protected:
 		wxBoxSizer* m_MainSizer;
+		wxStaticText* m_variantLabel;
+		wxChoice* m_variantChoiceCtrl;
 		wxStaticText* m_staticTextDir;
 		wxTextCtrl* m_outputDirectoryName;
 		STD_BITMAP_BUTTON* m_browseButton;
@@ -53,6 +55,7 @@ class DIALOG_GEN_FOOTPRINT_POSITION_BASE : public DIALOG_SHIM
 		wxCheckBox* m_onlySMD;
 		wxCheckBox* m_excludeTH;
 		wxCheckBox* m_excludeDNP;
+		wxCheckBox* m_excludeBOM;
 		wxCheckBox* m_cbIncludeBoardEdge;
 		wxCheckBox* m_useDrillPlaceOrigin;
 		wxCheckBox* m_negateXcb;

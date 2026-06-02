@@ -25,6 +25,7 @@
  */
 
 #include <stack>
+#include <vector>
 #include <wx/filefn.h>
 #include <wx/log.h>
 
@@ -41,9 +42,10 @@
 #include <sch_edit_frame.h>
 #include <sch_item.h>
 
-#include <symbol_library.h>
+#include <libraries/legacy_symbol_library.h>
 #include <connection_graph.h>
 #include <junction_helpers.h>
+#include <sch_commit.h>
 #include <sch_pin.h>
 #include <sch_symbol.h>
 #include <sch_group.h>
@@ -55,16 +57,18 @@
 #include <sch_text.h>
 #include <schematic.h>
 #include <symb_transforms_utils.h>
-#include <symbol_lib_table.h>
 #include <tool/common_tools.h>
 #include <sim/sim_model.h> // For V6 to V7 simulation model migration.
 #include <locale_io.h>
 
 #include <algorithm>
 #include <math/vector3.h>
+#include <memory>
 
 // TODO(JE) Debugging only
 #include <core/profile.h>
+#include <libraries/symbol_library_adapter.h>
+
 #include "sch_bus_entry.h"
 #include "sch_shape.h"
 
@@ -79,7 +83,7 @@ static const wxChar DanglingProfileMask[] = wxT( "DANGLING_PROFILE" );
 SCH_SCREEN::SCH_SCREEN( EDA_ITEM* aParent ) :
     BASE_SCREEN( aParent, SCH_SCREEN_T ),
     m_fileFormatVersionAtLoad( 0 ),
-    m_paper( wxT( "A4" ) ),
+    m_paper( PAGE_SIZE_TYPE::A4 ),
     m_isReadOnly( false ),
     m_fileExists( false )
 {
@@ -412,54 +416,97 @@ SCH_ITEM* SCH_SCREEN::GetItem( const VECTOR2I& aPosition, int aAccuracy, KICAD_T
 }
 
 
-std::set<SCH_ITEM*> SCH_SCREEN::MarkConnections( SCH_LINE* aSegment, bool aSecondPass )
+std::set<SCH_ITEM*> SCH_SCREEN::MarkConnections( SCH_ITEM* aItem, bool aSecondPass )
 {
 #define PROCESSED CANDIDATE     // Don't use SKIP_STRUCT; IsConnected() returns false if it's set.
 
     std::set<SCH_ITEM*>   retval;
-    std::stack<SCH_LINE*> to_search;
+    std::stack<SCH_ITEM*> toSearch;
 
-    wxCHECK_MSG( aSegment && aSegment->Type() == SCH_LINE_T, retval, wxT( "Invalid pointer." ) );
-
-    to_search.push( aSegment );
-
-    while( !to_search.empty() )
+    auto getItemEndpoints = []( SCH_ITEM* aCandidate ) -> std::vector<VECTOR2I>
     {
-        SCH_ITEM* item = to_search.top();
-        to_search.pop();
+        if( !aCandidate )
+            return {};
+
+        if( aCandidate->Type() == SCH_LINE_T )
+        {
+            SCH_LINE* line = static_cast<SCH_LINE*>( aCandidate );
+            return { line->GetStartPoint(), line->GetEndPoint() };
+        }
+
+        if( aCandidate->Type() == SCH_SHAPE_T )
+        {
+            SCH_SHAPE* shape = static_cast<SCH_SHAPE*>( aCandidate );
+
+            if( shape->GetShape() == SHAPE_T::ARC || shape->GetShape() == SHAPE_T::BEZIER )
+                return { shape->GetStart(), shape->GetEnd() };
+            else if( shape->GetShape() == SHAPE_T::RECTANGLE )
+                return shape->GetRectCorners();
+            else if( shape->GetShape() == SHAPE_T::SEGMENT )
+                return { shape->GetStart(), shape->GetEnd() };
+            else if( shape->GetShape() == SHAPE_T::POLY )
+                return shape->GetPolyPoints();
+        }
+
+        return {};
+    };
+
+    if( !aItem || getItemEndpoints( aItem ).empty() )
+        return retval;
+
+    toSearch.push( aItem );
+
+    while( !toSearch.empty() )
+    {
+        SCH_ITEM* item = toSearch.top();
+        toSearch.pop();
 
         if( item->HasFlag( PROCESSED ) )
             continue;
 
         item->SetFlags( PROCESSED );
 
-        for( SCH_ITEM* candidate : Items().Overlapping( SCH_LINE_T, item->GetBoundingBox() ) )
+        const BOX2I bbox = item->GetBoundingBox();
+
+        for( KICAD_T type : { SCH_LINE_T, SCH_SHAPE_T } )
         {
-            SCH_LINE* line = static_cast<SCH_LINE*>( candidate );
-
-            if( line->HasFlag( PROCESSED ) )
-                continue;
-
-            // Skip connecting lines on different layers (e.g. buses)
-            if( item->GetLayer() != line->GetLayer() )
-                continue;
-
-            // SCH_RTREE::Overlapping() included crossing lines.
-            if( !item->IsEndPoint( line->GetStartPoint() ) && !item->IsEndPoint( line->GetEndPoint() ) )
-                continue;
-
-            to_search.push( line );
-            retval.insert( line );
-
-            for( VECTOR2I pt : { line->GetStartPoint(), line->GetEndPoint() } )
+            for( SCH_ITEM* candidate : Items().Overlapping( type, bbox ) )
             {
-                if( item->IsConnected( pt ) )
-                {
-                    SCH_ITEM* junction = GetItem( pt, 0, SCH_JUNCTION_T );
+                if( candidate->HasFlag( PROCESSED ) )
+                    continue;
 
-                    if( aSecondPass && junction )
-                        retval.insert( junction );
+                std::vector<VECTOR2I> endpoints = getItemEndpoints( candidate );
+
+                if( endpoints.empty() )
+                    continue;
+
+                // Skip connecting items on different layers (e.g. buses)
+                if( item->GetLayer() != candidate->GetLayer() )
+                    continue;
+
+                bool sharesEndpoint = false;
+
+                for( const VECTOR2I& pt : endpoints )
+                {
+                    if( item->IsEndPoint( pt ) )
+                    {
+                        sharesEndpoint = true;
+
+                        if( aSecondPass && item->IsConnected( pt ) )
+                        {
+                            SCH_ITEM* junction = GetItem( pt, 0, SCH_JUNCTION_T );
+
+                            if( junction )
+                                retval.insert( junction );
+                        }
+                    }
                 }
+
+                if( !sharesEndpoint )
+                    continue;
+
+                toSearch.push( candidate );
+                retval.insert( candidate );
             }
         }
     }
@@ -667,10 +714,10 @@ void SCH_SCREEN::UpdateSymbolLinks( REPORTER* aReporter )
 
     wxString msg;
     std::vector<SCH_SYMBOL*> symbols;
-    SYMBOL_LIB_TABLE* libs = PROJECT_SCH::SchSymbolLibTable( &Schematic()->Prj() );
+    SYMBOL_LIBRARY_ADAPTER* libs = PROJECT_SCH::SymbolLibAdapter( &Schematic()->Project() );
 
     // This will be a nullptr if an s-expression schematic is loaded.
-    SYMBOL_LIBS* legacyLibs = PROJECT_SCH::SchLibs( &Schematic()->Prj() );
+    LEGACY_SYMBOL_LIBS* legacyLibs = PROJECT_SCH::LegacySchLibs( &Schematic()->Project() );
 
     for( SCH_ITEM* item : Items().OfType( SCH_SYMBOL_T ) )
         symbols.push_back( static_cast<SCH_SYMBOL*>( item ) );
@@ -721,7 +768,11 @@ void SCH_SCREEN::UpdateSymbolLinks( REPORTER* aReporter )
         // LIB_TABLE_BASE::LoadSymbol() throws an IO_ERROR if the library nickname
         // is not found in the table so check if the library still exists in the table
         // before attempting to load the symbol.
-        if( !libs->HasLibrary( symbol->GetLibId().GetLibNickname() ) && !legacyLibs )
+        std::optional<LIBRARY_TABLE_ROW*> libRow = libs->GetRow( symbol->GetLibId().GetLibNickname() );
+        bool hasLibraryRow = libRow.has_value();
+        bool hasLoadedLibrary = libs->HasLibrary( symbol->GetLibId().GetLibNickname() );
+
+        if( !hasLibraryRow && !legacyLibs )
         {
             if( aReporter )
             {
@@ -734,7 +785,13 @@ void SCH_SCREEN::UpdateSymbolLinks( REPORTER* aReporter )
             continue;
         }
 
-        if( libs->HasLibrary( symbol->GetLibId().GetLibNickname() ) )
+        if( hasLibraryRow && !hasLoadedLibrary )
+        {
+            libs->LoadOne( symbol->GetLibId().GetLibNickname() );
+            hasLoadedLibrary = libs->HasLibrary( symbol->GetLibId().GetLibNickname() );
+        }
+
+        if( hasLoadedLibrary )
         {
             try
             {
@@ -753,7 +810,7 @@ void SCH_SCREEN::UpdateSymbolLinks( REPORTER* aReporter )
 
         if( !tmp && legacyLibs && legacyLibs->GetLibraryCount() )
         {
-            SYMBOL_LIB& legacyCacheLib = legacyLibs->back();
+            LEGACY_SYMBOL_LIB& legacyCacheLib = legacyLibs->back();
 
             // It better be the cache library.
             wxCHECK2( legacyCacheLib.IsCache(), continue );
@@ -846,13 +903,33 @@ void SCH_SCREEN::SetConnectivityDirty()
 
 void SCH_SCREEN::Plot( PLOTTER* aPlotter, const SCH_PLOT_OPTS& aPlotOpts ) const
 {
+    std::vector<SCH_ITEM*> items;
+    items.reserve( Items().size() );
+
+    for( SCH_ITEM* item : Items() )
+        items.push_back( item );
+
+    Plot( aPlotter, aPlotOpts, items );
+}
+
+
+void SCH_SCREEN::Plot( PLOTTER* aPlotter, const SCH_PLOT_OPTS& aPlotOpts, const std::vector<SCH_ITEM*>& aItems ) const
+{
     // Ensure links are up to date, even if a library was reloaded for some reason:
     std::vector<SCH_ITEM*>   junctions;
     std::vector<SCH_ITEM*>   bitmaps;
     std::vector<SCH_SYMBOL*> symbols;
     std::vector<SCH_ITEM*>   other;
+    double                   hopOverScale = 0.0;
+    int                      defaultLineWidth = schIUScale.MilsToIU( DEFAULT_LINE_WIDTH_MILS );
 
-    for( SCH_ITEM* item : Items() )
+    if( !aItems.empty() && aItems[0]->Schematic() )
+    {
+        hopOverScale = aItems[0]->Schematic()->Settings().GetHopOverScale();
+        defaultLineWidth = aItems[0]->Schematic()->Settings().m_DefaultLineWidth;
+    }
+
+    for( SCH_ITEM* item : aItems )
     {
         if( item->IsMoving() )
             continue;
@@ -916,18 +993,20 @@ void SCH_SCREEN::Plot( PLOTTER* aPlotter, const SCH_PLOT_OPTS& aPlotOpts ) const
         aPlotter->SetCurrentLineWidth( lineWidth );
 
         if( item->Type() != SCH_LINE_T )
+        {
             item->Plot( aPlotter, !background, aPlotOpts, 0, 0, { 0, 0 }, false );
+        }
         else
         {
             SCH_LINE* aLine = static_cast<SCH_LINE*>( item );
 
-            if( !aLine->IsWire() || !aPlotOpts.m_plotHopOver )
+            if( ( !aLine->IsWire() && !aLine->IsBus() ) || !aPlotOpts.m_plotHopOver )
             {
                 item->Plot( aPlotter, !background, aPlotOpts, 0, 0, { 0, 0 }, false );
             }
             else
             {
-                double arcRadius = lineWidth * aLine->Schematic()->Settings().m_HopOverScale;
+                double arcRadius = defaultLineWidth * hopOverScale;
                 std::vector<VECTOR3I> curr_wire_shape = aLine->BuildWireWithHopShape( this, arcRadius );
 
                 for( size_t ii = 1; ii < curr_wire_shape.size(); ii++ )
@@ -967,21 +1046,31 @@ void SCH_SCREEN::Plot( PLOTTER* aPlotter, const SCH_PLOT_OPTS& aPlotOpts ) const
     // and symbols to ensure that they are always visible
     TRANSFORM savedTransform = renderSettings->m_Transform;
 
+    wxString        variant = Schematic()->GetCurrentVariant();
+    SCH_SHEET_PATH* sheet = &Schematic()->CurrentSheet();
+
     for( const SCH_SYMBOL* sym :symbols )
     {
         renderSettings->m_Transform = sym->GetTransform();
         aPlotter->SetCurrentLineWidth( sym->GetEffectivePenWidth( renderSettings ) );
 
+        bool dnp = sym->GetDNP( sheet, variant );
+
         for( SCH_FIELD field : sym->GetFields() )
         {
             field.ClearRenderCache();
-            field.Plot( aPlotter, false, aPlotOpts, sym->GetUnit(), sym->GetBodyStyle(), { 0, 0 },
-                        sym->GetDNP() );
+            field.Plot( aPlotter, false, aPlotOpts, sym->GetUnit(), sym->GetBodyStyle(), { 0, 0 }, dnp );
+
+            if( sym->IsSymbolLikePowerLocalLabel() && field.GetId() == FIELD_T::VALUE
+                && ( field.IsVisible() || field.IsForceVisible() ) )
+            {
+                sym->PlotLocalPowerIconShape( aPlotter );
+            }
         }
 
-        sym->PlotPins( aPlotter );
+        sym->PlotPins( aPlotter, dnp );
 
-        if( sym->GetDNP() )
+        if( dnp )
             sym->PlotDNP( aPlotter );
     }
 
@@ -1432,7 +1521,8 @@ void SCH_SCREEN::FixupEmbeddedData()
 
 void SCH_SCREEN::AddBusAlias( std::shared_ptr<BUS_ALIAS> aAlias )
 {
-    m_aliases.insert( aAlias );
+    if( SCHEMATIC* schematic = Schematic() )
+        schematic->AddBusAlias( aAlias );
 }
 
 
@@ -1739,7 +1829,7 @@ bool SCH_SCREEN::InProjectPath() const
     wxCHECK( Schematic() && !m_fileName.IsEmpty(), false );
 
     wxFileName thisScreenFn( m_fileName );
-    wxFileName thisProjectFn( Schematic()->Prj().GetProjectFullName() );
+    wxFileName thisProjectFn( Schematic()->Project().GetProjectFullName() );
 
     wxCHECK( thisProjectFn.IsAbsolute(), false );
 
@@ -1750,6 +1840,184 @@ bool SCH_SCREEN::InProjectPath() const
         thisScreenFn.RemoveLastDir();
 
     return thisScreenFn.GetPath() == thisProjectFn.GetPath();
+}
+
+
+std::set<wxString> SCH_SCREEN::GetVariantNames() const
+{
+    std::set<wxString> variantNames;
+
+    for( const SCH_ITEM* item : Items().OfType( SCH_SYMBOL_T ) )
+    {
+        const SCH_SYMBOL* symbol = static_cast<const SCH_SYMBOL*>( item );
+
+        wxCHECK2( symbol, continue );
+
+        const std::vector<SCH_SYMBOL_INSTANCE> symbolInstances = symbol->GetInstances();
+
+        for( const SCH_SYMBOL_INSTANCE& instance : symbolInstances )
+        {
+            for( const auto& [name, variant] : instance.m_Variants )
+                variantNames.emplace( name );
+        }
+    }
+
+    for( const SCH_ITEM* item : Items().OfType( SCH_SHEET_T ) )
+    {
+        const SCH_SHEET* sheet = static_cast<const SCH_SHEET*>( item );
+
+        wxCHECK2( sheet, continue );
+
+        const std::vector<SCH_SHEET_INSTANCE> sheetInstances = sheet->GetInstances();
+
+        for( const SCH_SHEET_INSTANCE& instance : sheetInstances )
+        {
+            for( const auto& [name, variant] : instance.m_Variants )
+                variantNames.emplace( name );
+        }
+    }
+
+    return variantNames;
+}
+
+
+void SCH_SCREEN::DeleteVariant( const wxString& aVariantName, SCH_COMMIT* aCommit )
+{
+    wxCHECK( !aVariantName.IsEmpty(), /* void */ );
+
+    for( SCH_ITEM* item : Items().OfType( SCH_SYMBOL_T ) )
+    {
+        SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
+
+        wxCHECK2( symbol, continue );
+
+        std::vector<SCH_SYMBOL_INSTANCE> symbolInstances = symbol->GetInstances();
+
+        for( SCH_SYMBOL_INSTANCE& instance : symbolInstances )
+        {
+            if( instance.m_Variants.contains( aVariantName ) )
+            {
+                if( aCommit )
+                    aCommit->Modify( item, this );
+
+                symbol->DeleteVariant( instance.m_Path, aVariantName );
+            }
+        }
+    }
+
+    for( SCH_ITEM* item : Items().OfType( SCH_SHEET_T ) )
+    {
+        SCH_SHEET* sheet = static_cast<SCH_SHEET*>( item );
+
+        wxCHECK2( sheet, continue );
+
+        std::vector<SCH_SHEET_INSTANCE> sheetInstances = sheet->GetInstances();
+
+        for( SCH_SHEET_INSTANCE& instance : sheetInstances )
+        {
+            if( instance.m_Variants.contains( aVariantName ) )
+            {
+                if( aCommit )
+                    aCommit->Modify( item, this );
+
+                sheet->DeleteVariant( instance.m_Path, aVariantName );
+            }
+        }
+    }
+}
+
+
+void SCH_SCREEN::RenameVariant( const wxString& aOldName, const wxString& aNewName,
+                                SCH_COMMIT* aCommit )
+{
+    wxCHECK( !aOldName.IsEmpty() && !aNewName.IsEmpty(), /* void */ );
+
+    for( SCH_ITEM* item : Items().OfType( SCH_SYMBOL_T ) )
+    {
+        SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
+
+        wxCHECK2( symbol, continue );
+
+        std::vector<SCH_SYMBOL_INSTANCE> symbolInstances = symbol->GetInstances();
+
+        for( SCH_SYMBOL_INSTANCE& instance : symbolInstances )
+        {
+            if( instance.m_Variants.contains( aOldName ) )
+            {
+                if( aCommit )
+                    aCommit->Modify( item, this );
+
+                symbol->RenameVariant( instance.m_Path, aOldName, aNewName );
+            }
+        }
+    }
+
+    for( SCH_ITEM* item : Items().OfType( SCH_SHEET_T ) )
+    {
+        SCH_SHEET* sheet = static_cast<SCH_SHEET*>( item );
+
+        wxCHECK2( sheet, continue );
+
+        std::vector<SCH_SHEET_INSTANCE> sheetInstances = sheet->GetInstances();
+
+        for( SCH_SHEET_INSTANCE& instance : sheetInstances )
+        {
+            if( instance.m_Variants.contains( aOldName ) )
+            {
+                if( aCommit )
+                    aCommit->Modify( item, this );
+
+                sheet->RenameVariant( instance.m_Path, aOldName, aNewName );
+            }
+        }
+    }
+}
+
+
+void SCH_SCREEN::CopyVariant( const wxString& aSourceVariant, const wxString& aNewVariant,
+                              SCH_COMMIT* aCommit )
+{
+    wxCHECK( !aSourceVariant.IsEmpty() && !aNewVariant.IsEmpty(), /* void */ );
+
+    for( SCH_ITEM* item : Items().OfType( SCH_SYMBOL_T ) )
+    {
+        SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
+
+        wxCHECK2( symbol, continue );
+
+        std::vector<SCH_SYMBOL_INSTANCE> symbolInstances = symbol->GetInstances();
+
+        for( SCH_SYMBOL_INSTANCE& instance : symbolInstances )
+        {
+            if( instance.m_Variants.contains( aSourceVariant ) )
+            {
+                if( aCommit )
+                    aCommit->Modify( item, this );
+
+                symbol->CopyVariant( instance.m_Path, aSourceVariant, aNewVariant );
+            }
+        }
+    }
+
+    for( SCH_ITEM* item : Items().OfType( SCH_SHEET_T ) )
+    {
+        SCH_SHEET* sheet = static_cast<SCH_SHEET*>( item );
+
+        wxCHECK2( sheet, continue );
+
+        std::vector<SCH_SHEET_INSTANCE> sheetInstances = sheet->GetInstances();
+
+        for( SCH_SHEET_INSTANCE& instance : sheetInstances )
+        {
+            if( instance.m_Variants.contains( aSourceVariant ) )
+            {
+                if( aCommit )
+                    aCommit->Modify( item, this );
+
+                sheet->CopyVariant( instance.m_Path, aSourceVariant, aNewVariant );
+            }
+        }
+    }
 }
 
 
@@ -1839,7 +2107,8 @@ void SCH_SCREENS::buildScreenList( SCH_SHEET* aSheet )
     {
         SCH_SCREEN* screen = aSheet->GetScreen();
 
-        wxCHECK_RET( screen, "No screen for aSheet" );
+        if( !screen )
+            return;
 
         addScreenToList( screen, aSheet );
 
@@ -1907,8 +2176,15 @@ int SCH_SCREENS::ReplaceDuplicateTimeStamps()
 
     std::set<EDA_ITEM*, decltype( timestamp_cmp )> unique_stamps( timestamp_cmp );
 
+    // Collect ALL items from all screens to detect duplicate UUIDs.
+    // This is essential for design blocks where multiple instances of the same content
+    // are placed on the same sheet - each instance needs unique UUIDs for items like
+    // wires, junctions, and groups, not just symbols and sheets.
     for( SCH_SCREEN* screen : m_screens )
-        screen->GetHierarchicalItems( &items );
+    {
+        for( SCH_ITEM* item : screen->Items() )
+            items.push_back( item );
+    }
 
     if( items.size() < 2 )
         return 0;
@@ -2102,6 +2378,10 @@ void SCH_SCREENS::BuildClientSheetPathList()
 
     wxCHECK_RET( sch, "Null schematic in SCH_SCREENS::BuildClientSheetPathList" );
 
+    // Don't build until we have a hierarchy to work with.  This can be called before the hierarchy is built.
+    if( !sch->HasHierarchy() )
+        return;
+
     for( SCH_SCREEN* curr_screen = GetFirst(); curr_screen; curr_screen = GetNext() )
         curr_screen->GetClientSheetPaths().clear();
 
@@ -2146,7 +2426,7 @@ void SCH_SCREEN::MigrateSimModels()
     for( SCH_ITEM* item : Items().OfType( SCH_SYMBOL_T ) )
     {
         SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
-        SIM_MODEL::MigrateSimModel<SCH_SYMBOL>( *symbol, &Schematic()->Prj() );
+        SIM_MODEL::MigrateSimModel<SCH_SYMBOL>( *symbol, &Schematic()->Project() );
     }
 }
 
@@ -2182,4 +2462,47 @@ bool SCH_SCREENS::HasSymbolFieldNamesWithWhiteSpace() const
     }
 
     return false;
+}
+
+
+std::set<wxString> SCH_SCREENS::GetVariantNames() const
+{
+    std::set<wxString> variantNames;
+
+    for( const SCH_SCREEN* screen : m_screens )
+    {
+        for( const wxString& variantName : screen->GetVariantNames() )
+            variantNames.emplace( variantName );
+    }
+
+    return variantNames;
+}
+
+
+void SCH_SCREENS::DeleteVariant( const wxString& aVariantName, SCH_COMMIT* aCommit )
+{
+    wxCHECK( !aVariantName.IsEmpty(), /* void */ );
+
+    for( SCH_SCREEN* screen : m_screens )
+        screen->DeleteVariant( aVariantName, aCommit );
+}
+
+
+void SCH_SCREENS::RenameVariant( const wxString& aOldName, const wxString& aNewName,
+                                 SCH_COMMIT* aCommit )
+{
+    wxCHECK( !aOldName.IsEmpty() && !aNewName.IsEmpty(), /* void */ );
+
+    for( SCH_SCREEN* screen : m_screens )
+        screen->RenameVariant( aOldName, aNewName, aCommit );
+}
+
+
+void SCH_SCREENS::CopyVariant( const wxString& aSourceVariant, const wxString& aNewVariant,
+                               SCH_COMMIT* aCommit )
+{
+    wxCHECK( !aSourceVariant.IsEmpty() && !aNewVariant.IsEmpty(), /* void */ );
+
+    for( SCH_SCREEN* screen : m_screens )
+        screen->CopyVariant( aSourceVariant, aNewVariant, aCommit );
 }

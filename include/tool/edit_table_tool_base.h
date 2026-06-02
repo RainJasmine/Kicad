@@ -45,78 +45,71 @@ protected:
     void addMenus( CONDITIONAL_MENU& selToolMenu )
     {
         auto cellSelection = SELECTION_CONDITIONS::MoreThan( 0 )
-                                    && SELECTION_CONDITIONS::OnlyTypes( { SCH_TABLECELL_T,
-                                                                          PCB_TABLECELL_T } );
+                             && SELECTION_CONDITIONS::OnlyTypes( { SCH_TABLECELL_T, PCB_TABLECELL_T } );
 
-        auto cellBlockSelection =
-                [&]( const SELECTION& sel )
+        auto cellBlockSelection = []( const SELECTION& sel )
+        {
+            if( sel.Size() < 2 )
+                return false;
+
+            int colMin = std::numeric_limits<int>::max();
+            int colMax = 0;
+            int rowMin = std::numeric_limits<int>::max();
+            int rowMax = 0;
+            int selectedArea = 0;
+
+            for( EDA_ITEM* item : sel )
+            {
+                if( T_TABLECELL* cell = dynamic_cast<T_TABLECELL*>( item ) )
                 {
-                    if( sel.Size() < 2 )
-                        return false;
+                    colMin = std::min( colMin, cell->GetColumn() );
+                    colMax = std::max( colMax, cell->GetColumn() + cell->GetColSpan() );
+                    rowMin = std::min( rowMin, cell->GetRow() );
+                    rowMax = std::max( rowMax, cell->GetRow() + cell->GetRowSpan() );
 
-                    int colMin = std::numeric_limits<int>::max();
-                    int colMax = 0;
-                    int rowMin = std::numeric_limits<int>::max();
-                    int rowMax = 0;
-                    int selectedArea = 0;
+                    selectedArea += cell->GetColSpan() * cell->GetRowSpan();
+                }
+            }
 
-                    for( EDA_ITEM* item : sel )
-                    {
-                        if( T_TABLECELL* cell = dynamic_cast<T_TABLECELL*>( item ) )
-                        {
-                            colMin = std::min( colMin, cell->GetColumn() );
-                            colMax = std::max( colMax, cell->GetColumn() + cell->GetColSpan() );
-                            rowMin = std::min( rowMin, cell->GetRow() );
-                            rowMax = std::max( rowMax, cell->GetRow() + cell->GetRowSpan() );
+            return selectedArea == ( colMax - colMin ) * ( rowMax - rowMin );
+        };
 
-                            selectedArea += cell->GetColSpan() * cell->GetRowSpan();
-                        }
-                    }
-
-                    return selectedArea == ( colMax - colMin ) * ( rowMax - rowMin );
-                };
-
-        auto mergedCellsSelection =
-                [&]( const SELECTION& sel )
+        auto mergedCellsSelection = []( const SELECTION& sel )
+        {
+            for( EDA_ITEM* item : sel )
+            {
+                if( T_TABLECELL* cell = dynamic_cast<T_TABLECELL*>( item ) )
                 {
-                    for( EDA_ITEM* item : sel )
-                    {
-                        if( T_TABLECELL* cell = dynamic_cast<T_TABLECELL*>( item ) )
-                        {
-                            if( cell->GetColSpan() > 1 || cell->GetRowSpan() > 1 )
-                                return true;
-                        }
-                    }
+                    if( cell->GetColSpan() > 1 || cell->GetRowSpan() > 1 )
+                        return true;
+                }
+            }
 
-                    return false;
-                };
+            return false;
+        };
 
         //
         // Add editing actions to the selection tool menu
         //
         selToolMenu.AddSeparator( 100 );
-        selToolMenu.AddItem( ACTIONS::addRowAbove,
-                             cellSelection && SELECTION_CONDITIONS::Idle, 100 );
-        selToolMenu.AddItem( ACTIONS::addRowBelow,
-                             cellSelection && SELECTION_CONDITIONS::Idle, 100 );
-        selToolMenu.AddItem( ACTIONS::addColBefore,
-                             cellSelection && SELECTION_CONDITIONS::Idle, 100 );
-        selToolMenu.AddItem( ACTIONS::addColAfter,
-                             cellSelection && SELECTION_CONDITIONS::Idle, 100 );
+        selToolMenu.AddItem( ACTIONS::addRowAbove,   cellSelection && SELECTION_CONDITIONS::Idle, 100 );
+        selToolMenu.AddItem( ACTIONS::addRowBelow,   cellSelection && SELECTION_CONDITIONS::Idle, 100 );
+        selToolMenu.AddItem( ACTIONS::addColBefore,  cellSelection && SELECTION_CONDITIONS::Idle, 100 );
+        selToolMenu.AddItem( ACTIONS::addColAfter,   cellSelection && SELECTION_CONDITIONS::Idle, 100 );
 
         selToolMenu.AddSeparator( 100 );
-        selToolMenu.AddItem( ACTIONS::deleteRows,
-                             cellSelection && SELECTION_CONDITIONS::Idle, 100 );
-        selToolMenu.AddItem( ACTIONS::deleteColumns, cellSelection && SELECTION_CONDITIONS::Idle,
-                             100 );
+        selToolMenu.AddItem( ACTIONS::deleteRows,    cellSelection && SELECTION_CONDITIONS::Idle, 100 );
+        selToolMenu.AddItem( ACTIONS::deleteColumns, cellSelection && SELECTION_CONDITIONS::Idle, 100 );
 
         selToolMenu.AddSeparator( 100 );
         selToolMenu.AddItem( ACTIONS::mergeCells,    cellSelection && cellBlockSelection, 100 );
         selToolMenu.AddItem( ACTIONS::unmergeCells,  cellSelection && mergedCellsSelection, 100 );
 
         selToolMenu.AddSeparator( 100 );
-        selToolMenu.AddItem( ACTIONS::editTable,
-                             cellSelection && SELECTION_CONDITIONS::Idle, 100 );
+        selToolMenu.AddItem( ACTIONS::editTable,     cellSelection && SELECTION_CONDITIONS::Idle, 100 );
+
+        selToolMenu.AddSeparator( 100 );
+        selToolMenu.AddItem( ACTIONS::exportTableCSV, cellSelection && SELECTION_CONDITIONS::Idle, 100 );
 
         selToolMenu.AddSeparator( 100 );
     }
@@ -363,7 +356,7 @@ protected:
 
         if( deleted.size() == (unsigned) table->GetRowCount() )
         {
-            commit.Remove( table );
+            commit.Remove( table, getScreen() );
         }
         else
         {
@@ -371,20 +364,27 @@ protected:
 
             VECTOR2I pos = table->GetPosition();
 
+            // Save old row heights BEFORE deleting cells
+            std::map<int, int> oldRowHeights;
+            for( int row = 0; row < table->GetRowCount(); ++row )
+                oldRowHeights[row] = table->GetRowHeight( row );
+
             clearSelection();
             table->DeleteMarkedCells();
 
             for( int row = 0; row < table->GetRowCount(); ++row )
             {
-                int offset = 0;
+                int old_row = row;
 
                 for( int deletedRow : deleted )
                 {
-                    if( deletedRow >= row )
-                        offset++;
+                    if( deletedRow <= old_row )
+                        old_row++;
                 }
 
-                table->SetRowHeight( row, table->GetRowHeight( row + offset ) );
+                // Use saved old heights instead of querying the modified table
+                int height = ( oldRowHeights.count( old_row ) ) ? oldRowHeights[old_row] : 0;
+                table->SetRowHeight( row, height );
             }
 
             table->SetPosition( pos );
@@ -440,7 +440,7 @@ protected:
 
         if( deleted.size() == (unsigned) table->GetColCount() )
         {
-            commit.Remove( table );
+            commit.Remove( table, getScreen() );
         }
         else
         {
@@ -454,15 +454,15 @@ protected:
 
             for( int col = 0; col < table->GetColCount(); ++col )
             {
-                int offset = 0;
+                int old_col = col;
 
                 for( int deletedCol : deleted )
                 {
-                    if( deletedCol >= col )
-                        offset++;
+                    if( deletedCol <= old_col )
+                        old_col++;
                 }
 
-                table->SetColWidth( col, table->GetColWidth( col + offset ) );
+                table->SetColWidth( col, table->GetColWidth( old_col ) );
             }
 
             table->SetPosition( pos );
@@ -589,11 +589,226 @@ protected:
         return 0;
     }
 
+public:
+    /**
+     * Get the bounding box of a cell block selection.
+     * @param aSel The selection to analyze
+     * @param aColMin Output: minimum column index
+     * @param aColMax Output: maximum column index (exclusive)
+     * @param aRowMin Output: minimum row index
+     * @param aRowMax Output: maximum row index (exclusive)
+     * @return true if selection forms a valid contiguous block, false otherwise
+     */
+    bool getCellBlockBounds( const SELECTION& aSel, int& aColMin, int& aColMax, int& aRowMin, int& aRowMax )
+    {
+        if( aSel.Size() < 1 )
+            return false;
+
+        aColMin = std::numeric_limits<int>::max();
+        aColMax = 0;
+        aRowMin = std::numeric_limits<int>::max();
+        aRowMax = 0;
+        int selectedArea = 0;
+
+        for( EDA_ITEM* item : aSel )
+        {
+            if( T_TABLECELL* cell = dynamic_cast<T_TABLECELL*>( item ) )
+            {
+                aColMin = std::min( aColMin, cell->GetColumn() );
+                aColMax = std::max( aColMax, cell->GetColumn() + cell->GetColSpan() );
+                aRowMin = std::min( aRowMin, cell->GetRow() );
+                aRowMax = std::max( aRowMax, cell->GetRow() + cell->GetRowSpan() );
+
+                selectedArea += cell->GetColSpan() * cell->GetRowSpan();
+            }
+        }
+
+        // Check if selection is contiguous (for single cell, we allow it)
+        if( aSel.Size() == 1 )
+            return true;
+
+        return selectedArea == ( aColMax - aColMin ) * ( aRowMax - aRowMin );
+    }
+
+    /**
+     * Validate if paste-into-cells is possible for the given selection.
+     * @param aSel The target cell selection
+     * @param aErrorMsg Output: error message if validation fails
+     * @return true if paste-into is valid, false otherwise
+     */
+    bool validatePasteIntoSelection( const SELECTION& aSel, wxString& aErrorMsg )
+    {
+        if( aSel.Empty() )
+        {
+            aErrorMsg = _( "No cells selected" );
+            return false;
+        }
+
+        // Check if all selected items are table cells from the same table
+        T_TABLE* table = nullptr;
+
+        for( EDA_ITEM* item : aSel )
+        {
+            T_TABLECELL* cell = dynamic_cast<T_TABLECELL*>( item );
+
+            if( !cell )
+            {
+                aErrorMsg = _( "Selection contains non-cell items" );
+                return false;
+            }
+
+            if( !table )
+            {
+                table = static_cast<T_TABLE*>( cell->GetParent() );
+            }
+            else if( cell->GetParent() != table )
+            {
+                aErrorMsg = _( "Selected cells are from different tables" );
+                return false;
+            }
+
+            // Check for merged cells (block paste-into for now)
+            if( cell->GetColSpan() > 1 || cell->GetRowSpan() > 1 )
+            {
+                aErrorMsg = _( "Cannot paste into merged cells" );
+                return false;
+            }
+        }
+
+        // Check if selection is contiguous
+        int colMin, colMax, rowMin, rowMax;
+
+        if( !getCellBlockBounds( aSel, colMin, colMax, rowMin, rowMax ) )
+        {
+            aErrorMsg = _( "Selected cells must form a contiguous block" );
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Paste text content from source table into selected cells.
+     * @param aSel The target cell selection
+     * @param aSourceTable The table containing cells to paste
+     * @param aCommit The commit object for tracking changes
+     * @return true if paste succeeded, false otherwise
+     */
+    bool pasteCellsIntoSelection( const SELECTION& aSel, T_TABLE* aSourceTable, T_COMMIT& aCommit )
+    {
+        if( !aSourceTable || aSel.Empty() )
+            return false;
+
+        // Get target cell range
+        int targetColMin, targetColMax, targetRowMin, targetRowMax;
+
+        if( !getCellBlockBounds( aSel, targetColMin, targetColMax, targetRowMin, targetRowMax ) )
+            return false;
+
+        T_TABLE* targetTable = static_cast<T_TABLE*>( static_cast<T_TABLECELL*>( aSel[0] )->GetParent() );
+
+        // Get source table dimensions
+        int sourceRows = aSourceTable->GetRowCount();
+        int sourceCols = aSourceTable->GetColCount();
+
+        int pasteEndRow = targetRowMin + sourceRows;
+        int pasteEndCol = targetColMin + sourceCols;
+
+        if( pasteEndRow > targetTable->GetRowCount() || pasteEndCol > targetTable->GetColCount() )
+        {
+            int rowsToAdd = std::max( 0, pasteEndRow - targetTable->GetRowCount() );
+            int colsToAdd = std::max( 0, pasteEndCol - targetTable->GetColCount() );
+
+            VECTOR2I pos = targetTable->GetPosition();
+            aCommit.Modify( targetTable, getScreen() );
+
+            for( int i = 0; i < rowsToAdd; ++i )
+            {
+                int insertRow = targetTable->GetRowCount();
+                int clipboardRow = insertRow - targetRowMin;
+
+                std::vector<T_TABLECELL*> sources;
+                sources.reserve( aSourceTable->GetColCount() );
+
+                for( int col = 0; col < aSourceTable->GetColCount(); ++col )
+                    sources.push_back( aSourceTable->GetCell( clipboardRow, col ) );
+
+                for( int col = 0; col < targetTable->GetColCount(); ++col )
+                {
+                    T_TABLECELL* sourceCell = ( col < aSourceTable->GetColCount() ) ? sources[col] : sources[0];
+                    T_TABLECELL* cell = copyCell( sourceCell );
+                    targetTable->InsertCell( insertRow * targetTable->GetColCount(), cell );
+                }
+
+                for( int afterRow = targetTable->GetRowCount() - 1; afterRow > insertRow; afterRow-- )
+                    targetTable->SetRowHeight( afterRow, targetTable->GetRowHeight( afterRow - 1 ) );
+
+                targetTable->SetRowHeight( insertRow, aSourceTable->GetRowHeight( clipboardRow ) );
+            }
+
+            for( int i = 0; i < colsToAdd; ++i )
+            {
+                int insertCol = targetTable->GetColCount();
+                int clipboardCol = insertCol - targetColMin;
+                int rowCount = targetTable->GetRowCount();
+
+                targetTable->SetColCount( targetTable->GetColCount() + 1 );
+
+                std::vector<T_TABLECELL*> sources;
+                sources.reserve( aSourceTable->GetRowCount() );
+
+                for( int row = 0; row < aSourceTable->GetRowCount(); ++row )
+                    sources.push_back( aSourceTable->GetCell( row, clipboardCol ) );
+
+                for( int row = 0; row < rowCount; ++row )
+                {
+                    T_TABLECELL* sourceCell = ( row < aSourceTable->GetRowCount() ) ? sources[row] : sources[0];
+                    T_TABLECELL* cell = copyCell( sourceCell );
+                    targetTable->InsertCell( row * targetTable->GetColCount() + insertCol, cell );
+                }
+
+                for( int afterCol = targetTable->GetColCount() - 1; afterCol > insertCol; afterCol-- )
+                    targetTable->SetColWidth( afterCol, targetTable->GetColWidth( afterCol - 1 ) );
+
+                targetTable->SetColWidth( insertCol, aSourceTable->GetColWidth( clipboardCol ) );
+            }
+
+            targetTable->SetPosition( pos );
+            targetTable->Normalize();
+        }
+
+        for( int srcRow = 0; srcRow < sourceRows; ++srcRow )
+        {
+            for( int srcCol = 0; srcCol < sourceCols; ++srcCol )
+            {
+                int destRow = targetRowMin + srcRow;
+                int destCol = targetColMin + srcCol;
+
+                if( destRow >= targetTable->GetRowCount() || destCol >= targetTable->GetColCount() )
+                    continue;
+
+                T_TABLECELL* sourceCell = aSourceTable->GetCell( srcRow, srcCol );
+                T_TABLECELL* targetCell = targetTable->GetCell( destRow, destCol );
+
+                aCommit.Modify( targetCell, getScreen() );
+
+                targetCell->SetText( sourceCell->GetText() );
+                targetCell->SetAttributes( *sourceCell, false );
+                targetCell->SetStroke( sourceCell->GetStroke() );
+                targetCell->SetFillMode( sourceCell->GetFillMode() );
+                targetCell->SetFillColor( sourceCell->GetFillColor() );
+            }
+        }
+
+        targetTable->Normalize();
+        return true;
+    }
+
     virtual TOOL_MANAGER* getToolMgr() = 0;
-    virtual BASE_SCREEN* getScreen() = 0;
+    virtual BASE_SCREEN*  getScreen() = 0;
 
     virtual const SELECTION& getTableCellSelection() = 0;
-    virtual void clearSelection() = 0;
+    virtual void             clearSelection() = 0;
 
     virtual T_TABLECELL* copyCell( T_TABLECELL* aSource ) = 0;
 };

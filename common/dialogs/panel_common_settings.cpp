@@ -25,15 +25,16 @@
 
 #include <advanced_config.h>
 #include <bitmaps.h>
-#include <dialog_shim.h>
+#include <class_draw_panel_gal.h>
 #include <dpi_scaling_common.h>
+#include <eda_draw_frame.h>
+#include <gal/graphics_abstraction_layer.h>
 #include <kiface_base.h>
 #include <kiplatform/ui.h>
 #include <pgm_base.h>
 #include <id.h>
 #include <settings/common_settings.h>
 #include <settings/settings_manager.h>
-#include <widgets/stepped_slider.h>
 #include <widgets/std_bitmap_button.h>
 #include <wx/filedlg.h>
 
@@ -44,15 +45,13 @@
  * Ugly as it all is, it does improve our usability on various platforms.
  */
 
-PANEL_COMMON_SETTINGS::PANEL_COMMON_SETTINGS( wxWindow* aParent )
-        : PANEL_COMMON_SETTINGS_BASE( aParent )
+PANEL_COMMON_SETTINGS::PANEL_COMMON_SETTINGS( wxWindow* aParent ) :
+        PANEL_COMMON_SETTINGS_BASE( aParent )
 {
-    /*
-     * Cairo canvas doesn't work on Mac, so no need for fallback anti-aliasing options
-     */
+    // Rendering engine
 #ifdef __WXMAC__
-    m_antialiasingFallback->Show( false );
-    m_antialiasingFallbackLabel->Show( false );
+    // On MAC, Cairo render does not work.
+    m_renderingSizer->Show( false );
 #endif
 
     ShowFileManagerWidgets( ADVANCED_CFG::GetCfg().m_EnableLibDir );
@@ -70,6 +69,14 @@ PANEL_COMMON_SETTINGS::PANEL_COMMON_SETTINGS( wxWindow* aParent )
     m_rbIconThemeAuto->Show( false );
 #endif
 
+    // It's common on Windows to have separate app and system settings for light/dark
+#ifndef __WXMSW__
+    m_stAppTheme->Show( false );
+    m_rbAppThemeLight->Show( false );
+    m_rbAppThemeDark->Show( false );
+    m_rbAppThemeAuto->Show( false );
+#endif
+
    	/*
    	 * Automatic canvas scaling works fine on all supported platforms, so manual scaling is disabled
    	 */
@@ -84,21 +91,19 @@ PANEL_COMMON_SETTINGS::PANEL_COMMON_SETTINGS( wxWindow* aParent )
         m_canvasScaleCtrl->SetIncrement( dpi_scaling_increment );
         m_canvasScaleCtrl->SetValue( DPI_SCALING::GetDefaultScaleFactor() );
 
-        m_canvasScaleCtrl->SetToolTip(
-                _( "Set the scale for the canvas."
-                   "\n\n"
-                   "On high-DPI displays on some platforms, KiCad cannot determine the "
-                   "scaling factor. In this case you may need to set this to a value to "
-                   "match your system's DPI scaling. 2.0 is a common value. "
-                   "\n\n"
-                   "If this does not match the system DPI scaling, the canvas will "
-                   "not match the window size and cursor position." ) );
+        m_canvasScaleCtrl->SetToolTip( _( "Set the scale for the canvas."
+                                          "\n\n"
+                                          "On high-DPI displays on some platforms, KiCad cannot determine the "
+                                          "scaling factor. In this case you may need to set this to a value to "
+                                          "match your system's DPI scaling. 2.0 is a common value. "
+                                          "\n\n"
+                                          "If this does not match the system DPI scaling, the canvas will "
+                                          "not match the window size and cursor position." ) );
 
-        m_canvasScaleAuto->SetToolTip(
-                _( "Use an automatic value for the canvas scale."
-                   "\n\n"
-                   "On some platforms, the automatic value is incorrect and should be "
-                   "set manually." ) );
+        m_canvasScaleAuto->SetToolTip( _( "Use an automatic value for the canvas scale."
+                                          "\n\n"
+                                          "On some platforms, the automatic value is incorrect and should be "
+                                          "set manually." ) );
     }
     else
     {
@@ -107,6 +112,12 @@ PANEL_COMMON_SETTINGS::PANEL_COMMON_SETTINGS( wxWindow* aParent )
         m_canvasScaleCtrl = nullptr;
         m_canvasScaleAuto->Show( false );
     }
+
+    m_zoomCorrectionCtrl = new ZOOM_CORRECTION_CTRL( this,
+                                                     Pgm().GetCommonSettings()->m_Appearance.zoom_correction_factor,
+                                                     ADVANCED_CFG::GetCfg().m_ScreenDPI );
+
+    m_scalingSizer->Add( m_zoomCorrectionCtrl, 1, wxEXPAND );
 
     // Hide the option of icons in menus for platforms that do not support them
     m_checkBoxIconsInMenus->Show( KIPLATFORM::UI::AllowIconsInMenus() );
@@ -163,13 +174,14 @@ bool PANEL_COMMON_SETTINGS::TransferDataFromWindow()
     COMMON_SETTINGS* commonSettings = Pgm().GetCommonSettings();
 
     commonSettings->m_System.file_explorer = m_textCtrlFileManager->GetValue();
-
-    commonSettings->m_System.autosave_interval = m_SaveTime->GetValue() * 60;
     commonSettings->m_System.file_history_size = m_fileHistorySize->GetValue();
-    commonSettings->m_System.clear_3d_cache_interval = m_Clear3DCacheFilesOlder->GetValue();
 
-    commonSettings->m_Graphics.opengl_aa_mode = m_antialiasing->GetSelection();
-    commonSettings->m_Graphics.cairo_aa_mode = m_antialiasingFallback->GetSelection();
+    commonSettings->m_Graphics.aa_mode = m_antialiasing->GetSelection();
+
+    if( m_rbAccelerated->GetValue() )
+        commonSettings->m_Graphics.canvas_type = EDA_DRAW_PANEL_GAL::GAL_TYPE_OPENGL;
+    else
+        commonSettings->m_Graphics.canvas_type = EDA_DRAW_PANEL_GAL::GAL_TYPE_CAIRO;
 
     if( m_canvasScaleCtrl )
     {
@@ -183,6 +195,13 @@ bool PANEL_COMMON_SETTINGS::TransferDataFromWindow()
         commonSettings->m_Appearance.icon_theme = ICON_THEME::DARK;
     else if( m_rbIconThemeAuto->GetValue() )
         commonSettings->m_Appearance.icon_theme = ICON_THEME::AUTO;
+
+    if( m_rbAppThemeLight->GetValue() )
+        commonSettings->m_Appearance.app_theme = APP_THEME::LIGHT;
+    else if( m_rbAppThemeDark->GetValue() )
+        commonSettings->m_Appearance.app_theme = APP_THEME::DARK;
+    else if( m_rbAppThemeAuto->GetValue() )
+        commonSettings->m_Appearance.app_theme = APP_THEME::AUTO;
 
     if( m_rbIconSizeSmall->GetValue() )
         commonSettings->m_Appearance.toolbar_icon_size = 16;
@@ -198,6 +217,10 @@ bool PANEL_COMMON_SETTINGS::TransferDataFromWindow()
 
     commonSettings->m_Appearance.grid_striping = m_gridStriping->GetValue();
 
+    commonSettings->m_Appearance.use_custom_cursors = !m_disableCustomCursors->GetValue();
+
+    commonSettings->m_Appearance.zoom_correction_factor = m_zoomCorrectionCtrl->GetValue();
+
     double dimmingPercent = 80;
     m_highContrastCtrl->GetValue().ToDouble( &dimmingPercent );
     commonSettings->m_Appearance.hicontrast_dimming_factor = dimmingPercent / 100.0f;
@@ -208,11 +231,22 @@ bool PANEL_COMMON_SETTINGS::TransferDataFromWindow()
     commonSettings->m_Input.warp_mouse_on_move   = m_warpMouseOnMove->GetValue();
 
     commonSettings->m_Backup.enabled             = m_cbBackupEnabled->GetValue();
-    commonSettings->m_Backup.backup_on_autosave  = m_cbBackupAutosave->GetValue();
-    commonSettings->m_Backup.limit_total_files   = m_backupLimitTotalFiles->GetValue();
-    commonSettings->m_Backup.limit_daily_files   = m_backupLimitDailyFiles->GetValue();
-    commonSettings->m_Backup.min_interval        = m_backupMinInterval->GetValue() * 60;
-    commonSettings->m_Backup.limit_total_size    = m_backupLimitTotalSize->GetValue() * 1024 * 1024;
+    commonSettings->m_Backup.limit_total_size    = m_backupLimitTotalSize->GetValue() * 1024ULL * 1024ULL;
+
+    // The radio-box choice order is constructed to match these enum values; if the enum
+    // is reordered in common_settings.h the ternaries below silently flip without these.
+    static_assert( static_cast<int>( BACKUP_FORMAT::INCREMENTAL ) == 0 );
+    static_assert( static_cast<int>( BACKUP_FORMAT::ZIP ) == 1 );
+    static_assert( static_cast<int>( BACKUP_LOCATION::PROJECT_DIR ) == 0 );
+    static_assert( static_cast<int>( BACKUP_LOCATION::USER_DIR ) == 1 );
+
+    commonSettings->m_Backup.format = ( m_choiceBackupFormat->GetSelection() == 0 )
+                                              ? BACKUP_FORMAT::INCREMENTAL
+                                              : BACKUP_FORMAT::ZIP;
+
+    commonSettings->m_Backup.location = ( m_choiceBackupLocation->GetSelection() == 0 )
+                                                ? BACKUP_LOCATION::PROJECT_DIR
+                                                : BACKUP_LOCATION::USER_DIR;
 
     commonSettings->m_Session.remember_open_files = m_cbRememberOpenFiles->GetValue();
 
@@ -247,18 +281,14 @@ void PANEL_COMMON_SETTINGS::ResetPanel()
 
 void PANEL_COMMON_SETTINGS::applySettingsToPanel( COMMON_SETTINGS& aSettings )
 {
-    int timevalue = aSettings.m_System.autosave_interval;
-    wxString msg;
-
-    msg << timevalue / 60;
-    m_SaveTime->SetValue( msg );
-
     m_fileHistorySize->SetValue( aSettings.m_System.file_history_size );
 
-    m_antialiasing->SetSelection( aSettings.m_Graphics.opengl_aa_mode );
-    m_antialiasingFallback->SetSelection( aSettings.m_Graphics.cairo_aa_mode );
+    m_antialiasing->SetSelection( aSettings.m_Graphics.aa_mode );
 
-    m_Clear3DCacheFilesOlder->SetValue( aSettings.m_System.clear_3d_cache_interval );
+    if( aSettings.m_Graphics.canvas_type == EDA_DRAW_PANEL_GAL::GAL_TYPE_OPENGL )
+        m_rbAccelerated->SetValue( true );
+    else
+        m_rbFallback->SetValue( true );
 
     if( m_canvasScaleCtrl )
     {
@@ -274,6 +304,13 @@ void PANEL_COMMON_SETTINGS::applySettingsToPanel( COMMON_SETTINGS& aSettings )
     case ICON_THEME::AUTO:  m_rbIconThemeAuto->SetValue( true );    break;
     }
 
+    switch( aSettings.m_Appearance.app_theme )
+    {
+    case APP_THEME::LIGHT: m_rbAppThemeLight->SetValue( true ); break;
+    case APP_THEME::DARK: m_rbAppThemeDark->SetValue( true ); break;
+    case APP_THEME::AUTO: m_rbAppThemeAuto->SetValue( true ); break;
+    }
+
     switch( aSettings.m_Appearance.toolbar_icon_size )
     {
     case 16: m_rbIconSizeSmall->SetValue( true );   break;
@@ -286,6 +323,10 @@ void PANEL_COMMON_SETTINGS::applySettingsToPanel( COMMON_SETTINGS& aSettings )
 
     m_gridStriping->SetValue( aSettings.m_Appearance.grid_striping );
 
+    m_disableCustomCursors->SetValue( !aSettings.m_Appearance.use_custom_cursors );
+
+    m_zoomCorrectionCtrl->SetDisplayedValue( aSettings.m_Appearance.zoom_correction_factor );
+
     double dimmingPercent = aSettings.m_Appearance.hicontrast_dimming_factor * 100.0f;
     m_highContrastCtrl->SetValue( wxString::Format( "%.0f", dimmingPercent ) );
 
@@ -297,11 +338,13 @@ void PANEL_COMMON_SETTINGS::applySettingsToPanel( COMMON_SETTINGS& aSettings )
     m_cbRememberOpenFiles->SetValue( aSettings.m_Session.remember_open_files );
 
     m_cbBackupEnabled->SetValue( aSettings.m_Backup.enabled );
-    m_cbBackupAutosave->SetValue( aSettings.m_Backup.backup_on_autosave );
-    m_backupLimitTotalFiles->SetValue( aSettings.m_Backup.limit_total_files );
-    m_backupLimitDailyFiles->SetValue( aSettings.m_Backup.limit_daily_files );
-    m_backupMinInterval->SetValue( aSettings.m_Backup.min_interval / 60 );
     m_backupLimitTotalSize->SetValue( aSettings.m_Backup.limit_total_size / ( 1024 * 1024 ) );
+
+    m_choiceBackupFormat->SetSelection(
+            aSettings.m_Backup.format == BACKUP_FORMAT::INCREMENTAL ? 0 : 1 );
+
+    m_choiceBackupLocation->SetSelection(
+            aSettings.m_Backup.location == BACKUP_LOCATION::PROJECT_DIR ? 0 : 1 );
 
     m_showScrollbars->SetValue( aSettings.m_Appearance.show_scrollbars );
 }
@@ -380,6 +423,8 @@ void PANEL_COMMON_SETTINGS::OnPDFViewerClick( wxCommandEvent& event )
 
     wxFileDialog dlg( topLevelParent, _( "Select Preferred PDF Viewer" ), fn.GetPath(),
                       fn.GetFullPath(), wildcard, wxFD_OPEN | wxFD_FILE_MUST_EXIST );
+
+    KIPLATFORM::UI::AllowNetworkFileSystems( &dlg );
 
     if( dlg.ShowModal() == wxID_CANCEL )
         return;

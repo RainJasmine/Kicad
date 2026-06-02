@@ -32,13 +32,19 @@
 #include <core/map_helpers.h>
 #include <fmt/core.h>
 #include <macros.h>
-#include <richio.h>                        // StrPrintf
 #include <string_utils.h>
+#include <widgets/kistatusbar.h>
 #include <wx_filename.h>
 #include <fmt/chrono.h>
 #include <wx/log.h>
 #include <wx/regex.h>
+#include <wx/tokenzr.h>
+#include <libeval/numeric_evaluator.h>
 #include "locale_io.h"
+#include <wx/event.h>
+#include <wx/uri.h>
+#include <project.h>
+#include <common.h>
 
 
 /**
@@ -46,7 +52,9 @@
  * platforms.  This is the list of illegal file name characters for Windows which includes
  * the illegal file name characters for Linux and OSX.
  */
-static const char illegalFileNameChars[] = "\\/:\"<>|*?";
+static constexpr std::string_view illegalFileNameChars = "\\/:\"<>|*?";
+
+static const wxChar defaultVariantName[] = wxT( "< Default >" );
 
 
 // Checks if a full filename is valid, i.e. does not contains illegal chars
@@ -155,7 +163,7 @@ bool ConvertSmartQuotesAndDashes( wxString* aString )
 
     for( wxString::iterator ii = aString->begin(); ii != aString->end(); ++ii )
     {
-        if( *ii == L'\u00B4' || *ii == L'\u2018' || *ii == L'\u2019' )
+        if( *ii == L'\u2018' || *ii == L'\u2019' )
         {
             *ii = '\'';
             retVal = true;
@@ -234,7 +242,7 @@ wxString EscapeString( const wxString& aSource, ESCAPE_CONTEXT aContext )
         }
         else if( aContext == CTX_JS_STR )
         {
-            if( c >= 0x7F || c == '\'' || c == '\\' || c == '(' || c == ')' )
+            if( c >= 0x7F || c == '\'' || c == '"' || c == '\\' || c == '(' || c == ')' )
             {
                 unsigned int code = c;
                 char buffer[16];
@@ -810,15 +818,7 @@ char* GetLine( FILE* File, char* Line, int* LineNum, int SizeLine )
 
 wxString GetISO8601CurrentDateTime()
 {
-    // on msys2 variant mingw64, in fmt::format the %z format
-    // (offset from UTC in the ISO 8601 format, e.g. -0430) does not work,
-    // and is in fact %Z (locale-dependent time zone name or abbreviation) and breaks our date.
-    // However, on msys2 variant ucrt64, it works (this is not the same code in fmt::format)
-#if defined(__MINGW32__) && !defined(_UCRT)
-    return fmt::format( "{:%FT%T}", fmt::localtime( std::time( nullptr ) ) );
-#else
-    return fmt::format( "{:%FT%T%z}", fmt::localtime( std::time( nullptr ) ) );
-#endif
+    return wxDateTime::Now().FormatISOCombined( 'T' );
 }
 
 
@@ -829,7 +829,10 @@ int StrNumCmp( const wxString& aString1, const wxString& aString2, bool aIgnoreC
     auto str1 = aString1.begin();
     auto str2 = aString2.begin();
 
-    while( str1 != aString1.end() && str2 != aString2.end() )
+    const auto str1End = aString1.end();
+    const auto str2End = aString2.end();
+
+    while( str1 != str1End && str2 != str2End )
     {
         wxUniChar c1 = *str1;
         wxUniChar c2 = *str2;
@@ -844,14 +847,14 @@ int StrNumCmp( const wxString& aString1, const wxString& aString2, bool aIgnoreC
                 c1 = *str1;
                 nb1 = nb1 * 10 + (int) c1 - '0';
                 ++str1;
-            } while( str1 != aString1.end() && wxIsdigit( *str1 ) );
+            } while( str1 != str1End && wxIsdigit( *str1 ) );
 
             do
             {
                 c2 = *str2;
                 nb2 = nb2 * 10 + (int) c2 - '0';
                 ++str2;
-            } while( str2 != aString2.end() && wxIsdigit( *str2 ) );
+            } while( str2 != str2End && wxIsdigit( *str2 ) );
 
             if( nb1 < nb2 )
                 return -1;
@@ -859,8 +862,8 @@ int StrNumCmp( const wxString& aString1, const wxString& aString2, bool aIgnoreC
             if( nb1 > nb2 )
                 return 1;
 
-            c1 = ( str1 != aString1.end() ) ? *str1 : wxUniChar( 0 );
-            c2 = ( str2 != aString2.end() ) ? *str2 : wxUniChar( 0 );
+            c1 = ( str1 != str1End ) ? *str1 : wxUniChar( 0 );
+            c2 = ( str2 != str2End ) ? *str2 : wxUniChar( 0 );
         }
 
         // Any numerical comparisons to here are identical.
@@ -884,18 +887,18 @@ int StrNumCmp( const wxString& aString1, const wxString& aString2, bool aIgnoreC
                 return 1;
         }
 
-        if( str1 != aString1.end() )
+        if( str1 != str1End )
             ++str1;
 
-        if( str2 != aString2.end() )
+        if( str2 != str2End )
             ++str2;
     }
 
-    if( str1 == aString1.end() && str2 != aString2.end() )
+    if( str1 == str1End && str2 != str2End )
     {
         return -1;   // Identical to here but aString1 is longer.
     }
-    else if( str1 != aString1.end() && str2 == aString2.end() )
+    else if( str1 != str1End && str2 == str2End )
     {
         return 1;    // Identical to here but aString2 is longer.
     }
@@ -971,7 +974,7 @@ bool WildCompareString( const wxString& pattern, const wxString& string_to_tst,
 bool ApplyModifier( double& value, const wxString& aString )
 {
     /// Although the two 'μ's look the same, they are U+03BC and U+00B5
-    static const wxString modifiers( wxT( "pnuµμmkKM" ) );
+    static const wxString modifiers( wxT( "afpnuµμmLRFkKMGTPE" ) );
 
     if( !aString.length() )
         return false;
@@ -1001,20 +1004,33 @@ bool ApplyModifier( double& value, const wxString& aString )
         return false;
     }
 
+    // Note: most of these are SI, but some (L, R, F) are IEC 60062.
+    if( modifier == 'a' )
+        value *= 1.0e-18;
+    else if( modifier == 'f' )
+        value *= 1.0e-15;
     if( modifier == 'p' )
         value *= 1.0e-12;
     if( modifier == 'n' )
         value *= 1.0e-9;
     else if( modifier == 'u' || modifier == wxS( "µ" )[0] || modifier == wxS( "μ" )[0] )
         value *= 1.0e-6;
-    else if( modifier == 'm' )
+    else if( modifier == 'm' || modifier == 'L' )
         value *= 1.0e-3;
+    else if( modifier == 'R' || modifier == 'F' )
+        ; // unity scalar
     else if( modifier == 'k' || modifier == 'K' )
         value *= 1.0e3;
     else if( modifier == 'M' )
         value *= 1.0e6;
     else if( modifier == 'G' )
         value *= 1.0e9;
+    else if( modifier == 'T' )
+        value *= 1.0e12;
+    else if( modifier == 'P' )
+        value *= 1.0e15;
+    else if( modifier == 'E' )
+        value *= 1.0e18;
 
     return true;
 }
@@ -1200,6 +1216,7 @@ int SplitString( const wxString& strToSplit,
                  wxString* strEnd )
 {
     static const wxString separators( wxT( ".," ) );
+    wxUniChar             infix = 0;
 
     // Clear all the return strings
     strBeginning->Empty();
@@ -1234,20 +1251,44 @@ int SplitString( const wxString& strToSplit,
 
         for( ; ii >= 0; ii-- )
         {
-            if( !wxIsdigit( strToSplit[ii] ) && separators.Find( strToSplit[ii] ) < 0 )
+            double    scale;
+            wxUniChar c = strToSplit[ii];
+
+            if( wxIsdigit( c ) )
+            {
+                continue;
+            }
+            if( infix == 0 && NUMERIC_EVALUATOR::IsOldSchoolDecimalSeparator( c, &scale ) )
+            {
+                infix = c;
+                continue;
+            }
+            else if( separators.Find( strToSplit[ii] ) >= 0 )
+            {
+                continue;
+            }
+            else
+            {
                 break;
+            }
         }
 
         // If all that was left was digits, then just set the digits string
         if( ii < 0 )
+        {
             *strDigits = strToSplit.substr( 0, position );
-
-        /* We were only looking for the last set of digits everything else is
-         * part of the preamble */
+        }
+        // Otherwise everything else is part of the preamble
         else
         {
             *strDigits    = strToSplit.substr( ii + 1, position - ii - 1 );
             *strBeginning = strToSplit.substr( 0, ii + 1 );
+        }
+
+        if( infix > 0 )
+        {
+            strDigits->Replace( infix, '.' );
+            *strEnd = infix + *strEnd;
         }
     }
 
@@ -1281,37 +1322,49 @@ int GetTrailingInt( const wxString& aStr )
 
 wxString GetIllegalFileNameWxChars()
 {
-    return From_UTF8( illegalFileNameChars );
+    return wxString::FromUTF8( illegalFileNameChars.data(), illegalFileNameChars.length() );
 }
 
 
-bool ReplaceIllegalFileNameChars( std::string* aName, int aReplaceChar )
+bool ReplaceIllegalFileNameChars( std::string& aName, int aReplaceChar )
 {
-    bool changed = false;
-    std::string result;
-    result.reserve( aName->length() );
+    size_t first_illegal_pos = aName.find_first_of( illegalFileNameChars );
 
-    for( std::string::iterator it = aName->begin();  it != aName->end();  ++it )
+    if( first_illegal_pos == std::string::npos )
     {
-        if( strchr( illegalFileNameChars, *it ) )
+        return false;
+    }
+
+    std::string result;
+    // result will be at least equal to original, add 16 in case of hex replacements
+    result.reserve( aName.length() + 16 );
+    // append the valid part
+    result.append( aName, 0, first_illegal_pos );
+
+    for( size_t i = first_illegal_pos; i < aName.length(); ++i )
+    {
+        char c = aName[i];
+
+        // Check if this specific char is illegal
+        if( illegalFileNameChars.find( c ) != std::string_view::npos )
         {
             if( aReplaceChar )
-                StrPrintf( &result, "%c", aReplaceChar );
+            {
+                result.push_back( aReplaceChar );
+            }
             else
-                StrPrintf( &result, "%%%02x", *it );
-
-            changed = true;
+            {
+                fmt::format_to( std::back_inserter( result ), "%{:02x}", static_cast<unsigned char>( c ) );
+            }
         }
         else
         {
-            result += *it;
+            result.push_back( c );
         }
     }
 
-    if( changed )
-        *aName = std::move( result );
-
-    return changed;
+    aName = std::move( result );
+    return true;
 }
 
 
@@ -1503,3 +1556,347 @@ wxString NormalizeFileUri( const wxString& aFileUri )
 
     return retv;
 }
+
+
+wxString ConvertPathToFileUri( const wxString& aPath, const PROJECT* aProject )
+{
+    if( aPath.IsEmpty() || aPath == wxS( "~" ) )
+        return aPath;
+
+    bool looksLikePath = aPath.StartsWith( wxS( "/" ) ) || aPath.StartsWith( wxS( "${" ) )
+                         || aPath.StartsWith( wxS( "./" ) ) || aPath.StartsWith( wxS( "../" ) );
+
+#ifdef __WINDOWS__
+    looksLikePath = looksLikePath || ( aPath.Length() >= 2 && wxIsalpha( aPath[0] ) && aPath[1] == ':' )
+                    || aPath.StartsWith( wxS( "\\\\" ) ) || aPath.StartsWith( wxS( ".\\" ) )
+                    || aPath.StartsWith( wxS( "..\\" ) );
+#endif
+
+    if( !looksLikePath )
+    {
+        wxURI uri( aPath );
+
+        if( uri.HasScheme() )
+            return aPath;
+
+        return aPath; // Not a path, return unchanged
+    }
+
+    // Resolve env vars
+    wxString resolved = aPath;
+
+    if( aProject )
+        resolved = ResolveUriByEnvVars( aPath, aProject );
+
+    wxFileName fname( resolved );
+
+    if( !fname.IsAbsolute() && aProject && !aProject->GetProjectPath().IsEmpty() )
+    {
+        fname.MakeAbsolute( aProject->GetProjectPath() );
+        resolved = fname.GetFullPath();
+    }
+
+    // Only convert if the file actually exists
+    bool isUNC = resolved.StartsWith( wxS( "\\\\" ) );
+
+    if( !isUNC && !wxFileExists( resolved ) && !wxDirExists( resolved ) )
+        return aPath;
+
+    if( aPath.StartsWith( wxS( "/" ) ) )
+        return wxS( "file://" ) + aPath;
+
+    if( aPath.StartsWith( wxS( "${" ) ) )
+        return wxS( "file://" ) + aPath;
+
+    if( aPath.StartsWith( wxS( "./" ) ) || aPath.StartsWith( wxS( "../" ) ) )
+        return wxS( "file://" ) + aPath;
+
+#ifdef __WINDOWS__
+    if( aPath.StartsWith( wxS( "\\\\" ) ) )
+    {
+        wxString path = aPath.Mid( 2 );
+        path.Replace( wxS( "\\" ), wxS( "/" ) );
+        return wxS( "file://" ) + path;
+    }
+
+    if( aPath.Length() >= 2 && wxIsalpha( aPath[0] ) && aPath[1] == ':' )
+    {
+        wxString path = aPath;
+        path.Replace( wxS( "\\" ), wxS( "/" ) );
+        return wxS( "file:///" ) + path;
+    }
+
+    if( aPath.StartsWith( wxS( ".\\" ) ) || aPath.StartsWith( wxS( "..\\" ) ) )
+    {
+        wxString path = aPath;
+        path.Replace( wxS( "\\" ), wxS( "/" ) );
+        return wxS( "file://" ) + path;
+    }
+#endif
+
+    return aPath;
+}
+
+
+namespace
+{
+    // Extract (prefix, numericValue) where numericValue = -1 if no numeric suffix
+    std::pair<wxString, long> ParseAlphaNumericPin( const wxString& pinNum )
+    {
+        wxString prefix;
+        long     numValue = -1;
+
+        size_t numStart = pinNum.length();
+        for( int i = static_cast<int>( pinNum.length() ) - 1; i >= 0; --i )
+        {
+            if( !wxIsdigit( pinNum[i] ) )
+            {
+                numStart = i + 1;
+                break;
+            }
+            if( i == 0 )
+                numStart = 0; // all digits
+        }
+
+        if( numStart < pinNum.length() )
+        {
+            prefix = pinNum.Left( numStart );
+            wxString numericPart = pinNum.Mid( numStart );
+            numericPart.ToLong( &numValue );
+        }
+
+        return { prefix, numValue };
+    }
+}
+
+std::vector<wxString> ExpandStackedPinNotation( const wxString& aPinName, bool* aValid )
+{
+    if( aValid )
+        *aValid = true;
+
+    std::vector<wxString> expanded;
+
+    const bool hasOpenBracket  = aPinName.Contains( wxT( "[" ) );
+    const bool hasCloseBracket = aPinName.Contains( wxT( "]" ) );
+
+    if( hasOpenBracket || hasCloseBracket )
+    {
+        if( !aPinName.StartsWith( wxT( "[" ) ) || !aPinName.EndsWith( wxT( "]" ) ) )
+        {
+            if( aValid )
+                *aValid = false;
+            expanded.push_back( aPinName );
+            return expanded;
+        }
+    }
+
+    if( !aPinName.StartsWith( wxT( "[" ) ) || !aPinName.EndsWith( wxT( "]" ) ) )
+    {
+        expanded.push_back( aPinName );
+        return expanded;
+    }
+
+    const wxString inner = aPinName.Mid( 1, aPinName.Length() - 2 );
+
+    size_t start = 0;
+    while( start < inner.length() )
+    {
+        size_t comma = inner.find( ',', start );
+        wxString part = ( comma == wxString::npos ) ? inner.Mid( start ) : inner.Mid( start, comma - start );
+        part.Trim( true ).Trim( false );
+        if( part.empty() )
+        {
+            start = ( comma == wxString::npos ) ? inner.length() : comma + 1;
+            continue;
+        }
+
+        int dashPos = part.Find( '-' );
+        if( dashPos != wxNOT_FOUND )
+        {
+            wxString startTxt = part.Left( dashPos );
+            wxString endTxt   = part.Mid( dashPos + 1 );
+            startTxt.Trim( true ).Trim( false );
+            endTxt.Trim( true ).Trim( false );
+
+            auto [startPrefix, startVal] = ParseAlphaNumericPin( startTxt );
+            auto [endPrefix, endVal]     = ParseAlphaNumericPin( endTxt );
+
+            if( startPrefix != endPrefix || startVal == -1 || endVal == -1 || startVal > endVal )
+            {
+                if( aValid )
+                    *aValid = false;
+                expanded.clear();
+                expanded.push_back( aPinName );
+                return expanded;
+            }
+
+            for( long ii = startVal; ii <= endVal; ++ii )
+            {
+                if( startPrefix.IsEmpty() )
+                    expanded.emplace_back( wxString::Format( wxT( "%ld" ), ii ) );
+                else
+                    expanded.emplace_back( wxString::Format( wxT( "%s%ld" ), startPrefix, ii ) );
+            }
+        }
+        else
+        {
+            expanded.push_back( part );
+        }
+
+        if( comma == wxString::npos )
+            break;
+        start = comma + 1;
+    }
+
+    if( expanded.empty() )
+    {
+        expanded.push_back( aPinName );
+        if( aValid )
+            *aValid = false;
+    }
+
+    return expanded;
+}
+
+
+int CountStackedPinNotation( const wxString& aPinName, bool* aValid )
+{
+    size_t len = aPinName.length();
+
+    if( !aValid )
+    {
+        // Fastest path when we're not interested in validity
+        if( len < 3 )
+            return 1;
+    }
+    else
+    {
+        *aValid = true;
+
+        // Fast path: if no brackets, it's a single pin
+        const bool hasOpenBracket = aPinName.Contains( wxT( "[" ) );
+        const bool hasCloseBracket = aPinName.Contains( wxT( "]" ) );
+
+        if( hasOpenBracket || hasCloseBracket )
+        {
+            if( aPinName[0] != '[' || aPinName[len - 1] != ']' )
+            {
+                *aValid = false;
+                return 1;
+            }
+        }
+    }
+
+    if( aPinName[0] != '[' || aPinName[len - 1] != ']' )
+        return 1;
+
+    const wxString inner = aPinName.Mid( 1, aPinName.Length() - 2 );
+
+    int count = 0;
+    size_t start = 0;
+
+    while( start < inner.length() )
+    {
+        size_t comma = inner.find( ',', start );
+        wxString part = ( comma == wxString::npos ) ? inner.Mid( start ) : inner.Mid( start, comma - start );
+        part.Trim( true ).Trim( false );
+
+        if( part.empty() )
+        {
+            start = ( comma == wxString::npos ) ? inner.length() : comma + 1;
+            continue;
+        }
+
+        int dashPos = part.Find( '-' );
+        if( dashPos != wxNOT_FOUND )
+        {
+            wxString startTxt = part.Left( dashPos );
+            wxString endTxt   = part.Mid( dashPos + 1 );
+            startTxt.Trim( true ).Trim( false );
+            endTxt.Trim( true ).Trim( false );
+
+            auto [startPrefix, startVal] = ParseAlphaNumericPin( startTxt );
+            auto [endPrefix, endVal]     = ParseAlphaNumericPin( endTxt );
+
+            if( startPrefix != endPrefix || startVal == -1 || endVal == -1 || startVal > endVal )
+            {
+                if( aValid )
+                    *aValid = false;
+
+                return 1;
+            }
+
+            // Count pins in the range
+            count += static_cast<int>( endVal - startVal + 1 );
+        }
+        else
+        {
+            // Single pin
+            ++count;
+        }
+
+        if( comma == wxString::npos )
+            break;
+
+        start = comma + 1;
+    }
+
+    if( count == 0 )
+    {
+        if( aValid )
+            *aValid = false;
+
+        return 1;
+    }
+
+    return count;
+}
+
+
+wxString GetDefaultVariantName()
+{
+    return wxString( defaultVariantName );
+}
+
+
+int SortVariantNames( const wxString& aLhs, const wxString& aRhs )
+{
+    if( ( aLhs == defaultVariantName ) && ( aRhs != defaultVariantName ) )
+        return -1;
+
+    if( ( aLhs != defaultVariantName ) && ( aRhs == defaultVariantName ) )
+        return 1;
+
+    return StrNumCmp( aLhs, aRhs );
+}
+
+
+std::vector<LOAD_MESSAGE> ExtractLibraryLoadErrors( const wxString& aErrorString, int aSeverity )
+{
+    std::vector<LOAD_MESSAGE> messages;
+
+    if( aErrorString.IsEmpty() )
+        return messages;
+
+    // Errors are separated by newlines. We want to keep:
+    // - Lines starting with "Library '" (library-level errors)
+    // - Lines containing "Expecting" (file error location)
+    // And strip:
+    // - Lines starting with "from " (internal code location info)
+    wxStringTokenizer tokenizer( aErrorString, wxS( "\n" ), wxTOKEN_STRTOK );
+
+    while( tokenizer.HasMoreTokens() )
+    {
+        wxString line = tokenizer.GetNextToken();
+
+        // Skip internal code location lines (e.g., "from pcb_io_kicad_sexpr_parser.cpp : ...")
+        if( line.StartsWith( wxS( "from " ) ) )
+            continue;
+
+        if( line.StartsWith( wxS( "Library '" ) ) || line.Contains( wxS( "Expecting" ) ) )
+            messages.push_back( { line, static_cast<SEVERITY>( aSeverity ) } );
+    }
+
+    return messages;
+}
+

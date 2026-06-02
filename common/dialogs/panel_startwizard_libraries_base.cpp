@@ -1,0 +1,99 @@
+///////////////////////////////////////////////////////////////////////////
+// C++ code generated with wxFormBuilder (version 4.2.1-0-g80c4cb6)
+// http://www.wxformbuilder.org/
+//
+// PLEASE DO *NOT* EDIT THIS FILE!
+///////////////////////////////////////////////////////////////////////////
+
+#include "panel_startwizard_libraries_base.h"
+
+///////////////////////////////////////////////////////////////////////////
+
+PANEL_STARTWIZARD_LIBRARIES_BASE::PANEL_STARTWIZARD_LIBRARIES_BASE( wxWindow* parent, wxWindowID id, const wxPoint& pos, const wxSize& size, long style, const wxString& name ) : wxPanel( parent, id, pos, size, style, name )
+{
+	wxBoxSizer* bPanelSizer;
+	bPanelSizer = new wxBoxSizer( wxHORIZONTAL );
+
+	wxBoxSizer* bSizer8;
+	bSizer8 = new wxBoxSizer( wxVERTICAL );
+
+	m_stIntro = new wxStaticText( this, wxID_ANY, _("KiCad comes with a large set of symbol and footprint libraries maintained by the KiCad librarian team.  You may also create your own libraries, and install third-party ones from the Plugin and Content Manager or other sources.\n\nLibrary tables are the configuration files which list the libraries to be loaded. Global libraries are available in every project, and you may also add project-specific libraries if desired."), wxDefaultPosition, wxDefaultSize, 0 );
+	m_stIntro->Wrap( -1 );
+	bSizer8->Add( m_stIntro, 0, wxALL|wxEXPAND, 5 );
+
+	m_stRequiredTablesLabel = new wxStaticText( this, wxID_ANY, _("<b>The following global library tables need to be created:</b>"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_stRequiredTablesLabel->SetLabelMarkup( _("<b>The following global library tables need to be created:</b>") );
+	m_stRequiredTablesLabel->Wrap( -1 );
+	bSizer8->Add( m_stRequiredTablesLabel, 0, wxALL|wxEXPAND, 5 );
+
+	m_stRequiredTables = new wxStaticText( this, wxID_ANY, _("dummy"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_stRequiredTables->SetLabelMarkup( _("dummy") );
+	m_stRequiredTables->Wrap( -1 );
+	bSizer8->Add( m_stRequiredTables, 0, wxALL, 5 );
+
+
+	bSizer8->Add( 0, 10, 0, wxEXPAND, 5 );
+
+	m_stQuery = new wxStaticText( this, wxID_ANY, _("How would you like KiCad to create them?"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_stQuery->Wrap( 400 );
+	bSizer8->Add( m_stQuery, 0, wxALL, 5 );
+
+	m_rbDefaultTables = new wxRadioButton( this, wxID_ANY, _("Start with the built-in KiCad libraries"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_rbDefaultTables->SetValue( true );
+	bSizer8->Add( m_rbDefaultTables, 0, wxALL, 5 );
+
+	m_rbImport = new wxRadioButton( this, wxID_ANY, _("Import tables from the previous version"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_rbImport->SetToolTip( _("Library tables will be imported from the version you selected on the previous step.  Any tables that cannot be imported will be created with the default KiCad libraries.") );
+
+	bSizer8->Add( m_rbImport, 0, wxALL, 5 );
+
+	wxBoxSizer* bSizer4;
+	bSizer4 = new wxBoxSizer( wxHORIZONTAL );
+
+	m_cbMigrateBuiltInLibraries = new wxCheckBox( this, wxID_ANY, _("Migrate built-in libraries to the latest version (recommended)"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_cbMigrateBuiltInLibraries->SetValue(true);
+	m_cbMigrateBuiltInLibraries->SetToolTip( _("When enabled, KiCad will replace any existing references to built-in libraries with references to the latest version") );
+
+	bSizer4->Add( m_cbMigrateBuiltInLibraries, 0, wxALL, 5 );
+
+
+	bSizer8->Add( bSizer4, 0, wxLEFT, 20 );
+
+	m_rbBlankTables = new wxRadioButton( this, wxID_ANY, _("Start with no libraries"), wxDefaultPosition, wxDefaultSize, 0 );
+	bSizer8->Add( m_rbBlankTables, 0, wxALL, 5 );
+
+
+	bSizer8->Add( 0, 10, 0, wxEXPAND, 5 );
+
+	m_sizerWarning = new wxBoxSizer( wxHORIZONTAL );
+
+	m_bmpWarning = new wxStaticBitmap( this, wxID_ANY, wxNullBitmap, wxDefaultPosition, wxSize( 48,48 ), 0 );
+	m_bmpWarning->SetMinSize( wxSize( 48,48 ) );
+
+	m_sizerWarning->Add( m_bmpWarning, 0, wxALL, 4 );
+
+	m_stWarning = new wxStaticText( this, wxID_ANY, _("The built-in library tables could not be found in the expected location. This usually means that you have installed the KiCad software without also installing the libraries. You can proceed with setup, but you will need to install the libraries separately in order for them to be available."), wxDefaultPosition, wxDefaultSize, 0 );
+	m_stWarning->Wrap( -1 );
+	m_sizerWarning->Add( m_stWarning, 0, wxALL|wxEXPAND, 5 );
+
+
+	bSizer8->Add( m_sizerWarning, 0, wxEXPAND, 5 );
+
+
+	bPanelSizer->Add( bSizer8, 1, wxEXPAND, 5 );
+
+
+	this->SetSizer( bPanelSizer );
+	this->Layout();
+	bPanelSizer->Fit( this );
+
+	// Connect Events
+	this->Connect( wxEVT_SIZE, wxSizeEventHandler( PANEL_STARTWIZARD_LIBRARIES_BASE::OnSize ) );
+}
+
+PANEL_STARTWIZARD_LIBRARIES_BASE::~PANEL_STARTWIZARD_LIBRARIES_BASE()
+{
+	// Disconnect Events
+	this->Disconnect( wxEVT_SIZE, wxSizeEventHandler( PANEL_STARTWIZARD_LIBRARIES_BASE::OnSize ) );
+
+}

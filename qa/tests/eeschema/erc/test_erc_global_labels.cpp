@@ -31,8 +31,7 @@
 
 struct ERC_REGRESSION_TEST_FIXTURE
 {
-    ERC_REGRESSION_TEST_FIXTURE() :
-            m_settingsManager( true /* headless */ )
+    ERC_REGRESSION_TEST_FIXTURE()
     { }
 
     SETTINGS_MANAGER           m_settingsManager;
@@ -69,7 +68,6 @@ BOOST_FIXTURE_TEST_CASE( ERCGlobalLabels, ERC_REGRESSION_TEST_FIXTURE )
         m_schematic->ConnectionGraph()->RunERC();
 
         ERC_TESTER tester( m_schematic.get() );
-        tester.TestConflictingBusAliases();
         tester.TestMultUnitPinConflicts();
         tester.TestMultiunitFootprints();
         tester.TestNoConnectPins();
@@ -94,7 +92,8 @@ BOOST_FIXTURE_TEST_CASE( ERCSingleGlobalLabels, ERC_REGRESSION_TEST_FIXTURE )
     LOCALE_IO dummy;
 
     // Check for Errors when using global labels
-    std::vector<std::pair<wxString, int>> tests = { { "issue13212", 3 } };
+    std::vector<std::pair<wxString, int>> tests = { { "issue13212", 3 },
+                                                    { "erc_label_test", 7 } };
 
     for( const std::pair<wxString, int>& test : tests )
     {
@@ -108,15 +107,17 @@ BOOST_FIXTURE_TEST_CASE( ERCSingleGlobalLabels, ERC_REGRESSION_TEST_FIXTURE )
         settings.m_ERCSeverities[ERCE_LIB_SYMBOL_MISMATCH] = RPT_SEVERITY_IGNORE;
 
         // Configure the rules under test
-        settings.m_ERCSeverities[ERCE_GLOBLABEL_DANGLING] = RPT_SEVERITY_IGNORE;
+        settings.m_ERCSeverities[ERCE_LABEL_SINGLE_PIN] = RPT_SEVERITY_IGNORE;
         settings.m_ERCSeverities[ERCE_SINGLE_GLOBAL_LABEL] = RPT_SEVERITY_ERROR;
+
+        // Silence dangling wire errors
+        settings.m_ERCSeverities[ERCE_UNCONNECTED_WIRE_ENDPOINT] = RPT_SEVERITY_IGNORE;
 
         SCH_SHEET_LIST sheets = m_schematic->BuildSheetListSortedByPageNumbers();
         m_schematic->ConnectionGraph()->Recalculate( sheets, true );
         m_schematic->ConnectionGraph()->RunERC();
 
         ERC_TESTER tester( m_schematic.get() );
-        tester.TestConflictingBusAliases();
         tester.TestMultUnitPinConflicts();
         tester.TestMultiunitFootprints();
         tester.TestNoConnectPins();

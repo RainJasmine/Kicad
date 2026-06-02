@@ -1,23 +1,20 @@
-option( KICAD_SHOW_GTK_MESSAGES
-    "Show all the GTK error messages in the terminal"
-    OFF )
-
-mark_as_advanced( KICAD_SHOW_GTK_MESSAGES )
-
 set( PLATFORM_COMPILE_DEFS "" )
 
 # Add port-specific files and definitions
 if( KICAD_WX_PORT STREQUAL osx )
     set( PLATFORM_SRCS
         port/wxosx/ui.mm
+        port/wxosx/webview.mm
         )
 elseif( KICAD_WX_PORT STREQUAL msw )
     set( PLATFORM_SRCS
         port/wxmsw/ui.cpp
+        port/wxmsw/webview.cpp
         )
 elseif( KICAD_WX_PORT STREQUAL gtk )
     set( PLATFORM_SRCS
         port/wxgtk/ui.cpp
+        port/wxgtk/webview.cpp
         )
 
     find_package(PkgConfig REQUIRED)
@@ -31,13 +28,6 @@ elseif( KICAD_WX_PORT STREQUAL gtk )
     include_directories( SYSTEM ${GTK3_INCLUDE_DIRS} )
     link_directories( ${GTK3_LIBRARY_DIRS} )
     add_definitions( ${GTK3_CFLAGS_OTHER} )
-
-    # Add the definition to show the GTK error messages if desired (they are hidden
-    # by us by default)
-    if( KICAD_SHOW_GTK_MESSAGES )
-        message( STATUS "Configuring KiCad not to hide any GTK error messages" )
-        string( APPEND PLATFORM_COMPILE_DEFS "-DKICAD_SHOW_GTK_MESSAGES" )
-    endif()
 endif()
 
 
@@ -51,6 +41,7 @@ if( APPLE )
         os/apple/policy.mm
         os/apple/secrets.mm
         os/apple/sysinfo.cpp
+        os/apple/printing.mm
         )
 
     set( PLATFORM_LIBS
@@ -58,6 +49,9 @@ if( APPLE )
         "-framework AppKit"
         "-framework CoreData"
         "-framework Foundation"
+        "-framework PDFKit"
+        "-framework WebKit"
+        "-framework CFNetwork"
         )
 elseif( WIN32 )
     list( APPEND PLATFORM_SRCS
@@ -68,6 +62,7 @@ elseif( WIN32 )
         os/windows/policy.cpp
         os/windows/secrets.cpp
         os/windows/sysinfo.cpp
+        os/windows/printing.cpp
         )
 
     set( PLATFORM_LIBS
@@ -75,6 +70,7 @@ elseif( WIN32 )
         "winhttp"
         "wintrust"
         "imm32"
+        "windowsapp"
         )
 elseif( UNIX )
     list( APPEND PLATFORM_SRCS
@@ -85,12 +81,17 @@ elseif( UNIX )
         os/unix/policy.cpp
         os/unix/secrets.cpp
         os/unix/sysinfo.cpp
+        os/unix/printing.cpp
         )
 
     # Detect the secret library and configure it
     pkg_check_modules(secret REQUIRED libsecret-1)
     include_directories( SYSTEM ${secret_INCLUDE_DIRS} )
     list( APPEND PLATFORM_LIBS ${secret_LIBRARIES} )
+
+    # Detect Poppler library for printing and configure it
+    find_package( Poppler REQUIRED COMPONENTS Glib )
+    list( APPEND PLATFORM_LIBS Poppler::Glib )
 
     if( KICAD_WAYLAND )
         find_package(Wayland 1.20 COMPONENTS Client REQUIRED)
@@ -102,9 +103,11 @@ endif()
 
 include_directories(
     ${INC_AFTER}
+    ${CMAKE_SOURCE_DIR}/include
     )
 
 add_library( kiplatform STATIC
+    os/common/io.cpp
     ${PLATFORM_SRCS}
     )
 
@@ -118,6 +121,8 @@ target_include_directories( kiplatform PUBLIC
 
 target_link_libraries( kiplatform
     core
+    kimath
+    nlohmann_json
     ${wxWidgets_LIBRARIES}
     ${PLATFORM_LIBS}
     )

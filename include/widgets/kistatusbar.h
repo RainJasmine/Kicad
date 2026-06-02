@@ -26,6 +26,12 @@
 #define KISTATUSBAR_H
 
 #include <kicommon.h>
+#include <optional>
+#include <mutex>
+#include <vector>
+#include <unordered_map>
+#include <widgets/report_severity.h>
+#include <wx/statusbr.h>
 
 class wxGauge;
 class wxButton;
@@ -41,10 +47,32 @@ class BITMAP_BUTTON;
  * Background notifications button (FIELD_OFFSET_NOTIFICATION_BUTTON  offset id)
  */
 
+/**
+ * Structure to store a load message with its severity.
+ */
+struct LOAD_MESSAGE
+{
+    wxString  message;
+    SEVERITY  severity;
+};
+
+
 class KICOMMON_API KISTATUSBAR : public wxStatusBar
 {
 public:
-    KISTATUSBAR( int aNumberFields, wxWindow* parent, wxWindowID id );
+    enum STYLE_FLAGS : int
+    {
+        NONE_STYLE        = 0x00,
+        NOTIFICATION_ICON = 0x01,
+        CANCEL_BUTTON     = 0x02,
+        WARNING_ICON      = 0x04,
+    };
+
+    static constexpr auto DEFAULT_STYLE =
+            static_cast<STYLE_FLAGS>( NOTIFICATION_ICON | CANCEL_BUTTON );
+
+    KISTATUSBAR( int aNumberFields, wxWindow* parent, wxWindowID id,
+                 STYLE_FLAGS aFlags = DEFAULT_STYLE );
 
     ~KISTATUSBAR();
 
@@ -88,17 +116,62 @@ public:
      */
     void SetNotificationCount( int aCount );
 
+    /**
+     * Clears all warning messages from the given source (or all sources if aSource is empty)
+     */
+    void ClearWarningMessages( const wxString& aSource = wxEmptyString );
+
+    /**
+     * Add warning/error messages (not thread-safe, use the std::vector<LOAD_MESSAGE> variant
+     * from other threads)
+     */
+    void AddWarningMessages( const wxString& aSource, const wxString& aMessages );
+
+    /**
+     * Add warning/error messages thread-safely.
+     * Can be called from any thread. UI update is deferred to main thread.
+     */
+    void AddWarningMessages( const wxString& aSource, const std::vector<LOAD_MESSAGE>& aMessages );
+
+    /**
+     * Get current message count (thread-safe).
+     */
+    size_t GetLoadWarningCount() const;
+
 private:
     void onSize( wxSizeEvent& aEvent );
     void onBackgroundProgressClick( wxMouseEvent& aEvent );
     void onNotificationsIconClick( wxCommandEvent& aEvent );
+    void onLoadWarningsIconClick( wxCommandEvent& aEvent );
+    void updateWarningUI();  ///< Update warning button visibility and badge (main thread only)
+    void updateAuxFieldWidths();
+    void updateBackgroundText();
+    void layoutControls();
+
+    enum class FIELD
+    {
+        BGJOB_LABEL,
+        BGJOB_GAUGE,
+        BGJOB_CANCEL,
+        WARNING,
+        NOTIFICATION
+    };
+
+    std::optional<int> fieldIndex( FIELD aField ) const;
 
 private:
     wxGauge*       m_backgroundProgressBar;
     wxButton*      m_backgroundStopButton;
     wxStaticText*  m_backgroundTxt;
     BITMAP_BUTTON* m_notificationsButton;
+    BITMAP_BUTTON* m_warningButton;
+    mutable std::mutex m_warningMutex;  ///< Protects m_warningMessages
+    std::unordered_map<wxString, std::vector<LOAD_MESSAGE>> m_warningMessages;
     int            m_normalFieldsCount;
+    STYLE_FLAGS    m_styleFlags;
+    wxString       m_savedStatusText;       ///< Saved text from adjacent field during background jobs
+    wxString       m_backgroundRawText;     ///< Unellipsized background status text
+    std::vector<int> m_fieldWidths;
 };
 
 #endif

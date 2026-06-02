@@ -26,7 +26,7 @@
 
 #include <dialogs/dialog_plugin_options.h>
 #include <grid_tricks.h>
-#include <lib_table_base.h>
+#include <libraries/library_table.h>
 #include <widgets/wx_grid.h>
 #include <widgets/std_bitmap_button.h>
 #include <bitmaps.h>
@@ -98,22 +98,20 @@ bool DIALOG_PLUGIN_OPTIONS::TransferDataToWindow()
     // Fill the grid with existing aOptions
     std::string options = TO_UTF8( m_callers_options );
 
-    std::map<std::string, UTF8>* props = LIB_TABLE::ParseOptions( options );
+    std::map<std::string, UTF8> props = LIBRARY_TABLE::ParseOptions( options );
 
-    if( props )
+    if( !props.empty() )
     {
-        if( (int) props->size() > m_grid->GetNumberRows() )
-            m_grid->AppendRows( props->size() - m_grid->GetNumberRows() );
+        if( props.size() > static_cast<size_t>( m_grid->GetNumberRows() ) )
+            m_grid->AppendRows( props.size() - m_grid->GetNumberRows() );
 
         int row = 0;
 
-        for( std::map<std::string, UTF8>::const_iterator it = props->begin(); it != props->end(); ++it, ++row )
+        for( const auto& [key, value] : props )
         {
-            m_grid->SetCellValue( row, 0, From_UTF8( it->first.c_str() ) );
-            m_grid->SetCellValue( row, 1, it->second );
+            m_grid->SetCellValue( row, 0, From_UTF8( key.c_str() ) );
+            m_grid->SetCellValue( row, 1, value );
         }
-
-        delete props;
     }
 
     return true;
@@ -140,36 +138,27 @@ bool DIALOG_PLUGIN_OPTIONS::TransferDataFromWindow()
             props[name] = value;
     }
 
-    *m_result = LIB_TABLE::FormatOptions( &props ).wx_str();
+    *m_result = LIBRARY_TABLE::FormatOptions( &props ).wx_str();
     return true;
 }
 
 
 int DIALOG_PLUGIN_OPTIONS::appendRow()
 {
-    int row = m_grid->GetNumberRows();
-
     m_grid->AppendRows( 1 );
-
-    // wx documentation is wrong, SetGridCursor does not make visible.
-    m_grid->MakeCellVisible( row, 0 );
-    m_grid->SetGridCursor( row, 0 );
-
-    return row;
+    return m_grid->GetNumberRows() - 1;
 }
 
 
-void DIALOG_PLUGIN_OPTIONS::appendOption()
+int DIALOG_PLUGIN_OPTIONS::appendOption()
 {
-    int selected_row = m_listbox->GetSelection();
-    if( selected_row != wxNOT_FOUND )
+    int row = m_listbox->GetSelection();
+
+    if( row != wxNOT_FOUND )
     {
-        wxString    option = m_listbox->GetString( selected_row );
+        wxString option = m_listbox->GetString( row );
 
-        int row_count = m_grid->GetNumberRows();
-        int row;
-
-        for( row=0;  row<row_count;  ++row )
+        for( row = 0; row < m_grid->GetNumberRows(); ++row )
         {
             wxString col0 = m_grid->GetCellValue( row, 0 );
 
@@ -177,12 +166,14 @@ void DIALOG_PLUGIN_OPTIONS::appendOption()
                 break;
         }
 
-        if( row == row_count )
+        if( row == m_grid->GetNumberRows() )
             row = appendRow();
 
         m_grid->SetCellValue( row, 0, option );
         m_grid_widths_dirty = true;
     }
+
+    return row;
 }
 
 
@@ -211,35 +202,32 @@ void DIALOG_PLUGIN_OPTIONS::onListBoxItemDoubleClicked( wxCommandEvent& event )
 
 void DIALOG_PLUGIN_OPTIONS::onAppendOption( wxCommandEvent& )
 {
-    if( !m_grid->CommitPendingChanges() )
-        return;
-
-    appendOption();
+    m_grid->OnAddRow(
+            [&]() -> std::pair<int, int>
+            {
+                return { appendOption(), -1 };
+            } );
 }
 
 
 void DIALOG_PLUGIN_OPTIONS::onAppendRow( wxCommandEvent& )
 {
-    if( !m_grid->CommitPendingChanges() )
-        return;
-
-    appendRow();
+    m_grid->OnAddRow(
+            [&]() -> std::pair<int, int>
+            {
+                return { appendRow(), 0 };
+            } );
 }
 
 
 void DIALOG_PLUGIN_OPTIONS::onDeleteRow( wxCommandEvent& )
 {
-    if( !m_grid->CommitPendingChanges() )
-        return;
-
-    int curRow   = m_grid->GetGridCursorRow();
-
-    m_grid->DeleteRows( curRow );
-    m_grid_widths_dirty = true;
-
-    curRow = std::max( 0, curRow - 1 );
-    m_grid->MakeCellVisible( curRow, m_grid->GetGridCursorCol() );
-    m_grid->SetGridCursor( curRow, m_grid->GetGridCursorCol() );
+    m_grid->OnDeleteRows(
+            [&]( int row )
+            {
+                m_grid->DeleteRows( row );
+                m_grid_widths_dirty = true;
+            } );
 }
 
 

@@ -30,7 +30,7 @@
 
 
 ///! Update the schema version whenever a migration is required
-const int colorsSchemaVersion = 5;
+const int colorsSchemaVersion = 6;
 const wxString COLOR_SETTINGS::COLOR_BUILTIN_DEFAULT = "_builtin_default";
 const wxString COLOR_SETTINGS::COLOR_BUILTIN_CLASSIC = "_builtin_classic";
 
@@ -76,6 +76,7 @@ COLOR_SETTINGS::COLOR_SETTINGS( const wxString& aFilename, bool aAbsolutePath ) 
     CLR( "schematic.label_hier",        LAYER_HIERLABEL              );
     CLR( "schematic.label_local",       LAYER_LOCLABEL               );
     CLR( "schematic.netclass_flag",     LAYER_NETCLASS_REFS          );
+    CLR( "schematic.drag_net_collision", LAYER_DRAG_NET_COLLISION    );
     CLR( "schematic.rule_area",         LAYER_RULE_AREAS             );
     CLR( "schematic.no_connect",        LAYER_NOCONNECT              );
     CLR( "schematic.note",              LAYER_NOTES                  );
@@ -129,6 +130,7 @@ COLOR_SETTINGS::COLOR_SETTINGS( const wxString& aFilename, bool aAbsolutePath ) 
     CLR( "board.drc_error",                LAYER_DRC_ERROR          );
     CLR( "board.drc_warning",              LAYER_DRC_WARNING        );
     CLR( "board.drc_exclusion",            LAYER_DRC_EXCLUSION      );
+    CLR( "board.drc_highlighted",          LAYER_DRC_HIGHLIGHTED    );
     CLR( "board.grid",                     LAYER_GRID               );
     CLR( "board.grid_axes",                LAYER_GRID_AXES          );
     CLR( "board.pad_plated_hole",          LAYER_PAD_PLATEDHOLES    );
@@ -142,6 +144,7 @@ COLOR_SETTINGS::COLOR_SETTINGS( const wxString& aFilename, bool aAbsolutePath ) 
     CLR( "board.track_net_names",          NETNAMES_LAYER_ID_START  );
     CLR( "board.pad_net_names",            LAYER_PAD_NETNAMES       );
     CLR( "board.via_net_names",            LAYER_VIA_NETNAMES       );
+    CLR( "board.points",                   LAYER_POINTS             );
 
     CLR( "board.copper.f",      F_Cu    );
     CLR( "board.copper.in1",    In1_Cu  );
@@ -308,6 +311,13 @@ COLOR_SETTINGS::COLOR_SETTINGS( const wxString& aFilename, bool aAbsolutePath ) 
 
     // this bump shouldn't have happened; add a no-op migration to avoid future issues
     registerMigration( 4, 5, []() { return true; } );
+
+    registerMigration( 5, 6,
+            [&]()
+            {
+                Set( "board.drc_highlighted", COLOR4D( PUREMAGENTA ) );
+                return true;
+            } );
 }
 
 

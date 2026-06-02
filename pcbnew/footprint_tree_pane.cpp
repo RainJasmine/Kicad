@@ -25,7 +25,7 @@
 #include "fp_tree_synchronizing_adapter.h"
 #include <widgets/lib_tree.h>
 #include <footprint_edit_frame.h>
-#include <fp_lib_table.h>
+
 
 FOOTPRINT_TREE_PANE::FOOTPRINT_TREE_PANE( FOOTPRINT_EDIT_FRAME* aParent )
         : wxPanel( aParent ),
@@ -34,7 +34,7 @@ FOOTPRINT_TREE_PANE::FOOTPRINT_TREE_PANE( FOOTPRINT_EDIT_FRAME* aParent )
 {
     // Create widgets
     wxBoxSizer* boxSizer = new wxBoxSizer( wxVERTICAL );
-    m_tree = new LIB_TREE( this, wxT( "footprints" ), &GFootprintTable,
+    m_tree = new LIB_TREE( this, wxT( "footprints" ),
                            m_frame->GetLibTreeAdapter(), LIB_TREE::SEARCH );
     boxSizer->Add( m_tree, 1, wxEXPAND, 5 );
 

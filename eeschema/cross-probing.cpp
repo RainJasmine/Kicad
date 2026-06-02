@@ -23,9 +23,11 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include <wx/tokenzr.h>
+#include <fmt.h>
 #include <kiface_base.h>
 #include <kiway.h>
-#include <kiway_express.h>
+#include <kiway_mail.h>
 #include <eda_dde.h>
 #include <connection_graph.h>
 #include <sch_sheet.h>
@@ -37,12 +39,17 @@
 #include <project/net_settings.h>
 #include <project_sch.h>
 #include <richio.h>
-#include <symbol_lib_table.h>
 #include <tools/sch_actions.h>
 #include <tools/sch_editor_control.h>
 #include <advanced_config.h>
+
+#include <pgm_base.h>
+#include <libraries/symbol_library_adapter.h>
 #include <widgets/sch_design_block_pane.h>
+#include <widgets/kistatusbar.h>
+#include <wx/filefn.h>
 #include <wx/log.h>
+#include <trace_helpers.h>
 
 SCH_ITEM* SCH_EDITOR_CONTROL::FindSymbolAndItem( const wxString* aPath, const wxString* aReference,
                                                  bool aSearchHierarchy, SCH_SEARCH_T aSearchType,
@@ -233,7 +240,7 @@ void SCH_EDIT_FRAME::ExecuteRemoteCommand( const char* cmdline )
         GetToolManager()->RunAction( SCH_ACTIONS::updateNetHighlighting );
         RefreshNetNavigator();
 
-        SetStatusText( _( "Selected net:" ) + wxS( " " ) + UnescapeString( netName ) );
+        SetStatusText( _( "Highlighted net:" ) + wxS( " " ) + UnescapeString( netName ) );
         return;
     }
     else if( strcmp( idcmd, "$CLEAR:" ) == 0 )
@@ -368,7 +375,7 @@ void SCH_EDIT_FRAME::SendCrossProbeNetName( const wxString& aNetName )
 {
     // The command is a keyword followed by a quoted string.
 
-    std::string packet = StrPrintf( "$NET: \"%s\"", TO_UTF8( aNetName ) );
+    std::string packet = fmt::format( "$NET: \"{}\"", TO_UTF8( aNetName ) );
 
     if( !packet.empty() )
     {
@@ -421,7 +428,7 @@ void SCH_EDIT_FRAME::SetCrossProbeConnection( const SCH_CONNECTION* aConnection 
     for( size_t i = 1; i < all_members.size(); i++ )
         nets << "," << all_members[i]->Name();
 
-    std::string packet = StrPrintf( "$NETS: \"%s\"", TO_UTF8( nets ) );
+    std::string packet = fmt::format( "$NETS: \"{}\"", TO_UTF8( nets ) );
 
     if( !packet.empty() )
     {
@@ -477,7 +484,7 @@ bool findSymbolsAndPins(
 
     SCH_REFERENCE_LIST references;
 
-    aSheetPath.GetSymbols( references, false, true );
+    aSheetPath.GetSymbols( references, SYMBOL_FILTER_NON_POWER, true );
 
     for( unsigned ii = 0; ii < references.GetCount(); ii++ )
     {
@@ -564,7 +571,7 @@ bool sheetContainsOnlyWantedItems(
     }
 
     SCH_REFERENCE_LIST references;
-    aSheetPath.GetSymbols( references, false, true );
+    aSheetPath.GetSymbols( references, SYMBOL_FILTER_NON_POWER, true );
 
     if( references.GetCount() == 0 )    // Empty sheet, obviously do not contain wanted items
     {
@@ -832,7 +839,7 @@ findItemsFromSyncSelection( const SCHEMATIC& aSchematic, const std::string aSync
 }
 
 
-void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
+void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
 {
     std::string& payload = mail.GetPayload();
 
@@ -842,9 +849,22 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
     {
         std::stringstream ss( payload );
         std::string       file;
-        SYMBOL_LIB_TABLE* symLibTbl = PROJECT_SCH::SchSymbolLibTable( &Prj() );
 
-        wxCHECK_RET( symLibTbl, "Could not load symbol lib table." );
+        LIBRARY_MANAGER&              manager = Pgm().GetLibraryManager();
+        SYMBOL_LIBRARY_ADAPTER*       adapter = PROJECT_SCH::SymbolLibAdapter( &Prj() );
+        std::optional<LIBRARY_TABLE*> optTable = manager.Table( LIBRARY_TABLE_TYPE::SYMBOL,
+                                                                LIBRARY_TABLE_SCOPE::PROJECT );
+
+        wxCHECK_RET( optTable.has_value(), "Could not load symbol lib table." );
+        LIBRARY_TABLE* table = optTable.value();
+
+        wxString projectPath = Prj().GetProjectPath();
+
+        // First line of payload is the source project directory.
+        std::string srcProjDir;
+        std::getline( ss, srcProjDir, '\n' );
+
+        std::vector<wxString> toLoad;
 
         while( std::getline( ss, file, '\n' ) )
         {
@@ -863,20 +883,60 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
 
             pi.reset( SCH_IO_MGR::FindPlugin( type ) );
 
-            if( !symLibTbl->HasLibrary( fn.GetName() ) )
-            {
-                symLibTbl->InsertRow( new SYMBOL_LIB_TABLE_ROW( fn.GetName(), fn.GetFullPath(),
-                                                                SCH_IO_MGR::ShowType( type ) ) );
-                wxString tblName = Prj().SymbolLibTableName();
+            wxString libTableUri;
+            bool     isProjectLocal = fn.GetFullPath().StartsWith( wxString( srcProjDir ) );
 
-                try
-                {
-                    symLibTbl->Save( tblName );
-                }
-                catch( const IO_ERROR& ioe )
-                {
-                    wxLogError( _( "Error saving project-specific library table:\n\n%s" ), ioe.What() );
-                }
+            if( isProjectLocal )
+            {
+                // Project-local library: copy into the KiCad project directory and use a
+                // project-relative path so the sym-lib-table stays portable.
+                if( !fn.FileExists() )
+                    continue;
+
+                wxFileName projectFn( projectPath, fn.GetFullName() );
+
+                if( fn.GetFullPath() != projectFn.GetFullPath() && !projectFn.FileExists() )
+                    wxCopyFile( fn.GetFullPath(), projectFn.GetFullPath() );
+
+                libTableUri = wxS( "${KIPRJMOD}/" ) + fn.GetFullName();
+            }
+            else
+            {
+                // External library referenced by absolute path. Preserve the original path.
+                libTableUri = fn.GetFullPath();
+            }
+
+            if( !table->HasRow( fn.GetName() ) )
+            {
+                LIBRARY_TABLE_ROW& row = table->InsertRow();
+                row.SetNickname( fn.GetName() );
+                row.SetURI( libTableUri );
+                row.SetType( SCH_IO_MGR::ShowType( type ) );
+                toLoad.emplace_back( fn.GetName() );
+            }
+        }
+
+        if( !toLoad.empty() )
+        {
+            bool success = true;
+
+            table->Save().map_error(
+                        [&]( const LIBRARY_ERROR& aError )
+                        {
+                            wxLogError( wxT( "Error saving project library table:\n\n" ) + aError.message );
+                            success = false;
+                        } );
+
+            if( success )
+            {
+                manager.AbortAsyncLoads();
+                manager.LoadProjectTables( { LIBRARY_TABLE_TYPE::SYMBOL } );
+
+                std::ranges::for_each( toLoad,
+                                       [adapter]( const wxString& aNick )
+                                       {
+                                           adapter->LoadOne( aNick );
+                                       } );
             }
         }
 
@@ -931,6 +991,26 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
                                                                             items );
 
             m_syncingPcbToSchSelection = false;
+
+            if( eeconfig()->m_CrossProbing.flash_selection )
+            {
+                wxLogTrace( traceCrossProbeFlash, "MAIL_SELECTION(_FORCE): flash enabled, items=%zu", items.size() );
+                if( items.empty() )
+                {
+                    wxLogTrace( traceCrossProbeFlash, "MAIL_SELECTION(_FORCE): nothing to flash" );
+                }
+                else
+                {
+                    std::vector<SCH_ITEM*> itemPtrs;
+                    std::copy( items.begin(), items.end(), std::back_inserter( itemPtrs ) );
+
+                    StartCrossProbeFlash( itemPtrs );
+                }
+            }
+            else
+            {
+                wxLogTrace( traceCrossProbeFlash, "MAIL_SELECTION(_FORCE): flash disabled" );
+            }
         }
 
         break;
@@ -1054,9 +1134,46 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& mail )
         break;
 
     case MAIL_RELOAD_LIB:
-        m_designBlocksPane->RefreshLibs();
-        SyncView();
+    {
+        if( m_designBlocksPane && m_designBlocksPane->IsShown() )
+        {
+            m_designBlocksPane->RefreshLibs();
+            SyncView();
+        }
+
+        // Show any symbol library load errors in the status bar
+        if( KISTATUSBAR* statusBar = dynamic_cast<KISTATUSBAR*>( GetStatusBar() ) )
+        {
+            SYMBOL_LIBRARY_ADAPTER* adapter = PROJECT_SCH::SymbolLibAdapter( &Prj() );
+            wxString errors = adapter->GetLibraryLoadErrors();
+
+            if( !errors.IsEmpty() )
+                statusBar->AddWarningMessages( "load", errors );
+        }
+
         break;
+    }
+
+    case MAIL_SCH_NAVIGATE_TO_SHEET:
+    {
+        wxString targetFile( payload );
+
+        for( SCH_SHEET_PATH& sheetPath : m_schematic->Hierarchy() )
+        {
+            SCH_SCREEN* screen = sheetPath.LastScreen();
+
+            if( screen && screen->GetFileName() == targetFile )
+            {
+                m_toolManager->RunAction<SCH_SHEET_PATH*>( SCH_ACTIONS::changeSheet, &sheetPath );
+                payload = "success";
+                Raise();
+                return;
+            }
+        }
+
+        payload.clear();
+        break;
+    }
 
     default:;
 

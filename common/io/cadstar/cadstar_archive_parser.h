@@ -352,10 +352,10 @@ public:
         wxString    Name;
         long        LineWidth;
         long        Height;
-        long Width; ///< Defaults to 0 if using system fonts or, if using CADSTAR font, default to
-                    ///< equal height (1:1 aspect ratio). Allows for system fonts to be rendered in
-                    ///< a different aspect ratio.
-        FONT Font;
+        long        Width; ///< Defaults to 0 if using system fonts or, if using CADSTAR font, default to
+                           ///< equal height (1:1 aspect ratio). Allows for system fonts to be rendered in
+                           ///< a different aspect ratio.
+        FONT        Font;
 
         void Parse( XNODE* aNode, PARSER_CONTEXT* aContext ) override;
     };
@@ -429,7 +429,7 @@ public:
 
     enum class VERTEX_TYPE
     {
-        POINT,
+        VT_POINT,
         CLOCKWISE_ARC,
         CLOCKWISE_SEMICIRCLE,
         ANTICLOCKWISE_ARC,
@@ -442,7 +442,7 @@ public:
      */
     struct VERTEX : PARSER
     {
-        VERTEX( VERTEX_TYPE aType = VERTEX_TYPE::POINT, POINT aEnd = POINT(), POINT aCenter = POINT() ) :
+        VERTEX( VERTEX_TYPE aType = VERTEX_TYPE::VT_POINT, POINT aEnd = POINT(), POINT aCenter = POINT() ) :
                 Type( aType ),
                 End( aEnd ),
                 Center( aCenter )
@@ -916,17 +916,16 @@ public:
         TEXTCODE_ID   TextCodeID;
         LAYER_ID      LayerID;
         POINT         Position;
-        long          OrientAngle = 0;
-        bool          Mirror      = false;
-        bool          Fixed       = false;
-        SWAP_RULE     SwapRule    = SWAP_RULE::BOTH;
-        JUSTIFICATION Justification =
-                JUSTIFICATION::LEFT; ///< Note: Justification has no effect on single lines of text
-        ALIGNMENT Alignment = ALIGNMENT::
-                NO_ALIGNMENT; ///< In CADSTAR The default alignment for a TEXT object (when
-                              ///< "(No Alignment()" is selected) Bottom Left of the *first line*.
-                              ///< Note that this is different from BOTTOM_LEFT (which is bottom
-                              ///< left of the whole text block)
+        long          OrientAngle   = 0;
+        bool          Mirror        = false;
+        bool          Fixed         = false;
+        SWAP_RULE     SwapRule      = SWAP_RULE::BOTH;
+        JUSTIFICATION Justification = JUSTIFICATION::LEFT;     ///< Note: has no effect on single lines of text
+        ALIGNMENT     Alignment     = ALIGNMENT::NO_ALIGNMENT; ///< In CADSTAR The default alignment for a TEXT object
+                                                               ///< (when "(No Alignment)" is selected) Bottom Left
+                                                               ///< of the *first line*.
+                                                               ///< Note that this is different from BOTTOM_LEFT
+                                                               ///< (which is bottom left of the whole text block)
         GROUP_ID      GroupID = wxEmptyString; ///< If not empty, this FIGURE is part of a group
         REUSEBLOCKREF ReuseBlockRef;
 

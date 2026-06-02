@@ -31,6 +31,7 @@
 #include <kiface_base.h>
 #include <layer_ids.h>
 #include <lset.h>
+#include <confirm.h>
 
 #include <dialogs/dialog_map_gerber_layers_to_pcb.h>
 
@@ -140,7 +141,7 @@ void DIALOG_MAP_GERBER_LAYERS_TO_PCB::initDialog()
             flexColumnBoxSizer = m_flexRightColumnBoxSizer;
 
         // Provide a text string to identify the Gerber layer
-        msg.Printf( _( "Layer %d" ), m_buttonTable[ii] + 1 );
+        msg.Printf( _( "Layer %d:" ), m_buttonTable[ii] + 1 );
 
         label = new wxStaticText( this, wxID_STATIC, msg );
         flexColumnBoxSizer->Add( label, 0, wxALIGN_CENTER_VERTICAL | wxALL, 5 );
@@ -151,9 +152,9 @@ void DIALOG_MAP_GERBER_LAYERS_TO_PCB::initDialog()
         flexColumnBoxSizer->Add( label, 0, wxALIGN_CENTER_VERTICAL | wxALL, 5 );
 
         // Provide a button for this layer (which will invoke a child dialog box)
-        item_ID          = ID_BUTTON_0 + ii;
-        wxButton * Button = new wxButton( this, item_ID, wxT( "..." ), wxDefaultPosition,
-                                          wxDefaultSize, wxBU_EXACTFIT );
+        item_ID = ID_BUTTON_0 + ii;
+        wxButton * Button = new wxButton( this, item_ID, wxT( "..." ), wxDefaultPosition, wxDefaultSize,
+                                          wxBU_EXACTFIT );
 
         flexColumnBoxSizer->Add( Button, 0, wxALIGN_CENTER_VERTICAL | wxALL );
 
@@ -210,13 +211,12 @@ void DIALOG_MAP_GERBER_LAYERS_TO_PCB::initDialog()
 
     if( numMappedGerbers > 0 )
     {
-        // See if the user wants to map the Altium Gerbers to known KiCad PCB layers
-        int returnVal = wxMessageBox( wxString::Format( _( "Gerbers with known layers: %d" ), numMappedGerbers )
+        KICAD_MESSAGE_DIALOG dlg ( this,
+                                   wxString::Format( _( "Gerbers with known layers: %d" ), numMappedGerbers )
                                               + wxT( "\n\n" ) + _( "Assign to matching PCB layers?" ),
-                                      _( "Automatic Layer Assignment" ),
-                                      wxOK | wxCANCEL | wxOK_DEFAULT );
+                                    _( "Automatic Layer Assignment" ), wxOK | wxCANCEL | wxOK_DEFAULT );
 
-        if( returnVal == wxOK )
+        if( dlg.ShowModal() == wxOK )
         {
             int total_copper = 0;
 

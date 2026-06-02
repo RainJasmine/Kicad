@@ -22,15 +22,20 @@
 set( QA_UTIL_COMMON_SRC
     stdstream_line_reader.cpp
     utility_program.cpp
+    error_handlers.cpp
 
     uuid_test_utils.cpp
 
+    geometry/geometry.cpp
     geometry/line_chain_construction.cpp
     geometry/poly_set_construction.cpp
     geometry/seg_construction.cpp
 
     wx_utils/unit_test_utils.cpp
     wx_utils/wx_assert.cpp
+
+    # PDF testing helpers
+    pdf_test_utils.cpp
 )
 
 # A generic library of useful functions for various testing purposes

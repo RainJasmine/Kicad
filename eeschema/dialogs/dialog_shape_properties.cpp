@@ -29,6 +29,7 @@
 #include <sch_rule_area.h>
 #include <dialog_shape_properties.h>
 #include <settings/color_settings.h>
+#include <widgets/wx_infobar.h>
 #include <symbol_editor_settings.h>
 #include <sch_commit.h>
 #include <string_utils.h>
@@ -44,7 +45,7 @@ DIALOG_SHAPE_PROPERTIES::DIALOG_SHAPE_PROPERTIES( SCH_BASE_FRAME* aParent, SCH_S
 
     // DIALOG_SHIM needs a unique hash_key because classname is not sufficient because the
     // different shapes (and even whether or not we're within the symbol editor) cause different
-    // dialog layouts).
+    // dialog layouts.
     m_hash_key = TO_UTF8( GetTitle() + aParent->GetName() );
 
     m_helpLabel1->SetFont( KIUI::GetInfoFont( this ).Italic() );
@@ -150,7 +151,7 @@ bool DIALOG_SHAPE_PROPERTIES::TransferDataToWindow()
     else
         wxFAIL_MSG( wxT( "Line type not found in the type lookup map" ) );
 
-    if( SYMBOL_EDIT_FRAME* symbolEditor = dynamic_cast<SYMBOL_EDIT_FRAME*>( m_frame ) )
+    if( dynamic_cast<SYMBOL_EDIT_FRAME*>( m_frame ) )
     {
         m_rbFillNone->Enable( true );
         m_rbFillOutline->Enable( true );
@@ -190,26 +191,19 @@ bool DIALOG_SHAPE_PROPERTIES::TransferDataToWindow()
         const SYMBOL* symbol = m_shape->GetParentSymbol();
 
         m_privateCheckbox->SetValue( m_shape->IsPrivate() );
-        m_checkApplyToAllUnits->SetValue( symbol->GetUnitCount() > 1 && m_shape->GetUnit() == 0 );
-        m_checkApplyToAllUnits->Enable( symbol->GetUnitCount() > 1 );
-        m_checkApplyToAllBodyStyles->SetValue( m_shape->GetBodyStyle() == 0 );
-
-        bool enableAlternateBodyStyle = symbol->HasAlternateBodyStyle();
-
-        // If a symbol contains no body-style-specific pins or graphic items,
-        // symbol->HasAlternateBodyStyle() will return false.
-        // But when creating a new symbol, with DeMorgan option set, the m_checkApplyToAllBodyStyles
-        // must be enabled in order to be able to create graphic items shared by all body styles.
-        if( symbolEditor->GetShowDeMorgan() )
-            enableAlternateBodyStyle = true;
-
-        m_checkApplyToAllBodyStyles->Enable( enableAlternateBodyStyle );
+        m_checkApplyToAllUnits->SetValue( symbol->IsMultiUnit() && m_shape->GetUnit() == 0 );
+        m_checkApplyToAllUnits->Enable( symbol->IsMultiUnit() );
+        m_checkApplyToAllBodyStyles->SetValue( symbol->IsMultiBodyStyle() && m_shape->GetBodyStyle() == 0 );
+        m_checkApplyToAllBodyStyles->Enable( symbol->IsMultiBodyStyle() );
     }
     else
     {
         m_fillCtrl->SetSelection( m_shape->GetFillModeProp() );
         m_fillColorSwatch->SetSwatchColor( m_shape->GetFillColor(), false );
     }
+
+    m_fillColorLabel->Enable( m_fillCtrl->GetSelection() != UI_FILL_MODE::NONE );
+    m_fillColorSwatch->Enable( m_fillCtrl->GetSelection() != UI_FILL_MODE::NONE );
 
     return true;
 }
@@ -241,8 +235,8 @@ void DIALOG_SHAPE_PROPERTIES::onBorderChecked( wxCommandEvent& event )
 
 void DIALOG_SHAPE_PROPERTIES::onFillChoice( wxCommandEvent& event )
 {
-    m_fillColorLabel->Enable( m_fillCtrl->GetSelection() == UI_FILL_MODE::SOLID );
-    m_fillColorSwatch->Enable( m_fillCtrl->GetSelection() == UI_FILL_MODE::SOLID );
+    m_fillColorLabel->Enable( m_fillCtrl->GetSelection() != UI_FILL_MODE::NONE );
+    m_fillColorSwatch->Enable( m_fillCtrl->GetSelection() != UI_FILL_MODE::NONE );
 }
 
 

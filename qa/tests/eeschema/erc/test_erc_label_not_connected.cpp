@@ -32,8 +32,7 @@
 
 struct ERC_REGRESSION_TEST_FIXTURE
 {
-    ERC_REGRESSION_TEST_FIXTURE() :
-            m_settingsManager( true /* headless */ )
+    ERC_REGRESSION_TEST_FIXTURE()
     { }
 
     SETTINGS_MANAGER           m_settingsManager;
@@ -53,7 +52,8 @@ BOOST_FIXTURE_TEST_CASE( ERCLabelNotConnected, ERC_REGRESSION_TEST_FIXTURE )
         { "issue7203",                          4 },
         { "issue11926",                         2 },
         { "issue10430",                         8 },
-        { "erc_directive_label_not_connected",  1 }
+        { "erc_directive_label_not_connected",  1 },
+        { "issue23346/issue23346",              1 }
     };
 
     for( const std::pair<wxString, int>& test : tests )
@@ -70,7 +70,6 @@ BOOST_FIXTURE_TEST_CASE( ERCLabelNotConnected, ERC_REGRESSION_TEST_FIXTURE )
         m_schematic->ConnectionGraph()->RunERC();
 
         ERC_TESTER tester( m_schematic.get() );
-        tester.TestConflictingBusAliases();
         tester.TestMultUnitPinConflicts();
         tester.TestMultiunitFootprints();
         tester.TestNoConnectPins();

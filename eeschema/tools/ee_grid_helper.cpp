@@ -39,10 +39,18 @@
 #include <view/view.h>
 #include "ee_grid_helper.h"
 
+EE_GRID_HELPER::EE_GRID_HELPER() :
+        GRID_HELPER()
+{
+}
+
 
 EE_GRID_HELPER::EE_GRID_HELPER( TOOL_MANAGER* aToolMgr ) :
         GRID_HELPER( aToolMgr, LAYER_SCHEMATIC_ANCHOR )
 {
+    if( !m_toolMgr )
+        return;
+
     KIGFX::VIEW* view = m_toolMgr->GetView();
 
     m_viewAxis.SetSize( 20000 );
@@ -62,6 +70,9 @@ EE_GRID_HELPER::EE_GRID_HELPER( TOOL_MANAGER* aToolMgr ) :
 
 EE_GRID_HELPER::~EE_GRID_HELPER()
 {
+    if( !m_toolMgr )
+        return;
+
     KIGFX::VIEW* view = m_toolMgr->GetView();
 
     view->Remove( &m_viewAxis );
@@ -146,10 +157,8 @@ VECTOR2I EE_GRID_HELPER::BestSnapAnchor( const VECTOR2I& aOrigin, GRID_HELPER_GR
 
     VECTOR2I pt = aOrigin;
     VECTOR2I snapDist( snapRange, snapRange );
-    bool     snapLineX = false;
-    bool     snapLineY = false;
-    bool     snapPoint = false;
     bool     gridChecked = false;
+    bool     snappedToAnchor = false;
 
     BOX2I    bb( VECTOR2I( aOrigin.x - snapRange / 2, aOrigin.y - snapRange / 2 ),
                  VECTOR2I( snapRange, snapRange ) );
@@ -175,42 +184,13 @@ VECTOR2I EE_GRID_HELPER::BestSnapAnchor( const VECTOR2I& aOrigin, GRID_HELPER_GR
 
     showConstructionGeometry( m_enableSnap );
 
-    SNAP_LINE_MANAGER&      snapLineManager = getSnapManager().GetSnapLineManager();
-    std::optional<VECTOR2I> snapLineOrigin = snapLineManager.GetSnapLineOrigin();
+    SNAP_LINE_MANAGER& snapLineManager = getSnapManager().GetSnapLineManager();
+    const VECTOR2D     gridSize = GetGridSize( aGrid );
 
-    if( m_enableSnapLine && m_snapItem && snapLineOrigin.has_value()
-        && m_skipPoint != *snapLineOrigin )
-    {
-        if( std::abs( snapLineOrigin->x - aOrigin.x ) < snapDist.x )
-        {
-            pt.x = snapLineOrigin->x;
-            snapDist.x = std::abs( pt.x - aOrigin.x );
-            snapLineX = true;
-        }
+    std::optional<VECTOR2I> guideSnap;
 
-        if( std::abs( snapLineOrigin->y - aOrigin.y ) < snapDist.y )
-        {
-            pt.y = snapLineOrigin->y;
-            snapDist.y = std::abs( pt.y - aOrigin.y );
-            snapLineY = true;
-        }
-
-        if( canUseGrid() && std::abs( nearestGrid.x - aOrigin.x ) < snapDist.x )
-        {
-            pt.x = nearestGrid.x;
-            snapDist.x = std::abs( nearestGrid.x - aOrigin.x );
-            snapLineX = false;
-        }
-
-        if( canUseGrid() && std::abs( nearestGrid.y - aOrigin.y ) < snapDist.y )
-        {
-            pt.y = nearestGrid.y;
-            snapDist.y = std::abs( nearestGrid.y - aOrigin.y );
-            snapLineY = false;
-        }
-
-        gridChecked = true;
-    }
+    if( m_enableSnapLine )
+        guideSnap = SnapToConstructionLines( aOrigin, nearestGrid, gridSize, snapRange );
 
     if( m_enableSnap && nearest && nearest->Distance( aOrigin ) < snapDist.EuclideanNorm() )
     {
@@ -220,45 +200,49 @@ VECTOR2I EE_GRID_HELPER::BestSnapAnchor( const VECTOR2I& aOrigin, GRID_HELPER_GR
             pt = nearestGrid;
             snapDist.x = std::abs( nearestGrid.x - aOrigin.x );
             snapDist.y = std::abs( nearestGrid.y - aOrigin.y );
-            snapPoint = false;
+            gridChecked = true;
         }
         else
         {
             pt = nearest->pos;
             snapDist.x = std::abs( nearest->pos.x - aOrigin.x );
             snapDist.y = std::abs( nearest->pos.y - aOrigin.y );
-            snapPoint = true;
+            snappedToAnchor = true;
+            gridChecked = true;
         }
-
-        snapLineX = false;
-        snapLineY = false;
-        gridChecked = true;
     }
 
-    if( canUseGrid() && !gridChecked )
-        pt = nearestGrid;
-
-    if( snapLineX || snapLineY )
+    if( guideSnap && m_skipPoint != *guideSnap )
     {
-        snapLineManager.SetSnapLineEnd( pt );
+        snapLineManager.SetSnapLineEnd( *guideSnap );
+        m_toolMgr->GetView()->SetVisible( &m_viewSnapPoint, false );
+        m_snapItem = std::nullopt;
+        return *guideSnap;
     }
-    else if( snapPoint )
+
+    if( snappedToAnchor )
     {
         m_snapItem = *nearest;
         m_viewSnapPoint.SetPosition( pt );
 
         snapLineManager.SetSnapLineOrigin( pt );
+        snapLineManager.SetSnapLineEnd( std::nullopt );
 
         if( m_toolMgr->GetView()->IsVisible( &m_viewSnapPoint ) )
-            m_toolMgr->GetView()->Update( &m_viewSnapPoint, KIGFX::GEOMETRY);
+            m_toolMgr->GetView()->Update( &m_viewSnapPoint, KIGFX::GEOMETRY );
         else
             m_toolMgr->GetView()->SetVisible( &m_viewSnapPoint, true );
+
+        return pt;
     }
-    else
-    {
-        snapLineManager.ClearSnapLine();
-        m_toolMgr->GetView()->SetVisible( &m_viewSnapPoint, false );
-    }
+
+    m_snapItem = std::nullopt;
+
+    if( canUseGrid() && !gridChecked )
+        pt = nearestGrid;
+
+    snapLineManager.SetSnapLineEnd( std::nullopt );
+    m_toolMgr->GetView()->SetVisible( &m_viewSnapPoint, false );
 
     return pt;
 }

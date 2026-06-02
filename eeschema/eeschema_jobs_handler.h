@@ -45,6 +45,13 @@ public:
     int JobSchErc( JOB* aJob );
     int JobSymUpgrade( JOB* aJob );
     int JobSymExportSvg( JOB* aJob );
+    int JobUpgrade( JOB* aJob );
+
+    /**
+     * Clear the cached CLI schematic so the next job reloads from the current project.
+     * Called when the API server switches documents.
+     */
+    void ClearCachedSchematic();
 
     /**
      * Configure the SCH_RENDER_SETTINGS object with the correct data to be used with plotting.

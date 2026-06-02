@@ -86,6 +86,7 @@ enum KiCadObjectType
   KOT_WSG_PAGE = 50;
 
   KOT_SCH_GROUP = 51;
+  KOT_PCB_BARCODE = 52;
 }
 
 // Mapped to GR_TEXT_H_ALIGN_T
@@ -118,4 +119,17 @@ enum StrokeLineStyle
   SLS_DOT        = 4;
   SLS_DASHDOT    = 5;
   SLS_DASHDOTDOT = 6;
+}
+
+// Units used for various commands that can have customizable units (e.g. export jobs).
+// All internal API commands use nanometers.
+// Not every value is accepted by every command; check the documentation.
+enum Units
+{
+  U_UNKNOWN = 0;
+  U_INCH = 1;
+  U_MM = 2;
+  U_MILS = 3;
+  U_METERS = 4;
+  U_TENTHS = 5;
 }

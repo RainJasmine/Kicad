@@ -6,6 +6,7 @@
 ///////////////////////////////////////////////////////////////////////////
 
 #include "widgets/std_bitmap_button.h"
+#include "widgets/text_ctrl_eval.h"
 
 #include "panel_preview_3d_model_base.h"
 
@@ -32,7 +33,7 @@ PANEL_PREVIEW_3D_MODEL_BASE::PANEL_PREVIEW_3D_MODEL_BASE( wxWindow* parent, wxWi
 	m_staticText1->Wrap( -1 );
 	fgSizerScale->Add( m_staticText1, 0, wxALIGN_CENTER_VERTICAL|wxLEFT, 5 );
 
-	xscale = new wxTextCtrl( sbSizerScale->GetStaticBox(), wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0 );
+	xscale = new TEXT_CTRL_EVAL( sbSizerScale->GetStaticBox(), wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0 );
 	fgSizerScale->Add( xscale, 0, wxALIGN_CENTER_VERTICAL|wxLEFT|wxEXPAND, 5 );
 
 	m_spinXscale = new wxSpinButton( sbSizerScale->GetStaticBox(), wxID_ANY, wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS|wxSP_VERTICAL );
@@ -42,7 +43,7 @@ PANEL_PREVIEW_3D_MODEL_BASE::PANEL_PREVIEW_3D_MODEL_BASE( wxWindow* parent, wxWi
 	m_staticText2->Wrap( -1 );
 	fgSizerScale->Add( m_staticText2, 0, wxALIGN_CENTER_VERTICAL|wxLEFT, 5 );
 
-	yscale = new wxTextCtrl( sbSizerScale->GetStaticBox(), wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0 );
+	yscale = new TEXT_CTRL_EVAL( sbSizerScale->GetStaticBox(), wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0 );
 	fgSizerScale->Add( yscale, 0, wxALIGN_CENTER_VERTICAL|wxLEFT|wxEXPAND, 5 );
 
 	m_spinYscale = new wxSpinButton( sbSizerScale->GetStaticBox(), wxID_ANY, wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS|wxSP_VERTICAL );
@@ -52,7 +53,7 @@ PANEL_PREVIEW_3D_MODEL_BASE::PANEL_PREVIEW_3D_MODEL_BASE( wxWindow* parent, wxWi
 	m_staticText3->Wrap( -1 );
 	fgSizerScale->Add( m_staticText3, 0, wxALIGN_CENTER_VERTICAL|wxLEFT, 5 );
 
-	zscale = new wxTextCtrl( sbSizerScale->GetStaticBox(), wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0 );
+	zscale = new TEXT_CTRL_EVAL( sbSizerScale->GetStaticBox(), wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0 );
 	fgSizerScale->Add( zscale, 0, wxALIGN_CENTER_VERTICAL|wxLEFT|wxEXPAND, 5 );
 
 	m_spinZscale = new wxSpinButton( sbSizerScale->GetStaticBox(), wxID_ANY, wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS|wxSP_VERTICAL );
@@ -77,7 +78,7 @@ PANEL_PREVIEW_3D_MODEL_BASE::PANEL_PREVIEW_3D_MODEL_BASE( wxWindow* parent, wxWi
 	m_staticText11->Wrap( -1 );
 	fgSizerRotate->Add( m_staticText11, 0, wxALIGN_CENTER_VERTICAL|wxLEFT, 5 );
 
-	xrot = new wxTextCtrl( sbSizerRotation->GetStaticBox(), wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0 );
+	xrot = new TEXT_CTRL_EVAL( sbSizerRotation->GetStaticBox(), wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0 );
 	fgSizerRotate->Add( xrot, 0, wxALIGN_CENTER_VERTICAL|wxLEFT|wxEXPAND, 5 );
 
 	m_spinXrot = new wxSpinButton( sbSizerRotation->GetStaticBox(), wxID_ANY, wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS|wxSP_VERTICAL );
@@ -87,7 +88,7 @@ PANEL_PREVIEW_3D_MODEL_BASE::PANEL_PREVIEW_3D_MODEL_BASE( wxWindow* parent, wxWi
 	m_staticText21->Wrap( -1 );
 	fgSizerRotate->Add( m_staticText21, 0, wxALIGN_CENTER_VERTICAL|wxLEFT, 5 );
 
-	yrot = new wxTextCtrl( sbSizerRotation->GetStaticBox(), wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0 );
+	yrot = new TEXT_CTRL_EVAL( sbSizerRotation->GetStaticBox(), wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0 );
 	fgSizerRotate->Add( yrot, 0, wxALIGN_CENTER_VERTICAL|wxLEFT|wxEXPAND, 5 );
 
 	m_spinYrot = new wxSpinButton( sbSizerRotation->GetStaticBox(), wxID_ANY, wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS|wxSP_VERTICAL );
@@ -97,7 +98,7 @@ PANEL_PREVIEW_3D_MODEL_BASE::PANEL_PREVIEW_3D_MODEL_BASE( wxWindow* parent, wxWi
 	m_staticText31->Wrap( -1 );
 	fgSizerRotate->Add( m_staticText31, 0, wxALIGN_CENTER_VERTICAL|wxLEFT, 5 );
 
-	zrot = new wxTextCtrl( sbSizerRotation->GetStaticBox(), wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0 );
+	zrot = new TEXT_CTRL_EVAL( sbSizerRotation->GetStaticBox(), wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0 );
 	fgSizerRotate->Add( zrot, 0, wxALIGN_CENTER_VERTICAL|wxLEFT|wxEXPAND, 5 );
 
 	m_spinZrot = new wxSpinButton( sbSizerRotation->GetStaticBox(), wxID_ANY, wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS|wxSP_VERTICAL );
@@ -122,7 +123,7 @@ PANEL_PREVIEW_3D_MODEL_BASE::PANEL_PREVIEW_3D_MODEL_BASE( wxWindow* parent, wxWi
 	m_staticText12->Wrap( -1 );
 	fgSizerOffset->Add( m_staticText12, 0, wxALIGN_CENTER_VERTICAL|wxLEFT, 5 );
 
-	xoff = new wxTextCtrl( sbSizerOffset->GetStaticBox(), wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0 );
+	xoff = new TEXT_CTRL_EVAL( sbSizerOffset->GetStaticBox(), wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0 );
 	fgSizerOffset->Add( xoff, 0, wxALIGN_CENTER_VERTICAL|wxLEFT|wxEXPAND, 5 );
 
 	m_spinXoffset = new wxSpinButton( sbSizerOffset->GetStaticBox(), wxID_ANY, wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS|wxSP_VERTICAL );
@@ -132,7 +133,7 @@ PANEL_PREVIEW_3D_MODEL_BASE::PANEL_PREVIEW_3D_MODEL_BASE( wxWindow* parent, wxWi
 	m_staticText22->Wrap( -1 );
 	fgSizerOffset->Add( m_staticText22, 0, wxALIGN_CENTER_VERTICAL|wxLEFT, 5 );
 
-	yoff = new wxTextCtrl( sbSizerOffset->GetStaticBox(), wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0 );
+	yoff = new TEXT_CTRL_EVAL( sbSizerOffset->GetStaticBox(), wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0 );
 	fgSizerOffset->Add( yoff, 0, wxALIGN_CENTER_VERTICAL|wxLEFT|wxEXPAND, 5 );
 
 	m_spinYoffset = new wxSpinButton( sbSizerOffset->GetStaticBox(), wxID_ANY, wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS|wxSP_VERTICAL );
@@ -142,7 +143,7 @@ PANEL_PREVIEW_3D_MODEL_BASE::PANEL_PREVIEW_3D_MODEL_BASE( wxWindow* parent, wxWi
 	m_staticText32->Wrap( -1 );
 	fgSizerOffset->Add( m_staticText32, 0, wxALIGN_CENTER_VERTICAL|wxLEFT, 5 );
 
-	zoff = new wxTextCtrl( sbSizerOffset->GetStaticBox(), wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0 );
+	zoff = new TEXT_CTRL_EVAL( sbSizerOffset->GetStaticBox(), wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0 );
 	fgSizerOffset->Add( zoff, 0, wxALIGN_CENTER_VERTICAL|wxLEFT|wxEXPAND, 5 );
 
 	m_spinZoffset = new wxSpinButton( sbSizerOffset->GetStaticBox(), wxID_ANY, wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS|wxSP_VERTICAL );
@@ -212,21 +213,33 @@ PANEL_PREVIEW_3D_MODEL_BASE::PANEL_PREVIEW_3D_MODEL_BASE( wxWindow* parent, wxWi
 	bSizer3DButtons->Add( 0, 20, 0, wxEXPAND, 5 );
 
 	m_bpvLeft = new STD_BITMAP_BUTTON( this, wxID_ANY, wxNullBitmap, wxDefaultPosition, wxSize( -1,-1 ), wxBU_AUTODRAW|0 );
+	m_bpvLeft->SetToolTip( _("View Left") );
+
 	bSizer3DButtons->Add( m_bpvLeft, 0, wxBOTTOM, 5 );
 
 	m_bpvRight = new STD_BITMAP_BUTTON( this, wxID_ANY, wxNullBitmap, wxDefaultPosition, wxSize( -1,-1 ), wxBU_AUTODRAW|0 );
+	m_bpvRight->SetToolTip( _("View Right") );
+
 	bSizer3DButtons->Add( m_bpvRight, 0, wxBOTTOM, 5 );
 
 	m_bpvFront = new STD_BITMAP_BUTTON( this, wxID_ANY, wxNullBitmap, wxDefaultPosition, wxSize( -1,-1 ), wxBU_AUTODRAW|0 );
+	m_bpvFront->SetToolTip( _("View Front") );
+
 	bSizer3DButtons->Add( m_bpvFront, 0, wxBOTTOM, 5 );
 
 	m_bpvBack = new STD_BITMAP_BUTTON( this, wxID_ANY, wxNullBitmap, wxDefaultPosition, wxSize( -1,-1 ), wxBU_AUTODRAW|0 );
+	m_bpvBack->SetToolTip( _("View Back") );
+
 	bSizer3DButtons->Add( m_bpvBack, 0, wxBOTTOM, 5 );
 
 	m_bpvTop = new STD_BITMAP_BUTTON( this, wxID_ANY, wxNullBitmap, wxDefaultPosition, wxSize( -1,-1 ), wxBU_AUTODRAW|0 );
+	m_bpvTop->SetToolTip( _("View Top") );
+
 	bSizer3DButtons->Add( m_bpvTop, 0, wxBOTTOM, 5 );
 
 	m_bpvBottom = new STD_BITMAP_BUTTON( this, wxID_ANY, wxNullBitmap, wxDefaultPosition, wxSize( -1,-1 ), wxBU_AUTODRAW|0 );
+	m_bpvBottom->SetToolTip( _("View Bottom") );
+
 	bSizer3DButtons->Add( m_bpvBottom, 0, 0, 5 );
 
 

@@ -60,7 +60,6 @@ bool IsUTF8( const char* aString );
  * wxString() with many member functions. There are multiple ways to create text into
  * a std::string without the need of too many member functions:
  *
- *  - richio.h's StrPrintf().
  *  - std::ostringstream.
  *
  * Because this class uses no virtuals, it should be possible to cast any std::string
@@ -87,6 +86,12 @@ public:
 
     UTF8( const std::string& o ) :
         m_s( o )
+    {
+        MAYBE_VERIFY_UTF8( c_str() );
+    }
+
+    UTF8( const UTF8& o ) :
+        m_s( o.m_s )
     {
         MAYBE_VERIFY_UTF8( c_str() );
     }
@@ -178,6 +183,23 @@ public:
         return *this;
     }
 
+    UTF8& operator=( const UTF8& aOther )
+    {
+        m_s = aOther.m_s;
+        MAYBE_VERIFY_UTF8( c_str() );
+        return *this;
+    }
+
+    // Move assignment operator
+    UTF8& operator=( UTF8&& aOther ) noexcept
+    {
+        if (this != &aOther)
+            m_s = std::move( aOther.m_s );
+
+        MAYBE_VERIFY_UTF8( c_str() );
+        return *this;
+    }
+
     // a substring of a UTF8 is not necessarily a UTF8 if a multibyte character
     // was split, so return std::string not UTF8
     std::string substr( size_t pos = 0, size_t len = npos ) const
@@ -197,7 +219,6 @@ public:
     std::string::const_iterator begin()         const   { return m_s.begin(); }
     std::string::const_iterator end()           const   { return m_s.end(); }
 
-#ifndef SWIG
     /**
      * uni_iter
      * is a non-mutating iterator that walks through unicode code points in the UTF8 encoded
@@ -303,7 +324,6 @@ public:
      * @return the count of bytes consumed.
      */
     static int uni_forward( const unsigned char* aSequence, unsigned* aResult = nullptr );
-#endif  // SWIG
 
 protected:
     std::string m_s;

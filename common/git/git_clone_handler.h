@@ -25,10 +25,11 @@
 #define GIT_CLONE_HANDLER_H_
 
 #include "kicad_git_common.h"
+#include <import_export.h>
 #include "git_repo_mixin.h"
 #include "git_progress.h"
 
-class GIT_CLONE_HANDLER : public KIGIT_REPO_MIXIN
+class APIEXPORT GIT_CLONE_HANDLER : public KIGIT_REPO_MIXIN
 {
 public:
     GIT_CLONE_HANDLER( KIGIT_COMMON* aCommon );
@@ -42,7 +43,7 @@ public:
     void SetClonePath( const wxString& aPath ) { m_clonePath = aPath; }
     wxString GetClonePath() const { return m_clonePath; }
 
-    void SetRemote( const wxString& aRemote ) { GetCommon()->m_remote = aRemote; }
+    void SetRemote( const wxString& aRemote ) { GetCommon()->SetRemote( aRemote ); }
 
     void UpdateProgress( int aCurrent, int aTotal, const wxString& aMessage ) override;
 

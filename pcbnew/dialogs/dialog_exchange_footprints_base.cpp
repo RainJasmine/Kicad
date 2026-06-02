@@ -112,8 +112,11 @@ DIALOG_EXCHANGE_FOOTPRINTS_BASE::DIALOG_EXCHANGE_FOOTPRINTS_BASE( wxWindow* pare
 	m_resetTextItemLayers = new wxCheckBox( m_updateOptionsSizer->GetStaticBox(), wxID_ANY, _("Update/reset text layers and visibilities"), wxDefaultPosition, wxDefaultSize, 0 );
 	bSizer5->Add( m_resetTextItemLayers, 0, wxBOTTOM|wxRIGHT, 5 );
 
-	m_resetTextItemEffects = new wxCheckBox( m_updateOptionsSizer->GetStaticBox(), wxID_ANY, _("Update/reset text sizes, styles and positions"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_resetTextItemEffects = new wxCheckBox( m_updateOptionsSizer->GetStaticBox(), wxID_ANY, _("Update/reset text sizes and styles"), wxDefaultPosition, wxDefaultSize, 0 );
 	bSizer5->Add( m_resetTextItemEffects, 0, wxBOTTOM|wxRIGHT, 5 );
+
+	m_resetTextItemPositions = new wxCheckBox( m_updateOptionsSizer->GetStaticBox(), wxID_ANY, _("Update/reset text position and rotation"), wxDefaultPosition, wxDefaultSize, 0 );
+	bSizer5->Add( m_resetTextItemPositions, 0, wxBOTTOM|wxRIGHT, 5 );
 
 	m_resetTextItemContent = new wxCheckBox( m_updateOptionsSizer->GetStaticBox(), wxID_ANY, _("Update/reset text content"), wxDefaultPosition, wxDefaultSize, 0 );
 	bSizer5->Add( m_resetTextItemContent, 0, wxBOTTOM|wxRIGHT, 5 );
@@ -122,7 +125,7 @@ DIALOG_EXCHANGE_FOOTPRINTS_BASE::DIALOG_EXCHANGE_FOOTPRINTS_BASE( wxWindow* pare
 	bSizer5->Add( 0, 10, 1, 0, 5 );
 
 	m_checkAll = new wxButton( m_updateOptionsSizer->GetStaticBox(), wxID_ANY, _("Check All Update Options"), wxDefaultPosition, wxDefaultSize, 0 );
-	bSizer5->Add( m_checkAll, 0, wxEXPAND, 5 );
+	bSizer5->Add( m_checkAll, 0, wxBOTTOM|wxEXPAND|wxLEFT, 5 );
 
 
 	m_updateOptionsSizer->Add( bSizer5, 1, wxEXPAND|wxRIGHT, 10 );
@@ -139,11 +142,16 @@ DIALOG_EXCHANGE_FOOTPRINTS_BASE::DIALOG_EXCHANGE_FOOTPRINTS_BASE( wxWindow* pare
 	m_reset3DModels = new wxCheckBox( m_updateOptionsSizer->GetStaticBox(), wxID_ANY, _("Update/reset 3D models"), wxDefaultPosition, wxDefaultSize, 0 );
 	bSizer6->Add( m_reset3DModels, 0, wxBOTTOM|wxRIGHT, 5 );
 
+	m_matchPadPositions = new wxCheckBox( m_updateOptionsSizer->GetStaticBox(), wxID_ANY, _("Match pad positions"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_matchPadPositions->SetToolTip( _("Attempt to match pad positions even if the footprint origin or rotation has changed.") );
+
+	bSizer6->Add( m_matchPadPositions, 0, wxBOTTOM|wxRIGHT, 5 );
+
 
 	bSizer6->Add( 0, 10, 1, 0, 5 );
 
 	m_uncheckAll = new wxButton( m_updateOptionsSizer->GetStaticBox(), wxID_ANY, _("Uncheck All Update Options"), wxDefaultPosition, wxDefaultSize, 0 );
-	bSizer6->Add( m_uncheckAll, 0, wxEXPAND, 5 );
+	bSizer6->Add( m_uncheckAll, 0, wxBOTTOM|wxEXPAND|wxRIGHT, 5 );
 
 
 	m_updateOptionsSizer->Add( bSizer6, 1, wxEXPAND, 5 );

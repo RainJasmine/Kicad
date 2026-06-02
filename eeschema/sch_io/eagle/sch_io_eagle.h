@@ -48,7 +48,7 @@ class SCH_GLOBALLABEL;
 class SCH_SYMBOL;
 class SCH_FIELD;
 class LIB_SYMBOL;
-class SYMBOL_LIB;
+class LEGACY_SYMBOL_LIB;
 class SCH_PIN;
 class wxXmlNode;
 
@@ -228,13 +228,16 @@ private:
     // (named power pins in Eagle).
     struct EAGLE_MISSING_CMP
     {
-        EAGLE_MISSING_CMP( const SCH_SYMBOL* aSymbol = nullptr )
-            : cmp( aSymbol )
+        EAGLE_MISSING_CMP( const SCH_SYMBOL* aSymbol = nullptr, SCH_SCREEN* aScreen = nullptr )
+            : cmp( aSymbol ), screen( aScreen )
         {
         }
 
         ///< Link to the parent symbol
         const SCH_SYMBOL* cmp;
+
+        ///< Screen where the parent symbol is located
+        SCH_SCREEN* screen;
 
         /* Map of the symbol units: for each unit there is a flag saying
          * whether the unit needs to be instantiated with appropriate net labels to

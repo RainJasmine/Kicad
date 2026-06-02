@@ -24,7 +24,9 @@
 #include "preview_items/construction_geom.h"
 
 #include <layer_ids.h>
+#include <utility>
 #include <gal/graphics_abstraction_layer.h>
+#include <geometry/line.h>
 #include <geometry/shape_utils.h>
 #include <preview_items/item_drawing_utils.h>
 #include <view/view.h>
@@ -39,9 +41,15 @@ CONSTRUCTION_GEOM::CONSTRUCTION_GEOM() :
 }
 
 
-void CONSTRUCTION_GEOM::AddDrawable( const DRAWABLE& aItem, bool aPersistent )
+void CONSTRUCTION_GEOM::AddDrawable( const DRAWABLE& aItem, bool aPersistent, int aLineWidth )
 {
-    m_drawables.push_back( { aItem, aPersistent } );
+    m_drawables.push_back( { aItem, aPersistent, aLineWidth } );
+}
+
+
+void CONSTRUCTION_GEOM::SetSnapGuides( std::vector<SNAP_GUIDE> aGuides )
+{
+    m_snapGuides = std::move( aGuides );
 }
 
 
@@ -78,18 +86,20 @@ void CONSTRUCTION_GEOM::ViewDraw( int aLayer, VIEW* aView ) const
     const bool haveSnapLine = m_snapLine && m_snapLine->Length() >= minSnapLineLength;
 
     // Avoid fighting with the snap line
-    const auto drawLineIfNotAlsoSnapLine = [&]( const SEG& aLine )
-    {
-        if( !haveSnapLine || !aLine.ApproxCollinear( *m_snapLine, 1 ) )
-        {
-            gal.DrawLine( aLine.A, aLine.B );
-        }
-    };
+    const auto drawLineIfNotAlsoSnapLine =
+            [&]( const SEG& aLine )
+            {
+                if( !haveSnapLine || !aLine.ApproxCollinear( *m_snapLine, 1 ) )
+                {
+                    gal.DrawLine( aLine.A, aLine.B );
+                }
+            };
 
     // Draw all the items
     for( const DRAWABLE_INFO& drawable : m_drawables )
     {
         gal.SetStrokeColor( drawable.IsPersistent ? m_persistentColor : m_color );
+        gal.SetLineWidth( drawable.LineWidth / gal.GetWorldScale() );
 
         std::visit(
                 [&]( const auto& visited )
@@ -139,9 +149,28 @@ void CONSTRUCTION_GEOM::ViewDraw( int aLayer, VIEW* aView ) const
                 drawable.Item );
     }
 
+    for( const SNAP_GUIDE& guide : m_snapGuides )
+    {
+        const SEG& segment = guide.Segment;
+        const int  dashSize = aView->ToWorld( 8 );
+
+        if( segment.A == segment.B )
+            continue;
+
+        std::optional<SEG> clipped = KIGEOM::ClipLineToBox( LINE( segment ), viewport );
+
+        if( !clipped )
+            continue;
+
+        gal.SetStrokeColor( guide.Color );
+        gal.SetLineWidth( guide.LineWidth );
+        KIGFX::DrawDashedLine( gal, *clipped, dashSize );
+    }
+
     if( haveSnapLine )
     {
         gal.SetStrokeColor( m_persistentColor );
+        gal.SetLineWidth( 2 );
 
         const int dashSizeBasis = aView->ToWorld( 12 );
         const int snapOriginMarkerSize = aView->ToWorld( 16 );

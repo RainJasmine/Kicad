@@ -28,9 +28,11 @@
 #include <board.h>
 #include <board_commit.h>
 #include <board_design_settings.h>
+#include <drc/drc_engine.h>
 #include <connectivity/connectivity_data.h>
 #include <tracks_cleaner.h>
 #include <cleanup_item.h>
+#include <drc/drc_engine.h>
 #include <drc/drc_item.h>
 #include <settings/settings_manager.h>
 #include <tool/tool_manager.h>
@@ -39,8 +41,7 @@ namespace
 {
 struct TRACK_CLEANER_TEST_FIXTURE
 {
-    TRACK_CLEANER_TEST_FIXTURE() :
-            m_settingsManager( true /* headless */ )
+    TRACK_CLEANER_TEST_FIXTURE()
     { }
 
     SETTINGS_MANAGER       m_settingsManager;
@@ -207,8 +208,8 @@ BOOST_DATA_TEST_CASE_F( TRACK_CLEANER_TEST_FIXTURE, TrackCleanerRegressionTests,
     bds.m_DRCSeverities[ DRCE_SOLDERMASK_BRIDGE ] = SEVERITY::RPT_SEVERITY_IGNORE;
 
     bds.m_DRCEngine->SetViolationHandler(
-            [&]( const std::shared_ptr<DRC_ITEM>& aItem, VECTOR2I aPos, int aLayer,
-                 DRC_CUSTOM_MARKER_HANDLER* aCustomHandler )
+            [&]( const std::shared_ptr<DRC_ITEM>& aItem, const VECTOR2I& aPos, int aLayer,
+                 const std::function<void( PCB_MARKER* )>& aPathGenerator )
             {
                 if( aItem->GetErrorCode() == DRCE_UNCONNECTED_ITEMS )
                     violations.push_back( *aItem );

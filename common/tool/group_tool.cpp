@@ -20,14 +20,17 @@
  * or you may write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
+#include "tool/group_tool.h"
+
+#include <set>
 
 #include <eda_draw_frame.h>
 #include <kiplatform/ui.h>
 #include <tool/actions.h>
 #include <tool/tool_manager.h>
 #include <tool/picker_tool.h>
-#include <tool/group_tool.h>
 #include <tool/selection.h>
+#include <tool/selection_tool.h>
 #include <status_popup.h>
 #include <commit.h>
 #include <bitmaps.h>
@@ -60,7 +63,7 @@ public:
 private:
     void update() override
     {
-        bool canGroup = false;
+        int  selectionCount = 0;
         bool hasGroup = false;
         bool hasMember = false;
         bool onlyOneGroup = false;
@@ -70,7 +73,7 @@ private:
         {
             for( EDA_ITEM* item : m_selectionTool->GetSelection() )
             {
-                canGroup = true;
+                selectionCount++;
 
                 if( item->Type() == PCB_GROUP_T || item->Type() == SCH_GROUP_T )
                 {
@@ -91,7 +94,7 @@ private:
             }
         }
 
-        Enable( ACTIONS::group.GetUIId(),           canGroup );
+        Enable( ACTIONS::group.GetUIId(),           selectionCount >= 2 );
         Enable( ACTIONS::ungroup.GetUIId(),         hasGroup );
         Enable( ACTIONS::addToGroup.GetUIId(),      onlyOneGroup && hasUngroupedItems );
         Enable( ACTIONS::removeFromGroup.GetUIId(), hasMember );
@@ -252,6 +255,8 @@ int GROUP_TOOL::RemoveFromGroup( const TOOL_EVENT& aEvent )
     if( selection.Empty() )
         m_toolMgr->RunAction( ACTIONS::selectionCursor );
 
+    std::set<EDA_GROUP*> affectedGroups;
+
     for( EDA_ITEM* item : selection )
     {
         if( EDA_GROUP* group = item->GetParentGroup() )
@@ -259,6 +264,16 @@ int GROUP_TOOL::RemoveFromGroup( const TOOL_EVENT& aEvent )
             m_commit->Modify( group->AsEdaItem(), m_frame->GetScreen(), RECURSE_MODE::NO_RECURSE );
             m_commit->Modify( item, m_frame->GetScreen() );
             group->RemoveItem( item );
+            affectedGroups.insert( group );
+        }
+    }
+
+    for( EDA_GROUP* group : affectedGroups )
+    {
+        if( group->GetItems().size() < 2 )
+        {
+            group->RemoveAll();
+            m_commit->Remove( group->AsEdaItem(), m_frame->GetScreen() );
         }
     }
 

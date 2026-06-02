@@ -15,11 +15,14 @@
     "boost-ptr-container",
     "boost-random",
     "boost-range",
+    "boost-stacktrace",
     "boost-test",
     "boost-uuid",
     "cairo",
-    "wxwidgets-33",
-    "glew",
+    {
+      "name": "wxwidgets-33",
+      "features": [ "webview" ]
+    },
     "curl",
     {
       "name": "gettext",
@@ -41,7 +44,6 @@
     },
     "icu",
     "ngspice",
-    "wxpython-33",
     {
       "name": "libgit2",
       "features": [ "ssh", "winhttp" ]
@@ -62,15 +64,11 @@
     },
     {
       "name": "wxwidgets-33",
-      "version": "3.3.0#3"
-    },
-    {
-      "name": "wxpython-33",
-      "version": "4.2.3#1"
+      "version": "3.3.1#4"
     },
     {
       "name": "ngspice",
-      "version": "44#1"
+      "version": "46#0"
     },
     {
       "name": "protobuf",

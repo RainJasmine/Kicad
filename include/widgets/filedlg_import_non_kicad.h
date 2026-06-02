@@ -17,10 +17,8 @@
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef KICAD_FILEDLG_IMPORT_NON_KICAD_H
-#define KICAD_FILEDLG_IMPORT_NON_KICAD_H
+#pragma once
 
-#include <wx/wx.h>
 #include <wx/filedlgcustomize.h>
 
 
@@ -33,6 +31,10 @@ public:
 
     virtual void AddCustomControls( wxFileDialogCustomize& customizer ) override
     {
+#ifdef __WXMAC__
+        customizer.AddStaticText( wxT( "\n\n" ) );  // Increase height of static box
+#endif
+
         m_cb = customizer.AddCheckBox( _( "Show import issues" ) );
         m_cb->SetValue( m_showIssues );
     }
@@ -51,5 +53,3 @@ private:
 
     wxDECLARE_NO_COPY_CLASS( FILEDLG_IMPORT_NON_KICAD );
 };
-
-#endif //KICAD_FILEDLG_IMPORT_NON_KICAD_H

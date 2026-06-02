@@ -36,6 +36,7 @@
 
 class PCB_EDIT_FRAME;
 class DIALOG_DRC;
+class DIALOG_DRC_RULE_EDITOR;
 class DRC_ITEM;
 class WX_PROGRESS_REPORTER;
 class DRC_ENGINE;
@@ -60,6 +61,8 @@ public:
 
     int ShowDRCDialog( const TOOL_EVENT& aEvent );
 
+    DIALOG_DRC* GetDRCDialog() { return m_drcDialog; }
+
     /**
      * Check to see if the DRC_TOOL dialog is currently shown
      */
@@ -74,6 +77,12 @@ public:
      * Close and free the DRC dialog.
      */
     void DestroyDRCDialog();
+
+    void ShowDesignRuleEditorDialog( wxWindow* aParent );
+
+    int ShowDesignRuleEditorDialog( const TOOL_EVENT& aEvent );
+
+    void DestroyDesignRuleEditorDialog();
 
     std::shared_ptr<DRC_ENGINE> GetDRCEngine() { return m_drcEngine; }
 
@@ -95,6 +104,9 @@ public:
 
     int ExcludeMarker( const TOOL_EVENT& aEvent );
 
+    wxString FixDRCErrorMenuText( const std::shared_ptr<RC_ITEM>& aDRCItem );
+    void FixDRCError( const std::shared_ptr<RC_ITEM>& aDRCItem );
+
 private:
     ///< Set up handlers for various events.
     void setTransitions() override;
@@ -110,6 +122,7 @@ private:
     PCB_EDIT_FRAME*             m_editFrame;
     BOARD*                      m_pcb;
     DIALOG_DRC*                 m_drcDialog;
+    DIALOG_DRC_RULE_EDITOR*     m_designRuleEditorDlg;
     bool                        m_drcRunning;
     std::shared_ptr<DRC_ENGINE> m_drcEngine;
 };

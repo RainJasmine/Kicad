@@ -36,6 +36,17 @@ class EDIT_LINE;
 class EDIT_POINTS;
 
 
+/**
+ * Mode for polygon line edge constraints. Determines what happens to the dragged line's
+ * length when moving perpendicular to the line.
+ */
+enum class POLYGON_LINE_MODE
+{
+    CONVERGING,    ///< Adjacent lines converge/diverge, dragged line length changes
+    FIXED_LENGTH   ///< Dragged line maintains its length, adjacent lines adjust angles
+};
+
+
 enum GRID_CONSTRAINT_TYPE
 {
     IGNORE_GRID,
@@ -160,6 +171,29 @@ private:
 
 
 /**
+ * #EDIT_CONSTRAINT that imposes a constraint that a point has to be located at angle of 90
+ * degree multiplicity (i.e. horizontal or vertical).
+ */
+class EC_90DEGREE : public EDIT_CONSTRAINT<EDIT_POINT>
+{
+public:
+    /**
+     * @param aConstrained is the point that is put under constrain.
+     * @param aConstrainer is the point that is the source of the constrain.
+     */
+    EC_90DEGREE( EDIT_POINT& aConstrained, const EDIT_POINT& aConstrainer ) :
+            EDIT_CONSTRAINT<EDIT_POINT>( aConstrained ),
+            m_constrainer( aConstrainer )
+    {};
+
+    /// @copydoc EDIT_CONSTRAINT::Apply()
+    virtual void Apply( EDIT_POINT& aHandle, const GRID_HELPER& aGrid ) override;
+
+private:
+    const EDIT_POINT& m_constrainer;    ///< Point that imposes the constraint.
+};
+
+/**
  * #EDIT_CONSTRAINT that imposes a constraint that a point has to lie on a line (determined
  * by 2 points).
  */
@@ -170,6 +204,9 @@ public:
 
     /// @copydoc EDIT_CONSTRAINT::Apply()
     virtual void Apply( EDIT_POINT& aHandle, const GRID_HELPER& aGrid ) override;
+
+    const EDIT_POINT& GetConstrainer() const { return m_constrainer; }
+    VECTOR2I GetLineVector() const { return m_line; }
 
 private:
     const EDIT_POINT& m_constrainer;    ///< Point that imposes the constraint.
@@ -207,25 +244,50 @@ private:
 
 
 /**
- * #EDIT_CONSTRAINT for 3 segments: dragged and two adjacent ones, enforcing to keep their slopes
- * and allows only to change ending points. Applied to zones.
+ * #EDIT_CONSTRAINT for polygon line dragging. The line center moves perpendicular to the line
+ * itself. Two modes control what happens to the line length:
+ *   - CONVERGING: Adjacent lines maintain angles, dragged line length changes
+ *   - FIXED_LENGTH: Dragged line maintains length, adjacent lines adjust angles
  */
 class EC_CONVERGING : public EDIT_CONSTRAINT<EDIT_LINE>
 {
 public:
-    EC_CONVERGING( EDIT_LINE& aLine, EDIT_POINTS& aPoints );
+    EC_CONVERGING( EDIT_LINE& aLine, EDIT_POINTS& aPoints,
+                   POLYGON_LINE_MODE aMode = POLYGON_LINE_MODE::CONVERGING );
 
     virtual ~EC_CONVERGING();
 
     /// @copydoc EDIT_CONSTRAINT::Apply()
     virtual void Apply( EDIT_LINE& aHandle, const GRID_HELPER& aGrid ) override;
 
+    /// Get the current constraint mode
+    POLYGON_LINE_MODE GetMode() const { return m_mode; }
+
+    /// Set the constraint mode (allows switching between converging and fixed-length)
+    void SetMode( POLYGON_LINE_MODE aMode ) { m_mode = aMode; }
+
+    /// Original center of the dragged line, captured at drag start.
+    const VECTOR2I& GetOriginalCenter() const { return m_originalCenter; }
+
+    /// Perpendicular direction of motion for the dragged line, captured at drag start.
+    /// Length matches the original dragged segment vector.
+    const VECTOR2I& GetPerpVector() const { return m_perpVector; }
+
 private:
+    /// Apply converging mode: find intersections with adjacent lines
+    void applyConverging( EDIT_LINE& aHandle );
+
+    /// Apply fixed-length mode: maintain line length, adjust adjacent line angles
+    void applyFixedLength( EDIT_LINE& aHandle );
+
+    /// Constraint mode
+    POLYGON_LINE_MODE m_mode;
+
     /// Constraint for origin side segment.
-    EDIT_CONSTRAINT<EDIT_POINT>* m_originSideConstraint;
+    std::unique_ptr<EDIT_CONSTRAINT<EDIT_POINT>> m_originSideConstraint;
 
     /// Constraint for end side segment.
-    EDIT_CONSTRAINT<EDIT_POINT>* m_endSideConstraint;
+    std::unique_ptr<EDIT_CONSTRAINT<EDIT_POINT>> m_endSideConstraint;
 
     /// Additional constraint, applied when at least two points are collinear. It is a pointer to
     /// m_[origin/end]SideConstraint, so it should not be freed.
@@ -237,9 +299,28 @@ private:
     /// Vector that represents the initial direction of the dragged segment.
     VECTOR2I m_draggedVector;
 
+    /// Original center position of the line
+    VECTOR2I m_originalCenter;
+
+    /// Perpendicular direction to the dragged segment (for constraining movement)
+    VECTOR2I m_perpVector;
+
+    /// Original half-length of the line (for fixed-length mode)
+    double m_halfLength;
+
     /// Flags to indicate when dragged and neighbouring lines are (almost) collinear.
     bool m_originCollinear;
     bool m_endCollinear;
+
+    /// Previous and next points to keep drag endpoints fixed.
+    EDIT_POINT* m_prevOrigin;
+    EDIT_POINT* m_nextEnd;
+
+    /// Original convergence point of adjacent segments.
+    VECTOR2I m_convergencePoint;
+
+    /// Vector from the convergence point to the mid-line point.
+    VECTOR2I m_midVector;
 };
 
 

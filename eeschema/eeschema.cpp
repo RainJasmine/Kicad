@@ -23,8 +23,10 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include <core/json_serializers.h>
 #include <pgm_base.h>
 #include <kiface_base.h>
+#include <background_jobs_monitor.h>
 #include <cli_progress_reporter.h>
 #include <confirm.h>
 #include <gestfich.h>
@@ -33,36 +35,41 @@
 #include "eeschema_helpers.h"
 #include <eeschema_settings.h>
 #include <sch_edit_frame.h>
-#include <design_block_lib_table.h>
+#include <libraries/symbol_library_adapter.h>
 #include <symbol_edit_frame.h>
 #include <symbol_viewer_frame.h>
 #include <symbol_chooser_frame.h>
-#include <symbol_lib_table.h>
-#include <dialogs/dialog_global_design_block_lib_table_config.h>
-#include <dialogs/dialog_global_sym_lib_table_config.h>
 #include <dialogs/panel_grid_settings.h>
 #include <dialogs/panel_simulator_preferences.h>
 #include <dialogs/panel_design_block_lib_table.h>
 #include <dialogs/panel_sym_lib_table.h>
 #include <kiway.h>
+#include <project_sch.h>
+#include <richio.h>
 #include <settings/settings_manager.h>
 #include <symbol_editor_settings.h>
 #include <sexpr/sexpr.h>
 #include <sexpr/sexpr_parser.h>
+#include <string_utils.h>
+#include <trace_helpers.h>
+#include <thread_pool.h>
 #include <kiface_ids.h>
+#include <widgets/kistatusbar.h>
 #include <netlist_exporters/netlist_exporter_kicad.h>
 #include <wx/ffile.h>
+#include <wx/tokenzr.h>
 #include <wildcards_and_files_ext.h>
 
 #include <schematic.h>
 #include <connection_graph.h>
 #include <panel_template_fieldnames.h>
 #include <panel_eeschema_color_settings.h>
+#include <panel_sch_data_sources.h>
 #include <panel_sym_color_settings.h>
 #include <panel_eeschema_editing_options.h>
 #include <panel_eeschema_annotation_options.h>
 #include <panel_sym_editing_options.h>
-#include <dialogs/panel_gal_display_options.h>
+#include <dialogs/panel_base_display_options.h>
 #include <panel_eeschema_display_options.h>
 #include <panel_sym_display_options.h>
 #include <sim/simulator_frame.h>
@@ -70,6 +77,15 @@
 #include <dialogs/panel_toolbar_customization.h>
 #include <toolbars_sch_editor.h>
 #include <toolbars_symbol_editor.h>
+
+#if defined( KICAD_IPC_API )
+#include <api/api_handler_sch.h>
+#include <api/api_server.h>
+#include <api/api_utils.h>
+#include <api/headless_sch_context.h>
+#include <sch_io/sch_io.h>
+#include <sch_io/sch_io_mgr.h>
+#endif
 
 #include <wx/crt.h>
 
@@ -88,14 +104,27 @@ static std::unique_ptr<SCHEMATIC> readSchematicFromFile( const std::string& aFil
 
     SETTINGS_MANAGER& manager = Pgm().GetSettingsManager();
 
-    // TODO: this must load the schematic's project, not a default project.  At the very minimum
-    // variable resolution won't work without the project, but there might also be issues with
-    // netclasses, etc.
-    manager.LoadProject( "" );
+    wxFileName pro( aFilename );
+    pro.SetExt( FILEEXT::ProjectFileExtension );
+    pro.MakeAbsolute();
+    wxString projectPath = pro.GetFullPath();
+
+    PROJECT* project = manager.GetProject( projectPath );
+
+    if( !project )
+    {
+        manager.LoadProject( projectPath, true );
+        project = manager.GetProject( projectPath );
+    }
+
     schematic->Reset();
-    schematic->SetProject( &manager.Prj() );
-    schematic->SetRoot( pi->LoadSchematicFile( aFilename, schematic.get() ) );
-    schematic->CurrentSheet().push_back( &schematic->Root() );
+    schematic->SetProject( project );
+    SCH_SHEET* rootSheet = pi->LoadSchematicFile( aFilename, schematic.get() );
+
+    if( !rootSheet )
+        return nullptr;
+
+    schematic->SetTopLevelSheets( { rootSheet } );
 
     SCH_SCREENS screens( schematic->Root() );
 
@@ -154,7 +183,8 @@ static struct IFACE : public KIFACE_BASE, public UNITS_PROVIDER
 
     IFACE( const char* aName, KIWAY::FACE_T aType ) :
             KIFACE_BASE( aName, aType ),
-            UNITS_PROVIDER( schIUScale, EDA_UNITS::MM )
+            UNITS_PROVIDER( schIUScale, EDA_UNITS::MM ),
+            m_libraryPreloadInProgress( false )
     {}
 
     bool OnKifaceStart( PGM_BASE* aProgram, int aCtlBits, KIWAY* aKiway ) override;
@@ -274,10 +304,10 @@ static struct IFACE : public KIFACE_BASE, public UNITS_PROVIDER
             for( TOOL_ACTION* action : ACTION_MANAGER::GetActionList() )
                 actions.push_back( action );
 
-            for( ACTION_TOOLBAR_CONTROL* control : ACTION_TOOLBAR::GetCustomControlList() )
+            for( ACTION_TOOLBAR_CONTROL* control : ACTION_TOOLBAR::GetCustomControlList( FRAME_SCH_SYMBOL_EDITOR ) )
                 controls.push_back( control );
 
-            return new PANEL_TOOLBAR_CUSTOMIZATION( aParent, cfg, tb, actions, controls );
+            return new PANEL_TOOLBAR_CUSTOMIZATION( aParent, cfg, tb, FRAME_SCH_SYMBOL_EDITOR, actions, controls );
         }
 
         case PANEL_SYM_COLORS:
@@ -319,9 +349,6 @@ static struct IFACE : public KIFACE_BASE, public UNITS_PROVIDER
             return new PANEL_EESCHEMA_EDITING_OPTIONS( aParent, this, frame );
         }
 
-        case PANEL_SCH_ANNO_OPTIONS:
-            return new PANEL_EESCHEMA_ANNOTATION_OPTIONS( aParent, aKiway->Player( FRAME_SCH, false ) );
-
         case PANEL_SCH_TOOLBARS:
         {
             APP_SETTINGS_BASE* cfg = GetAppSettings<EESCHEMA_SETTINGS>( "eeschema" );
@@ -333,10 +360,10 @@ static struct IFACE : public KIFACE_BASE, public UNITS_PROVIDER
             for( TOOL_ACTION* action : ACTION_MANAGER::GetActionList() )
                 actions.push_back( action );
 
-            for( ACTION_TOOLBAR_CONTROL* control : ACTION_TOOLBAR::GetCustomControlList() )
+            for( ACTION_TOOLBAR_CONTROL* control : ACTION_TOOLBAR::GetCustomControlList( FRAME_SCH ) )
                 controls.push_back( control );
 
-            return new PANEL_TOOLBAR_CUSTOMIZATION( aParent, cfg, tb, actions, controls );
+            return new PANEL_TOOLBAR_CUSTOMIZATION( aParent, cfg, tb, FRAME_SCH, actions, controls );
         }
 
         case PANEL_SCH_COLORS:
@@ -344,6 +371,19 @@ static struct IFACE : public KIFACE_BASE, public UNITS_PROVIDER
 
         case PANEL_SCH_FIELD_NAME_TEMPLATES:
             return new PANEL_TEMPLATE_FIELDNAMES( aParent, nullptr );
+
+        case PANEL_SCH_DATA_SOURCES:
+        {
+            EDA_BASE_FRAME* frame = aKiway->Player( FRAME_SCH, false );
+
+            if( !frame )
+                frame = aKiway->Player( FRAME_SCH_SYMBOL_EDITOR, false );
+
+            if( !frame )
+                frame = aKiway->Player( FRAME_SCH_VIEWER, false );
+
+            return new class PANEL_SCH_DATA_SOURCES( aParent, frame );
+        }
 
         case PANEL_SCH_SIMULATOR:
             return new PANEL_SIMULATOR_PREFERENCES( aParent );
@@ -388,11 +428,35 @@ static struct IFACE : public KIFACE_BASE, public UNITS_PROVIDER
 
     bool HandleJobConfig( JOB* aJob, wxWindow* aParent ) override;
 
-private:
-    bool loadGlobalLibTable();
-    bool loadGlobalDesignBlockLibTable();
+#if defined( KICAD_IPC_API )
+    bool HandleApiOpenDocument( const wxString& aPath,
+                                KICAD_API_SERVER* aServer,
+                                wxString* aError ) override;
 
+    bool HandleApiCloseDocument( const wxString& aSchFileName,
+                                 KICAD_API_SERVER* aServer,
+                                 wxString* aError ) override;
+#endif
+
+    void PreloadLibraries( KIWAY* aKiway ) override;
+    void CancelPreload( bool aBlock = true ) override;
+    void ProjectChanged() override;
+
+private:
     std::unique_ptr<EESCHEMA_JOBS_HANDLER> m_jobHandler;
+    std::shared_ptr<BACKGROUND_JOB>        m_libraryPreloadBackgroundJob;
+    std::future<void>                      m_libraryPreloadReturn;
+    std::atomic_bool                       m_libraryPreloadInProgress;
+    std::atomic_bool                       m_libraryPreloadAbort;
+
+#if defined( KICAD_IPC_API )
+    void closeCurrentDocument( KICAD_API_SERVER* aServer );
+
+    KIWAY*                                    m_kiway = nullptr;
+    SCHEMATIC*                                m_openSchematic = nullptr;
+    std::shared_ptr<HEADLESS_SCH_CONTEXT>     m_openContext;
+    std::unique_ptr<API_HANDLER_SCH>          m_openHandler;
+#endif
 
 } kiface( "eeschema", KIWAY::FACE_SCH );
 
@@ -431,13 +495,9 @@ bool IFACE::OnKifaceStart( PGM_BASE* aProgram, int aCtlBits, KIWAY* aKiway )
 
     start_common( aCtlBits );
 
-    if( !loadGlobalLibTable() || !loadGlobalDesignBlockLibTable() )
-    {
-        // we didnt get anywhere deregister the settings
-        aProgram->GetSettingsManager().FlushAndRelease( symSettings, false );
-        aProgram->GetSettingsManager().FlushAndRelease( KifaceSettings(), false );
-        return false;
-    }
+#if defined( KICAD_IPC_API )
+    m_kiway = aKiway;
+#endif
 
     m_jobHandler = std::make_unique<EESCHEMA_JOBS_HANDLER>( aKiway );
 
@@ -453,105 +513,131 @@ bool IFACE::OnKifaceStart( PGM_BASE* aProgram, int aCtlBits, KIWAY* aKiway )
 
 void IFACE::Reset()
 {
-    loadGlobalLibTable();
 }
 
 
-bool IFACE::loadGlobalLibTable()
+void IFACE::PreloadLibraries( KIWAY* aKiway )
 {
-    wxFileName fn = SYMBOL_LIB_TABLE::GetGlobalTableFileName();
+    constexpr static int interval = 150;
+    constexpr static int timeLimit = 120000;
 
-    if( !fn.FileExists() )
-    {
-        if( !( m_start_flags & KFCTL_CLI ) )
+    wxCHECK( aKiway, /* void */ );
+
+    // Use compare_exchange to atomically check and set the flag to prevent race conditions
+    // when PreloadLibraries is called multiple times concurrently (e.g., from project manager
+    // and schematic editor both scheduling via CallAfter)
+    bool expected = false;
+
+    if( !m_libraryPreloadInProgress.compare_exchange_strong( expected, true ) )
+        return;
+
+    Pgm().ClearLibraryLoadMessages();
+
+    m_libraryPreloadBackgroundJob =
+            Pgm().GetBackgroundJobMonitor().Create( _( "Loading Symbol Libraries" ) );
+
+    auto preload =
+        [this, aKiway]() -> void
         {
-            // Ensure the splash screen does not hide the dialog:
-            Pgm().HideSplash();
+            std::shared_ptr<BACKGROUND_JOB_REPORTER> reporter =
+                    m_libraryPreloadBackgroundJob->m_reporter;
 
-            DIALOG_GLOBAL_SYM_LIB_TABLE_CONFIG symDialog( nullptr );
+            SYMBOL_LIBRARY_ADAPTER* adapter = PROJECT_SCH::SymbolLibAdapter( &aKiway->Prj() );
 
-            if( symDialog.ShowModal() != wxID_OK )
-                return false;
-        }
-    }
-    else
-    {
-        try
-        {
-            // The global table is not related to a specific project.  All projects
-            // will use the same global table.  So the KIFACE::OnKifaceStart() contract
-            // of avoiding anything project specific is not violated here.
-            if( !SYMBOL_LIB_TABLE::LoadGlobalTable( SYMBOL_LIB_TABLE::GetGlobalLibTable() ) )
-                return false;
-        }
-        catch( const IO_ERROR& ioe )
-        {
-            // if we are here, a incorrect global symbol library table was found.
-            // Incorrect global symbol library table is not a fatal error:
-            // the user just has to edit the (partially) loaded table.
-            wxString msg =
-                    _( "An error occurred attempting to load the global symbol library table.\n"
-                       "Please edit this global symbol library table in Preferences menu." );
+            int elapsed = 0;
 
-            DisplayErrorMessage( nullptr, msg, ioe.What() );
-        }
-    }
+            reporter->Report( _( "Loading Symbol Libraries" ) );
+            adapter->AsyncLoad();
 
-    return true;
+            while( true )
+            {
+                if( m_libraryPreloadAbort.load() )
+                {
+                    m_libraryPreloadAbort.store( false );
+                    break;
+                }
+
+                std::this_thread::sleep_for( std::chrono::milliseconds( interval ) );
+
+                if( std::optional<float> loadStatus = adapter->AsyncLoadProgress() )
+                {
+                    float progress = *loadStatus;
+                    reporter->SetCurrentProgress( progress );
+
+                    if( progress >= 1 )
+                        break;
+                }
+                else
+                {
+                    reporter->SetCurrentProgress( 1 );
+                    break;
+                }
+
+                elapsed += interval;
+
+                if( elapsed > timeLimit )
+                    break;
+            }
+
+            adapter->BlockUntilLoaded();
+
+            // Collect library load errors for async reporting
+            wxString errors = adapter->GetLibraryLoadErrors();
+
+            wxLogTrace( traceLibraries, "eeschema PreloadLibraries: errors.IsEmpty()=%d, length=%zu",
+                        errors.IsEmpty(), errors.length() );
+
+            std::vector<LOAD_MESSAGE> messages =
+                    ExtractLibraryLoadErrors( errors, RPT_SEVERITY_ERROR );
+
+            if( !messages.empty() )
+            {
+                wxLogTrace( traceLibraries, "  -> collected %zu messages, calling AddLibraryLoadMessages",
+                            messages.size() );
+                Pgm().AddLibraryLoadMessages( messages );
+            }
+            else
+            {
+                wxLogTrace( traceLibraries, "  -> no errors from symbol libraries" );
+            }
+
+            Pgm().GetBackgroundJobMonitor().Remove( m_libraryPreloadBackgroundJob );
+            m_libraryPreloadBackgroundJob.reset();
+            m_libraryPreloadInProgress.store( false );
+
+            std::string payload = "";
+            aKiway->ExpressMail( FRAME_SCH, MAIL_RELOAD_LIB, payload, nullptr, true );
+            aKiway->ExpressMail( FRAME_SCH_SYMBOL_EDITOR, MAIL_RELOAD_LIB, payload, nullptr, true );
+            aKiway->ExpressMail( FRAME_SCH_VIEWER, MAIL_RELOAD_LIB, payload, nullptr, true );
+        };
+
+    thread_pool& tp = GetKiCadThreadPool();
+    m_libraryPreloadReturn = tp.submit_task( preload );
 }
 
 
-bool IFACE::loadGlobalDesignBlockLibTable()
+void IFACE::CancelPreload( bool aBlock )
 {
-    try
+    if( m_libraryPreloadInProgress.load() )
     {
-        wxFileName fn = DESIGN_BLOCK_LIB_TABLE::GetGlobalTableFileName();
+        m_libraryPreloadAbort.store( true );
 
-        if( !fn.FileExists() )
-        {
-            DESIGN_BLOCK_LIB_TABLE emptyTable;
-            emptyTable.Save( fn.GetFullPath() );
-        }
-
-        // The global table is not related to a specific project.  All projects
-        // will use the same global table.  So the KIFACE::OnKifaceStart() contract
-        // of avoiding anything project specific is not violated here.
-        if( !DESIGN_BLOCK_LIB_TABLE::LoadGlobalTable(
-                    DESIGN_BLOCK_LIB_TABLE::GetGlobalLibTable() ) )
-            return false;
+        if( aBlock )
+            m_libraryPreloadReturn.wait();
     }
-    catch( const IO_ERROR& ioe )
-    {
-        // if we are here, a incorrect global design block library table was found.
-        // Incorrect global design block library table is not a fatal error:
-        // the user just has to edit the (partially) loaded table.
-        wxString msg =
-                _( "An error occurred attempting to load the global design block library table.\n"
-                   "Please edit this global design block library table in Preferences menu." );
+}
 
-        DisplayErrorMessage( nullptr, msg, ioe.What() );
-    }
 
-    return true;
+void IFACE::ProjectChanged()
+{
+    if( m_libraryPreloadInProgress.load() )
+        m_libraryPreloadAbort.store( true );
 }
 
 
 void IFACE::OnKifaceEnd()
 {
     end_common();
-}
-
-
-static void traverseSEXPR( SEXPR::SEXPR* aNode,
-                           const std::function<void( SEXPR::SEXPR* )>& aVisitor )
-{
-    aVisitor( aNode );
-
-    if( aNode->IsList() )
-    {
-        for( unsigned i = 0; i < aNode->GetNumberOfChildren(); i++ )
-            traverseSEXPR( aNode->GetChild( i ), aVisitor );
-    }
 }
 
 
@@ -591,16 +677,18 @@ void IFACE::SaveFileAs( const wxString& aProjectBasePath, const wxString& aProje
             return;
         }
 
-        // Sheet paths when auto-generated are relative to the root, so those will stay
-        // pointing to whatever they were pointing at.
-        // The author can create their own absolute and relative sheet paths.  Absolute
-        // sheet paths aren't an issue, and relative ones will continue to work as long
-        // as the author didn't include any '..'s.  If they did, it's still not clear
-        // whether they should be adjusted or not (as the author may be duplicating an
-        // entire tree with several projects within it), so we leave this as an exercise
-        // to the author.
+        CopySexprFile( aSrcFilePath, destFile.GetFullPath(),
+                [&]( const std::string& token, wxString& value ) -> bool
+                {
+                    if( token == "project" && value == aProjectName )
+                    {
+                        value = aNewProjectName;
+                        return true;
+                    }
 
-        KiCopyFile( aSrcFilePath, destFile.GetFullPath(), aErrors );
+                    return false;
+                },
+                aErrors );
     }
     else if( ext == FILEEXT::SchematicSymbolFileExtension )
     {
@@ -621,77 +709,48 @@ void IFACE::SaveFileAs( const wxString& aProjectBasePath, const wxString& aProje
     }
     else if( ext == FILEEXT::NetlistFileExtension )
     {
-        bool success = false;
-
         if( destFile.GetName() == aProjectName )
-            destFile.SetName( aNewProjectName  );
+            destFile.SetName( aNewProjectName );
 
-        try
-        {
-            SEXPR::PARSER parser;
-            std::unique_ptr<SEXPR::SEXPR> sexpr( parser.ParseFromFile( TO_UTF8( aSrcFilePath ) ) );
-
-            traverseSEXPR( sexpr.get(), [&]( SEXPR::SEXPR* node )
+        CopySexprFile( aSrcFilePath, destFile.GetFullPath(),
+                [&]( const std::string& token, wxString& value ) -> bool
                 {
-                    if( node->IsList() && node->GetNumberOfChildren() > 1
-                            && node->GetChild( 0 )->IsSymbol()
-                            && node->GetChild( 0 )->GetSymbol() == "source" )
+                    if( token == "source" )
                     {
-                        auto pathNode = dynamic_cast<SEXPR::SEXPR_STRING*>( node->GetChild( 1 ) );
-                        auto symNode = dynamic_cast<SEXPR::SEXPR_SYMBOL*>( node->GetChild( 1 ) );
-                        wxString path;
-
-                        if( pathNode )
-                            path = pathNode->m_value;
-                        else if( symNode )
-                            path = symNode->m_value;
-
-                        if( path == aProjectName + wxS( ".sch" ) )
-                            path = aNewProjectName + wxS( ".sch" );
-                        else if( path == aProjectBasePath + "/" + aProjectName + wxS( ".sch" ) )
-                            path = aNewProjectBasePath + "/" + aNewProjectName + wxS( ".sch" );
-                        else if( path.StartsWith( aProjectBasePath ) )
-                            path.Replace( aProjectBasePath, aNewProjectBasePath, false );
-
-                        if( pathNode )
-                            pathNode->m_value = path;
-                        else if( symNode )
-                            symNode->m_value = path;
+                        for( const wxString& extension : { wxString( wxT( ".sch" ) ), wxString( wxT( ".kicad_sch" ) ) } )
+                        {
+                            if( value == aProjectName + extension )
+                            {
+                                value = aNewProjectName + extension;
+                                return true;
+                            }
+                            else if( value == aProjectBasePath + "/" + aProjectName + extension )
+                            {
+                                value = aNewProjectBasePath + "/" + aNewProjectName + extension;
+                                return true;
+                            }
+                            else if( value.StartsWith( aProjectBasePath ) )
+                            {
+                                value.Replace( aProjectBasePath, aNewProjectBasePath, false );
+                                return true;
+                            }
+                        }
                     }
-                } );
 
-            wxFFile destNetList( destFile.GetFullPath(), "wb" );
-
-            if( destNetList.IsOpened() )
-                success = destNetList.Write( sexpr->AsString( 0 ) );
-
-            // wxFFile dtor will close the file
-        }
-        catch( ... )
-        {
-            success = false;
-        }
-
-        if( !success )
-        {
-            wxString msg;
-
-            if( !aErrors.empty() )
-                aErrors += wxS( "\n" );
-
-            msg.Printf( _( "Cannot copy file '%s'." ), destFile.GetFullPath() );
-            aErrors += msg;
-        }
+                    return false;
+                },
+                aErrors );
     }
     else if( destFile.GetName() == FILEEXT::SymbolLibraryTableFileName )
     {
-        SYMBOL_LIB_TABLE symbolLibTable;
-        symbolLibTable.Load( aSrcFilePath );
+        wxFileName    libTableFn( aSrcFilePath );
+        LIBRARY_TABLE libTable( libTableFn, LIBRARY_TABLE_SCOPE::PROJECT );
+        libTable.SetPath( destFile.GetFullPath() );
+        libTable.SetType( LIBRARY_TABLE_TYPE::SYMBOL );
 
-        for( unsigned i = 0; i < symbolLibTable.GetCount(); i++ )
+        for( LIBRARY_TABLE_ROW& row : libTable.Rows() )
         {
-            LIB_TABLE_ROW& row = symbolLibTable.At( i );
-            wxString       uri = row.GetFullURI();
+            wxString uri = row.URI();
 
             uri.Replace( wxS( "/" ) + aProjectName + wxS( "-cache.lib" ),
                          wxS( "/" ) + aNewProjectName + wxS( "-cache.lib" ) );
@@ -700,23 +759,20 @@ void IFACE::SaveFileAs( const wxString& aProjectBasePath, const wxString& aProje
             uri.Replace( wxS( "/" ) + aProjectName + wxS( ".lib" ),
                          wxS( "/" ) + aNewProjectName + wxS( ".lib" ) );
 
-            row.SetFullURI( uri );
+            row.SetURI( uri );
         }
 
-        try
-        {
-            symbolLibTable.Save( destFile.GetFullPath() );
-        }
-        catch( ... )
-        {
-            wxString msg;
+        libTable.Save().map_error(
+                [&]( const LIBRARY_ERROR& aError )
+                {
+                        wxString msg;
 
-            if( !aErrors.empty() )
-                aErrors += "\n";
+                        if( !aErrors.empty() )
+                            aErrors += wxT( "\n" );
 
-            msg.Printf( _( "Cannot copy file '%s'." ), destFile.GetFullPath() );
-            aErrors += msg;
-        }
+                        msg.Printf( _( "Cannot copy file '%s'." ), destFile.GetFullPath() );
+                        aErrors += msg;
+                } );
     }
     else
     {
@@ -735,3 +791,145 @@ bool IFACE::HandleJobConfig( JOB* aJob, wxWindow* aParent )
 {
     return m_jobHandler->HandleJobConfig( aJob, aParent );
 }
+
+
+#if defined( KICAD_IPC_API )
+// TODO(JE) some of the below methods can probably be factored out and shared between sch/pcb
+void IFACE::closeCurrentDocument( KICAD_API_SERVER* aServer )
+{
+    if( m_openHandler )
+    {
+        if( aServer )
+            aServer->DeregisterHandler( m_openHandler.get() );
+
+        m_openHandler.reset();
+    }
+
+    m_openContext.reset();
+
+    delete m_openSchematic;
+    m_openSchematic = nullptr;
+
+    // The jobs handler caches the last-loaded schematic. Clear it so the next job
+    // uses the schematic from the newly opened document rather than a stale copy.
+    m_jobHandler->ClearCachedSchematic();
+}
+
+
+bool IFACE::HandleApiOpenDocument( const wxString& aPath, KICAD_API_SERVER* aServer,
+                                   wxString* aError )
+{
+    wxCHECK( aServer, false );
+
+    if( aPath.IsEmpty() )
+    {
+        if( aError )
+            *aError = wxS( "No path specified to open" );
+
+        return false;
+    }
+
+    wxFileName projectPath( aPath );
+
+    if( projectPath.GetExt() == FILEEXT::KiCadSchematicFileExtension )
+        projectPath.SetExt( FILEEXT::ProjectFileExtension );
+    else if( projectPath.GetExt() != FILEEXT::ProjectFileExtension )
+        projectPath.SetExt( FILEEXT::ProjectFileExtension );
+
+    projectPath.MakeAbsolute();
+
+    // Close any existing document before loading a new project. LoadProject with
+    // aSetActive=true destroys the old PROJECT, which would leave the old schematic
+    // and context holding dangling project pointers.
+    closeCurrentDocument( aServer );
+
+    SETTINGS_MANAGER& settingsManager = Pgm().GetSettingsManager();
+
+    if( !settingsManager.LoadProject( projectPath.GetFullPath(), true ) )
+    {
+        wxLogTrace( traceApi, "Warning: no project file found for %s", aPath );
+    }
+
+    PROJECT* project = settingsManager.GetProject( projectPath.GetFullPath() );
+
+    if( !project )
+    {
+        if( aError )
+            *aError = wxString::Format( wxS( "Error loading project for %s" ), aPath );
+
+        return false;
+    }
+
+    wxFileName schPath( projectPath );
+    schPath.SetExt( FILEEXT::KiCadSchematicFileExtension );
+
+    if( !schPath.FileExists() )
+    {
+        if( aError )
+            *aError = wxString::Format( wxS( "File not found: %s" ), schPath.GetFullPath() );
+
+        return false;
+    }
+
+    SCHEMATIC* schematic = nullptr;
+
+    try
+    {
+        schematic = EESCHEMA_HELPERS::LoadSchematic( schPath.GetFullPath(), false, false, project );
+
+        if( !schematic )
+        {
+            if( aError )
+                *aError = wxS( "Failed to load schematic" );
+
+            return false;
+        }
+    }
+    catch( ... )
+    {
+        if( aError )
+            *aError = wxS( "Failed to load schematic" );
+
+        return false;
+    }
+
+    m_openSchematic = schematic;
+
+    m_openContext = std::make_shared<HEADLESS_SCH_CONTEXT>( m_openSchematic, project, m_kiway );
+    m_openHandler = std::make_unique<API_HANDLER_SCH>( m_openContext );
+    aServer->RegisterHandler( m_openHandler.get() );
+
+    return true;
+}
+
+
+bool IFACE::HandleApiCloseDocument( const wxString& aSchFileName, KICAD_API_SERVER* aServer,
+                                    wxString* aError )
+{
+    wxCHECK( aServer, false );
+
+    if( !m_openContext )
+    {
+        if( aError )
+            *aError = wxS( "No document is currently open" );
+
+        return false;
+    }
+
+    if( !aSchFileName.IsEmpty() )
+    {
+        wxFileName currentSch( m_openContext->GetCurrentFileName() );
+
+        if( currentSch.GetFullName() != aSchFileName )
+        {
+            if( aError )
+                *aError = wxS( "Requested document does not match the open document" );
+
+            return false;
+        }
+    }
+
+    closeCurrentDocument( aServer );
+    return true;
+}
+#endif

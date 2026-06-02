@@ -52,6 +52,8 @@
 
 #include <core/profile.h>
 
+#include <wx/display.h>
+
 #include <pgm_base.h>
 #include <confirm.h>
 
@@ -84,9 +86,14 @@ EDA_DRAW_PANEL_GAL::EDA_DRAW_PANEL_GAL( wxWindow* aParentWindow, wxWindowID aWin
         m_options( aOptions ),
         m_eventDispatcher( nullptr ),
         m_lostFocus( false ),
+        m_glRecoveryAttempted( false ),
         m_stealsFocus( true ),
         m_statusPopup( nullptr )
 {
+#ifdef _WIN32
+    // need to fix broken cairo rendering on Windows with wx 3.3
+    SetDoubleBuffered( false );
+#endif
     m_PaintEventCounter = std::make_unique<PROF_COUNTER>( "Draw panel paint events" );
 
     if( Pgm().GetCommonSettings()->m_Appearance.show_scrollbars )
@@ -189,11 +196,58 @@ void EDA_DRAW_PANEL_GAL::SetFocus()
 
 void EDA_DRAW_PANEL_GAL::onPaint( wxPaintEvent& WXUNUSED( aEvent ) )
 {
-    DoRePaint();
+    DoRePaint( false );
 }
 
 
-bool EDA_DRAW_PANEL_GAL::DoRePaint()
+bool EDA_DRAW_PANEL_GAL::recoverFromGalError( const std::exception& aError )
+{
+    try
+    {
+        // Sleep/wake and GPU resets can invalidate the entire GL context.
+        // Try a full reinit of the current backend before falling back.
+        if( !m_glRecoveryAttempted )
+        {
+            m_glRecoveryAttempted = true;
+            GAL_TYPE prevBackend = m_backend;
+            m_backend = GAL_TYPE_NONE;
+
+            if( SwitchBackend( prevBackend ) )
+            {
+                StartDrawing();
+                return true;
+            }
+        }
+
+        if( GAL_FALLBACK_AVAILABLE && GAL_FALLBACK != m_backend )
+        {
+            m_glRecoveryAttempted = false;
+            SwitchBackend( GAL_FALLBACK );
+
+            DisplayInfoMessage( m_parent, _( "Could not use OpenGL, falling back to software rendering" ),
+                                wxString( aError.what() ) );
+
+            StartDrawing();
+            return true;
+        }
+
+        DisplayErrorMessage( m_parent, _( "Graphics error" ), wxString( aError.what() ) );
+    }
+    catch( std::exception& recoveryErr )
+    {
+        DisplayErrorMessage( m_parent, _( "Graphics error during recovery" ), wxString( recoveryErr.what() ) );
+    }
+    catch( ... )
+    {
+        DisplayErrorMessage( m_parent, _( "Graphics error during recovery" ),
+                             _( "Unknown exception during backend switch" ) );
+    }
+
+    return false;
+}
+
+
+bool EDA_DRAW_PANEL_GAL::DoRePaint( bool aAllowSkip )
 {
     if( !m_refreshMutex.try_lock() )
         return false;
@@ -223,6 +277,10 @@ bool EDA_DRAW_PANEL_GAL::DoRePaint()
     if( Pgm().GetCommonSettings()->m_Appearance.show_scrollbars )
         m_viewControls->UpdateScrollbars();
 
+#ifdef KICAD_GAL_PROFILE
+    latencyProbeZoomToRender.Checkpoint("do-repaint-start");
+#endif
+
     SCOPED_SET_RESET<bool> drawing( m_drawing, true );
 
     ( *m_PaintEventCounter )++;
@@ -232,11 +290,11 @@ bool EDA_DRAW_PANEL_GAL::DoRePaint()
     KIGFX::RENDER_SETTINGS* settings =
             static_cast<KIGFX::RENDER_SETTINGS*>( m_painter->GetSettings() );
 
-    PROF_TIMER cntUpd("view-upd-items");
-    PROF_TIMER cntTotal("view-total");
-    PROF_TIMER cntCtx("view-context-create");
-    PROF_TIMER cntCtxDestroy("view-context-destroy");
-    PROF_TIMER cntRedraw("view-redraw-rects");
+    PROF_TIMER cntUpd("view-upd-items", false);
+    PROF_TIMER cntTotal("view-total", false);
+    PROF_TIMER cntCtx("view-context-create", false);
+    PROF_TIMER cntCtxDestroy("view-context-destroy", false);
+    PROF_TIMER cntRedraw("view-redraw-rects", false);
 
     bool isDirty = false;
 
@@ -244,20 +302,57 @@ bool EDA_DRAW_PANEL_GAL::DoRePaint()
 
     try
     {
-        cntUpd.Start();
+        VECTOR2D cursorPos = m_viewControls->GetCursorPosition();
+        bool viewDirty = m_view->IsDirty();
+        bool cursorMoved = ( cursorPos != m_lastCursorPosition );
+        bool hasPendingItemUpdates = m_view->HasPendingItemUpdates();
 
-        try
+        // Skip all update work when nothing has changed since the previous frame.
+        // Never skip when responding to a native paint event or explicit ForceRefresh
+        // because the window content may have been invalidated by the OS.
+        if( aAllowSkip && !viewDirty && !cursorMoved && !hasPendingItemUpdates )
         {
-            m_view->UpdateItems();
-        }
-        catch( std::out_of_range& err )
-        {
-            // Don't do anything here but don't fail
-            // This can happen when we don't catch `at()` calls
-            wxLogTrace( traceDrawPanel, wxS( "Out of Range error: %s" ), err.what() );
+            m_lastRepaintEnd = wxGetLocalTimeMillis();
+            return true;
         }
 
-        cntUpd.Stop();
+        if( hasPendingItemUpdates )
+        {
+            cntUpd.Start();
+
+            try
+            {
+                m_view->UpdateItems();
+            }
+            catch( std::out_of_range& err )
+            {
+                // Don't do anything here but don't fail
+                // This can happen when we don't catch `at()` calls
+                wxLogTrace( traceDrawPanel, wxS( "Out of Range error: %s" ), err.what() );
+            }
+            catch( std::runtime_error& err )
+            {
+                // Handle GL errors (e.g. glMapBuffer failure) that surface during UpdateItems().
+                // These can occur on macOS under memory pressure when embedding large 3D models.
+                // Log and continue so the outer handler can decide whether to switch backends.
+                wxLogTrace( traceDrawPanel, wxS( "Runtime error during UpdateItems: %s" ),
+                            err.what() );
+                throw;
+            }
+
+            cntUpd.Stop();
+            viewDirty = m_view->IsDirty();
+        }
+
+        // After processing item updates, skip the GL cycle when neither the
+        // view targets nor the cursor position have changed.
+        if( aAllowSkip && !viewDirty && !cursorMoved )
+        {
+            m_lastRepaintEnd = wxGetLocalTimeMillis();
+            return true;
+        }
+
+        m_lastCursorPosition = cursorPos;
 
         // GAL_DRAWING_CONTEXT can throw in the dtor, so we need to scope
         // the full lifetime inside the try block
@@ -276,9 +371,9 @@ bool EDA_DRAW_PANEL_GAL::DoRePaint()
             m_gal->SetGridColor( settings->GetGridColor() );
             m_gal->SetCursorColor( settings->GetCursorColor() );
 
-            // TODO: find why ClearScreen() must be called here in opengl mode
-            // and only if m_view->IsDirty() in Cairo mode to avoid display artifacts
-            // when moving the mouse cursor
+            // OpenGL double-buffering leaves the back buffer undefined after
+            // SwapBuffers, so a full clear is always required before compositing.
+            // Cairo only needs to clear when NONCACHED content changed.
             if( m_backend == GAL_TYPE_OPENGL )
                 m_gal->ClearScreen();
 
@@ -302,47 +397,61 @@ bool EDA_DRAW_PANEL_GAL::DoRePaint()
                 isDirty = true;
             }
 
-            m_gal->DrawCursor( m_viewControls->GetCursorPosition() );
+            m_gal->DrawCursor( cursorPos );
+
+	    #ifdef KICAD_GAL_PROFILE
+	    latencyProbeZoomToRender.Checkpoint("do-repaint-pre-ctx-destroy");
+	    #endif
+
 
             cntCtxDestroy.Start();
         }
 
         // ctx goes out of scope here so destructor would be called
         cntCtxDestroy.Stop();
+
+#ifdef KICAD_GAL_PROFILE
+    	latencyProbeZoomToRender.Checkpoint("do-repaint-ctx-done");
+#endif
+
+        // OpenGL frame completed successfully, allow future recovery attempts
+        m_glRecoveryAttempted = false;
     }
     catch( std::exception& err )
     {
-        if( GAL_FALLBACK != m_backend )
-        {
-            SwitchBackend( GAL_FALLBACK );
+        wxLogTrace( traceDrawPanel, wxS( "DoRePaint exception: %s" ), err.what() );
 
-            DisplayInfoMessage( m_parent,
-                                _( "Could not use OpenGL, falling back to software rendering" ),
-                                wxString( err.what() ) );
+        if( recoverFromGalError( err ) )
+            return true;
 
-            StartDrawing();
-        }
-        else
-        {
-            // We're well and truly banjaxed if we get here without a fallback.
-            DisplayErrorMessage( m_parent, _( "Graphics error" ), wxString( err.what() ) );
-
-            StopDrawing();
-        }
+        StopDrawing();
+    }
+    catch( ... )
+    {
+        DisplayErrorMessage( m_parent, _( "Graphics error" ), _( "Unknown exception" ) );
+        StopDrawing();
     }
 
     if( isDirty )
     {
-        KI_TRACE( traceGalProfile, "View timing: %s %s %s %s %s\n",
+#ifdef KICAD_GAL_PROFILE
+        wxLogTrace( traceGalProfile, "View timing: %s %s %s %s %s",
             cntTotal.to_string(),
             cntUpd.to_string(),
             cntRedraw.to_string(),
             cntCtx.to_string(),
             cntCtxDestroy.to_string()
         );
+#endif
     }
 
     m_lastRepaintEnd = wxGetLocalTimeMillis();
+
+#ifdef KICAD_GAL_PROFILE
+    wxLogTrace( traceGalProfile, "%s", latencyProbeZoomToRender.to_string() );
+    latencyProbeRepaintToMotion.Reset();
+    latencyProbeRepaintToMotion.Checkpoint("repaint-done");
+#endif    
 
     return true;
 }
@@ -394,8 +503,44 @@ void EDA_DRAW_PANEL_GAL::RequestRefresh()
 
 void EDA_DRAW_PANEL_GAL::Refresh( bool aEraseBackground, const wxRect* aRect )
 {
-    if( !DoRePaint() )
-        RequestRefresh();
+    wxLongLong now = wxGetLocalTimeMillis();
+    wxLongLong delta = now - m_lastRepaintEnd;
+    bool galInitialized = m_gal && m_gal->IsInitialized();
+
+    // wxGetLocalTimeMillis is wall clock, so an NTP correction or manual
+    // clock change can make delta negative. Treat that as "long enough".
+    if( delta < 0 )
+        delta = 0;
+
+    // When vsync is available the driver throttles SwapBuffers, so we only need
+    // a small guard to avoid queueing work faster than the GPU can consume it.
+    // Without vsync, cap the render rate at the monitor refresh rate so the
+    // GPU is not saturated producing frames that will never be shown.
+    int minPeriodMs = 3;
+
+    if( galInitialized && m_gal->GetSwapInterval() == 0 )
+    {
+        // wxDisplay reports 0 on headless, some virtualized, and a few driver
+        // combinations. Clamp to a plausible monitor range before trusting it
+        // and fall back to 60 Hz otherwise.
+        int refreshHz = 60;
+        int reported = wxDisplay( this ).GetCurrentMode().refresh;
+
+        if( reported >= 24 && reported <= 1000 )
+            refreshHz = reported;
+
+        minPeriodMs = 1000 / refreshHz;
+    }
+
+    if( delta >= minPeriodMs )
+    {
+        if( !DoRePaint() )
+            RequestRefresh();
+    }
+    else if( !m_refreshTimer.IsRunning() )
+    {
+        m_refreshTimer.StartOnce( static_cast<int>( ( minPeriodMs - delta ).GetValue() ) );
+    }
 }
 
 
@@ -420,7 +565,7 @@ void EDA_DRAW_PANEL_GAL::ForceRefresh()
         }
     }
 
-    DoRePaint();
+    DoRePaint( false );
 }
 
 
@@ -593,16 +738,7 @@ void EDA_DRAW_PANEL_GAL::OnEvent( wxEvent& aEvent )
     else
         m_eventDispatcher->DispatchWxEvent( aEvent );
 
-    // Give events time to process, based on last render duration
-    wxLongLong endDelta = wxGetLocalTimeMillis() - m_lastRepaintEnd;
-    long long  timeLimit = ( m_lastRepaintEnd - m_lastRepaintStart ).GetValue() / 5;
-
-    timeLimit = std::clamp( timeLimit, 3LL, 150LL );
-
-    if( endDelta > timeLimit )
-        Refresh();
-    else
-        RequestRefresh();
+    Refresh();
 }
 
 
@@ -626,6 +762,12 @@ void EDA_DRAW_PANEL_GAL::onLostFocus( wxFocusEvent& aEvent )
     m_lostFocus = true;
 
     m_viewControls->CancelDrag();
+
+    // Reset the tool dispatcher's button state when focus is lost. This prevents
+    // the dispatcher from thinking the button is still pressed when focus returns,
+    // which can cause selection and drag operations to stop working.
+    if( m_eventDispatcher )
+        m_eventDispatcher->ResetState();
 
     aEvent.Skip();
 }
@@ -716,6 +858,7 @@ KIGFX::VC_SETTINGS EDA_DRAW_PANEL_GAL::GetVcSettings()
     vcSettings.m_scrollModifierZoom = cfg->m_Input.scroll_modifier_zoom;
     vcSettings.m_scrollModifierPanH = cfg->m_Input.scroll_modifier_pan_h;
     vcSettings.m_scrollModifierPanV = cfg->m_Input.scroll_modifier_pan_v;
+    vcSettings.m_motionPanModifier = cfg->m_Input.motion_pan_modifier;
     vcSettings.m_dragLeft = cfg->m_Input.drag_left;
     vcSettings.m_dragMiddle = cfg->m_Input.drag_middle;
     vcSettings.m_dragRight = cfg->m_Input.drag_right;

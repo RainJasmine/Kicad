@@ -24,9 +24,9 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#ifndef COLOR4D_H_
-#define COLOR4D_H_
+#pragma once
 
+#include <memory>
 #include <kicommon.h>
 #include <wx/debug.h>
 #include <wx/colour.h>
@@ -76,10 +76,11 @@ enum EDA_COLOR_T
     ORANGE,
     LIGHTORANGE,
     PUREORANGE,
-    NBCOLORS,                    ///< Number of colors
-    HIGHLIGHT_FLAG =  ( 1<<19 ),
-    MASKCOLOR      =    31       ///< mask for color index into colorRefs()[]
+    NBCOLORS,                     ///< Number of colors
+    HIGHLIGHT_FLAG = ( 1 << 19 ),
+    MASKCOLOR      =   31         ///< mask for color index into colorRefs()[]
 };
+
 
 struct KICOMMON_API StructColors
 {
@@ -394,6 +395,9 @@ public:
     double b; ///< Blue component
     double a; ///< Alpha component
 
+    // Optional text for evaluated colors
+    std::shared_ptr<wxString> m_text;
+
     /// For legacy support; used as a value to indicate color hasn't been set yet
     static const COLOR4D UNSPECIFIED;
 
@@ -430,5 +434,3 @@ struct KICOMMON_API std::hash<KIGFX::COLOR4D>
         return hash_val( aColor.r, aColor.b, aColor.g, aColor.a );
     }
 };
-
-#endif /* COLOR4D_H_ */

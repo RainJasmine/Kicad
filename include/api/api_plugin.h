@@ -25,10 +25,13 @@
 #include <optional>
 #include <set>
 #include <nlohmann/json_fwd.hpp>
+#include <nlohmann/json-schema.hpp>
+#include <tl/expected.hpp>
 #include <wx/bmpbndl.h>
 #include <wx/filename.h>
 #include <wx/string.h>
 
+#include <api/plugin_action_scope.h>
 #include <kicommon.h>
 
 
@@ -52,20 +55,9 @@ enum class PLUGIN_RUNTIME_TYPE
 };
 
 
-enum class PLUGIN_ACTION_SCOPE
-{
-    INVALID,
-    PCB,
-    SCHEMATIC,
-    FOOTPRINT,
-    SYMBOL,
-    PROJECT_MANAGER
-};
-
-
 struct PLUGIN_RUNTIME
 {
-    bool FromJson( const nlohmann::json& aJson );
+    tl::expected<bool, wxString> FromJson( const nlohmann::json& aJson );
 
     PLUGIN_RUNTIME_TYPE type;
     wxString min_version;
@@ -75,8 +67,6 @@ struct PLUGIN_RUNTIME
 
 /**
  * An action performed by a plugin via the IPC API
- * (not to be confused with ACTION_PLUGIN, the old SWIG plugin system, which will be removed
- * in the future)
  */
 struct PLUGIN_ACTION
 {
@@ -111,6 +101,8 @@ public:
 
     bool IsOk() const;
 
+    const wxString& ErrorMessage() const;
+
     static bool IsValidIdentifier( const wxString& aIdentifier );
 
     const wxString& Identifier() const;
@@ -143,6 +135,24 @@ struct CompareApiPluginIdentifiers
     {
         return item1->Identifier() < item2->Identifier();
     }
+};
+
+
+class LOGGING_ERROR_HANDLER : public nlohmann::json_schema::error_handler
+{
+public:
+    LOGGING_ERROR_HANDLER();
+
+    bool HasError() const { return m_hasError; }
+
+    const wxString& ErrorMessage() const { return m_errorMessage; }
+
+    void error( const nlohmann::json::json_pointer& ptr, const nlohmann::json& instance,
+                const std::string& message ) override;
+
+private:
+    bool m_hasError;
+    wxString m_errorMessage;
 };
 
 #endif //KICAD_API_PLUGIN_H

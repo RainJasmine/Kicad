@@ -33,12 +33,25 @@
 #include <macros.h>
 #include <json_common.h>
 #include <rc_json_schema.h>
+#include <widgets/report_severity.h>
 
 
-ERC_REPORT::ERC_REPORT( SCHEMATIC* aSchematic, EDA_UNITS aReportUnits ) :
+ERC_REPORT::ERC_REPORT( SCHEMATIC* aSchematic, EDA_UNITS aReportUnits,
+                        std::shared_ptr<RC_ITEMS_PROVIDER> aMarkersProvider ) :
         m_sch( aSchematic ),
-        m_reportUnits( aReportUnits )
+        m_reportUnits( aReportUnits ),
+        m_markersProvider( std::move( aMarkersProvider ) ),
+        m_reportedSeverities( 0 )
 {
+    if( !m_markersProvider )
+    {
+        // When no provider is supplied, fall back to creating one with default severities.
+        // This allows test code to get a basic report without needing to set up a provider.
+        m_markersProvider = std::make_shared<SHEETLIST_ERC_ITEMS_PROVIDER>( m_sch );
+        m_markersProvider->SetSeverities( RPT_SEVERITY_ERROR | RPT_SEVERITY_WARNING );
+    }
+
+    m_reportedSeverities = m_markersProvider->GetSeverities();
 }
 
 
@@ -49,8 +62,11 @@ wxString ERC_REPORT::GetTextReport()
     LOCALE_IO      locale;
     UNITS_PROVIDER unitsProvider( schIUScale, m_reportUnits );
 
-    wxString msg = wxString::Format( _( "ERC report (%s, Encoding UTF8)\n" ),
+    wxString msg = wxString::Format( wxT( "ERC report (%s, Encoding UTF8)\n" ),
                                      GetISO8601CurrentDateTime() );
+
+    msg += wxString::Format( wxT( "Report includes: %s\n" ),
+                             formatSeverities( m_reportedSeverities ) );
 
     std::map<KIID, EDA_ITEM*> itemMap;
 
@@ -63,14 +79,11 @@ wxString ERC_REPORT::GetTextReport()
 
     ERC_SETTINGS& settings = m_sch->ErcSettings();
 
-    SHEETLIST_ERC_ITEMS_PROVIDER errors( m_sch );
-    errors.SetSeverities( RPT_SEVERITY_ERROR | RPT_SEVERITY_WARNING );
-
     std::map<SCH_SHEET_PATH, std::vector<ERC_ITEM*>> orderedItems;
 
-    for( int i = 0; i < errors.GetCount(); ++i )
+    for( int i = 0; i < m_markersProvider->GetCount(); ++i )
     {
-        if( auto item = dynamic_cast<ERC_ITEM*>( errors.GetItem( i ).get() ) )
+        if( auto item = dynamic_cast<ERC_ITEM*>( m_markersProvider->GetItem( i ).get() ) )
         {
             if( item->MainItemHasSheetPath() )
                 orderedItems[item->GetMainItemSheetPath()].emplace_back( item );
@@ -81,7 +94,7 @@ wxString ERC_REPORT::GetTextReport()
 
     for( unsigned i = 0; i < sheetList.size(); i++ )
     {
-        msg << wxString::Format( _( "\n***** Sheet %s\n" ), sheetList[i].PathHumanReadable() );
+        msg << wxString::Format( wxT( "\n***** Sheet %s\n" ), sheetList[i].PathHumanReadable() );
 
         for( ERC_ITEM* item : orderedItems[sheetList[i]] )
         {
@@ -91,17 +104,37 @@ wxString ERC_REPORT::GetTextReport()
 
             switch( severity )
             {
-            case RPT_SEVERITY_ERROR: err_count++; break;
+            case RPT_SEVERITY_ERROR:   err_count++;  break;
             case RPT_SEVERITY_WARNING: warn_count++; break;
-            default: break;
+            default:                                 break;
             }
 
             msg << item->ShowReport( &unitsProvider, severity, itemMap );
         }
     }
 
-    msg << wxString::Format( _( "\n ** ERC messages: %d  Errors %d  Warnings %d\n" ), total_count,
-                             err_count, warn_count );
+    msg << wxString::Format( wxT( "\n ** ERC messages: %d  Errors %d  Warnings %d\n" ),
+                             total_count,
+                             err_count,
+                             warn_count );
+
+    msg << wxT( "\n ** Ignored checks:\n" );
+
+    bool hasIgnored = false;
+
+    for( const RC_ITEM& item : ERC_ITEM::GetItemsWithSeverities() )
+    {
+        int code = item.GetErrorCode();
+
+        if( code > 0 && settings.GetSeverity( code ) == RPT_SEVERITY_IGNORE )
+        {
+            msg << wxString::Format( wxT( "    - %s\n" ), item.GetErrorMessage( false ) );
+            hasIgnored = true;
+        }
+    }
+
+    if( !hasIgnored )
+        msg << wxT( "    - " ) << wxT( "None" ) << wxT( "\n" );
 
     return msg;
 }
@@ -123,10 +156,6 @@ bool ERC_REPORT::WriteTextReport( const wxString& aFullFileName )
 
 bool ERC_REPORT::WriteJsonReport( const wxString& aFullFileName )
 {
-    // We need the global LOCALE_IO here in order to
-    // write the report in the c-locale.
-    LOCALE_IO locale;
-
     std::ofstream jsonFileStream( aFullFileName.fn_str() );
 
     UNITS_PROVIDER            unitsProvider( pcbIUScale, m_reportUnits );
@@ -140,19 +169,26 @@ bool ERC_REPORT::WriteJsonReport( const wxString& aFullFileName )
     reportHead.kicad_version = GetMajorMinorPatchVersion();
     reportHead.coordinate_units = EDA_UNIT_UTILS::GetLabel( m_reportUnits );
 
+    // Document which severities are included in this report
+    if( m_reportedSeverities & RPT_SEVERITY_ERROR )
+        reportHead.included_severities.push_back( wxS( "error" ) );
+
+    if( m_reportedSeverities & RPT_SEVERITY_WARNING )
+        reportHead.included_severities.push_back( wxS( "warning" ) );
+
+    if( m_reportedSeverities & RPT_SEVERITY_EXCLUSION )
+        reportHead.included_severities.push_back( wxS( "exclusion" ) );
+
     SCH_SHEET_LIST sheetList = m_sch->Hierarchy();
     sheetList.FillItemMap( itemMap );
 
     ERC_SETTINGS& settings = m_sch->ErcSettings();
 
-    SHEETLIST_ERC_ITEMS_PROVIDER errors( m_sch );
-    errors.SetSeverities( RPT_SEVERITY_ERROR | RPT_SEVERITY_WARNING );
-
     std::map<SCH_SHEET_PATH, std::vector<ERC_ITEM*>> orderedItems;
 
-    for( int i = 0; i < errors.GetCount(); ++i )
+    for( int i = 0; i < m_markersProvider->GetCount(); ++i )
     {
-        if( auto item = dynamic_cast<ERC_ITEM*>( errors.GetItem( i ).get() ) )
+        if( auto item = dynamic_cast<ERC_ITEM*>( m_markersProvider->GetItem( i ).get() ) )
         {
             if( item->MainItemHasSheetPath() )
                 orderedItems[item->GetMainItemSheetPath()].emplace_back( item );
@@ -178,6 +214,19 @@ bool ERC_REPORT::WriteJsonReport( const wxString& aFullFileName )
         }
 
         reportHead.sheets.push_back( jsonSheet );
+    }
+
+    for( const RC_ITEM& item : ERC_ITEM::GetItemsWithSeverities() )
+    {
+        int code = item.GetErrorCode();
+
+        if( code > 0 && settings.GetSeverity( code ) == RPT_SEVERITY_IGNORE )
+        {
+            RC_JSON::IGNORED_CHECK ignoredCheck;
+            ignoredCheck.key = item.GetSettingsKey();
+            ignoredCheck.description = item.GetErrorMessage( false );
+            reportHead.ignored_checks.push_back( ignoredCheck );
+        }
     }
 
     nlohmann::json saveJson = nlohmann::json( reportHead );

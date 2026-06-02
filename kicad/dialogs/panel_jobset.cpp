@@ -41,10 +41,13 @@
 #include <widgets/grid_text_button_helpers.h>
 #include <kiplatform/ui.h>
 #include <confirm.h>
+#include <launch_ext.h>
+#include <wx/filename.h>
 
 #include <jobs/job_special_execute.h>
 #include <jobs/job_special_copyfiles.h>
 #include <dialogs/dialog_executecommand_job_settings.h>
+#include <common.h>
 
 
 extern KICOMMON_API
@@ -148,14 +151,9 @@ public:
             wxString jobId = jobs[itemIndex].m_id;
 
             if( m_destination->m_lastRunReporters.contains( jobId ) )
-            {
-                if( auto* reporter = static_cast<WX_STRING_REPORTER*>( m_destination->m_lastRunReporters[jobId] ) )
-                    m_textCtrlOutput->SetValue( reporter->GetMessages() );
-            }
+                m_textCtrlOutput->SetValue( m_destination->m_lastRunReporters.at( jobId )->GetMessages() );
             else
-            {
                 m_textCtrlOutput->SetValue( _( "No output messages" ) );
-            }
         }
     }
 
@@ -181,6 +179,7 @@ public:
     {
         m_buttonProperties->SetBitmap( KiBitmapBundle( BITMAPS::config ) );
         m_buttonDelete->SetBitmap( KiBitmapBundle( BITMAPS::small_trash ) );
+        m_buttonOpenOutput->SetBitmap( KiBitmapBundle( BITMAPS::small_new_window ) );
 
 #if  _WIN32
         // BORDER_RAISED/SUNKEN look pretty on every platform but Windows
@@ -215,6 +214,7 @@ public:
         wxCHECK( destination, /*void*/ );
 
         destination->m_lastRunSuccess = std::nullopt;
+        destination->m_lastResolvedOutputPath = std::nullopt;
         m_statusBitmap->SetBitmap( wxNullBitmap );
     }
 
@@ -284,7 +284,36 @@ public:
                 } );
     }
 
-    virtual void OnLastStatusClick( wxMouseEvent& aEvent ) override
+    void OnOpenOutput( wxCommandEvent& aEvent ) override
+    {
+        JOBSET_DESTINATION* destination = GetDestination();
+        wxCHECK( destination, /*void*/ );
+
+        wxString resolvedPath;
+
+        if( destination->m_lastResolvedOutputPath.has_value() )
+        {
+            resolvedPath = destination->m_lastResolvedOutputPath.value();
+        }
+        else
+        {
+            resolvedPath = ExpandTextVars( destination->GetPathInfo(), &m_frame->Prj() );
+            resolvedPath = ExpandEnvVarSubstitutions( resolvedPath, &m_frame->Prj() );
+
+            if( resolvedPath.StartsWith( "~" ) )
+                resolvedPath.Replace( "~", wxGetHomeDir(), false );
+        }
+
+        if( resolvedPath.IsEmpty() )
+            return;
+
+        wxString fullPath = wxFileName( resolvedPath ).GetFullPath();
+
+        if( !LaunchExternal( fullPath ) )
+            DisplayError( this, wxString::Format( _( "Failed to open '%s'." ), fullPath ) );
+    }
+
+    void OnLastStatusClick( wxMouseEvent& aEvent ) override
     {
         JOBSET_DESTINATION* destination = GetDestination();
         wxCHECK( destination, /*void*/ );
@@ -304,8 +333,10 @@ public:
 
         menu.AppendSeparator();
         menu.Append( wxID_VIEW_DETAILS, _( "View Last Run Log..." ) );
+        menu.Append( wxID_OPEN, _( "Open Output" ) );
 
         menu.Enable( wxID_VIEW_DETAILS, destination->m_lastRunSuccess.has_value() );
+        menu.Enable( wxID_OPEN, m_buttonOpenOutput->IsEnabled() );
 
         PopupMenu( &menu );
     }
@@ -323,6 +354,7 @@ public:
             UpdatePathInfo( destination->GetPathInfo() );
             m_jobsFile->SetDirty();
             m_panelParent->UpdateTitle();
+            ClearStatus();
         }
     }
 
@@ -368,9 +400,15 @@ private:
             }
                 break;
 
-            default:
-                wxFAIL_MSG( wxT( "Unknown ID in context menu event" ) );
-        }
+                case wxID_OPEN:
+                {
+                    wxCommandEvent dummy;
+                    OnOpenOutput( dummy );
+                }
+                break;
+
+                default: wxFAIL_MSG( wxT( "Unknown ID in context menu event" ) );
+                }
     }
 
 private:
@@ -523,9 +561,7 @@ void PANEL_JOBSET::RemoveDestination( PANEL_DESTINATION* aPanel )
 
 void PANEL_JOBSET::rebuildJobList()
 {
-    if( m_jobsGrid->GetNumberRows() )
-        m_jobsGrid->DeleteRows( 0, m_jobsGrid->GetNumberRows() );
-
+    m_jobsGrid->ClearRows();
     m_jobsGrid->AppendRows( (int) m_jobsFile->GetJobs().size() );
 
     int num = 1;
@@ -759,35 +795,12 @@ void PANEL_JOBSET::OnAddJobClick( wxCommandEvent& aEvent )
 
 void PANEL_JOBSET::OnJobButtonDelete( wxCommandEvent& aEvent )
 {
-    if( !m_jobsGrid->CommitPendingChanges() )
-        return;
-
-    wxArrayInt selectedRows = m_jobsGrid->GetSelectedRows();
-
-    if( selectedRows.empty() )
-        return;
-
-    m_jobsGrid->CommitPendingChanges( true /* quiet mode */ );
-    m_jobsGrid->ClearSelection();
-
-    // Reverse sort so deleting a row doesn't change the indexes of the other rows.
-    selectedRows.Sort( []( int* first, int* second )
-                       {
-                           return *second - *first;
-                       } );
-
-    int select = selectedRows[0];
-
-    for( int row : selectedRows )
-        m_jobsFile->RemoveJob( row );
-
-    rebuildJobList();
-
-    if( m_jobsGrid->GetNumberRows() )
-    {
-        m_jobsGrid->MakeCellVisible( std::max( 0, select-1 ), m_jobsGrid->GetGridCursorCol() );
-        m_jobsGrid->SetGridCursor( std::max( 0, select-1 ), m_jobsGrid->GetGridCursorCol() );
-    }
+    m_jobsGrid->OnDeleteRows(
+            [&]( int row )
+            {
+                m_jobsFile->RemoveJob( row );
+                m_jobsGrid->DeleteRows( row, 1 );
+            } );
 }
 
 

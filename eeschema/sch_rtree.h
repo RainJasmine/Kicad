@@ -27,10 +27,8 @@
 
 #include <core/typeinfo.h>
 #include <sch_item.h>
-#include <set>
-#include <vector>
 
-#include <geometry/rtree.h>
+#include <geometry/rtree/dynamic_rtree.h>
 
 /**
  * Implement an R-tree for fast spatial and type indexing of schematic items.
@@ -39,19 +37,11 @@
 class EE_RTREE
 {
 private:
-    using ee_rtree = RTree<SCH_ITEM*, int, 3, double>;
+    using ee_rtree = KIRTREE::DYNAMIC_RTREE<SCH_ITEM*, int, 3>;
 
 public:
-    EE_RTREE()
-    {
-        this->m_tree = new ee_rtree();
-        m_count      = 0;
-    }
-
-    ~EE_RTREE()
-    {
-        delete this->m_tree;
-    }
+    EE_RTREE() = default;
+    ~EE_RTREE() = default;
 
     /**
      * Insert an item into the tree. Item's bounding box is taken via its BBox() method.
@@ -67,7 +57,7 @@ public:
         const int mmin[3] = { type, bbox.GetX(), bbox.GetY() };
         const int mmax[3] = { type, bbox.GetRight(), bbox.GetBottom() };
 
-        m_tree->Insert( mmin, mmax, aItem );
+        m_tree.Insert( mmin, mmax, aItem );
         m_count++;
     }
 
@@ -78,7 +68,6 @@ public:
      */
     bool remove( SCH_ITEM* aItem )
     {
-        // First, attempt to remove the item using its given BBox
         BOX2I bbox = aItem->GetBoundingBox();
 
         // Inflate a bit for safety, selection shadows, etc.
@@ -88,19 +77,10 @@ public:
         const int mmin[3] = { type, bbox.GetX(), bbox.GetY() };
         const int mmax[3] = { type, bbox.GetRight(), bbox.GetBottom() };
 
-        // If we are not successful ( true == not found ), then we expand
-        // the search to the full tree
-        if( m_tree->Remove( mmin, mmax, aItem ) )
-        {
-            // N.B. We must search the whole tree for the pointer to remove
-            // because the item may have been moved before we have the chance to
-            // delete it from the tree
-            const int mmin2[3] = { INT_MIN, INT_MIN, INT_MIN };
-            const int mmax2[3] = { INT_MAX, INT_MAX, INT_MAX };
-
-            if( m_tree->Remove( mmin2, mmax2, aItem ) )
-                return false;
-        }
+        // DYNAMIC_RTREE::Remove tries the provided bbox first, then falls back
+        // to full-tree search if the item has moved since insertion.
+        if( !m_tree.Remove( mmin, mmax, aItem ) )
+            return false;
 
         m_count--;
         return true;
@@ -111,7 +91,7 @@ public:
      */
     void clear()
     {
-        m_tree->RemoveAll();
+        m_tree.RemoveAll();
         m_count = 0;
     }
 
@@ -149,7 +129,7 @@ public:
                     return true;
                 };
 
-        m_tree->Search( mmin, mmax, search );
+        m_tree.Search( mmin, mmax, search );
 
         if( !found && aRobust )
         {
@@ -160,7 +140,7 @@ public:
             const int mmin2[3] = { type, INT_MIN, INT_MIN };
             const int mmax2[3] = { type, INT_MAX, INT_MAX };
 
-            m_tree->Search( mmin2, mmax2, search );
+            m_tree.Search( mmin2, mmax2, search );
         }
 
         return found;
@@ -181,61 +161,65 @@ public:
         return m_count == 0;
     }
 
-    using iterator = typename ee_rtree::Iterator;
-
     /**
      * The #EE_TYPE struct provides a type-specific auto-range iterator to the RTree.  Using
      * this struct, one can write lines like:
      *
      * for( auto item : rtree.OfType( SCH_SYMBOL_T ) )
      *
-     * and iterate over the RTree items that are symbols only
+     * and iterate over the RTree items that are symbols only.
+     *
+     * Uses a lazy SearchRange internally to avoid materializing results.
      */
     struct EE_TYPE
     {
-        EE_TYPE( ee_rtree* aTree, KICAD_T aType ) : type_tree( aTree )
-        {
-            KICAD_T type = BaseType( aType );
+        using SearchIter = typename ee_rtree::SearchIterator;
 
-            if( type == SCH_LOCATE_ANY_T )
-                m_rect = { { INT_MIN, INT_MIN, INT_MIN }, { INT_MAX, INT_MAX, INT_MAX } };
-            else
-                m_rect = { { type, INT_MIN, INT_MIN }, { type, INT_MAX, INT_MAX } };
-        };
-
-        EE_TYPE( ee_rtree* aTree, KICAD_T aType, const BOX2I& aRect ) : type_tree( aTree )
+        EE_TYPE( const ee_rtree& aTree, KICAD_T aType )
         {
             KICAD_T type = BaseType( aType );
 
             if( type == SCH_LOCATE_ANY_T )
             {
-                m_rect = { { INT_MIN, aRect.GetX(),     aRect.GetY() },
-                           { INT_MAX, aRect.GetRight(), aRect.GetBottom() } };
+                m_min[0] = INT_MIN; m_min[1] = INT_MIN; m_min[2] = INT_MIN;
+                m_max[0] = INT_MAX; m_max[1] = INT_MAX; m_max[2] = INT_MAX;
             }
             else
             {
-                m_rect = { { type, aRect.GetX(),     aRect.GetY() },
-                           { type, aRect.GetRight(), aRect.GetBottom() } };
+                m_min[0] = type; m_min[1] = INT_MIN; m_min[2] = INT_MIN;
+                m_max[0] = type; m_max[1] = INT_MAX; m_max[2] = INT_MAX;
             }
-        };
 
-        ee_rtree::Rect m_rect;
-        ee_rtree*      type_tree;
-
-        iterator begin()
-        {
-            return type_tree->begin( m_rect );
+            m_range = aTree.Overlapping( m_min, m_max );
         }
 
-        iterator end()
+        EE_TYPE( const ee_rtree& aTree, KICAD_T aType, const BOX2I& aRect )
         {
-            return type_tree->end( m_rect );
+            KICAD_T type = BaseType( aType );
+
+            if( type == SCH_LOCATE_ANY_T )
+            {
+                m_min[0] = INT_MIN; m_min[1] = aRect.GetX();     m_min[2] = aRect.GetY();
+                m_max[0] = INT_MAX; m_max[1] = aRect.GetRight(); m_max[2] = aRect.GetBottom();
+            }
+            else
+            {
+                m_min[0] = type; m_min[1] = aRect.GetX();     m_min[2] = aRect.GetY();
+                m_max[0] = type; m_max[1] = aRect.GetRight(); m_max[2] = aRect.GetBottom();
+            }
+
+            m_range = aTree.Overlapping( m_min, m_max );
         }
 
-        bool empty()
-        {
-            return type_tree->Count() == 0;
-        }
+        SearchIter begin() { return m_range.begin(); }
+        SearchIter end() { return m_range.end(); }
+
+        bool empty() { return m_range.empty(); }
+
+    private:
+        int m_min[3] = {};
+        int m_max[3] = {};
+        typename ee_rtree::SearchRange m_range{ nullptr, m_min, m_max };
     };
 
     EE_TYPE OfType( KICAD_T aType ) const
@@ -278,34 +262,23 @@ public:
      *
      * @return Complete RTree of the screen's items.
      */
-    iterator begin()
+    typename ee_rtree::Iterator begin() const
     {
-        return m_tree->begin();
+        return m_tree.begin();
     }
 
     /**
      * Return a read/write iterator that points to one past the last element in the #EE_RTREE.
      */
-    iterator end()
+    typename ee_rtree::Iterator end() const
     {
-        return m_tree->end();
-    }
-
-
-    const iterator begin() const
-    {
-        return m_tree->begin();
-    }
-
-    const iterator end() const
-    {
-        return m_tree->end();
+        return m_tree.end();
     }
 
 
 private:
-    ee_rtree* m_tree;
-    size_t    m_count;
+    ee_rtree m_tree;
+    size_t   m_count = 0;
 };
 
 

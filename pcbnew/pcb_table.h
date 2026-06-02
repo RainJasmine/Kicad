@@ -28,6 +28,12 @@
 #include <pcb_tablecell.h>
 #include <board_item.h>
 #include <board_item_container.h>
+#include <algorithm>
+
+namespace KIGFX
+{
+class RENDER_SETTINGS;
+};
 
 
 class PCB_TABLE : public BOARD_ITEM_CONTAINER
@@ -38,6 +44,9 @@ public:
     PCB_TABLE( const PCB_TABLE& aTable );
 
     ~PCB_TABLE();
+
+    // If implemented, would need to copy m_cells list.
+    PCB_TABLE& operator=( const PCB_TABLE& ) = delete;
 
     static inline bool ClassOf( const EDA_ITEM* aItem )
     {
@@ -99,6 +108,7 @@ public:
 
     void RunOnChildren( const std::function<void( BOARD_ITEM* )>& aFunction, RECURSE_MODE aMode ) const override;
 
+    void SetLayer( PCB_LAYER_ID aLayer ) override;
     void SetPosition( const VECTOR2I& aPos ) override;
     VECTOR2I GetPosition() const override;
     VECTOR2I GetEnd() const;
@@ -176,10 +186,15 @@ public:
 
     void DeleteMarkedCells()
     {
-        alg::delete_if( m_cells,
+        std::erase_if( m_cells,
                 []( PCB_TABLECELL* cell )
                 {
-                    return ( cell->GetFlags() & STRUCT_DELETED ) > 0;
+                    if( cell->GetFlags() & STRUCT_DELETED )
+                    {
+                        delete cell;
+                        return true;
+                    }
+                    return false;
                 } );
     }
 
@@ -217,6 +232,26 @@ public:
                                   int aMaxError, ERROR_LOC aErrorLoc,
                                   bool aIgnoreLineWidth = false ) const override;
 
+   /**
+     * Convert the TABLE shape to a polyset. details will be included.
+     *
+     * @param aBuffer a buffer to store the polygon.
+     * @param aClearance the clearance around the pad.
+     * @param aError the maximum deviation from true circle.
+     * @param aErrorLoc should the approximation error be placed outside or inside the polygon?
+     * @param aRenderSettings used to plot outlines with not solid segments like dashed lines.
+     * If null, lines like dashed will be converted as SOLID
+     */
+    void TransformShapeToPolySet( SHAPE_POLY_SET& aBuffer, PCB_LAYER_ID aLayer,
+                                  int aClearance, int aError, ERROR_LOC aErrorLoc,
+                                  KIGFX::RENDER_SETTINGS* aRenderSettings = nullptr ) const override;
+
+    /**
+     * Convert graphic items (segments and texts) to a set of polygonal shapes
+     */
+    void TransformGraphicItemsToPolySet( SHAPE_POLY_SET& aBuffer, int aMaxError, ERROR_LOC aErrorLoc,
+                                         KIGFX::RENDER_SETTINGS* aRenderSettings ) const;
+
     INSPECT_RESULT Visit( INSPECTOR inspector, void* testData,
                           const std::vector<KICAD_T>& aScanTypes ) override;
 
@@ -233,6 +268,8 @@ public:
     bool HitTest( const VECTOR2I& aPosition, int aAccuracy = 0 ) const override;
 
     bool HitTest( const BOX2I& aRect, bool aContained, int aAccuracy = 0 ) const override;
+
+    bool HitTest( const SHAPE_LINE_CHAIN& aPoly, bool aContained ) const override;
 
     EDA_ITEM* Clone() const override
     {

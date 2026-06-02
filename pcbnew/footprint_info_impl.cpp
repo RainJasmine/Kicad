@@ -25,40 +25,47 @@
 #include <dialogs/html_message_box.h>
 #include <footprint.h>
 #include <footprint_info.h>
-#include <fp_lib_table.h>
+#include <footprint_library_adapter.h>
 #include <kiway.h>
 #include <lib_id.h>
 #include <progress_reporter.h>
 #include <string_utils.h>
 #include <thread_pool.h>
-#include <wildcards_and_files_ext.h>
-
-#include <kiplatform/io.h>
-
-#include <wx/textfile.h>
-#include <wx/txtstrm.h>
-#include <wx/wfstream.h>
 
 
 void FOOTPRINT_INFO_IMPL::load()
 {
-    FP_LIB_TABLE* fptable = m_owner->GetTable();
+    FOOTPRINT_LIBRARY_ADAPTER* adapter = m_owner->GetAdapter();
+    wxCHECK( adapter, /* void */ );
 
-    wxASSERT( fptable );
-
-    const FOOTPRINT* footprint = fptable->GetEnumeratedFootprint( m_nickname, m_fpname );
-
-    if( footprint == nullptr ) // Should happen only with malformed/broken libraries
+    try
     {
+        std::unique_ptr<FOOTPRINT> footprint( adapter->LoadFootprint( m_nickname, m_fpname, false ) );
+
+        if( footprint == nullptr ) // Should happen only with malformed/broken libraries
+        {
+            m_pad_count = 0;
+            m_unique_pad_count = 0;
+            m_numbered_pad_count = 0;
+        }
+        else
+        {
+            m_pad_count = footprint->GetPadCount( DO_NOT_INCLUDE_NPTH );
+            m_unique_pad_count = footprint->GetUniquePadCount( DO_NOT_INCLUDE_NPTH );
+            m_numbered_pad_count = footprint->GetNumberedPadCount();
+            m_keywords = footprint->GetKeywords();
+            m_doc = footprint->GetLibDescription();
+        }
+    }
+    catch( const IO_ERROR& ioe )
+    {
+        // Store error in the owner's error list for later display
+        if( m_owner )
+            m_owner->PushError( std::make_unique<IO_ERROR>( ioe ) );
+
         m_pad_count = 0;
         m_unique_pad_count = 0;
-    }
-    else
-    {
-        m_pad_count = footprint->GetPadCount( DO_NOT_INCLUDE_NPTH );
-        m_unique_pad_count = footprint->GetUniquePadCount( DO_NOT_INCLUDE_NPTH );
-        m_keywords = footprint->GetKeywords();
-        m_doc = footprint->GetLibDescription();
+        m_numbered_pad_count = 0;
     }
 
     m_loaded = true;
@@ -67,8 +74,43 @@ void FOOTPRINT_INFO_IMPL::load()
 
 void FOOTPRINT_LIST_IMPL::Clear()
 {
+    std::unique_lock<std::mutex> lock( m_loadInProgress );
+
     m_list.clear();
     m_list_timestamp = 0;
+}
+
+
+void FOOTPRINT_LIST_IMPL::WithFootprintsForLibrary(
+        const wxString& aLibName,
+        const std::function<void( const std::vector<LIB_TREE_ITEM*>& )>& aCallback )
+{
+    std::unique_lock<std::mutex> lock( m_loadInProgress );
+
+    std::vector<LIB_TREE_ITEM*> libList;
+    const auto& fullList = GetList();
+
+    FOOTPRINT_INFO_IMPL dummy( aLibName, wxEmptyString );
+    std::unique_ptr<FOOTPRINT_INFO> dummyPtr( &dummy );
+
+    auto libBounds = std::equal_range( fullList.begin(), fullList.end(), dummyPtr,
+            []( const std::unique_ptr<FOOTPRINT_INFO>& a, const std::unique_ptr<FOOTPRINT_INFO>& b )
+            {
+                if( !a || !b )
+                    return false;
+
+                return StrNumCmp( a->GetLibNickname(), b->GetLibNickname(), false ) < 0;
+            } );
+
+    dummyPtr.release();
+
+    for( auto i = libBounds.first; i != libBounds.second; ++i )
+    {
+        if( *i )
+            libList.push_back( i->get() );
+    }
+
+    aCallback( libList );
 }
 
 
@@ -103,14 +145,24 @@ bool FOOTPRINT_LIST_IMPL::CatchErrors( const std::function<void()>& aFunc )
 }
 
 
-bool FOOTPRINT_LIST_IMPL::ReadFootprintFiles( FP_LIB_TABLE* aTable, const wxString* aNickname,
+bool FOOTPRINT_LIST_IMPL::ReadFootprintFiles( FOOTPRINT_LIBRARY_ADAPTER* aAdapter, const wxString* aNickname,
                                               PROGRESS_REPORTER* aProgressReporter )
 {
+    std::unique_lock<std::mutex> lock( m_loadInProgress );
+
+    m_adapter = aAdapter;
+
+    // AsyncLoad() must be called before BlockUntilLoaded() to ensure library loading is started.
+    // This is necessary when the footprint chooser is opened from contexts that don't preload
+    // footprint libraries (e.g., eeschema).
+    m_adapter->AsyncLoad();
+    m_adapter->BlockUntilLoaded();
+
     long long int generatedTimestamp = 0;
 
     if( !CatchErrors( [&]()
                  {
-                     generatedTimestamp = aTable->GenerateTimestamp( aNickname );
+                     generatedTimestamp = aAdapter->GenerateTimestamp( aNickname );
                  } ) )
     {
         return false;
@@ -125,7 +177,6 @@ bool FOOTPRINT_LIST_IMPL::ReadFootprintFiles( FP_LIB_TABLE* aTable, const wxStri
     m_progress_reporter = aProgressReporter;
 
     m_cancelled = false;
-    m_lib_table = aTable;
 
     // Clear data before reading files
     m_errors.clear();
@@ -138,7 +189,7 @@ bool FOOTPRINT_LIST_IMPL::ReadFootprintFiles( FP_LIB_TABLE* aTable, const wxStri
     }
     else
     {
-        for( const wxString& nickname : aTable->GetLogicalLibs() )
+        for( const wxString& nickname : aAdapter->GetLibraryNames() )
             m_queue.push( nickname );
     }
 
@@ -174,17 +225,21 @@ void FOOTPRINT_LIST_IMPL::loadFootprints()
     auto fp_thread =
             [ this, &queue_parsed ]() -> size_t
             {
+                // Each thread pool worker needs its own KIID_NIL_SET_RESET since g_createNilUuids
+                // is thread_local. This prevents generating real UUIDs for temporary footprint data.
+                KIID_NIL_SET_RESET reset_kiid;
+
                 wxString nickname;
 
                 if( m_cancelled || !m_queue.pop( nickname ) )
                     return 0;
 
-                wxArrayString fpnames;
+                std::vector<wxString> fpnames;
 
                 CatchErrors(
                         [&]()
                         {
-                            m_lib_table->FootprintEnumerate( fpnames, nickname, false );
+                            fpnames = m_adapter->GetFootprintNames( nickname );
                         } );
 
                 for( wxString fpname : fpnames )
@@ -207,7 +262,7 @@ void FOOTPRINT_LIST_IMPL::loadFootprints()
             };
 
     for( size_t ii = 0; ii < num_elements; ++ii )
-        returns[ii] = tp.submit( fp_thread );
+        returns[ii] = tp.submit_task( fp_thread );
 
     for( const std::future<size_t>& ret : returns )
     {
@@ -231,6 +286,9 @@ void FOOTPRINT_LIST_IMPL::loadFootprints()
                []( std::unique_ptr<FOOTPRINT_INFO> const& lhs,
                    std::unique_ptr<FOOTPRINT_INFO> const& rhs ) -> bool
                {
+                   if( !lhs || !rhs )
+                       return false;
+
                    return *lhs < *rhs;
                } );
 }
@@ -241,89 +299,4 @@ FOOTPRINT_LIST_IMPL::FOOTPRINT_LIST_IMPL() :
     m_progress_reporter( nullptr ),
     m_cancelled( false )
 {
-}
-
-
-void FOOTPRINT_LIST_IMPL::WriteCacheToFile( const wxString& aFilePath )
-{
-    wxFileName          tmpFileName = wxFileName::CreateTempFileName( aFilePath );
-    wxFFileOutputStream outStream( tmpFileName.GetFullPath() );
-    wxTextOutputStream  txtStream( outStream );
-
-    if( !outStream.IsOk() )
-    {
-        return;
-    }
-
-    txtStream << wxString::Format( wxT( "%lld" ), m_list_timestamp ) << endl;
-
-    for( std::unique_ptr<FOOTPRINT_INFO>& fpinfo : m_list )
-    {
-        txtStream << fpinfo->GetLibNickname() << endl;
-        txtStream << fpinfo->GetName() << endl;
-        txtStream << EscapeString( fpinfo->GetDesc(), CTX_LINE ) << endl;
-        txtStream << EscapeString( fpinfo->GetKeywords(), CTX_LINE ) << endl;
-        txtStream << wxString::Format( wxT( "%d" ), fpinfo->GetOrderNum() ) << endl;
-        txtStream << wxString::Format( wxT( "%u" ), fpinfo->GetPadCount() ) << endl;
-        txtStream << wxString::Format( wxT( "%u" ), fpinfo->GetUniquePadCount() ) << endl;
-    }
-
-    txtStream.Flush();
-    outStream.Close();
-
-    // Preserve the permissions of the current file
-    KIPLATFORM::IO::DuplicatePermissions( aFilePath, tmpFileName.GetFullPath() );
-
-    if( !wxRenameFile( tmpFileName.GetFullPath(), aFilePath, true ) )
-    {
-        // cleanup in case rename failed
-        // its also not the end of the world since this is just a cache file
-        wxRemoveFile( tmpFileName.GetFullPath() );
-    }
-}
-
-
-void FOOTPRINT_LIST_IMPL::ReadCacheFromFile( const wxString& aFilePath )
-{
-    wxTextFile cacheFile( aFilePath );
-
-    m_list_timestamp = 0;
-    m_list.clear();
-
-    try
-    {
-        if( cacheFile.Exists() && cacheFile.Open() )
-        {
-            cacheFile.GetFirstLine().ToLongLong( &m_list_timestamp );
-
-            while( cacheFile.GetCurrentLine() + 6 < cacheFile.GetLineCount() )
-            {
-                wxString             libNickname    = cacheFile.GetNextLine();
-                wxString             name           = cacheFile.GetNextLine();
-                wxString             desc           = UnescapeString( cacheFile.GetNextLine() );
-                wxString             keywords       = UnescapeString( cacheFile.GetNextLine() );
-                int                  orderNum       = wxAtoi( cacheFile.GetNextLine() );
-                unsigned int         padCount       = (unsigned) wxAtoi( cacheFile.GetNextLine() );
-                unsigned int         uniquePadCount = (unsigned) wxAtoi( cacheFile.GetNextLine() );
-
-                FOOTPRINT_INFO_IMPL* fpinfo = new FOOTPRINT_INFO_IMPL( libNickname, name, desc,
-                                                                       keywords, orderNum,
-                                                                       padCount,  uniquePadCount );
-
-                m_list.emplace_back( std::unique_ptr<FOOTPRINT_INFO>( fpinfo ) );
-            }
-        }
-    }
-    catch( ... )
-    {
-        // whatever went wrong, invalidate the cache
-        m_list_timestamp = 0;
-    }
-
-    // Sanity check: an empty list is very unlikely to be correct.
-    if( m_list.size() == 0 )
-        m_list_timestamp = 0;
-
-    if( cacheFile.IsOpened() )
-        cacheFile.Close();
 }

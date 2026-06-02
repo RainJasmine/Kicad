@@ -32,42 +32,45 @@
 #include <json_schema_validator.h>
 
 
-class LOGGING_ERROR_HANDLER : public nlohmann::json_schema::error_handler
+LOGGING_ERROR_HANDLER::LOGGING_ERROR_HANDLER() :
+        m_hasError( false )
 {
-public:
-    LOGGING_ERROR_HANDLER() : m_hasError( false ) {}
-
-    bool HasError() const { return m_hasError; }
-
-    void error( const nlohmann::json::json_pointer& ptr, const nlohmann::json& instance,
-                const std::string& message ) override
-    {
-        m_hasError = true;
-        wxLogTrace( traceApi,
-                    wxString::Format( wxS( "JSON error: at %s, value:\n%s\n%s" ),
-                                      ptr.to_string(), instance.dump(), message ) );
-    }
-
-private:
-    bool m_hasError;
-};
+}
 
 
-bool PLUGIN_RUNTIME::FromJson( const nlohmann::json& aJson )
+void LOGGING_ERROR_HANDLER::error( const nlohmann::json::json_pointer& ptr,
+                                   const nlohmann::json& instance,
+                                   const std::string& message )
 {
-    // TODO move to tl::expected and give user feedback about parse errors
+    m_hasError = true;
+    wxLogTrace( traceApi,
+                wxString::Format( wxS( "JSON error: at %s, value:\n%s\n%s" ),
+                                  ptr.to_string(), instance.dump(), message ) );
 
+    wxString location = wxString::FromUTF8( ptr.to_string() );
+
+    if( location.IsEmpty() )
+        location = wxS( "/" );
+
+    if( !m_errorMessage.IsEmpty() )
+        m_errorMessage << '\n';
+
+    m_errorMessage << wxString::Format( _( "invalid plugin configuration at '%s': %s" ),
+                                        location, wxString::FromUTF8( message ) );
+}
+
+
+tl::expected<bool, wxString> PLUGIN_RUNTIME::FromJson( const nlohmann::json& aJson )
+{
     try
     {
         type = magic_enum::enum_cast<PLUGIN_RUNTIME_TYPE>( aJson.at( "type" ).get<std::string>(),
                                                            magic_enum::case_insensitive )
                        .value_or( PLUGIN_RUNTIME_TYPE::INVALID );
-
-
     }
-    catch( ... )
+    catch( std::exception& e )
     {
-        return false;
+        return tl::unexpected( wxString::Format( _( "invalid plugin runtime: %s" ), e.what() ) );
     }
 
     return type != PLUGIN_RUNTIME_TYPE::INVALID;
@@ -80,6 +83,7 @@ struct API_PLUGIN_CONFIG
                        const JSON_SCHEMA_VALIDATOR& aValidator );
 
     bool valid;
+    wxString error_message;
     wxString identifier;
     wxString name;
     wxString description;
@@ -97,7 +101,10 @@ API_PLUGIN_CONFIG::API_PLUGIN_CONFIG( API_PLUGIN& aParent, const wxFileName& aCo
     valid = false;
 
     if( !aConfigFile.IsFileReadable() )
+    {
+        error_message = _( "could not read plugin configuration file" );
         return;
+    }
 
     wxLogTrace( traceApi, "Plugin: parsing config file" );
 
@@ -112,9 +119,11 @@ API_PLUGIN_CONFIG::API_PLUGIN_CONFIG( API_PLUGIN& aParent, const wxFileName& aCo
                                     /* allow_exceptions = */ true,
                                     /* ignore_comments  = */ true );
     }
-    catch( ... )
+    catch( const std::exception& e )
     {
         wxLogTrace( traceApi, "Plugin: exception during parse" );
+        error_message = wxString::Format( _( "plugin configuration file error: %s" ),
+                                          wxString::FromUTF8( e.what() ) );
         return;
     }
 
@@ -123,6 +132,8 @@ API_PLUGIN_CONFIG::API_PLUGIN_CONFIG( API_PLUGIN& aParent, const wxFileName& aCo
 
     if( !handler.HasError() )
         wxLogTrace( traceApi, "Plugin: schema validation successful" );
+    else
+        error_message = handler.ErrorMessage();
 
     // All of these are required; any exceptions here leave us with valid == false
     try
@@ -131,15 +142,21 @@ API_PLUGIN_CONFIG::API_PLUGIN_CONFIG( API_PLUGIN& aParent, const wxFileName& aCo
         name = js.at( "name" ).get<wxString>();
         description = js.at( "description" ).get<wxString>();
 
-        if( !runtime.FromJson( js.at( "runtime" ) ) )
+        if( !runtime.FromJson( js.at( "runtime" ) ).or_else(
+                [this]( const wxString& aError )
+                {
+                    wxLogTrace( traceApi, "Plugin %s: %s", identifier, aError );
+                    error_message = aError;
+                } ).has_value() )
         {
-            wxLogTrace( traceApi, "Plugin: error parsing runtime section" );
             return;
         }
     }
-    catch( ... )
+    catch( const std::exception& e )
     {
         wxLogTrace( traceApi, "Plugin: exception while parsing required keys" );
+        error_message = wxString::Format( _( "missing or invalid required keys: %s" ),
+                                          wxString::FromUTF8( e.what() ) );
         return;
     }
 
@@ -147,6 +164,7 @@ API_PLUGIN_CONFIG::API_PLUGIN_CONFIG( API_PLUGIN& aParent, const wxFileName& aCo
     {
         wxLogTrace( traceApi, wxString::Format( "Plugin: identifier %s does not meet requirements",
                                                 identifier ) );
+        error_message = wxString::Format( _( "identifier '%s' is invalid" ), identifier );
         return;
     }
 
@@ -170,12 +188,16 @@ API_PLUGIN_CONFIG::API_PLUGIN_CONFIG( API_PLUGIN& aParent, const wxFileName& aCo
             }
         }
     }
-    catch( ... )
+    catch( const std::exception& e )
     {
         wxLogTrace( traceApi, "Plugin: exception while parsing actions" );
+        error_message = wxString::Format( _( "actions section is invalid: %s" ),
+                                          wxString::FromUTF8( e.what() ) );
+        return;
     }
 
     valid = true;
+    error_message = wxEmptyString;
 }
 
 
@@ -194,6 +216,12 @@ API_PLUGIN::~API_PLUGIN()
 bool API_PLUGIN::IsOk() const
 {
     return m_config->valid;
+}
+
+
+const wxString& API_PLUGIN::ErrorMessage() const
+{
+    return m_config->error_message;
 }
 
 

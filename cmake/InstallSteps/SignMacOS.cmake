@@ -1,12 +1,12 @@
 
-function( sign_kicad_bundle target signing_id use_secure_timestamp use_hardened_runtime entitlements_file)
+function( sign_kicad_bundle target signing_id use_secure_timestamp use_hardened_runtime entitlements_file use_sentry)
 
     # If the signing ID wasn't passed in, use - which means adhoc signing
     if ( NOT signing_id )
         set( signing_id "-")
     endif()
 
-    MESSAGE( STATUS "Signing ${target} with ${signing_id}, hardened runtime: ${use_hardened_runtime}, secure timestamp: ${use_secure_timestamp}, entitlements file: ${entitlements_file}" )
+    MESSAGE( STATUS "Signing ${target} with ${signing_id}, hardened runtime: ${use_hardened_runtime}, secure timestamp: ${use_secure_timestamp}, entitlements file: ${entitlements_file}, sentry: ${use_sentry}" )
 
     # --deep doesn't really work and is officially deprecated as of macos 13
     # https://developer.apple.com/library/archive/technotes/tn2206/_index.html#//apple_ref/doc/uid/DTS40007919-CH1-TNTAG201
@@ -16,24 +16,6 @@ function( sign_kicad_bundle target signing_id use_secure_timestamp use_hardened_
             "${target}/Contents/Applications/eeschema.app"
             "${target}/Contents/Applications/gerbview.app/Contents/MacOS/gerbview"
             "${target}/Contents/Applications/gerbview.app"  "${target}/Contents/Applications/pcbnew.app/Contents/MacOS/pcbnew" "${target}/Contents/Applications/pcbnew.app" "${target}/Contents/Applications/bitmap2component.app/Contents/MacOS/bitmap2component" "${target}/Contents/Applications/bitmap2component.app" "${target}/Contents/Applications/pcb_calculator.app/Contents/MacOS/pcb_calculator" "${target}/Contents/Applications/pcb_calculator.app" "${target}/Contents/Applications/pl_editor.app/Contents/MacOS/pl_editor" "${target}/Contents/Applications/pl_editor.app")
-
-    # Python things!
-    if( EXISTS "${target}/Contents/Frameworks/Python.framework" )
-        set( sign_list ${sign_list} "${target}/Contents/Frameworks/Python.framework/Versions/Current/share/doc/python3.9/examples/Tools/pynche"
-                "${target}/Contents/Frameworks/Python.framework/Versions/Current/Resources/Python.app/Contents/MacOS/Python")
-        file( GLOB python_bins "${target}/Contents/Frameworks/Python.framework/Versions/Current/bin/*" )
-
-        # add dylib, .so and .a files from Contents/Frameworks/Python.framework/Versions/Current/lib/ and recursively
-        file( GLOB_RECURSE python_libs ${sign_list} "${target}/Contents/Frameworks/Python.framework/Versions/Current/lib/*.dylib"
-                "${target}/Contents/Frameworks/Python.framework/Versions/Current/lib/*.so"
-                "${target}/Contents/Frameworks/Python.framework/Versions/Current/lib/*.a"
-                "${target}/Contents/Frameworks/Python.framework/Versions/Current/lib/*.o" )
-
-        set( sign_list ${sign_list} ${python_bins} ${python_libs} )
-    endif( )
-
-    set( sign_list ${sign_list} "${target}/Contents/Frameworks/Python.framework/Versions/Current/Resources/Python.app"
-            "${target}/Contents/Frameworks/Python.framework" )
 
     # add all the dylibs from contents/frameworks
     file( GLOB framework_dylibs "${target}/Contents/Frameworks/*.dylib" )
@@ -51,6 +33,10 @@ function( sign_kicad_bundle target signing_id use_secure_timestamp use_hardened_
             "${target}/Contents/MacOS/idfrect"
             "${target}/Contents/MacOS/kicad-cli"
             "${target}/Contents/MacOS/kicad")
+
+    if( use_sentry )
+        set( sign_list ${sign_list} "${target}/Contents/MacOS/crashpad_handler" )
+    endif()
 
     set( sign_list ${sign_list} ${framework_dylibs} ${plugins} ${translations} ${kicad_bins} ) # do i need to quote this differently?
 

@@ -22,13 +22,18 @@
  */
 
 #include <bitmaps.h>
+#include <common.h>
 #include <confirm.h>
+#include <kiplatform/io.h>
 #include <widgets/std_bitmap_button.h>
 #include <widgets/paged_dialog.h>
 #include <pcb_edit_frame.h>
 #include <pcbexpr_evaluator.h>
 #include <board.h>
 #include <board_design_settings.h>
+#include <drc/drc_engine.h>
+#include <project/net_settings.h>
+#include <settings/common_settings.h>
 #include <project.h>
 #include <string_utils.h>
 #include <tool/tool_manager.h>
@@ -36,10 +41,15 @@
 #include <widgets/wx_html_report_box.h>
 #include <dialogs/html_message_box.h>
 #include <scintilla_tricks.h>
+#include <drc/drc_rule_condition.h>
 #include <drc/drc_rule_parser.h>
 #include <tools/drc_tool.h>
 #include <pgm_base.h>
 #include <wildcards_and_files_ext.h>
+#include <regex>
+#include <unordered_map>
+#include <properties/property.h>
+#include <properties/property_mgr.h>
 
 PANEL_SETUP_RULES::PANEL_SETUP_RULES( wxWindow* aParentWindow, PCB_EDIT_FRAME* aFrame ) :
         PANEL_SETUP_RULES_BASE( aParentWindow ),
@@ -92,6 +102,7 @@ PANEL_SETUP_RULES::~PANEL_SETUP_RULES( )
     Pgm().GetCommonSettings()->m_Appearance.text_editor_zoom = m_textEditor->GetZoom();
 
     delete m_scintillaTricks;
+    m_scintillaTricks = nullptr;
 
     if( m_helpWindow )
         m_helpWindow->Destroy();
@@ -226,12 +237,14 @@ void PANEL_SETUP_RULES::onScintillaCharAdded( wxStyledTextEvent &aEvent )
     auto isDisallowToken =
             []( const wxString& token ) -> bool
             {
-                return token == wxT( "buried_via" )
+                return token == wxT( "blind_via" )
+                    || token == wxT( "buried_via" )
                     || token == wxT( "graphic" )
                     || token == wxT( "hole" )
                     || token == wxT( "micro_via" )
                     || token == wxT( "pad" )
                     || token == wxT( "text" )
+                    || token == wxT( "through_via" )
                     || token == wxT( "track" )
                     || token == wxT( "via" )
                     || token == wxT( "zone" );
@@ -462,6 +475,7 @@ void PANEL_SETUP_RULES::onScintillaCharAdded( wxStyledTextEvent &aEvent )
         {
             tokens = wxT( "annular_width|"
                           "assertion|"
+                          "bridged_mask|"
                           "clearance|"
                           "connection_width|"
                           "courtyard_clearance|"
@@ -495,13 +509,15 @@ void PANEL_SETUP_RULES::onScintillaCharAdded( wxStyledTextEvent &aEvent )
         }
         else if( sexprs.top() == wxT( "disallow" ) || isDisallowToken( sexprs.top() ) )
         {
-            tokens = wxT( "buried_via|"
+            tokens = wxT( "blind_via|"
+                          "buried_via|"
                           "footprint|"
                           "graphic|"
                           "hole|"
                           "micro_via|"
                           "pad|"
                           "text|"
+                          "through_via|"
                           "track|"
                           "via|"
                           "zone" );
@@ -538,7 +554,7 @@ void PANEL_SETUP_RULES::onScintillaCharAdded( wxStyledTextEvent &aEvent )
 
             for( const PROPERTY_MANAGER::CLASS_INFO& cls : propMgr.GetAllClasses() )
             {
-                const PROPERTY_LIST& props = propMgr.GetProperties( cls.type );
+                const std::vector<PROPERTY_BASE*>& props = propMgr.GetProperties( cls.type );
 
                 for( PROPERTY_BASE* prop : props )
                 {
@@ -601,7 +617,8 @@ void PANEL_SETUP_RULES::onScintillaCharAdded( wxStyledTextEvent &aEvent )
             else if( m_viaTypeRegex.Matches( last ) )
             {
                 tokens = wxT( "Through|"
-                              "Blind/buried|"
+                              "Blind|"
+                              "Buried|"
                               "Micro" );
             }
             else if( m_padTypeRegex.Matches( last ) )
@@ -710,31 +727,112 @@ void PANEL_SETUP_RULES::OnCompile( wxCommandEvent& event )
         std::function<bool( wxString* )> resolver =
                 [&]( wxString* token ) -> bool
                 {
-                    if( m_frame->Prj().TextVarResolver( token ) )
+                    if( m_frame->GetBoard()->ResolveTextVar( token, 0 ) )
                         return true;
 
                     return false;
                 };
 
-        wxString rulesText = ExpandTextVars( m_textEditor->GetText(), &resolver );
+        wxString rulesText = m_textEditor->GetText();
+        rulesText = m_frame->GetBoard()->ConvertCrossReferencesToKIIDs( rulesText );
+        rulesText = ExpandTextVars( rulesText, &resolver );
 
         DRC_RULES_PARSER parser( rulesText, _( "DRC rules" ) );
 
         parser.Parse( dummyRules, m_errorsReport );
+        checkPlausibility( dummyRules );
     }
     catch( PARSE_ERROR& pe )
     {
-        wxString msg = wxString::Format( wxT( "%s <a href='%d:%d'>%s</a>%s" ),
-                                         _( "ERROR:" ),
-                                         pe.lineNumber,
-                                         pe.byteIndex,
-                                         pe.ParseProblem(),
-                                         wxEmptyString );
-
-        m_errorsReport->Report( msg, RPT_SEVERITY_ERROR );
+        m_errorsReport->Report( wxString::Format( wxT( "%s <a href='%d:%d'>%s</a>%s" ),
+                                                  _( "ERROR:" ),
+                                                  pe.lineNumber,
+                                                  pe.byteIndex,
+                                                  pe.ParseProblem(),
+                                                  wxEmptyString ),
+                                RPT_SEVERITY_ERROR );
     }
 
     m_errorsReport->Flush();
+}
+
+
+void PANEL_SETUP_RULES::checkPlausibility( const std::vector<std::shared_ptr<DRC_RULE>>& aRules )
+{
+    BOARD*                 board = m_frame->GetBoard();
+    BOARD_DESIGN_SETTINGS& bds = board->GetDesignSettings();
+    LSET                   enabledLayers = board->GetEnabledLayers();
+
+    // Key by (condition, layerSource) so rules with different layer scopes are considered distinct
+    std::map<std::pair<wxString, wxString>, wxString> seenConditions;
+    std::regex netclassPattern( "NetClass\\s*[!=]=\\s*'\"?([^\"\\s]+)'\"?" );
+
+    for( const auto& rule : aRules )
+    {
+        wxString condition;
+
+        if( rule->m_Condition )
+            condition = rule->m_Condition->GetExpression();
+
+        condition.Trim( true ).Trim( false );
+
+        auto key = std::make_pair( condition, rule->m_LayerSource );
+
+        if( seenConditions.count( key ) )
+        {
+            m_errorsReport->Report( wxString::Format( _( "Rules '%s' and '%s' share the same condition." ),
+                                                      rule->m_Name,
+                                                      seenConditions[key] ),
+                                    RPT_SEVERITY_WARNING );
+        }
+        else
+        {
+            seenConditions[key] = rule->m_Name;
+        }
+
+        std::string          condUtf8 = condition.ToStdString();
+        std::sregex_iterator it( condUtf8.begin(), condUtf8.end(), netclassPattern );
+        std::sregex_iterator end;
+
+        for( ; it != end; ++it )
+        {
+            wxString ncName = wxString::FromUTF8( ( *it )[1].str() );
+
+            if( !bds.m_NetSettings->HasNetclass( ncName ) )
+            {
+                m_errorsReport->Report( wxString::Format( _( "Rule '%s' references undefined netclass '%s'." ),
+                                                          rule->m_Name,
+                                                          ncName ),
+                                        RPT_SEVERITY_WARNING );
+            }
+        }
+
+        const bool isInner = rule->m_LayerSource.IsSameAs( wxT( "'inner'" ), false );
+        const bool isOuter = rule->m_LayerSource.IsSameAs( wxT( "'outer'" ), false );
+
+        if( !rule->m_LayerSource.IsEmpty() && !isInner && !isOuter )
+        {
+            LSET invalid = rule->m_LayerCondition & ~enabledLayers;
+
+            if( invalid.any() )
+            {
+                wxString badLayers;
+
+                for( PCB_LAYER_ID layer : invalid.Seq() )
+                {
+                    if( !badLayers.IsEmpty() )
+                        badLayers += ", ";
+
+                    badLayers += board->GetLayerName( layer );
+                }
+
+                m_errorsReport->Report( wxString::Format( _( "Rule '%s' references undefined layer(s): %s." ),
+                                                          rule->m_Name,
+                                                          badLayers ),
+                                        RPT_SEVERITY_WARNING );
+            }
+        }
+    }
 }
 
 
@@ -810,13 +908,20 @@ bool PANEL_SETUP_RULES::TransferDataFromWindow()
 
     wxString rulesFilepath = m_frame->GetDesignRulesPath();
 
+    wxString    content = m_textEditor->GetText();
+    std::string utf8 = std::string( content.mb_str( wxConvUTF8 ) );
+    wxString    writeError;
+
+    if( !KIPLATFORM::IO::AtomicWriteFile( rulesFilepath, utf8.data(), utf8.size(), &writeError ) )
+    {
+        wxLogError( _( "Cannot save design rules to '%s': %s" ), rulesFilepath, writeError );
+        return false;
+    }
+
     try
     {
-        if( m_textEditor->SaveFile( rulesFilepath ) )
-        {
-            m_frame->GetBoard()->GetDesignSettings().m_DRCEngine->InitEngine( rulesFilepath );
-            return true;
-        }
+        m_frame->GetBoard()->GetDesignSettings().m_DRCEngine->InitEngine( rulesFilepath );
+        return true;
     }
     catch( PARSE_ERROR& )
     {
@@ -824,8 +929,6 @@ bool PANEL_SETUP_RULES::TransferDataFromWindow()
         // saved them so we can allow an exit.
         return true;
     }
-
-    return false;
 }
 
 

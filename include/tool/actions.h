@@ -110,6 +110,7 @@ public:
     static TOOL_ACTION mergeCells;
     static TOOL_ACTION unmergeCells;
     static TOOL_ACTION editTable;
+    static TOOL_ACTION exportTableCSV;
 
     // Find and Replace
     static TOOL_ACTION showSearch;
@@ -148,7 +149,9 @@ public:
     static TOOL_ACTION centerContents;
     static TOOL_ACTION centerSelection;
     static TOOL_ACTION toggleCursor;
-    static TOOL_ACTION toggleCursorStyle;
+    static TOOL_ACTION cursorSmallCrosshairs;
+    static TOOL_ACTION cursorFullCrosshairs;
+    static TOOL_ACTION cursor45Crosshairs;
     static TOOL_ACTION highContrastMode;
     static TOOL_ACTION highContrastModeCycle;
     static TOOL_ACTION toggleBoundingBoxes;
@@ -212,6 +215,10 @@ public:
 
     /// Select a single item under the cursor position
     static TOOL_ACTION selectionCursor;
+
+    /// Set lasso selection mode
+    static TOOL_ACTION selectSetRect;
+    static TOOL_ACTION selectSetLasso;
 
     /// Clear the current selection
     static TOOL_ACTION selectionClear;

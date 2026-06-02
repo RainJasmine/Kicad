@@ -23,12 +23,11 @@ set( KICAD_SRCS
     dialogs/dialog_copyfiles_job_settings_base.cpp
     dialogs/dialog_executecommand_job_settings.cpp
     dialogs/dialog_executecommand_job_settings_base.cpp
-    dialogs/dialog_update_check_prompt_base.cpp
-    dialogs/dialog_update_check_prompt.cpp
     dialogs/dialog_update_notice_base.cpp
     dialogs/dialog_update_notice.cpp
     dialogs/dialog_template_selector_base.cpp
     dialogs/dialog_template_selector.cpp
+    dialogs/dialog_edit_cfg.cpp
     dialogs/panel_kicad_launcher_base.cpp
     dialogs/panel_kicad_launcher.cpp
     dialogs/panel_jobset_base.cpp
@@ -38,11 +37,13 @@ set( KICAD_SRCS
     import_proj.cpp
     import_project.cpp
     kicad_manager_frame.cpp
+    local_history_pane.cpp
     menubar.cpp
     project_template.cpp
     project_tree_pane.cpp
     project_tree.cpp
     project_tree_item.cpp
+    project_tree_traverser.cpp
     update_manager.cpp
     toolbars_kicad_manager.cpp
     tools/kicad_manager_actions.cpp
@@ -66,11 +67,16 @@ set( KICAD_CLI_SRCS
     cli/command_pcb_export_ipcd356.cpp
     cli/command_pcb_export_odb.cpp
     cli/command_pcb_export_pdf.cpp
+    cli/command_pcb_export_png.cpp
     cli/command_pcb_export_pos.cpp
     cli/command_pcb_export_ps.cpp
+    cli/command_pcb_export_stats.cpp
     cli/command_pcb_export_svg.cpp
+    cli/command_pcb_upgrade.cpp
+    cli/command_pcb_import.cpp
     cli/command_fp_export_svg.cpp
     cli/command_fp_upgrade.cpp
+    cli/command_sch_upgrade.cpp
     cli/command_sch_export_bom.cpp
     cli/command_sch_export_pythonbom.cpp
     cli/command_sch_export_netlist.cpp
@@ -78,10 +84,20 @@ set( KICAD_CLI_SRCS
     cli/command_sch_erc.cpp
     cli/command_sym_export_svg.cpp
     cli/command_sym_upgrade.cpp
+    cli/command_gerber_info.cpp
+    cli/command_gerber_convert_png.cpp
+    cli/command_gerber_diff.cpp
     cli/command_version.cpp
 
     jobs_runner.cpp
     )
+
+if( KICAD_IPC_API )
+    set( KICAD_CLI_SRCS
+        ${KICAD_CLI_SRCS}
+        cli/command_api_server.cpp
+    )
+endif()
 
 if( WIN32 )
     if( MINGW )
@@ -140,6 +156,7 @@ if( UNIX )
         COMMAND ${CMAKE_COMMAND} -E create_symlink "${CMAKE_BINARY_DIR}/eeschema/_eeschema.kiface" "${CMAKE_BINARY_DIR}/kicad/_eeschema.kiface"
         COMMAND ${CMAKE_COMMAND} -E create_symlink "${CMAKE_BINARY_DIR}/pcbnew/_pcbnew.kiface" "${CMAKE_BINARY_DIR}/kicad/_pcbnew.kiface"
         COMMAND ${CMAKE_COMMAND} -E create_symlink "${CMAKE_BINARY_DIR}/cvpcb/_cvpcb.kiface" "${CMAKE_BINARY_DIR}/kicad/_cvpcb.kiface"
+        COMMAND ${CMAKE_COMMAND} -E create_symlink "${CMAKE_BINARY_DIR}/gerbview/_gerbview.kiface" "${CMAKE_BINARY_DIR}/kicad/_gerbview.kiface"
         COMMENT "Making <build-dir>/kicad/<kiface.symlinks>"
         )
 endif()
@@ -151,6 +168,7 @@ if( APPLE )
     target_link_libraries( kicad
         nlohmann_json
         common
+        pads_common
         kicommon
         core
         ${wxWidgets_LIBRARIES}
@@ -163,6 +181,7 @@ if( APPLE )
     target_link_libraries( kicad-cli
         nlohmann_json
         common
+        pads_common
         ${wxWidgets_LIBRARIES}
         core
         )
@@ -172,6 +191,7 @@ else()
         common
         gal
         common      #repeated due to a circular dependency between gal and common
+        pads_common
         kicommon
         core
         ${wxWidgets_LIBRARIES}
@@ -182,6 +202,7 @@ else()
         common
         gal
         common      #repeated due to a circular dependency between gal and common
+        pads_common
         kicommon
         core
         ${wxWidgets_LIBRARIES}
@@ -215,24 +236,15 @@ if( APPLE )
 
     set( SPICE_HELPER "1" )
 
-    if( PYTHON_FRAMEWORK )
-        set( PYTHON_FRAMEWORK_HELPER "1" )
-    else()
-        set( PYTHON_FRAMEWORK_HELPER "0" )
-    endif()
-
-    set_target_properties( kicad PROPERTIES BUILD_RPATH ${PYTHON_FRAMEWORK} )
     set_target_properties( kicad PROPERTIES INSTALL_RPATH
-            "@executable_path/../Frameworks;@executable_path/../Frameworks/Python.framework" )
+            "@executable_path/../Frameworks" )
     set_target_properties( kicad-cli PROPERTIES INSTALL_RPATH
-            "@executable_path/../Frameworks;@executable_path/../Frameworks/Python.framework" )
-    set_target_properties( kicad-cli PROPERTIES BUILD_WITH_INSTALL_RPATH 1 )
+            "@executable_path/../Frameworks" )
 
     install( CODE "
         set( KICAD_CMAKE_MODULE_PATH \"${KICAD_CMAKE_MODULE_PATH}\" )
         set( OSX_BUNDLE_INSTALL_BIN_DIR \"${OSX_BUNDLE_INSTALL_BIN_DIR}\" )
         set( OSX_BUNDLE_INSTALL_LIB_DIR \"${OSX_BUNDLE_INSTALL_LIB_DIR}\" )
-        set( PYTHON_FRAMEWORK \"${PYTHON_FRAMEWORK}\" )
     " )
 
     install( CODE [[
@@ -243,11 +255,15 @@ if( APPLE )
             ""
             ""
             )
-
-        # Now install Python framework properly (GET_RUNTIME_DEPENDENCIES can't do this)
-        execute_process( COMMAND rm ${OSX_BUNDLE_INSTALL_LIB_DIR}/Python )
-        execute_process( COMMAND cp -RP ${PYTHON_FRAMEWORK} ${OSX_BUNDLE_INSTALL_LIB_DIR}/ )
     ]] )
+
+    if( KICAD_USE_SENTRY )
+        install( FILES $<TARGET_FILE:crashpad_handler>
+            DESTINATION ${OSX_BUNDLE_INSTALL_BIN_DIR}
+            PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+            COMPONENT binary
+            )
+    endif()
 
     # move all individual app bundles into main bundle
     install( CODE "
@@ -274,8 +290,14 @@ if( APPLE )
         move_to_main_bundle( \"pcbnew.app\" \"PCB Editor.app\" )
         move_to_main_bundle( \"pl_editor.app\" \"Page Layout Editor.app\" )
 
+        if( ${KICAD_USE_SENTRY} )
+            file( REMOVE_RECURSE ${OSX_BUNDLE_INSTALL_BIN_DIR}/crashpad_handler.dSYM )
+            file( REMOVE_RECURSE ${KICAD_BIN}/bin )
+            file( REMOVE_RECURSE ${KICAD_BIN}/lib )
+        endif()
+
         cmake_policy( SET CMP0012 NEW )
-        if ( ${PYTHON_FRAMEWORK_HELPER} AND ${KICAD_APPLE_MAKE_RELOCATEABLE_BUNDLE} )
+        if ( ${KICAD_APPLE_MAKE_RELOCATEABLE_BUNDLE} )
             message( STATUS \"Making the finished bundle relocateable...\" )
             include( ${KICAD_CMAKE_MODULE_PATH}/InstallSteps/RefixupMacOS.cmake )
             refix_kicad_bundle( ${OSX_BUNDLE_INSTALL_DIR} )

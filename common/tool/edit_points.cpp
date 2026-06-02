@@ -27,6 +27,10 @@
 #include <gal/color4d.h>
 #include <gal/painter.h>
 #include <math/util.h>      // for KiROUND
+#include <geometry/seg.h>
+#include <wx/string.h>
+#include <vector>
+#include <algorithm>
 #include "tool/edit_points.h"
 
 
@@ -312,7 +316,7 @@ void EDIT_POINTS::ViewDraw( int aLayer, KIGFX::VIEW* aView ) const
             };
 
     for( const EDIT_POINT& point : m_points )
-        drawPoint( point );
+        drawPoint( point, point.DrawCircle() );
 
     for( const EDIT_LINE& line : m_lines )
     {
@@ -323,9 +327,10 @@ void EDIT_POINTS::ViewDraw( int aLayer, KIGFX::VIEW* aView ) const
 
         if( line.DrawLine() )
         {
-            gal->SetLineWidth( borderSize );
+            gal->SetLineWidth( borderSize / 4 );
             gal->SetStrokeColor( borderColor );
             gal->DrawLine( line.GetOrigin().GetPosition(), line.GetEnd().GetPosition() );
         }
     }
+
 }

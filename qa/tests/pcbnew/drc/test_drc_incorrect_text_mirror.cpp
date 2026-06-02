@@ -25,13 +25,15 @@
 #include <pcbnew_utils/board_test_utils.h>
 #include <board.h>
 #include <board_design_settings.h>
+#include <drc/drc_engine.h>
+#include <drc/drc_engine.h>
 #include <drc/drc_item.h>
 #include <settings/settings_manager.h>
 
 
 struct DRC_INCORRECT_TEXT_MIRROR_TEST_FIXTURE
 {
-    DRC_INCORRECT_TEXT_MIRROR_TEST_FIXTURE() : m_settingsManager( true /* headless */ ) {}
+    DRC_INCORRECT_TEXT_MIRROR_TEST_FIXTURE() {}
 
     SETTINGS_MANAGER       m_settingsManager;
     std::unique_ptr<BOARD> m_board;
@@ -62,8 +64,8 @@ BOOST_FIXTURE_TEST_CASE( DRCIncorrectTextMirror, DRC_INCORRECT_TEXT_MIRROR_TEST_
         bds.m_DRCSeverities[DRCE_NONMIRRORED_TEXT_ON_BACK_LAYER] = SEVERITY::RPT_SEVERITY_ERROR;
 
         bds.m_DRCEngine->SetViolationHandler(
-                [&]( const std::shared_ptr<DRC_ITEM>& aItem, VECTOR2I aPos, int aLayer,
-                     DRC_CUSTOM_MARKER_HANDLER* aCustomHandler )
+                [&]( const std::shared_ptr<DRC_ITEM>& aItem, const VECTOR2I& aPos, int aLayer,
+                     const std::function<void( PCB_MARKER* )>& aPathGenerator )
                 {
                     if( bds.GetSeverity( aItem->GetErrorCode() ) == SEVERITY::RPT_SEVERITY_ERROR )
                         violations.push_back( *aItem );

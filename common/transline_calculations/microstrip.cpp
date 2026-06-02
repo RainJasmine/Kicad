@@ -21,6 +21,8 @@
  * Boston, MA 02110-1301, USA.
  */
 
+#include <algorithm>
+
 #include <transline_calculations/microstrip.h>
 #include <transline_calculations/units.h>
 
@@ -31,11 +33,43 @@ using TCP = TRANSLINE_PARAMETERS;
 
 void MICROSTRIP::Analyse()
 {
+    UpdateDielectricModel();
+
+    const double f = GetParameter( TCP::FREQUENCY );
+    const double rawEpsR = GetParameter( TCP::EPSILONR );
+    const double rawTanD = GetParameter( TCP::TAND );
+
+    // Overlay dispersed values so helpers reading EPSILONR / TAND via GetParameter
+    // pick them up.  Raw inputs are restored before return.
+    SetParameter( TCP::EPSILONR, GetDispersedEpsilonR( f ) );
+    SetParameter( TCP::TAND, GetDispersedTanDelta( f ) );
+
     // Effective permeability
     mur_eff_ms();
 
     // Static impedance
     microstrip_Z0();
+
+    // Apply the soldermask cover correction to the static er_eff and Z0 before dispersion
+    // and losses consume them.  Uses the Wan-Hoorfar 2000 / Svacina 1992 three-layer
+    // filling factor with Bahl-Stuchly 1980 air-replacement decomposition.  When the mask
+    // is disabled or the thickness is zero this is a bit-identical no-op path.  Z0 scales
+    // as 1/sqrt(eps_eff) for a given homogeneous equivalent, so rescaling by
+    // sqrt(uncoated/coated) keeps the physics consistent.
+    const double erEffUncoated = er_eff_0;
+    const double dispersedEpsR = GetParameter( TCP::EPSILONR );
+    const double dispersedTanD = GetParameter( TCP::TAND );
+    const double uOverH = GetParameter( TCP::PHYS_WIDTH ) / GetParameter( TCP::H );
+
+    const auto [ erEffCoated, tanDCoated ] =
+            ApplySoldermaskCorrection( erEffUncoated, dispersedTanD, dispersedEpsR, uOverH, f );
+
+    if( erEffCoated != erEffUncoated )
+    {
+        er_eff_0 = erEffCoated;
+        Z0_0 *= std::sqrt( erEffUncoated / erEffCoated );
+        SetParameter( TCP::Z0, Z0_0 );
+    }
 
     // Calculate freq dependence of er and Z0
     dispersion();
@@ -43,8 +77,15 @@ void MICROSTRIP::Analyse()
     // Calculate electrical lengths
     line_angle();
 
+    // Swap the mask-blended tan delta in so dielectric_losses picks it up through the
+    // parameter map; restore the dispersed substrate value immediately after attenuation.
+    SetParameter( TCP::TAND, tanDCoated );
+
     // Calculate losses
     attenuation();
+
+    SetParameter( TCP::EPSILONR, rawEpsR );
+    SetParameter( TCP::TAND, rawTanD );
 }
 
 
@@ -195,9 +236,30 @@ double MICROSTRIP::Z0_homogeneous( double u )
 
 double MICROSTRIP::delta_Z0_cover( double u, double h2h )
 {
+    // March, "Empirical Formulas for the Impedance and Effective Dielectric Constant of
+    // Covered Microstrip", 11th European Microwave Conf., 1981, pp. 671-672, Eq. (1) with
+    // corrected P and Q.  Reproduced as Garg-Bahl-Bozzi, "Microstrip Lines and Slotlines",
+    // 4th ed., Artech House 2024, Sec. 2.4 Eqs. (2.128a)-(2.128b).  P alone applies for
+    // W/h <= 1 and P * Q for W/h >= 1; the sqrt(u - 1) factor in Q collapses to zero at
+    // u = 1 so a single expression handles both cases.  Validity 0.05 <= W/h <= 20,
+    // h'/h > 1.
+    //
+    // The original P/Q in Bahl, "Use Exact Methods for Microstrip Design", Microwaves
+    // Dec. 1978, p. 61, contains a typo that March (p. 671) calls out explicitly, noting
+    // "the equation for Q should be of the form 1 - tanh^-1(x) in lieu of 1 - tanh(1 - x),
+    // as published".  Wan, Int. J. MMCAE 5(6), 1995, Fig. 6(a) confirms Bahl's published
+    // Z0 deviates from rigorous numerical data while March's corrected form tracks it.
     const double h2hp1 = 1.0 + h2h;
-    const double P = 270.0 * ( 1.0 - tanh( 1.192 + 0.706 * sqrt( h2hp1 ) - 1.389 / h2hp1 ) );
-    const double Q = 1.0109 - atanh( ( 0.012 * u + 0.177 * u * u - 0.027 * u * u * u ) / ( h2hp1 * h2hp1 ) );
+    const double P = 270.0 * ( 1.0 - tanh( 0.28 + 1.2 * sqrt( h2h ) ) );
+
+    // Outside GBB's validity range the Q numerator saturates atanh (wide trace, low
+    // cover); fall back to the P-only branch so Z0 stays finite.
+    const double qArg = ( 0.48 * sqrt( std::max( 0.0, u - 1.0 ) ) ) / ( h2hp1 * h2hp1 );
+
+    if( qArg >= 1.0 )
+        return P;
+
+    const double Q = 1.0 - atanh( qArg );
     return P * Q;
 }
 
@@ -215,6 +277,18 @@ double MICROSTRIP::filling_factor( double u, double e_r )
 
 double MICROSTRIP::delta_q_cover( double h2h )
 {
+    // March, "Empirical Formulas for the Impedance and Effective Dielectric Constant of
+    // Covered Microstrip", 11th European Microwave Conf., 1981, p. 672, Eq. (7).  March
+    // derived this q_c by curve-fitting the Bryant-Weiss numerical data as a replacement
+    // for the original tanh form in Bahl, "Use Exact Methods for Microstrip Design",
+    // Microwaves Dec. 1978, p. 61, which March (p. 672) calls "highly inaccurate for H2/H
+    // ratios from 2 to 5".  q_c collapses to unity as the cover retreats.
+    //
+    // Wan, Int. J. MMCAE 5(6), 1995, Fig. 6(b) reports that for eps_eff at e_r = 9.8 and
+    // h'/h = 2.0 Bahl's original q_c tracks numerical data more closely than March's.  We
+    // retain March's form for consistency with the matching Z0 correction in
+    // delta_Z0_cover, which is also from March 1981 and was fitted against the same
+    // Bryant-Weiss reference set.
     return tanh( 1.043 + 0.121 * h2h - 1.164 / h2h );
 }
 
@@ -336,7 +410,7 @@ void MICROSTRIP::microstrip_Z0()
 
     /* characteristic impedance, corrected for thickness, cover */
     /*   and non-homogeneous material */
-    SetParameter( TCP::Z0, Z0_h_r / sqrt( e_r_eff_t ) );
+    SetParameter( TCP::Z0, ( Z0_h_r - delta_Z0_cover( u, h2h ) ) / sqrt( e_r_eff_t ) );
 
     w_eff = u * GetParameter( TCP::H );
     er_eff_0 = e_r_eff;

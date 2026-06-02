@@ -30,6 +30,7 @@
 #include <gal/graphics_abstraction_layer.h>
 #include <kiplatform/ui.h>
 #include <status_popup.h>
+#include <tool/tool_manager.h>
 #include <tools/pcb_selection_tool.h>
 #include <tools/zone_filler_tool.h>
 #include <view/view_controls.h>
@@ -44,16 +45,18 @@ PCB_PICKER_TOOL::PCB_PICKER_TOOL() :
 
 bool PCB_PICKER_TOOL::Init()
 {
-    PCB_BASE_FRAME*    frame = getEditFrame<PCB_BASE_FRAME>();
-    CONDITIONAL_MENU&  menu = m_menu->GetMenu();
+    CONDITIONAL_MENU& menu = m_menu->GetMenu();
 
-    const auto snapIsSetToAllLayers =
-            [=]( const SELECTION& aSel )
+    auto snapIsSetToAllLayers =
+            [this]( const SELECTION& aSel )
             {
-                if( frame )
-                    return frame->GetMagneticItemsSettings()->allLayers;
-                else
-                    return false;
+                if( PCB_BASE_FRAME* frame = getEditFrame<PCB_BASE_FRAME>() )
+                {
+                    if( frame->GetMagneticItemsSettings() )
+                        return frame->GetMagneticItemsSettings()->allLayers;
+                }
+
+                return false;
             };
 
     // "Cancel" goes at the top of the context menu when a tool is active
@@ -66,7 +69,7 @@ bool PCB_PICKER_TOOL::Init()
 
     menu.AddSeparator( 1 );
 
-    if( frame )
+    if( PCB_BASE_FRAME* frame = getEditFrame<PCB_BASE_FRAME>() )
         frame->AddStandardSubMenus( *m_menu.get() );
 
     return true;
@@ -114,8 +117,17 @@ int PCB_PICKER_TOOL::Main( const TOOL_EVENT& aEvent )
         {
             grid.SetSnap( !evt->Modifier( MD_SHIFT ) );
             grid.SetUseGrid( getView()->GetGAL()->GetGridSnapping() && !evt->DisableGridSnapping() );
-            cursorPos = grid.BestSnapAnchor( cursorPos, m_layerMask );
-            controls->ForceCursorPosition( true, cursorPos );
+
+            if( !evt->IsActivate() && !evt->IsCancelInteractive() )
+            {
+                // If we are switching, the canvas may not be valid any more
+                cursorPos = grid.BestSnapAnchor( cursorPos, nullptr );
+                controls->ForceCursorPosition( true, cursorPos );
+            }
+            else
+            {
+                grid.FullReset();
+            }
         }
 
         if( evt->IsCancelInteractive() || evt->IsActivate() )
@@ -257,11 +269,12 @@ int PCB_PICKER_TOOL::SelectPointInteractively( const TOOL_EVENT& aEvent )
 
     statusPopup.SetText( wxGetTranslation( params.m_Prompt ) );
 
-    const auto sendPoint = [&]( const std::optional<VECTOR2I>& aPoint )
-    {
-        statusPopup.Hide();
-        params.m_Receiver->UpdatePickedPoint( aPoint );
-    };
+    const auto sendPoint =
+            [&]( const std::optional<VECTOR2I>& aPoint )
+            {
+                statusPopup.Hide();
+                params.m_Receiver->UpdatePickedPoint( aPoint );
+            };
 
     SetSnapping( true );
     SetCursor( KICURSOR::PLACE );
@@ -303,10 +316,12 @@ int PCB_PICKER_TOOL::SelectPointInteractively( const TOOL_EVENT& aEvent )
     // Drop into the main event loop
     Main( aEvent );
 
+    ClearHandlers();
     canvas()->SetStatusPopup( nullptr );
     frame()->PopTool( aEvent );
     return 0;
 }
+
 
 int PCB_PICKER_TOOL::SelectItemInteractively( const TOOL_EVENT& aEvent )
 {
@@ -322,11 +337,12 @@ int PCB_PICKER_TOOL::SelectItemInteractively( const TOOL_EVENT& aEvent )
 
     statusPopup.SetText( wxGetTranslation( params.m_Prompt ) );
 
-    const auto sendItem = [&]( const EDA_ITEM* aItem )
-    {
-        statusPopup.Hide();
-        params.m_Receiver->UpdatePickedItem( aItem );
-    };
+    const auto sendItem =
+            [&]( const EDA_ITEM* aItem )
+            {
+                statusPopup.Hide();
+                params.m_Receiver->UpdatePickedItem( aItem );
+            };
 
     SetCursor( KICURSOR::BULLSEYE );
     SetSnapping( false );
@@ -337,8 +353,7 @@ int PCB_PICKER_TOOL::SelectItemInteractively( const TOOL_EVENT& aEvent )
             {
                 m_toolMgr->RunAction( ACTIONS::selectionClear );
                 const PCB_SELECTION& sel = selectionTool->RequestSelection(
-                        []( const VECTOR2I& aPt, GENERAL_COLLECTOR& aCollector,
-                            PCB_SELECTION_TOOL* sTool )
+                        []( const VECTOR2I& aPt, GENERAL_COLLECTOR& aCollector, PCB_SELECTION_TOOL* sTool )
                         {
                         } );
 
@@ -380,6 +395,7 @@ int PCB_PICKER_TOOL::SelectItemInteractively( const TOOL_EVENT& aEvent )
     // Drop into the main event loop
     Main( aEvent );
 
+    ClearHandlers();
     canvas()->SetStatusPopup( nullptr );
     frame()->PopTool( aEvent );
     return 0;

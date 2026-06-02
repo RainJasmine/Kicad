@@ -49,6 +49,14 @@ public:
         m_net = aNet;
     }
 
+    SEGMENT( const SHAPE_SEGMENT& aSeg, NET_HANDLE aNet ) :
+        LINKED_ITEM( SEGMENT_T ),
+        m_seg( aSeg )
+    {
+        m_net = aNet;
+    }
+
+
     SEGMENT( const LINE& aParentLine, const SEG& aSeg ) :
         LINKED_ITEM( SEGMENT_T ),
         m_seg( aSeg, aParentLine.Width() )

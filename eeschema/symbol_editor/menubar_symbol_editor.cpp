@@ -108,8 +108,11 @@ void SYMBOL_EDIT_FRAME::doReCreateMenuBar()
     editMenu->Add( ACTIONS::unselectAll );
 
     editMenu->AppendSeparator();
+    editMenu->Add( ACTIONS::find );
+    editMenu->Add( ACTIONS::findAndReplace );
+
+    editMenu->AppendSeparator();
     editMenu->Add( SCH_ACTIONS::pinTable );
-    editMenu->Add( SCH_ACTIONS::setUnitDisplayName );
     editMenu->Add( SCH_ACTIONS::updateSymbolFields );
 
 

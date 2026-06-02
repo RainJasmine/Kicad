@@ -137,8 +137,18 @@ public:
         /// Aperture used for castellated pads in drill files.
         GBR_APERTURE_ATTRIB_CASTELLATEDDRILL,
 
-        GBR_APERTURE_ATTRIB_VIADRILL,  ///< Aperture used for via holes in drill files.
-        GBR_APERTURE_ATTRIB_CMP_DRILL, ///< Aperture used for pad holes in drill files.
+        /// Aperture used for pressfit pads in drill files.
+        /// this is similar to GBR_APERTURE_ATTRIB_COMPONENTPAD with optional PressFit field
+        GBR_APERTURE_ATTRIB_PRESSFITDRILL,
+
+        ///< Aperture used for via holes in drill files.
+        GBR_APERTURE_ATTRIB_VIADRILL,
+
+        ///< Aperture used for backdrill holes in drill files.
+        GBR_APERTURE_ATTRIB_BACKDRILL,
+
+        ///< Aperture used for pad holes in drill files.
+        GBR_APERTURE_ATTRIB_CMP_DRILL,
 
         /// Aperture used for pads oblong holes in drill files.
         GBR_APERTURE_ATTRIB_CMP_OBLONG_DRILL,

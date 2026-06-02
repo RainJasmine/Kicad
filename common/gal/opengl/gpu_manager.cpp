@@ -221,12 +221,15 @@ void GPU_CACHED_MANAGER::EndDrawing()
         drawCalls++;
     }
 
+    (void) drawCalls; // silence warning
     cntDraw.Stop();
 
-    KI_TRACE( traceGalProfile,
-              "Cached manager size: VBO size %u iranges %zu max elt size %u drawcalls %u\n",
+#ifdef KICAD_GAL_PROFILE
+    wxLogTrace( traceGalProfile,
+              "Cached manager size: VBO size %u iranges %zu max elt size %u drawcalls %u",
               cached->AllItemsSize(), m_vranges.size(), m_indexBufMaxSize, drawCalls );
-    KI_TRACE( traceGalProfile, "Timing: %s\n", cntDraw.to_string() );
+    wxLogTrace( traceGalProfile, "Timing: %s", cntDraw.to_string() );
+#endif
 
     glBindBuffer( GL_ARRAY_BUFFER, 0 );
     cached->ClearDirty();

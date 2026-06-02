@@ -34,6 +34,7 @@
 
 #include <wx/wfstream.h>
 #include <wx/stdstream.h>
+#include <wx/base64.h>
 #include <wx/log.h>
 #include <glm/glm.hpp>
 
@@ -139,8 +140,8 @@ PCB_LAYER_ID PCB_IO_EASYEDAPRO_PARSER::LayerToKi( int aLayer )
     case 43: return In29_Cu;
     case 44: return In30_Cu;
 
-    case 48: return User_2; // Component shape layer
-    case 49: return User_3; // Component marking
+    case 48: return F_Fab; // Component shape layer
+    case 49: return F_Fab; // Component marking
 
     case 53: return User_4; // 3D shell outline
     case 54: return User_5; // 3D shell top
@@ -267,7 +268,7 @@ PCB_IO_EASYEDAPRO_PARSER::ParsePoly( BOARD_ITEM_CONTAINER* aContainer, nlohmann:
     std::vector<std::unique_ptr<PCB_SHAPE>> results;
 
     VECTOR2D prevPt;
-    for( int i = 0; i < polyData.size(); i++ )
+    for( int i = 0; i < (int) polyData.size(); i++ )
     {
         nlohmann::json val = polyData.at( i );
 
@@ -298,7 +299,7 @@ PCB_IO_EASYEDAPRO_PARSER::ParsePoly( BOARD_ITEM_CONTAINER* aContainer, nlohmann:
                 size.x = ( polyData.at( ++i ) );
                 size.y = -( polyData.at( ++i ).get<double>() );
                 double angle = polyData.at( ++i );
-                double cr = ( i + 1 ) < polyData.size() ? polyData.at( ++i ).get<double>() : 0;
+                double cr = ( i + 1 ) < (int) polyData.size() ? polyData.at( ++i ).get<double>() : 0;
 
                 if( cr == 0 )
                 {
@@ -402,7 +403,7 @@ PCB_IO_EASYEDAPRO_PARSER::ParsePoly( BOARD_ITEM_CONTAINER* aContainer, nlohmann:
                 SHAPE_LINE_CHAIN chain;
                 chain.Append( ScalePos( prevPt ) );
 
-                while( i < polyData.size() - 2 && polyData.at( i + 1 ).is_number() )
+                while( i < (int) polyData.size() - 2 && polyData.at( i + 1 ).is_number() )
                 {
                     VECTOR2D pt;
                     pt.x = ( polyData.at( ++i ) );
@@ -464,7 +465,7 @@ PCB_IO_EASYEDAPRO_PARSER::ParseContour( nlohmann::json polyData, bool aInFill,
     SHAPE_LINE_CHAIN result;
     VECTOR2D         prevPt;
 
-    for( int i = 0; i < polyData.size(); i++ )
+    for( int i = 0; i < (int) polyData.size(); i++ )
     {
         nlohmann::json val = polyData.at( i );
 
@@ -489,7 +490,7 @@ PCB_IO_EASYEDAPRO_PARSER::ParseContour( nlohmann::json polyData, bool aInFill,
                 size.x = ( polyData.at( ++i ) );
                 size.y = ( polyData.at( ++i ).get<double>() );
                 double angle = polyData.at( ++i );
-                double cr = ( i + 1 ) < polyData.size() ? polyData.at( ++i ).get<double>() : 0;
+                double cr = ( i + 1 ) < (int) polyData.size() ? polyData.at( ++i ).get<double>() : 0;
 
                 SHAPE_POLY_SET poly;
 
@@ -563,7 +564,7 @@ PCB_IO_EASYEDAPRO_PARSER::ParseContour( nlohmann::json polyData, bool aInFill,
             {
                 result.Append( ScalePos( prevPt ) );
 
-                while( i < polyData.size() - 2 && polyData.at( i + 1 ).is_number() )
+                while( i < (int) polyData.size() - 2 && polyData.at( i + 1 ).is_number() )
                 {
                     VECTOR2D pt;
                     pt.x = ( polyData.at( ++i ) );
@@ -617,13 +618,12 @@ std::unique_ptr<PAD> PCB_IO_EASYEDAPRO_PARSER::createPAD( FOOTPRINT*            
     pad->SetPosition( ScalePos( center ) );
     pad->SetOrientationDegrees( orientation );
 
-    if( !padHole.is_null() )
+    // Check if this pad has a real drill hole
+    // JLCEDA may use ["ROUND",0,0] to indicate SMD pads
+    bool hasHole = false;
+    
+    if( !padHole.is_null() && !padHole.empty() )
     {
-        double drill_dir = 0;
-
-        if( line.at( 14 ).is_number() )
-            drill_dir = line.at( 14 );
-
         wxString holeShape = padHole.at( 0 );
 
         if( holeShape == wxS( "ROUND" ) || holeShape == wxS( "SLOT" ) )
@@ -632,22 +632,35 @@ std::unique_ptr<PAD> PCB_IO_EASYEDAPRO_PARSER::createPAD( FOOTPRINT*            
             drill.x = padHole.at( 1 );
             drill.y = padHole.at( 2 );
 
-            double deg = EDA_ANGLE( drill_dir, DEGREES_T ).Normalize90().AsDegrees();
-
-            if( std::abs( deg ) >= 45 )
-                std::swap( drill.x, drill.y ); // KiCad doesn't support arbitrary hole direction
-
-            if( holeShape == wxS( "SLOT" ) )
+            // Only treat as PTH if hole size is non-zero
+            if( drill.x > 0 || drill.y > 0 )
             {
-                pad->SetDrillShape( PAD_DRILL_SHAPE::OBLONG );
-            }
+                hasHole = true;
 
-            pad->SetDrillSize( ScaleSize( drill ) );
-            pad->SetLayerSet( PAD::PTHMask() );
-            pad->SetAttribute( PAD_ATTRIB::PTH );
+                double drill_dir = 0;
+
+                if( line.at( 14 ).is_number() )
+                    drill_dir = line.at( 14 );
+
+                double deg = EDA_ANGLE( drill_dir, DEGREES_T ).Normalize90().AsDegrees();
+
+                if( std::abs( deg ) >= 45 )
+                    std::swap( drill.x, drill.y ); // KiCad doesn't support arbitrary hole direction
+
+                if( holeShape == wxS( "SLOT" ) )
+                {
+                    pad->SetDrillShape( PAD_DRILL_SHAPE::OBLONG );
+                }
+
+                pad->SetDrillSize( ScaleSize( drill ) );
+                pad->SetLayerSet( PAD::PTHMask() );
+                pad->SetAttribute( PAD_ATTRIB::PTH );
+            }
         }
     }
-    else
+    
+    // If no valid hole, this is an SMD pad
+    if( !hasHole )
     {
         if( klayer == F_Cu )
         {
@@ -699,7 +712,7 @@ std::unique_ptr<PAD> PCB_IO_EASYEDAPRO_PARSER::createPAD( FOOTPRINT*            
         pad->SetSize( PADSTACK::ALL_LAYERS, ScaleSize( size ) );
         pad->SetShape( PADSTACK::ALL_LAYERS, PAD_SHAPE::OVAL );
     }
-    else if( padSh == wxS( "POLY" ) )
+    else if( padSh == wxS( "POLY" ) || padSh == wxS( "POLYGON" ) )
     {
         pad->SetShape( PADSTACK::ALL_LAYERS, PAD_SHAPE::CUSTOM );
         pad->SetAnchorPadShape( PADSTACK::ALL_LAYERS, PAD_SHAPE::CIRCLE );
@@ -723,7 +736,7 @@ std::unique_ptr<PAD> PCB_IO_EASYEDAPRO_PARSER::createPAD( FOOTPRINT*            
 
     pad->SetThermalSpokeAngle( ANGLE_90 );
 
-    return std::move( pad );
+    return pad;
 }
 
 
@@ -788,10 +801,8 @@ FOOTPRINT* PCB_IO_EASYEDAPRO_PARSER::ParseFootprint( const nlohmann::json&      
             }
             else if( type == wxS( "FILL" ) )
             {
-                int          layer = line.at( 4 ).get<int>();
-                PCB_LAYER_ID klayer = LayerToKi( layer );
-
-                double width = line.at( 5 );
+                int          fillLayer = line.at( 4 ).get<int>();
+                PCB_LAYER_ID fillKlayer = LayerToKi( fillLayer );
 
                 nlohmann::json polyDataList = line.at( 7 );
 
@@ -821,8 +832,6 @@ FOOTPRINT* PCB_IO_EASYEDAPRO_PARSER::ParseFootprint( const nlohmann::json&      
                     if( polySet.OutlineCount() > 1 )
                         group = std::make_unique<PCB_GROUP>( footprint );
 
-                    BOX2I polyBBox = polySet.BBox();
-
                     for( const SHAPE_POLY_SET::POLYGON& poly : polySet.CPolygons() )
                     {
                         std::unique_ptr<PCB_SHAPE> shape =
@@ -830,7 +839,7 @@ FOOTPRINT* PCB_IO_EASYEDAPRO_PARSER::ParseFootprint( const nlohmann::json&      
 
                         shape->SetFilled( true );
                         shape->SetPolyShape( poly );
-                        shape->SetLayer( klayer );
+                        shape->SetLayer( fillKlayer );
                         shape->SetWidth( 0 );
 
                         if( group )
@@ -863,7 +872,6 @@ FOOTPRINT* PCB_IO_EASYEDAPRO_PARSER::ParseFootprint( const nlohmann::json&      
             int          layer = line.at( 3 ).get<int>();
             PCB_LAYER_ID klayer = LayerToKi( layer );
 
-            double         width = line.at( 4 );
             std::set<int>  flags = line.at( 5 );
             nlohmann::json polyDataList = line.at( 6 );
 
@@ -928,22 +936,61 @@ FOOTPRINT* PCB_IO_EASYEDAPRO_PARSER::ParseFootprint( const nlohmann::json&      
     }
 
     // Heal board outlines
-    std::vector<PCB_SHAPE*>                 shapes;
-    std::vector<std::unique_ptr<PCB_SHAPE>> newShapes;
+    std::vector<PCB_SHAPE*>                 edgeShapes;
 
     for( BOARD_ITEM* item : footprint->GraphicalItems() )
     {
-        if( !item->IsOnLayer( Edge_Cuts ) )
-            continue;
-
-        if( item->Type() == PCB_SHAPE_T )
-            shapes.push_back( static_cast<PCB_SHAPE*>( item ) );
+        if( item->IsOnLayer( Edge_Cuts ) && item->Type() == PCB_SHAPE_T )
+            edgeShapes.push_back( static_cast<PCB_SHAPE*>( item ) );
     }
 
-    ConnectBoardShapes( shapes, newShapes, SHAPE_JOIN_DISTANCE );
+    ConnectBoardShapes( edgeShapes, SHAPE_JOIN_DISTANCE );
 
-    for( std::unique_ptr<PCB_SHAPE>& ptr : newShapes )
-        footprint->Add( ptr.release(), ADD_MODE::APPEND );
+    // EasyEDA footprints don't have courtyard, so build a box ourselves
+    if( !footprint->IsOnLayer( F_CrtYd ) )
+    {
+        BOX2I bbox = footprint->GetLayerBoundingBox( { F_Cu, F_Fab, F_Paste, F_Mask, Edge_Cuts } );
+        bbox.Inflate( pcbIUScale.mmToIU( 0.25 ) ); // Default courtyard clearance
+
+        std::unique_ptr<PCB_SHAPE> shape =
+                std::make_unique<PCB_SHAPE>( footprint, SHAPE_T::RECTANGLE );
+
+        shape->SetWidth( pcbIUScale.mmToIU( DEFAULT_COURTYARD_WIDTH ) );
+        shape->SetLayer( F_CrtYd );
+        shape->SetStart( bbox.GetOrigin() );
+        shape->SetEnd( bbox.GetEnd() );
+
+        footprint->Add( shape.release(), ADD_MODE::APPEND );
+    }
+
+    bool hasFabRef = false;
+
+    for( BOARD_ITEM* item : footprint->GraphicalItems() )
+    {
+        if( item->Type() == PCB_TEXT_T && item->IsOnLayer( F_Fab ) )
+        {
+            if( static_cast<PCB_TEXT*>( item )->GetText() == wxT( "${REFERENCE}" ) )
+            {
+                hasFabRef = true;
+                break;
+            }
+        }
+    }
+
+    if( !hasFabRef )
+    {
+        // Add reference text field on F_Fab
+        int c_refTextSize = pcbIUScale.mmToIU( 0.5 );      // KLC min Fab text size
+        int c_refTextThickness = pcbIUScale.mmToIU( 0.1 ); // Decent text thickness
+        std::unique_ptr<PCB_TEXT> refText = std::make_unique<PCB_TEXT>( footprint );
+
+        refText->SetLayer( F_Fab );
+        refText->SetTextSize( VECTOR2I( c_refTextSize, c_refTextSize ) );
+        refText->SetTextThickness( c_refTextThickness );
+        refText->SetText( wxT( "${REFERENCE}" ) );
+
+        footprint->Add( refText.release(), ADD_MODE::APPEND );
+    }
 
     return footprintPtr.release();
 }
@@ -1006,8 +1053,6 @@ void PCB_IO_EASYEDAPRO_PARSER::ParseBoard(
             {
                 wxString units = ruleData.at( 0 );
                 double   minVal = ruleData.at( 1 );
-                double   optVal = ruleData.at( 2 );
-                double   maxVal = ruleData.at( 3 );
 
                 bds.m_TrackMinWidth = ScaleSize( minVal );
             }
@@ -1017,7 +1062,7 @@ void PCB_IO_EASYEDAPRO_PARSER::ParseBoard(
                 nlohmann::json table = ruleData.at( 1 );
 
                 int minVal = INT_MAX;
-                for( const std::vector<int>& arr : table )
+                for( const auto& arr : table )
                 {
                     for( int val : arr )
                     {
@@ -1137,8 +1182,6 @@ void PCB_IO_EASYEDAPRO_PARSER::ParseBoard(
                 int          layer = line.at( 4 ).get<int>();
                 PCB_LAYER_ID klayer = LayerToKi( layer );
 
-                double width = line.at( 5 );
-
                 nlohmann::json polyDataList = line.at( 7 );
 
                 if( !polyDataList.at( 0 ).is_array() )
@@ -1200,7 +1243,6 @@ void PCB_IO_EASYEDAPRO_PARSER::ParseBoard(
                 int          layer = line.at( 4 ).get<int>();
                 PCB_LAYER_ID klayer = LayerToKi( layer );
 
-                double         lineWidth = line.at( 5 ); // Doesn't matter
                 wxString       pourname = line.at( 6 );
                 int            fillOrder = line.at( 7 ).get<int>();
                 nlohmann::json polyDataList = line.at( 8 );
@@ -1268,7 +1310,6 @@ void PCB_IO_EASYEDAPRO_PARSER::ParseBoard(
             int          layer = line.at( 3 ).get<int>();
             PCB_LAYER_ID klayer = LayerToKi( layer );
 
-            double         width = line.at( 4 );
             std::set<int>  flags = line.at( 5 );
             nlohmann::json polyDataList = line.at( 6 );
 
@@ -1746,11 +1787,10 @@ void PCB_IO_EASYEDAPRO_PARSER::ParseBoard(
             for( auto& it = range.first; it != range.second; ++it )
             {
                 const EASYEDAPRO::POURED& poured = it->second;
-                int                       unki = poured.unki;
 
                 SHAPE_POLY_SET thisPoly;
 
-                for( int dataId = 0; dataId < poured.polyData.size(); dataId++ )
+                for( int dataId = 0; dataId < (int) poured.polyData.size(); dataId++ )
                 {
                     const nlohmann::json& fillData = poured.polyData[dataId];
                     const double          ptScale = 10;
@@ -1816,8 +1856,7 @@ void PCB_IO_EASYEDAPRO_PARSER::ParseBoard(
     }
 
     // Heal board outlines
-    std::vector<PCB_SHAPE*>                 shapes;
-    std::vector<std::unique_ptr<PCB_SHAPE>> newShapes;
+    std::vector<PCB_SHAPE*> shapes;
 
     for( BOARD_ITEM* item : aBoard->Drawings() )
     {
@@ -1828,13 +1867,10 @@ void PCB_IO_EASYEDAPRO_PARSER::ParseBoard(
             shapes.push_back( static_cast<PCB_SHAPE*>( item ) );
     }
 
-    ConnectBoardShapes( shapes, newShapes, SHAPE_JOIN_DISTANCE );
-
-    for( std::unique_ptr<PCB_SHAPE>& ptr : newShapes )
-        aBoard->Add( ptr.release(), ADD_MODE::APPEND );
+    ConnectBoardShapes( shapes, SHAPE_JOIN_DISTANCE );
 
     // Center the board
-    BOX2I     outlineBbox = aBoard->ComputeBoundingBox( true );
+    BOX2I     outlineBbox = aBoard->ComputeBoundingBox( true, true );
     PAGE_INFO pageInfo = aBoard->GetPageSettings();
 
     VECTOR2D pageCenter( pcbIUScale.MilsToIU( pageInfo.GetWidthMils() / 2 ),

@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////
-// C++ code generated with wxFormBuilder (version 4.2.1-0-g80c4cb6)
+// C++ code generated with wxFormBuilder (version 4.2.1-0-g80c4cb6a-dirty)
 // http://www.wxformbuilder.org/
 //
 // PLEASE DO *NOT* EDIT THIS FILE!
@@ -10,7 +10,6 @@
 #include <wx/artprov.h>
 #include <wx/xrc/xmlres.h>
 #include <wx/intl.h>
-class STD_BITMAP_BUTTON;
 class UNIT_SELECTOR_ANGLE;
 class UNIT_SELECTOR_FREQUENCY;
 class UNIT_SELECTOR_LEN;
@@ -29,12 +28,13 @@ class UNIT_SELECTOR_RESISTOR;
 #include <wx/statbmp.h>
 #include <wx/sizer.h>
 #include <wx/stattext.h>
-#include <wx/textctrl.h>
-#include <wx/button.h>
 #include <wx/choice.h>
+#include <wx/checkbox.h>
+#include <wx/textctrl.h>
+#include <wx/statline.h>
+#include <wx/button.h>
 #include <wx/statbox.h>
 #include <wx/radiobut.h>
-#include <wx/bmpbuttn.h>
 #include <wx/panel.h>
 
 ///////////////////////////////////////////////////////////////////////////
@@ -49,6 +49,20 @@ class PANEL_TRANSLINE_BASE : public CALCULATOR_PANEL
 	protected:
 		wxRadioBox* m_TranslineSelection;
 		wxStaticBitmap* m_translineBitmap;
+		wxStaticText* m_dielectricModelLabel;
+		wxChoice* m_dielectricModelChoice;
+		wxCheckBox* m_soldermaskPresentCheck;
+		wxCheckBox* m_soldermaskFillsGapsCheck;
+		wxStaticText* m_soldermaskThicknessLabel;
+		wxTextCtrl* m_soldermaskThicknessValue;
+		wxStaticText* m_soldermaskThicknessUnit;
+		wxStaticText* m_soldermaskEpsilonRLabel;
+		wxTextCtrl* m_soldermaskEpsilonRValue;
+		wxStaticText* m_soldermaskTanDLabel;
+		wxTextCtrl* m_soldermaskTanDValue;
+		wxStaticLine* m_staticline1;
+		wxStaticLine* m_staticline2;
+		wxStaticLine* m_staticline3;
 		wxStaticText* m_EpsilonR_label;
 		wxTextCtrl* m_Value_EpsilonR;
 		wxButton* m_button_EpsilonR;
@@ -80,6 +94,9 @@ class PANEL_TRANSLINE_BASE : public CALCULATOR_PANEL
 		wxStaticText* m_Frequency_label;
 		wxTextCtrl* m_Value_Frequency_Ctrl;
 		UNIT_SELECTOR_FREQUENCY* m_choiceUnit_Frequency;
+		wxStaticText* m_SpecFrequency_label;
+		wxTextCtrl* m_Value_SpecFrequency_Ctrl;
+		UNIT_SELECTOR_FREQUENCY* m_choiceUnit_SpecFrequency;
 		wxStaticBitmap* m_bmCMicrostripZoddZeven;
 		wxStaticText* m_phys_prm1_label;
 		wxTextCtrl* m_Phys_prm1_Value;
@@ -93,9 +110,7 @@ class PANEL_TRANSLINE_BASE : public CALCULATOR_PANEL
 		wxTextCtrl* m_Phys_prm3_Value;
 		UNIT_SELECTOR_LEN* m_choiceUnit_Param3;
 		wxButton* m_AnalyseButton;
-		STD_BITMAP_BUTTON* m_bpButtonAnalyze;
 		wxButton* m_SynthetizeButton;
-		STD_BITMAP_BUTTON* m_bpButtonSynthetize;
 		wxStaticText* m_elec_prm1_label;
 		wxTextCtrl* m_Elec_prm1_Value;
 		UNIT_SELECTOR_RESISTOR* m_choiceUnit_ElecPrm1;
@@ -129,6 +144,8 @@ class PANEL_TRANSLINE_BASE : public CALCULATOR_PANEL
 
 		// Virtual event handlers, override them in your derived class
 		virtual void OnTranslineSelection( wxCommandEvent& event ) { event.Skip(); }
+		virtual void OnDielectricModelChanged( wxCommandEvent& event ) { event.Skip(); }
+		virtual void OnSoldermaskChanged( wxCommandEvent& event ) { event.Skip(); }
 		virtual void OnTranslineEpsilonR_Button( wxCommandEvent& event ) { event.Skip(); }
 		virtual void OnTranslineTanD_Button( wxCommandEvent& event ) { event.Skip(); }
 		virtual void OnTranslineRho_Button( wxCommandEvent& event ) { event.Skip(); }

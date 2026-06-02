@@ -25,18 +25,24 @@
 #include <pcb_generator.h>
 #include <generators_mgr.h>
 
+#include <functional>
 #include <optional>
 #include <magic_enum.hpp>
 
 #include <wx/debug.h>
+#include <wx/log.h>
+
 #include <gal/graphics_abstraction_layer.h>
 #include <geometry/shape_circle.h>
+#include <geometry/geometry_utils.h>
 #include <kiplatform/ui.h>
 #include <dialogs/dialog_unit_entry.h>
 #include <collectors.h>
 #include <scoped_set_reset.h>
 #include <core/mirror.h>
+#include <string_utils.h>
 
+#include <board.h>
 #include <board_design_settings.h>
 #include <drc/drc_engine.h>
 #include <pcb_track.h>
@@ -44,6 +50,7 @@
 #include <pcb_group.h>
 
 #include <tool/edit_points.h>
+#include <tool/tool_manager.h>
 #include <tools/drawing_tool.h>
 #include <tools/generator_tool.h>
 #include <tools/pcb_picker_tool.h>
@@ -67,521 +74,183 @@
 
 #include <dialogs/dialog_tuning_pattern_properties.h>
 
-#include <wx/log.h>
+#include <generators/pcb_tuning_pattern.h>
+#include <project/project_file.h>
+#include <project/tuning_profiles.h>
+#include <properties/property.h>
+#include <properties/property_mgr.h>
+
+TUNING_STATUS_VIEW_ITEM::TUNING_STATUS_VIEW_ITEM( PCB_BASE_EDIT_FRAME* aFrame ) :
+        EDA_ITEM( NOT_USED ), // Never added to anything - just a preview
+        m_frame( aFrame ),
+        m_min( 0.0 ),
+        m_max( 0.0 ),
+        m_current( 0.0 ),
+        m_isTimeDomain( false )
+{ }
 
 
-enum LENGTH_TUNING_MODE
+wxString TUNING_STATUS_VIEW_ITEM::GetClass() const
 {
-    SINGLE,
-    DIFF_PAIR,
-    DIFF_PAIR_SKEW
-};
-
-
-class TUNING_STATUS_VIEW_ITEM : public EDA_ITEM
-{
-public:
-    TUNING_STATUS_VIEW_ITEM( PCB_BASE_EDIT_FRAME* aFrame ) :
-            EDA_ITEM( NOT_USED ), // Never added to anything - just a preview
-            m_frame( aFrame ), m_min( 0.0 ), m_max( 0.0 ), m_current( 0.0 ), m_isTimeDomain( false )
-    { }
-
-    wxString GetClass() const override { return wxT( "TUNING_STATUS" ); }
+    return wxT( "TUNING_STATUS" );
+}
 
 #if defined(DEBUG)
-    void Show( int nestLevel, std::ostream& os ) const override {}
+void TUNING_STATUS_VIEW_ITEM::Show( int nestLevel, std::ostream& os ) const  {}
 #endif
 
-    VECTOR2I GetPosition() const override { return m_pos; }
-    void     SetPosition( const VECTOR2I& aPos ) override { m_pos = aPos; };
 
-    void SetMinMax( const double aMin, const double aMax )
+VECTOR2I TUNING_STATUS_VIEW_ITEM::GetPosition() const  { return m_pos; }
+void     TUNING_STATUS_VIEW_ITEM::SetPosition( const VECTOR2I& aPos )  { m_pos = aPos; };
+
+
+void TUNING_STATUS_VIEW_ITEM::SetMinMax( const double aMin, const double aMax )
+{
+    const EDA_DATA_TYPE unitType = m_isTimeDomain ? EDA_DATA_TYPE::TIME : EDA_DATA_TYPE::DISTANCE;
+
+    m_min = aMin;
+    m_minText = m_frame->MessageTextFromValue( m_min, false, unitType );
+    m_max = aMax;
+    m_maxText = m_frame->MessageTextFromValue( m_max, false, unitType );
+}
+
+
+void TUNING_STATUS_VIEW_ITEM::ClearMinMax()
+{
+    m_min = 0.0;
+    m_minText = wxT( "---" );
+    m_max = std::numeric_limits<double>::max();
+    m_maxText = wxT( "---" );
+}
+
+
+void TUNING_STATUS_VIEW_ITEM::SetCurrent( const double aCurrent, const wxString& aLabel )
+{
+    const EDA_DATA_TYPE unitType = m_isTimeDomain ? EDA_DATA_TYPE::TIME : EDA_DATA_TYPE::DISTANCE;
+
+    m_current = aCurrent;
+    m_currentText = m_frame->MessageTextFromValue( aCurrent, true, unitType );
+    m_currentLabel = aLabel;
+}
+
+
+void TUNING_STATUS_VIEW_ITEM::SetIsTimeDomain( const bool aIsTimeDomain )
+{
+    m_isTimeDomain = aIsTimeDomain;
+}
+
+
+const BOX2I TUNING_STATUS_VIEW_ITEM::ViewBBox() const
+{
+    BOX2I tmp;
+
+    // this is an edit-time artefact; no reason to try and be smart with the bounding box
+    // (besides, we can't tell the text extents without a view to know what the scale is)
+    tmp.SetMaximum();
+    return tmp;
+}
+
+
+std::vector<int> TUNING_STATUS_VIEW_ITEM::ViewGetLayers() const
+{
+    return { LAYER_UI_START, LAYER_UI_START + 1 };
+}
+
+
+void TUNING_STATUS_VIEW_ITEM::ViewDraw( int aLayer, KIGFX::VIEW* aView ) const
+{
+    KIGFX::GAL* gal = aView->GetGAL();
+    bool        viewFlipped = gal->IsFlippedX();
+    bool        drawingDropShadows = ( aLayer == LAYER_UI_START );
+
+    gal->Save();
+    gal->Scale( { 1., 1. } );
+
+    KIGFX::PREVIEW::TEXT_DIMS headerDims = KIGFX::PREVIEW::GetConstantGlyphHeight( gal, -2 );
+    KIGFX::PREVIEW::TEXT_DIMS textDims = KIGFX::PREVIEW::GetConstantGlyphHeight( gal, -1 );
+    KIFONT::FONT*             font = KIFONT::FONT::GetFont();
+    const KIFONT::METRICS&    fontMetrics = KIFONT::METRICS::Default();
+    TEXT_ATTRIBUTES           textAttrs;
+
+    int      glyphWidth = textDims.GlyphSize.x;
+    VECTOR2I margin( KiROUND( glyphWidth * 0.4 ), glyphWidth );
+    VECTOR2I size( glyphWidth * 25 + margin.x * 2, headerDims.GlyphSize.y + textDims.GlyphSize.y );
+    VECTOR2I offset( margin.x * 2, -( size.y + margin.y * 2 ) );
+
+    if( drawingDropShadows )
     {
-        const EDA_DATA_TYPE unitType = m_isTimeDomain ? EDA_DATA_TYPE::TIME : EDA_DATA_TYPE::DISTANCE;
-
-        m_min = aMin;
-        m_minText = m_frame->MessageTextFromValue( m_min, false, unitType );
-        m_max = aMax;
-        m_maxText = m_frame->MessageTextFromValue( m_max, false, unitType );
-    }
-
-    void ClearMinMax()
-    {
-        m_min = 0.0;
-        m_minText = wxT( "---" );
-        m_max = std::numeric_limits<double>::max();
-        m_maxText = wxT( "---" );
-    }
-
-    void SetCurrent( const double aCurrent, const wxString& aLabel )
-    {
-        const EDA_DATA_TYPE unitType = m_isTimeDomain ? EDA_DATA_TYPE::TIME : EDA_DATA_TYPE::DISTANCE;
-
-        m_current = aCurrent;
-        m_currentText = m_frame->MessageTextFromValue( aCurrent, true, unitType );
-        m_currentLabel = aLabel;
-    }
-
-    void SetIsTimeDomain( const bool aIsTimeDomain ) { m_isTimeDomain = aIsTimeDomain; }
-
-    const BOX2I ViewBBox() const override
-    {
-        BOX2I tmp;
-
-        // this is an edit-time artefact; no reason to try and be smart with the bounding box
-        // (besides, we can't tell the text extents without a view to know what the scale is)
-        tmp.SetMaximum();
-        return tmp;
-    }
-
-    std::vector<int> ViewGetLayers() const override
-    {
-        return { LAYER_UI_START, LAYER_UI_START + 1 };
-    }
-
-    void ViewDraw( int aLayer, KIGFX::VIEW* aView ) const override
-    {
-        KIGFX::GAL* gal = aView->GetGAL();
-        bool        viewFlipped = gal->IsFlippedX();
-        bool        drawingDropShadows = ( aLayer == LAYER_UI_START );
-
-        gal->Save();
-        gal->Scale( { 1., 1. } );
-
-        KIGFX::PREVIEW::TEXT_DIMS headerDims = KIGFX::PREVIEW::GetConstantGlyphHeight( gal, -2 );
-        KIGFX::PREVIEW::TEXT_DIMS textDims = KIGFX::PREVIEW::GetConstantGlyphHeight( gal, -1 );
-        KIFONT::FONT*             font = KIFONT::FONT::GetFont();
-        const KIFONT::METRICS&    fontMetrics = KIFONT::METRICS::Default();
-        TEXT_ATTRIBUTES           textAttrs;
-
-        int      glyphWidth = textDims.GlyphSize.x;
-        VECTOR2I margin( KiROUND( glyphWidth * 0.4 ), KiROUND( glyphWidth ) );
-        VECTOR2I size( glyphWidth * 25 + margin.x * 2, headerDims.GlyphSize.y + textDims.GlyphSize.y );
-        VECTOR2I offset( margin.x * 2, -( size.y + margin.y * 2 ) );
-
-        if( drawingDropShadows )
-        {
-            gal->SetIsFill( true );
-            gal->SetIsStroke( true );
-            gal->SetLineWidth( gal->GetScreenWorldMatrix().GetScale().x * 2 );
-            gal->SetStrokeColor( wxSystemSettings::GetColour( wxSYS_COLOUR_BTNTEXT ) );
-            KIGFX::COLOR4D bgColor( wxSystemSettings::GetColour( wxSYS_COLOUR_BTNFACE ) );
-            gal->SetFillColor( bgColor.WithAlpha( 0.9 ) );
-
-            gal->DrawRectangle( GetPosition() + offset - margin,
-                                GetPosition() + offset + size + margin );
-            gal->Restore();
-            return;
-        }
-
-        COLOR4D bg = wxSystemSettings::GetColour( wxSYS_COLOUR_BTNFACE );
-        COLOR4D normal = wxSystemSettings::GetColour( wxSYS_COLOUR_BTNTEXT );
-        COLOR4D red;
-
-        // Choose a red with reasonable contrasting with the background
-        double  bg_h, bg_s, bg_l;
-        bg.ToHSL( bg_h, bg_s, bg_l );
-        red.FromHSL( 0, 1.0, bg_l < 0.5 ? 0.7 : 0.3 );
-
-        if( viewFlipped )
-            textAttrs.m_Halign = GR_TEXT_H_ALIGN_RIGHT;
-        else
-            textAttrs.m_Halign = GR_TEXT_H_ALIGN_LEFT;
-
-        gal->SetIsFill( false );
+        gal->SetIsFill( true );
         gal->SetIsStroke( true );
-        gal->SetStrokeColor( normal );
+        gal->SetLineWidth( gal->GetScreenWorldMatrix().GetScale().x * 2 );
+        gal->SetStrokeColor( wxSystemSettings::GetColour( wxSYS_COLOUR_BTNTEXT ) );
+        KIGFX::COLOR4D bgColor( wxSystemSettings::GetColour( wxSYS_COLOUR_BTNFACE ) );
+        gal->SetFillColor( bgColor.WithAlpha( 0.9 ) );
+
+        gal->DrawRectangle( GetPosition() + offset - margin,
+                            GetPosition() + offset + size + margin );
+        gal->Restore();
+        return;
+    }
+
+    COLOR4D bg = wxSystemSettings::GetColour( wxSYS_COLOUR_BTNFACE );
+    COLOR4D normal = wxSystemSettings::GetColour( wxSYS_COLOUR_BTNTEXT );
+    COLOR4D red;
+    COLOR4D green;
+
+    double bg_h, bg_s, bg_l;
+    bg.ToHSL( bg_h, bg_s, bg_l );
+
+    // Choose colors with reasonable contrasting with the background
+    red.FromHSL( 0.0, 1.0, bg_l < 0.5 ? 0.7 : 0.3 );
+    green.FromHSL( 120.0, 1.0, bg_l < 0.5 ? 0.8 : 0.2 );
+
+    if( viewFlipped )
+        textAttrs.m_Halign = GR_TEXT_H_ALIGN_RIGHT;
+    else
         textAttrs.m_Halign = GR_TEXT_H_ALIGN_LEFT;
 
-        // Prevent text flipping when view is flipped
-        if( gal->IsFlippedX() )
-        {
-            textAttrs.m_Mirrored = true;
-            textAttrs.m_Halign = GR_TEXT_H_ALIGN_RIGHT;
-        }
+    gal->SetIsFill( false );
+    gal->SetIsStroke( true );
+    gal->SetStrokeColor( normal );
+    textAttrs.m_Halign = GR_TEXT_H_ALIGN_LEFT;
 
-        textAttrs.m_Size = headerDims.GlyphSize;
-        textAttrs.m_StrokeWidth = headerDims.StrokeWidth;
-
-        VECTOR2I textPos = GetPosition() + offset;
-        font->Draw( gal, m_currentLabel, textPos, textAttrs, KIFONT::METRICS::Default() );
-
-        textPos.x += glyphWidth * 11 + margin.x;
-        font->Draw( gal, _( "min" ), textPos, textAttrs, fontMetrics );
-
-        textPos.x += glyphWidth * 7 + margin.x;
-        font->Draw( gal, _( "max" ), textPos, textAttrs, fontMetrics );
-
-        textAttrs.m_Size = textDims.GlyphSize;
-        textAttrs.m_StrokeWidth = textDims.StrokeWidth;
-
-        textPos = GetPosition() + offset;
-        textPos.y += KiROUND( headerDims.LinePitch * 1.3 );
-        font->Draw( gal, m_currentText, textPos, textAttrs, KIFONT::METRICS::Default() );
-
-        textPos.x += glyphWidth * 11 + margin.x;
-        gal->SetStrokeColor( m_current < m_min ? red : normal );
-        font->Draw( gal, m_minText, textPos, textAttrs, fontMetrics );
-
-        textPos.x += glyphWidth * 7 + margin.x;
-        gal->SetStrokeColor( m_current > m_max ? red : normal );
-        font->Draw( gal, m_maxText, textPos, textAttrs, fontMetrics );
-
-        gal->Restore();
-    }
-
-protected:
-    EDA_DRAW_FRAME* m_frame;
-    VECTOR2I        m_pos;
-    double          m_min;
-    double          m_max;
-    double          m_current;
-    wxString        m_currentLabel;
-    wxString        m_currentText;
-    wxString        m_minText;
-    wxString        m_maxText;
-    bool            m_isTimeDomain;
-};
-
-
-class PCB_TUNING_PATTERN : public PCB_GENERATOR
-{
-public:
-    static const wxString GENERATOR_TYPE;
-    static const wxString DISPLAY_NAME;
-
-    PCB_TUNING_PATTERN( BOARD_ITEM* aParent = nullptr, PCB_LAYER_ID aLayer = F_Cu,
-                        LENGTH_TUNING_MODE aMode = LENGTH_TUNING_MODE::SINGLE );
-
-    wxString GetGeneratorType() const override { return wxS( "tuning_pattern" ); }
-
-    wxString GetItemDescription( UNITS_PROVIDER* aUnitsProvider, bool aFull ) const override
+    // Prevent text flipping when view is flipped
+    if( gal->IsFlippedX() )
     {
-        return wxString( _( "Tuning Pattern" ) );
+        textAttrs.m_Mirrored = true;
+        textAttrs.m_Halign = GR_TEXT_H_ALIGN_RIGHT;
     }
 
-    wxString GetFriendlyName() const override
-    {
-        return wxString( _( "Tuning Pattern" ) );
-    }
+    textAttrs.m_Size = headerDims.GlyphSize;
+    textAttrs.m_StrokeWidth = headerDims.StrokeWidth;
 
-    wxString GetPluralName() const override
-    {
-        return wxString( _( "Tuning Patterns" ) );
-    }
+    VECTOR2I textPos = GetPosition() + offset;
+    font->Draw( gal, m_currentLabel, textPos, textAttrs, KIFONT::METRICS::Default() );
 
-    BITMAPS GetMenuImage() const override
-    {
-        switch( m_tuningMode )
-        {
-        case SINGLE:         return BITMAPS::ps_tune_length;           break;
-        case DIFF_PAIR:      return BITMAPS::ps_diff_pair_tune_length; break;
-        case DIFF_PAIR_SKEW: return BITMAPS::ps_diff_pair_tune_phase;  break;
-        }
+    textPos.x += glyphWidth * 11 + margin.x;
+    font->Draw( gal, _( "min" ), textPos, textAttrs, fontMetrics );
 
-        return BITMAPS::unknown;
-    }
+    textPos.x += glyphWidth * 7 + margin.x;
+    font->Draw( gal, _( "max" ), textPos, textAttrs, fontMetrics );
 
-    static PCB_TUNING_PATTERN* CreateNew( GENERATOR_TOOL* aTool, PCB_BASE_EDIT_FRAME* aFrame,
-                                          BOARD_CONNECTED_ITEM* aStartItem,
-                                          LENGTH_TUNING_MODE aMode );
+    textAttrs.m_Size = textDims.GlyphSize;
+    textAttrs.m_StrokeWidth = textDims.StrokeWidth;
 
-    void EditStart( GENERATOR_TOOL* aTool, BOARD* aBoard, BOARD_COMMIT* aCommit ) override;
+    textPos = GetPosition() + offset;
+    textPos.y += KiROUND( headerDims.LinePitch * 1.3 );
+    gal->SetStrokeColor( m_current < m_min || m_current > m_max ? red : green );
+    font->Draw( gal, m_currentText, textPos, textAttrs, KIFONT::METRICS::Default() );
 
-    bool Update( GENERATOR_TOOL* aTool, BOARD* aBoard, BOARD_COMMIT* aCommit ) override;
+    textPos.x += glyphWidth * 11 + margin.x;
+    gal->SetStrokeColor( m_current < m_min ? red : green );
+    font->Draw( gal, m_minText, textPos, textAttrs, fontMetrics );
 
-    void EditPush( GENERATOR_TOOL* aTool, BOARD* aBoard, BOARD_COMMIT* aCommit,
-                   const wxString& aCommitMsg = wxEmptyString, int aCommitFlags = 0 ) override;
+    textPos.x += glyphWidth * 7 + margin.x;
+    gal->SetStrokeColor( m_current > m_max ? red : green );
+    font->Draw( gal, m_maxText, textPos, textAttrs, fontMetrics );
 
-    void EditRevert( GENERATOR_TOOL* aTool, BOARD* aBoard, BOARD_COMMIT* aCommit ) override;
-
-    void Remove( GENERATOR_TOOL* aTool, BOARD* aBoard, BOARD_COMMIT* aCommit ) override;
-
-    bool MakeEditPoints( EDIT_POINTS& points ) const override;
-
-    bool UpdateFromEditPoints( EDIT_POINTS& aEditPoints ) override;
-
-    bool UpdateEditPoints( EDIT_POINTS& aEditPoints ) override;
-
-    void Move( const VECTOR2I& aMoveVector ) override
-    {
-        m_origin += aMoveVector;
-        m_end += aMoveVector;
-
-        if( !this->HasFlag( IN_EDIT ) )
-        {
-            PCB_GROUP::Move( aMoveVector );
-
-            if( m_baseLine )
-                m_baseLine->Move( aMoveVector );
-
-            if( m_baseLineCoupled )
-                m_baseLineCoupled->Move( aMoveVector );
-        }
-    }
-
-    void Rotate( const VECTOR2I& aRotCentre, const EDA_ANGLE& aAngle ) override
-    {
-        if( !this->HasFlag( IN_EDIT ) )
-        {
-            PCB_GENERATOR::Rotate( aRotCentre, aAngle );
-            RotatePoint( m_end, aRotCentre, aAngle );
-
-            if( m_baseLine )
-                m_baseLine->Rotate( aAngle, aRotCentre );
-
-            if( m_baseLineCoupled )
-                m_baseLineCoupled->Rotate( aAngle, aRotCentre );
-        }
-    }
-
-    void Flip( const VECTOR2I& aCentre, FLIP_DIRECTION aFlipDirection ) override
-    {
-        if( !this->HasFlag( IN_EDIT ) )
-        {
-            PCB_GENERATOR::Flip( aCentre, aFlipDirection );
-
-            baseMirror( aCentre, aFlipDirection );
-        }
-    }
-
-    void Mirror( const VECTOR2I& aCentre, FLIP_DIRECTION aFlipDirection ) override
-    {
-        if( !this->HasFlag( IN_EDIT ) )
-        {
-            PCB_GENERATOR::Mirror( aCentre, aFlipDirection );
-
-            baseMirror( aCentre, aFlipDirection );
-        }
-    }
-
-    const BOX2I GetBoundingBox() const override
-    {
-        return getOutline().BBox();
-    }
-
-    std::vector<int> ViewGetLayers() const override
-    {
-        return { LAYER_ANCHOR, GetLayer() };
-    }
-
-    bool HitTest( const VECTOR2I& aPosition, int aAccuracy = 0 ) const override
-    {
-        return getOutline().Collide( aPosition, aAccuracy );
-    }
-
-    bool HitTest( const BOX2I& aRect, bool aContained, int aAccuracy ) const override
-    {
-        BOX2I sel = aRect;
-
-        if ( aAccuracy )
-            sel.Inflate( aAccuracy );
-
-        if( aContained )
-            return sel.Contains( GetBoundingBox() );
-
-        return sel.Intersects( GetBoundingBox() );
-    }
-
-    const BOX2I ViewBBox() const override { return GetBoundingBox(); }
-
-    EDA_ITEM* Clone() const override { return new PCB_TUNING_PATTERN( *this ); }
-
-    void ViewDraw( int aLayer, KIGFX::VIEW* aView ) const override final;
-
-    const VECTOR2I& GetEnd() const { return m_end; }
-    void            SetEnd( const VECTOR2I& aValue ) { m_end = aValue; }
-
-    int  GetEndX() const { return m_end.x; }
-    void SetEndX( int aValue ) { m_end.x = aValue; }
-
-    int  GetEndY() const { return m_end.y; }
-    void SetEndY( int aValue ) { m_end.y = aValue; }
-
-    LENGTH_TUNING_MODE GetTuningMode() const { return m_tuningMode; }
-
-    PNS::ROUTER_MODE GetPNSMode()
-    {
-        switch( m_tuningMode )
-        {
-        case LENGTH_TUNING_MODE::SINGLE:         return PNS::PNS_MODE_TUNE_SINGLE;
-        case LENGTH_TUNING_MODE::DIFF_PAIR:      return PNS::PNS_MODE_TUNE_DIFF_PAIR;
-        case LENGTH_TUNING_MODE::DIFF_PAIR_SKEW: return PNS::PNS_MODE_TUNE_DIFF_PAIR_SKEW;
-        default:                                 return PNS::PNS_MODE_TUNE_SINGLE;
-        }
-    }
-
-    PNS::MEANDER_SETTINGS& GetSettings() { return m_settings; }
-
-    int  GetMinAmplitude() const { return m_settings.m_minAmplitude; }
-    void SetMinAmplitude( int aValue )
-    {
-        aValue = std::max( aValue, 0 );
-
-        m_settings.m_minAmplitude = aValue;
-
-        if( m_settings.m_maxAmplitude < m_settings.m_minAmplitude )
-            m_settings.m_maxAmplitude = m_settings.m_minAmplitude;
-    }
-
-    int  GetMaxAmplitude() const { return m_settings.m_maxAmplitude; }
-    void SetMaxAmplitude( int aValue )
-    {
-        aValue = std::max( aValue, 0 );
-
-        m_settings.m_maxAmplitude = aValue;
-
-        if( m_settings.m_maxAmplitude < m_settings.m_minAmplitude )
-            m_settings.m_minAmplitude = m_settings.m_maxAmplitude;
-    }
-
-    // Update the initial side one time at EditStart based on m_end.
-    void UpdateSideFromEnd() { m_updateSideFromEnd = true; }
-
-    PNS::MEANDER_SIDE GetInitialSide() const { return m_settings.m_initialSide; }
-    void              SetInitialSide( PNS::MEANDER_SIDE aValue ) { m_settings.m_initialSide = aValue; }
-
-    int  GetSpacing() const { return m_settings.m_spacing; }
-    void SetSpacing( int aValue ) { m_settings.m_spacing = aValue; }
-
-    std::optional<int> GetTargetLength() const
-    {
-        if( m_settings.m_targetLength.Opt() == PNS::MEANDER_SETTINGS::LENGTH_UNCONSTRAINED )
-            return std::optional<int>();
-        else
-            return m_settings.m_targetLength.Opt();
-    }
-
-    void SetTargetLength( std::optional<int> aValue )
-    {
-        m_settings.m_isTimeDomain = false;
-
-        if( aValue.has_value() )
-            m_settings.SetTargetLength( aValue.value() );
-        else
-            m_settings.SetTargetLength( PNS::MEANDER_SETTINGS::LENGTH_UNCONSTRAINED );
-    }
-
-    std::optional<int> GetTargetDelay() const
-    {
-        if( m_settings.m_targetLengthDelay.Opt() == PNS::MEANDER_SETTINGS::DELAY_UNCONSTRAINED )
-            return std::optional<int>();
-        else
-            return m_settings.m_targetLengthDelay.Opt();
-    }
-
-    void SetTargetDelay( std::optional<int> aValue )
-    {
-        m_settings.m_isTimeDomain = true;
-
-        if( aValue.has_value() )
-            m_settings.SetTargetLengthDelay( aValue.value() );
-        else
-            m_settings.SetTargetLengthDelay( PNS::MEANDER_SETTINGS::DELAY_UNCONSTRAINED );
-    }
-
-    int  GetTargetSkew() const { return m_settings.m_targetSkew.Opt(); }
-    void SetTargetSkew( int aValue ) { m_settings.SetTargetSkew( aValue ); }
-
-    int  GetTargetSkewDelay() const { return m_settings.m_targetSkewDelay.Opt(); }
-    void SetTargetSkewDelay( int aValue ) { m_settings.SetTargetSkewDelay( aValue ); }
-
-    bool GetOverrideCustomRules() const { return m_settings.m_overrideCustomRules; }
-    void SetOverrideCustomRules( bool aOverride ) { m_settings.m_overrideCustomRules = aOverride; }
-
-    int  GetCornerRadiusPercentage() const { return m_settings.m_cornerRadiusPercentage; }
-    void SetCornerRadiusPercentage( int aValue ) { m_settings.m_cornerRadiusPercentage = aValue; }
-
-    bool IsSingleSided() const { return m_settings.m_singleSided; }
-    void SetSingleSided( bool aValue ) { m_settings.m_singleSided = aValue; }
-
-    bool IsRounded() const { return m_settings.m_cornerStyle == PNS::MEANDER_STYLE_ROUND; }
-    void SetRounded( bool aFlag ) { m_settings.m_cornerStyle = aFlag ? PNS::MEANDER_STYLE_ROUND
-                                                                     : PNS::MEANDER_STYLE_CHAMFER; }
-
-    std::vector<std::pair<wxString, wxVariant>> GetRowData() override
-    {
-        std::vector<std::pair<wxString, wxVariant>> data = PCB_GENERATOR::GetRowData();
-        data.emplace_back( _HKI( "Net" ), m_lastNetName );
-        data.emplace_back( _HKI( "Tuning" ), m_tuningInfo );
-        return data;
-    }
-
-    const STRING_ANY_MAP GetProperties() const override;
-    void SetProperties( const STRING_ANY_MAP& aProps ) override;
-
-    void ShowPropertiesDialog( PCB_BASE_EDIT_FRAME* aEditFrame ) override;
-
-    std::vector<EDA_ITEM*> GetPreviewItems( GENERATOR_TOOL* aTool, PCB_BASE_EDIT_FRAME* aFrame,
-                                            bool aStatusItemsOnly = false ) override;
-
-    void GetMsgPanelInfo( EDA_DRAW_FRAME* aFrame, std::vector<MSG_PANEL_ITEM>& aList ) override;
-
-protected:
-    void swapData( BOARD_ITEM* aImage ) override
-    {
-        wxASSERT( aImage->Type() == PCB_GENERATOR_T );
-
-        std::swap( *this, *static_cast<PCB_TUNING_PATTERN*>( aImage ) );
-    }
-
-    bool recoverBaseline( PNS::ROUTER* aRouter );
-
-    bool baselineValid();
-
-    bool initBaseLine( PNS::ROUTER* aRouter, int aPNSLayer, BOARD* aBoard, VECTOR2I& aStart,
-                       VECTOR2I& aEnd, NETINFO_ITEM* aNet,
-                       std::optional<SHAPE_LINE_CHAIN>& aBaseLine );
-
-    bool initBaseLines( PNS::ROUTER* aRouter, int aPNSLayer, BOARD* aBoard );
-
-    bool removeToBaseline( PNS::ROUTER* aRouter, int aPNSLayer, SHAPE_LINE_CHAIN& aBaseLine );
-
-    bool resetToBaseline( GENERATOR_TOOL* aTool, int aPNSLayer, SHAPE_LINE_CHAIN& aBaseLine,
-                          bool aPrimary );
-
-    SHAPE_LINE_CHAIN getOutline() const;
-
-    void baseMirror( const VECTOR2I& aCentre, FLIP_DIRECTION aFlipDirection )
-    {
-        PCB_GENERATOR::baseMirror( aCentre, aFlipDirection );
-
-        if( m_baseLine )
-        {
-            m_baseLine->Mirror( aCentre, aFlipDirection );
-            m_origin = m_baseLine->CPoint( 0 );
-            m_end = m_baseLine->CPoint( -1 );
-        }
-
-        if( m_baseLineCoupled )
-            m_baseLineCoupled->Mirror( aCentre, aFlipDirection );
-
-        if( m_settings.m_initialSide == PNS::MEANDER_SIDE_RIGHT )
-            m_settings.m_initialSide = PNS::MEANDER_SIDE_LEFT;
-        else
-            m_settings.m_initialSide = PNS::MEANDER_SIDE_RIGHT;
-    }
-
-protected:
-    VECTOR2I              m_end;
-
-    PNS::MEANDER_SETTINGS m_settings;
-
-    std::optional<SHAPE_LINE_CHAIN> m_baseLine;
-    std::optional<SHAPE_LINE_CHAIN> m_baseLineCoupled;
-
-    int                   m_trackWidth;
-    int                   m_diffPairGap;
-
-    LENGTH_TUNING_MODE    m_tuningMode;
-
-    wxString              m_lastNetName;
-    wxString              m_tuningInfo;
-
-    PNS::MEANDER_PLACER_BASE::TUNING_STATUS m_tuningStatus;
-
-    bool                  m_updateSideFromEnd;
-};
+    gal->Restore();
+}
 
 
 static LENGTH_TUNING_MODE tuningFromString( const std::string& aStr )
@@ -686,8 +355,9 @@ PCB_TUNING_PATTERN::PCB_TUNING_PATTERN( BOARD_ITEM* aParent, PCB_LAYER_ID aLayer
         m_trackWidth( 0 ),
         m_diffPairGap( 0 ),
         m_tuningMode( aMode ),
+        m_tuningLength( 0 ),
         m_tuningStatus( PNS::MEANDER_PLACER_BASE::TUNING_STATUS::TUNED ),
-        m_updateSideFromEnd(false)
+        m_updateSideFromEnd( false )
 {
     m_generatorType = GENERATOR_TYPE;
     m_name = DISPLAY_NAME;
@@ -791,6 +461,17 @@ PCB_TUNING_PATTERN* PCB_TUNING_PATTERN::CreateNew( GENERATOR_TOOL* aTool,
                 pattern->m_settings.m_isTimeDomain = false;
             }
         }
+        else if( aStartItem->GetEffectiveNetClass()->HasTuningProfile() )
+        {
+            // Check if the tuning profile has time domain tuning enabled
+            const std::shared_ptr<TUNING_PROFILES> tuningParams =
+                    board->GetProject()->GetProjectFile().TuningProfileParameters();
+            TUNING_PROFILE& profile =
+                    tuningParams->GetTuningProfile( aStartItem->GetEffectiveNetClass()->GetTuningProfile() );
+
+            if( profile.m_EnableTimeDomainTuning )
+                pattern->m_settings.m_isTimeDomain = true;
+        }
     }
     else
     {
@@ -851,7 +532,7 @@ void PCB_TUNING_PATTERN::EditStart( GENERATOR_TOOL* aTool, BOARD* aBoard, BOARD_
             && m_baseLineCoupled->SegmentCount() > 0 )
         {
             centerlineOffsetEnd =
-                    ( m_baseLineCoupled->CPoint( -1 ) - m_baseLine->CPoint( -1 ) ) / 2;
+                    ( m_baseLineCoupled->CLastPoint() - m_baseLine->CLastPoint() ) / 2;
         }
 
         SEG baseEnd = m_baseLine && m_baseLine->SegmentCount() > 0 ? m_baseLine->CSegment( -1 )
@@ -906,6 +587,11 @@ void PCB_TUNING_PATTERN::EditStart( GENERATOR_TOOL* aTool, BOARD* aBoard, BOARD_
                 m_settings.m_isTimeDomain = constraint.m_IsTimeDomain;
                 aTool->GetManager()->PostEvent( EVENTS::SelectedItemsModified );
             }
+            else if( track->GetEffectiveNetClass()->HasTuningProfile() )
+            {
+                m_settings.m_isTimeDomain = true;
+                aTool->GetManager()->PostEvent( EVENTS::SelectedItemsModified );
+            }
         }
         else
         {
@@ -936,6 +622,11 @@ void PCB_TUNING_PATTERN::EditStart( GENERATOR_TOOL* aTool, BOARD* aBoard, BOARD_
                     }
 
                     m_settings.m_isTimeDomain = constraint.m_IsTimeDomain;
+                    aTool->GetManager()->PostEvent( EVENTS::SelectedItemsModified );
+                }
+                else if( track->GetEffectiveNetClass()->HasTuningProfile() )
+                {
+                    m_settings.m_isTimeDomain = true;
                     aTool->GetManager()->PostEvent( EVENTS::SelectedItemsModified );
                 }
             }
@@ -1179,13 +870,35 @@ bool PCB_TUNING_PATTERN::initBaseLines( PNS::ROUTER* aRouter, int aPNSLayer, BOA
     return true;
 }
 
-bool PCB_TUNING_PATTERN::removeToBaseline( PNS::ROUTER* aRouter, int aPNSLayer,
-                                           SHAPE_LINE_CHAIN& aBaseLine )
+
+class UNLOCKER
+{
+public:
+    UNLOCKER( PCB_TUNING_PATTERN* aPattern ) :
+            m_pattern( aPattern ),
+            m_wasLocked( aPattern->IsLocked() )
+    {
+        m_pattern->SetLocked( false );
+    }
+
+    ~UNLOCKER()
+    {
+        if( m_wasLocked )
+            m_pattern->SetLocked( true );
+    }
+
+private:
+    PCB_TUNING_PATTERN*  m_pattern;
+    bool                 m_wasLocked;
+};
+
+
+bool PCB_TUNING_PATTERN::removeToBaseline( PNS::ROUTER* aRouter, int aPNSLayer, SHAPE_LINE_CHAIN& aBaseLine )
 {
     VECTOR2I startSnapPoint, endSnapPoint;
 
-    std::optional<PNS::LINE> pnsLine = getPNSLine( aBaseLine.CPoint( 0 ), aBaseLine.CPoint( -1 ),
-                                                   aRouter, aPNSLayer, startSnapPoint, endSnapPoint );
+    std::optional<PNS::LINE> pnsLine = getPNSLine( aBaseLine.CPoint( 0 ), aBaseLine.CLastPoint(), aRouter,
+                                                   aPNSLayer, startSnapPoint, endSnapPoint );
 
     wxCHECK( pnsLine, false );
 
@@ -1218,6 +931,7 @@ bool PCB_TUNING_PATTERN::removeToBaseline( PNS::ROUTER* aRouter, int aPNSLayer,
 
 void PCB_TUNING_PATTERN::Remove( GENERATOR_TOOL* aTool, BOARD* aBoard, BOARD_COMMIT* aCommit )
 {
+    UNLOCKER raiiUnlocker( this );
     SetFlags( IN_EDIT );
 
     aTool->Router()->SyncWorld();
@@ -1265,8 +979,6 @@ void PCB_TUNING_PATTERN::Remove( GENERATOR_TOOL* aTool, BOARD* aBoard, BOARD_COM
         for( BOARD_ITEM* item : routerAddedItems )
             aCommit->Add( item );
     }
-
-    aCommit->Push( "Remove Tuning Pattern" );
 }
 
 
@@ -1344,16 +1056,16 @@ bool PCB_TUNING_PATTERN::recoverBaseline( PNS::ROUTER* aRouter )
 }
 
 
-bool PCB_TUNING_PATTERN::resetToBaseline( GENERATOR_TOOL* aTool, int aPNSLayer,
-                                          SHAPE_LINE_CHAIN& aBaseLine, bool aPrimary )
+bool PCB_TUNING_PATTERN::resetToBaseline( GENERATOR_TOOL* aTool, int aPNSLayer, SHAPE_LINE_CHAIN& aBaseLine,
+                                          bool aPrimary )
 {
     PNS_KICAD_IFACE* iface = aTool->GetInterface();
     PNS::ROUTER*     router = aTool->Router();
     PNS::NODE*       world = router->GetWorld();
     VECTOR2I         startSnapPoint, endSnapPoint;
 
-    std::optional<PNS::LINE> pnsLine = getPNSLine( aBaseLine.CPoint( 0 ), aBaseLine.CPoint( -1 ),
-                                                   router, aPNSLayer, startSnapPoint, endSnapPoint );
+    std::optional<PNS::LINE> pnsLine = getPNSLine( aBaseLine.CPoint( 0 ), aBaseLine.CLastPoint(), router,
+                                                   aPNSLayer, startSnapPoint, endSnapPoint );
 
     if( !pnsLine )
     {
@@ -1437,6 +1149,8 @@ bool PCB_TUNING_PATTERN::Update( GENERATOR_TOOL* aTool, BOARD* aBoard, BOARD_COM
     if( !( GetFlags() & IN_EDIT ) )
         return false;
 
+    UNLOCKER raiiUnlocker( this );
+
     KIGFX::VIEW*     view = aTool->GetManager()->GetView();
     PNS::ROUTER*     router = aTool->Router();
     PNS_KICAD_IFACE* iface = aTool->GetInterface();
@@ -1476,7 +1190,7 @@ bool PCB_TUNING_PATTERN::Update( GENERATOR_TOOL* aTool, BOARD* aBoard, BOARD_COM
         if( resetToBaseline( aTool, pnslayer, *m_baseLine, true ) )
         {
             m_origin = m_baseLine->CPoint( 0 );
-            m_end = m_baseLine->CPoint( -1 );
+            m_end = m_baseLine->CLastPoint();
         }
         else
         {
@@ -1538,10 +1252,11 @@ bool PCB_TUNING_PATTERN::Update( GENERATOR_TOOL* aTool, BOARD* aBoard, BOARD_COM
     m_settings = placer->MeanderSettings();
     m_lastNetName = iface->GetNetName( startItem->Net() );
     m_tuningStatus = placer->TuningStatus();
+    m_tuningLength = placer->TuningLengthResult();
 
     wxString statusMessage;
 
-    switch ( m_tuningStatus )
+    switch( m_tuningStatus )
     {
     case PNS::MEANDER_PLACER_BASE::TOO_LONG:  statusMessage = _( "too long" );  break;
     case PNS::MEANDER_PLACER_BASE::TOO_SHORT: statusMessage = _( "too short" ); break;
@@ -1558,12 +1273,12 @@ bool PCB_TUNING_PATTERN::Update( GENERATOR_TOOL* aTool, BOARD* aBoard, BOARD_COM
     if( m_settings.m_isTimeDomain )
     {
         result = EDA_UNIT_UTILS::UI::MessageTextFromValue( pcbIUScale, EDA_UNITS::PS,
-                                                           (double) placer->TuningLengthResult() );
+                                                           (double) m_tuningLength );
     }
     else
     {
         result = EDA_UNIT_UTILS::UI::MessageTextFromValue( pcbIUScale, userUnits,
-                                                           (double) placer->TuningLengthResult() );
+                                                           (double) m_tuningLength );
     }
 
     m_tuningInfo.Printf( wxS( "%s (%s)" ), result, statusMessage );
@@ -1572,8 +1287,7 @@ bool PCB_TUNING_PATTERN::Update( GENERATOR_TOOL* aTool, BOARD* aBoard, BOARD_COM
 }
 
 
-void PCB_TUNING_PATTERN::EditPush( GENERATOR_TOOL* aTool, BOARD* aBoard, BOARD_COMMIT* aCommit,
-                                   const wxString& aCommitMsg, int aCommitFlags )
+void PCB_TUNING_PATTERN::EditFinish( GENERATOR_TOOL* aTool, BOARD* aBoard, BOARD_COMMIT* aCommit  )
 {
     if( !( GetFlags() & IN_EDIT ) )
         return;
@@ -1630,15 +1344,10 @@ void PCB_TUNING_PATTERN::EditPush( GENERATOR_TOOL* aTool, BOARD* aBoard, BOARD_C
             }
         }
     }
-
-    if( aCommitMsg.IsEmpty() )
-        aCommit->Push( _( "Edit Tuning Pattern" ), aCommitFlags );
-    else
-        aCommit->Push( aCommitMsg, aCommitFlags );
 }
 
 
-void PCB_TUNING_PATTERN::EditRevert( GENERATOR_TOOL* aTool, BOARD* aBoard, BOARD_COMMIT* aCommit )
+void PCB_TUNING_PATTERN::EditCancel( GENERATOR_TOOL* aTool, BOARD* aBoard, BOARD_COMMIT* aCommit )
 {
     if( !( GetFlags() & IN_EDIT ) )
         return;
@@ -1659,9 +1368,6 @@ void PCB_TUNING_PATTERN::EditRevert( GENERATOR_TOOL* aTool, BOARD* aBoard, BOARD
     }
 
     aTool->Router()->StopRouting();
-
-    if( aCommit )
-        aCommit->Revert();
 }
 
 
@@ -1673,7 +1379,7 @@ bool PCB_TUNING_PATTERN::MakeEditPoints( EDIT_POINTS& aPoints ) const
     if( m_tuningMode == DIFF_PAIR && m_baseLineCoupled && m_baseLineCoupled->SegmentCount() > 0 )
     {
         centerlineOffset = ( m_baseLineCoupled->CPoint( 0 ) - m_origin ) / 2;
-        centerlineOffsetEnd = ( m_baseLineCoupled->CPoint( -1 ) - m_end ) / 2;
+        centerlineOffsetEnd = ( m_baseLineCoupled->CLastPoint() - m_end ) / 2;
     }
 
     aPoints.AddPoint( m_origin + centerlineOffset );
@@ -1716,7 +1422,7 @@ bool PCB_TUNING_PATTERN::UpdateFromEditPoints( EDIT_POINTS& aEditPoints )
     if( m_tuningMode == DIFF_PAIR && m_baseLineCoupled && m_baseLineCoupled->SegmentCount() > 0 )
     {
         centerlineOffset = ( m_baseLineCoupled->CPoint( 0 ) - m_origin ) / 2;
-        centerlineOffsetEnd = ( m_baseLineCoupled->CPoint( -1 ) - m_end ) / 2;
+        centerlineOffsetEnd = ( m_baseLineCoupled->CLastPoint() - m_end ) / 2;
     }
 
     SEG base = m_baseLine && m_baseLine->SegmentCount() > 0 ? m_baseLine->CSegment( 0 )
@@ -1771,7 +1477,7 @@ bool PCB_TUNING_PATTERN::UpdateEditPoints( EDIT_POINTS& aEditPoints )
     if( m_tuningMode == DIFF_PAIR && m_baseLineCoupled && m_baseLineCoupled->SegmentCount() > 0 )
     {
         centerlineOffset = ( m_baseLineCoupled->CPoint( 0 ) - m_origin ) / 2;
-        centerlineOffsetEnd = ( m_baseLineCoupled->CPoint( -1 ) - m_end ) / 2;
+        centerlineOffsetEnd = ( m_baseLineCoupled->CLastPoint() - m_end ) / 2;
     }
 
     SEG base = m_baseLine && m_baseLine->SegmentCount() > 0 ? m_baseLine->CSegment( 0 )
@@ -2010,9 +1716,9 @@ const STRING_ANY_MAP PCB_TUNING_PATTERN::GetProperties() const
     props.set_iu( "target_skew_max", m_settings.m_targetSkew.Max() );
     props.set_iu( "last_track_width", m_trackWidth );
     props.set_iu( "last_diff_pair_gap", m_diffPairGap );
+    props.set_iu( "last_tuning_length", m_tuningLength );
 
     props.set( "last_netname", m_lastNetName );
-    props.set( "last_tuning", m_tuningInfo );
     props.set( "override_custom_rules", m_settings.m_overrideCustomRules );
 
     if( m_baseLine )
@@ -2088,16 +1794,36 @@ void PCB_TUNING_PATTERN::SetProperties( const STRING_ANY_MAP& aProps )
     aProps.get_to_iu( "min_spacing", m_settings.m_spacing );
     aProps.get_to_iu( "last_track_width", m_trackWidth );
     aProps.get_to_iu( "last_diff_pair_gap", m_diffPairGap );
+    aProps.get_to_iu( "last_tuning_length", m_tuningLength );
     aProps.get_to( "override_custom_rules", m_settings.m_overrideCustomRules );
 
     aProps.get_to( "last_netname", m_lastNetName );
-    aProps.get_to( "last_tuning", m_tuningInfo );
 
     if( auto baseLine = aProps.get_opt<SHAPE_LINE_CHAIN>( "base_line" ) )
         m_baseLine = *baseLine;
 
     if( auto baseLineCoupled = aProps.get_opt<SHAPE_LINE_CHAIN>( "base_line_coupled" ) )
         m_baseLineCoupled = *baseLineCoupled;
+
+    // Reconstruct m_tuningInfo from loaded length and status
+    if( m_tuningLength != 0 )
+    {
+        wxString statusMessage;
+
+        switch( m_tuningStatus )
+        {
+        case PNS::MEANDER_PLACER_BASE::TOO_LONG:  statusMessage = _( "too long" );  break;
+        case PNS::MEANDER_PLACER_BASE::TOO_SHORT: statusMessage = _( "too short" ); break;
+        case PNS::MEANDER_PLACER_BASE::TUNED:     statusMessage = _( "tuned" );     break;
+        default:                                  statusMessage = _( "unknown" );   break;
+        }
+
+        EDA_UNITS units = m_settings.m_isTimeDomain ? EDA_UNITS::PS : EDA_UNITS::MM;
+        wxString  lengthStr = EDA_UNIT_UTILS::UI::MessageTextFromValue( pcbIUScale, units,
+                                                                        (double) m_tuningLength );
+
+        m_tuningInfo.Printf( wxS( "%s (%s)" ), lengthStr, statusMessage );
+    }
 }
 
 
@@ -2164,7 +1890,9 @@ void PCB_TUNING_PATTERN::ShowPropertiesDialog( PCB_BASE_EDIT_FRAME* aEditFrame )
         GENERATOR_TOOL* generatorTool = aEditFrame->GetToolManager()->GetTool<GENERATOR_TOOL>();
         EditStart( generatorTool, GetBoard(), &commit );
         Update( generatorTool, GetBoard(), &commit );
-        EditPush( generatorTool, GetBoard(), &commit );
+        EditFinish( generatorTool, GetBoard(), &commit );
+
+        commit.Push( _( "Edit Tuning Pattern" ) );
     }
 }
 
@@ -2306,7 +2034,7 @@ void PCB_TUNING_PATTERN::GetMsgPanelInfo( EDA_DRAW_FRAME* aFrame,
         aList.emplace_back( _( "Resolved Netclass" ),
                             UnescapeString( netclass->GetHumanReadableName() ) );
 
-    aList.emplace_back( _( "Layer" ), layerMaskDescribe() );
+    aList.emplace_back( _( "Layer" ), LayerMaskDescribe() );
 
     if( width && !mixedWidth )
         aList.emplace_back( _( "Width" ), aFrame->MessageTextFromValue( width ) );
@@ -2453,9 +2181,6 @@ using SCOPED_DRAW_MODE = SCOPED_SET_RESET<DRAWING_TOOL::MODE>;
 
 int DRAWING_TOOL::PlaceTuningPattern( const TOOL_EVENT& aEvent )
 {
-    // TODO: (JJ) Reserving before v9 string freeze
-    wxLogDebug( _( "Tune Skew" ) );
-
     if( m_isFootprintEditor )
         return 0;
 
@@ -2496,13 +2221,6 @@ int DRAWING_TOOL::PlaceTuningPattern( const TOOL_EVENT& aEvent )
     // Add a VIEW_GROUP that serves as a preview for the new item
     m_preview.Clear();
     m_view->Add( &m_preview );
-
-    auto setCursor =
-            [&]()
-            {
-                m_frame->GetCanvas()->SetCurrentCursor( KICURSOR::BULLSEYE );
-                controls->ShowCursor( true );
-            };
 
     auto applyCommonSettings =
             [&]( PCB_TUNING_PATTERN* aPattern )
@@ -2573,12 +2291,8 @@ int DRAWING_TOOL::PlaceTuningPattern( const TOOL_EVENT& aEvent )
                 }
             };
 
-    // Set initial cursor
-    setCursor();
-
     while( TOOL_EVENT* evt = Wait() )
     {
-        setCursor();
         VECTOR2D cursorPos = controls->GetMousePosition();
 
         if( evt->IsCancelInteractive() || evt->IsActivate()
@@ -2587,7 +2301,7 @@ int DRAWING_TOOL::PlaceTuningPattern( const TOOL_EVENT& aEvent )
             if( m_tuningPattern )
             {
                 // First click already made; clean up tuning pattern preview
-                m_tuningPattern->EditRevert( generatorTool, m_board, nullptr );
+                m_tuningPattern->EditCancel( generatorTool, m_board, nullptr );
 
                 delete m_tuningPattern;
                 m_tuningPattern = nullptr;
@@ -2703,7 +2417,9 @@ int DRAWING_TOOL::PlaceTuningPattern( const TOOL_EVENT& aEvent )
 
                 m_tuningPattern->EditStart( generatorTool, m_board, &commit );
                 m_tuningPattern->Update( generatorTool, m_board, &commit );
-                m_tuningPattern->EditPush( generatorTool, m_board, &commit, _( "Tune" ) );
+                m_tuningPattern->EditFinish( generatorTool, m_board, &commit );
+
+                commit.Push( _( "Tune" ) );
 
                 m_tuningPattern = nullptr;
                 m_pickerItem = nullptr;
@@ -2721,11 +2437,14 @@ int DRAWING_TOOL::PlaceTuningPattern( const TOOL_EVENT& aEvent )
             {
                 auto* placer = static_cast<PNS::MEANDER_PLACER_BASE*>( router->Placer() );
 
-                placer->SpacingStep( evt->IsAction( &PCB_ACTIONS::spacingIncrease ) ? 1 : -1 );
-                m_tuningPattern->SetSpacing( placer->MeanderSettings().m_spacing );
-                meanderSettings.m_spacing = placer->MeanderSettings().m_spacing;
+                if( placer )
+                {
+                    placer->SpacingStep( evt->IsAction( &PCB_ACTIONS::spacingIncrease ) ? 1 : -1 );
+                    m_tuningPattern->SetSpacing( placer->MeanderSettings().m_spacing );
+                    meanderSettings.m_spacing = placer->MeanderSettings().m_spacing;
 
-                updateTuningPattern();
+                    updateTuningPattern();
+                }
             }
             else
             {
@@ -2739,11 +2458,14 @@ int DRAWING_TOOL::PlaceTuningPattern( const TOOL_EVENT& aEvent )
             {
                 auto* placer = static_cast<PNS::MEANDER_PLACER_BASE*>( router->Placer() );
 
-                placer->AmplitudeStep( evt->IsAction( &PCB_ACTIONS::amplIncrease ) ? 1 : -1 );
-                m_tuningPattern->SetMaxAmplitude( placer->MeanderSettings().m_maxAmplitude );
-                meanderSettings.m_maxAmplitude = placer->MeanderSettings().m_maxAmplitude;
+                if( placer )
+                {
+                    placer->AmplitudeStep( evt->IsAction( &PCB_ACTIONS::amplIncrease ) ? 1 : -1 );
+                    m_tuningPattern->SetMaxAmplitude( placer->MeanderSettings().m_maxAmplitude );
+                    meanderSettings.m_maxAmplitude = placer->MeanderSettings().m_maxAmplitude;
 
-                updateTuningPattern();
+                    updateTuningPattern();
+                }
             }
             else
             {
@@ -2831,54 +2553,77 @@ static struct PCB_TUNING_PATTERN_DESC
         propMgr.InheritsAfter( TYPE_HASH( PCB_TUNING_PATTERN ), TYPE_HASH( PCB_GENERATOR ) );
         propMgr.InheritsAfter( TYPE_HASH( PCB_TUNING_PATTERN ), TYPE_HASH( BOARD_ITEM ) );
 
+        ENUM_MAP<PCB_LAYER_ID>& layerEnum = ENUM_MAP<PCB_LAYER_ID>::Instance();
+
+        if( layerEnum.Choices().GetCount() == 0 )
+        {
+            layerEnum.Undefined( UNDEFINED_LAYER );
+
+            for( PCB_LAYER_ID layer : LSET::AllLayersMask() )
+                layerEnum.Map( layer, LSET::Name( layer ) );
+        }
+
+        auto layer = new PROPERTY_ENUM<PCB_TUNING_PATTERN, PCB_LAYER_ID>(
+                _HKI( "Layer" ), &PCB_TUNING_PATTERN::SetLayer, &PCB_TUNING_PATTERN::GetLayer );
+        layer->SetChoices( layerEnum.Choices() );
+        propMgr.ReplaceProperty( TYPE_HASH( BOARD_ITEM ), _HKI( "Layer" ), layer );
+
+        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, int>( _HKI( "Width" ),
+                                     &PCB_TUNING_PATTERN::SetWidth, &PCB_TUNING_PATTERN::GetWidth,
+                                     PROPERTY_DISPLAY::PT_SIZE ) );
+
+        propMgr.AddProperty( new PROPERTY_ENUM<PCB_TUNING_PATTERN, int>( _HKI( "Net" ),
+                                     &PCB_TUNING_PATTERN::SetNetCode, &PCB_TUNING_PATTERN::GetNetCode, PT_NET ) );
+
+        const wxString groupTechLayers = _HKI( "Technical Layers" );
+
+        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, bool>( _HKI( "Soldermask" ),
+                                     &PCB_TUNING_PATTERN::SetHasSolderMask, &PCB_TUNING_PATTERN::HasSolderMask ),
+                             groupTechLayers );
+
+        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, std::optional<int>>( _HKI( "Soldermask Margin Override" ),
+                                     &PCB_TUNING_PATTERN::SetLocalSolderMaskMargin,
+                                     &PCB_TUNING_PATTERN::GetLocalSolderMaskMargin,
+                                     PROPERTY_DISPLAY::PT_SIZE ),
+                             groupTechLayers );
+
         const wxString groupTab = _HKI( "Pattern Properties" );
 
-        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, int>(
-                                     _HKI( "End X" ), &PCB_TUNING_PATTERN::SetEndX,
-                                     &PCB_TUNING_PATTERN::GetEndX, PROPERTY_DISPLAY::PT_SIZE,
-                                     ORIGIN_TRANSFORMS::ABS_X_COORD ),
+        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, int>( _HKI( "End X" ),
+                                     &PCB_TUNING_PATTERN::SetEndX, &PCB_TUNING_PATTERN::GetEndX,
+                                     PROPERTY_DISPLAY::PT_SIZE, ORIGIN_TRANSFORMS::ABS_X_COORD ),
                              groupTab );
 
-        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, int>(
-                                     _HKI( "End Y" ), &PCB_TUNING_PATTERN::SetEndY,
-                                     &PCB_TUNING_PATTERN::GetEndY, PROPERTY_DISPLAY::PT_SIZE,
-                                     ORIGIN_TRANSFORMS::ABS_Y_COORD ),
+        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, int>( _HKI( "End Y" ),
+                                     &PCB_TUNING_PATTERN::SetEndY, &PCB_TUNING_PATTERN::GetEndY,
+                                     PROPERTY_DISPLAY::PT_SIZE, ORIGIN_TRANSFORMS::ABS_Y_COORD ),
                              groupTab );
 
-        propMgr.AddProperty( new PROPERTY_ENUM<PCB_TUNING_PATTERN, LENGTH_TUNING_MODE>(
-                                     _HKI( "Tuning Mode" ),
+        propMgr.AddProperty( new PROPERTY_ENUM<PCB_TUNING_PATTERN, LENGTH_TUNING_MODE>( _HKI( "Tuning Mode" ),
                                      NO_SETTER( PCB_TUNING_PATTERN, LENGTH_TUNING_MODE ),
                                      &PCB_TUNING_PATTERN::GetTuningMode ),
                              groupTab );
 
-        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, int>(
-                                     _HKI( "Min Amplitude" ),
-                                     &PCB_TUNING_PATTERN::SetMinAmplitude,
-                                     &PCB_TUNING_PATTERN::GetMinAmplitude,
+        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, int>( _HKI( "Min Amplitude" ),
+                                     &PCB_TUNING_PATTERN::SetMinAmplitude, &PCB_TUNING_PATTERN::GetMinAmplitude,
                                      PROPERTY_DISPLAY::PT_SIZE, ORIGIN_TRANSFORMS::ABS_X_COORD ),
                              groupTab );
 
-        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, int>(
-                                     _HKI( "Max Amplitude" ),
-                                     &PCB_TUNING_PATTERN::SetMaxAmplitude,
-                                     &PCB_TUNING_PATTERN::GetMaxAmplitude,
+        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, int>( _HKI( "Max Amplitude" ),
+                                     &PCB_TUNING_PATTERN::SetMaxAmplitude, &PCB_TUNING_PATTERN::GetMaxAmplitude,
                                      PROPERTY_DISPLAY::PT_SIZE, ORIGIN_TRANSFORMS::ABS_X_COORD ),
                              groupTab );
 
-        propMgr.AddProperty( new PROPERTY_ENUM<PCB_TUNING_PATTERN, PNS::MEANDER_SIDE>(
-                                     _HKI( "Initial Side" ),
-                                     &PCB_TUNING_PATTERN::SetInitialSide,
-                                     &PCB_TUNING_PATTERN::GetInitialSide ),
+        propMgr.AddProperty( new PROPERTY_ENUM<PCB_TUNING_PATTERN, PNS::MEANDER_SIDE>( _HKI( "Initial Side" ),
+                                     &PCB_TUNING_PATTERN::SetInitialSide, &PCB_TUNING_PATTERN::GetInitialSide ),
                              groupTab );
 
-        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, int>(
-                                     _HKI( "Min Spacing" ), &PCB_TUNING_PATTERN::SetSpacing,
-                                     &PCB_TUNING_PATTERN::GetSpacing, PROPERTY_DISPLAY::PT_SIZE,
-                                     ORIGIN_TRANSFORMS::ABS_X_COORD ),
+        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, int>( _HKI( "Min Spacing" ),
+                                     &PCB_TUNING_PATTERN::SetSpacing, &PCB_TUNING_PATTERN::GetSpacing,
+                                     PROPERTY_DISPLAY::PT_SIZE, ORIGIN_TRANSFORMS::ABS_X_COORD ),
                              groupTab );
 
-        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, int>(
-                                     _HKI( "Corner Radius %" ),
+        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, int>( _HKI( "Corner Radius %" ),
                                      &PCB_TUNING_PATTERN::SetCornerRadiusPercentage,
                                      &PCB_TUNING_PATTERN::GetCornerRadiusPercentage,
                                      PROPERTY_DISPLAY::PT_DEFAULT, ORIGIN_TRANSFORMS::NOT_A_COORD ),
@@ -2921,49 +2666,41 @@ static struct PCB_TUNING_PATTERN_DESC
             return isSkew( aItem ) && isTimeDomain( aItem );
         };
 
-        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, std::optional<int>>(
-                                     _HKI( "Target Length" ), &PCB_TUNING_PATTERN::SetTargetLength,
-                                     &PCB_TUNING_PATTERN::GetTargetLength, PROPERTY_DISPLAY::PT_SIZE,
-                                     ORIGIN_TRANSFORMS::ABS_X_COORD ),
+        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, std::optional<int>>( _HKI( "Target Length" ),
+                                     &PCB_TUNING_PATTERN::SetTargetLength, &PCB_TUNING_PATTERN::GetTargetLength,
+                                     PROPERTY_DISPLAY::PT_SIZE, ORIGIN_TRANSFORMS::ABS_X_COORD ),
                              groupTab )
                 .SetAvailableFunc( isLengthIsSpaceDomain );
 
-        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, std::optional<int>>(
-                                     _HKI( "Target Delay" ), &PCB_TUNING_PATTERN::SetTargetDelay,
-                                     &PCB_TUNING_PATTERN::GetTargetDelay, PROPERTY_DISPLAY::PT_TIME,
-                                     ORIGIN_TRANSFORMS::NOT_A_COORD ),
+        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, std::optional<int>>( _HKI( "Target Delay" ),
+                                     &PCB_TUNING_PATTERN::SetTargetDelay, &PCB_TUNING_PATTERN::GetTargetDelay,
+                                     PROPERTY_DISPLAY::PT_TIME, ORIGIN_TRANSFORMS::NOT_A_COORD ),
                              groupTab )
                 .SetAvailableFunc( isLengthIsTimeDomain );
 
-        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, int>(
-                                     _HKI( "Target Skew" ), &PCB_TUNING_PATTERN::SetTargetSkew,
-                                     &PCB_TUNING_PATTERN::GetTargetSkew, PROPERTY_DISPLAY::PT_SIZE,
-                                     ORIGIN_TRANSFORMS::ABS_X_COORD ),
+        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, int>( _HKI( "Target Skew" ),
+                                     &PCB_TUNING_PATTERN::SetTargetSkew, &PCB_TUNING_PATTERN::GetTargetSkew,
+                                     PROPERTY_DISPLAY::PT_SIZE, ORIGIN_TRANSFORMS::ABS_X_COORD ),
                              groupTab )
                 .SetAvailableFunc( isSkewIsSpaceDomain );
 
-        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, int>(
-                                     _HKI( "Target Skew Delay" ), &PCB_TUNING_PATTERN::SetTargetSkewDelay,
-                                     &PCB_TUNING_PATTERN::GetTargetSkewDelay, PROPERTY_DISPLAY::PT_TIME,
-                                     ORIGIN_TRANSFORMS::NOT_A_COORD ),
+        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, int>( _HKI( "Target Skew Delay" ),
+                                     &PCB_TUNING_PATTERN::SetTargetSkewDelay, &PCB_TUNING_PATTERN::GetTargetSkewDelay,
+                                     PROPERTY_DISPLAY::PT_TIME, ORIGIN_TRANSFORMS::NOT_A_COORD ),
                              groupTab )
                 .SetAvailableFunc( isSkewIsTimeDomain );
 
-        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, bool>(
-                                     _HKI( "Override Custom Rules" ),
+        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, bool>( _HKI( "Override Custom Rules" ),
                                      &PCB_TUNING_PATTERN::SetOverrideCustomRules,
                                      &PCB_TUNING_PATTERN::GetOverrideCustomRules ),
                              groupTab );
 
-        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, bool>(
-                                     _HKI( "Single-sided" ),
-                                     &PCB_TUNING_PATTERN::SetSingleSided,
-                                     &PCB_TUNING_PATTERN::IsSingleSided ),
+        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, bool>( _HKI( "Single-sided" ),
+                                     &PCB_TUNING_PATTERN::SetSingleSided, &PCB_TUNING_PATTERN::IsSingleSided ),
                              groupTab );
 
-        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, bool>(
-                                     _HKI( "Rounded" ), &PCB_TUNING_PATTERN::SetRounded,
-                                     &PCB_TUNING_PATTERN::IsRounded ),
+        propMgr.AddProperty( new PROPERTY<PCB_TUNING_PATTERN, bool>( _HKI( "Rounded" ),
+                                     &PCB_TUNING_PATTERN::SetRounded, &PCB_TUNING_PATTERN::IsRounded ),
                              groupTab );
     }
 } _PCB_TUNING_PATTERN_DESC;

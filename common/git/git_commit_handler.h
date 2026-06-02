@@ -27,32 +27,34 @@
 // Define a class to handle git commit operations
 
 #include <git/kicad_git_common.h>
-#include <git2.h>
+#include <import_export.h>
+#include "git_backend.h"
 
 #include <string>
 #include <vector>
+#include <wx/arrstr.h> // for MSVC to see std::vector<wxString> is exported from wx
+#include <wx/string.h>
 
-class GIT_COMMIT_HANDLER : public KIGIT_COMMON
+class LIBGIT_BACKEND;
+
+class APIEXPORT GIT_COMMIT_HANDLER : public KIGIT_COMMON
 {
 public:
     GIT_COMMIT_HANDLER( git_repository* aRepo );
     virtual ~GIT_COMMIT_HANDLER();
 
-    enum class CommitResult
-    {
-        Success,
-        Error,
-        Cancelled
-    };
+    CommitResult PerformCommit( const std::vector<wxString>& aFiles,
+                               const wxString&               aMessage,
+                               const wxString&               aAuthorName,
+                               const wxString&               aAuthorEmail );
 
-    CommitResult PerformCommit( const std::vector<std::string>& aFilesToCommit );
-
-    std::string GetErrorString() const;
+    wxString GetErrorString() const;
 
 private:
-    void AddErrorString( const std::string& aErrorString );
+    friend class LIBGIT_BACKEND;
+    void AddErrorString( const wxString& aErrorString );
 
-    std::string m_errorString;
+    wxString m_errorString;
 };
 
 #endif // GIT_COMMIT_HANDLER_H

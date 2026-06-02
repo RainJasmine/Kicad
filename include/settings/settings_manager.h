@@ -25,7 +25,7 @@
 #include <mutex>
 #include <typeinfo>
 #include <core/wx_stl_compat.h> // for wxString hash
-#include <settings/color_settings.h>
+#include <settings/json_settings.h>
 #include <pgm_base.h>
 
 class COLOR_SETTINGS;
@@ -48,9 +48,16 @@ class LOCKFILE;
 class KICOMMON_API SETTINGS_MANAGER
 {
 public:
-    SETTINGS_MANAGER( bool aHeadless = false );
+    SETTINGS_MANAGER();
 
     ~SETTINGS_MANAGER();
+
+    /**
+     * @return true if the settings directory for this version of KiCad exists and has at least a
+     * common settings file (kicad_common.json).  Used to know whether or not the first-run wizard
+     * needs to be shown.
+     */
+    bool SettingsDirectoryValid() const;
 
     /**
      * @return true if settings load was successful
@@ -90,6 +97,16 @@ public:
      * @param aSettings is the object to release
      */
     void FlushAndRelease( JSON_SETTINGS* aSettings, bool aSave = true );
+
+    /**
+     * Reset all program settings to defaults.
+     */
+    void ResetToDefaults();
+
+    /**
+     * Clear saved file history from all settings files.
+     */
+    void ClearFileHistory();
 
     /**
      * Return a handle to the a given settings by type.
@@ -139,7 +156,7 @@ public:
         }
         else
         {
-            wxFAIL_MSG( "Tried to GetAppSettings before registering" );
+            wxFAIL_MSG( wxString::Format( "Tried to GetAppSettings before registering: %s", aFilename ) );
         }
 
         m_app_settings_cache[typeHash] = ret;
@@ -202,20 +219,7 @@ public:
      */
     COLOR_SETTINGS* GetColorSettings( const wxString& aName );
 
-    std::vector<COLOR_SETTINGS*> GetColorSettingsList()
-    {
-        std::vector<COLOR_SETTINGS*> ret;
-
-        for( const std::pair<const wxString, COLOR_SETTINGS*>& entry : m_color_settings )
-            ret.push_back( entry.second );
-
-        std::sort( ret.begin(), ret.end(), []( COLOR_SETTINGS* a, COLOR_SETTINGS* b )
-                                           {
-                                               return a->GetName() < b->GetName();
-                                           } );
-
-        return ret;
-    }
+    std::vector<COLOR_SETTINGS*> GetColorSettingsList();
 
     /**
      * Safely save a #COLOR_SETTINGS to disk, preserving any changes outside the given namespace.
@@ -262,28 +266,11 @@ public:
     wxString GetPathForSettingsFile( JSON_SETTINGS* aSettings );
 
     /**
-     * Handle the initialization of the user settings directory and migration from previous
-     * KiCad versions as needed.
+     * Handle migration of the settings from previous KiCad versions.
      *
-     * This method will check for the existence of the user settings path for this KiCad version.
-     * If it exists, settings load will proceed normally using that path.
-     *
-     * If that directory is empty or does not exist, the migration wizard will be launched, which
-     * will give users the option to migrate settings from a previous KiCad version (if one is
-     * found), manually specify a directory to migrate from, or start with default settings.
-     *
-     * @return true if migration was successful or not necessary, false otherwise.
+     * @return true if migration was successful, false otherwise.
      */
-    bool MigrateIfNeeded();
-
-    /**
-     * Helper for #DIALOG_MIGRATE_SETTINGS to specify a source for migration.
-     *
-     * @param aSource is a directory containing settings files to migrate from (can be empty).
-     */
-    void SetMigrationSource( const wxString& aSource ) { m_migration_source = aSource; }
-
-    void SetMigrateLibraryTables( bool aMigrate = true ) { m_migrateLibraryTables = aMigrate; }
+    bool MigrateFromPreviousVersion( const wxString& aSourcePath );
 
     /**
      * Retrieve the name of the most recent previous KiCad version that can be found in the
@@ -352,6 +339,13 @@ public:
     PROJECT* GetProject( const wxString& aFullPath ) const;
 
     /**
+     * Return the active project iff its path matches @p aProjectPath, else nullptr.
+     * Lets backup/history helpers feed the right PROJECT* into per-project path
+     * resolvers without falling back to Prj() for an unrelated project.
+     */
+    PROJECT* GetProjectForPath( const wxString& aProjectPath ) const;
+
+    /**
      * @return a list of open projects.
      */
     std::vector<wxString> GetOpenProjects() const;
@@ -390,6 +384,42 @@ public:
      * @return the full path to where project backups should be stored.
      */
     wxString GetProjectBackupsPath() const;
+
+    /**
+     * Resolve the backup root directory for a project, honoring the active
+     * BACKUP_LOCATION preference.  PROJECT_DIR yields the legacy
+     * "<projectpath>/<name>-backups/" path; USER_DIR yields a per-project
+     * subdirectory under the user data path keyed by SHA-256 of the project
+     * full path so identically-named projects do not collide.
+     *
+     * @param aProject is the project whose backup root to resolve, or nullptr to use Prj().
+     * @return absolute directory path with a trailing separator.
+     */
+    wxString GetBackupRootForProject( const PROJECT* aProject = nullptr ) const;
+
+    /**
+     * Resolve the local-history (.history) storage directory for a project.
+     * PROJECT_DIR yields "<projectpath>/.history/"; USER_DIR yields a per-project
+     * subdirectory under the user data path.
+     */
+    wxString GetLocalHistoryDirForProject( const PROJECT* aProject = nullptr ) const;
+
+    /**
+     * Resolve the local-history directory for a project given by its on-disk path.
+     * In PROJECT_DIR mode the supplied path is used verbatim (so callers can target
+     * a project that is not the active one); in USER_DIR mode the keying defers to
+     * #GetLocalHistoryDirForProject when @p aProjectPath matches the active project.
+     */
+    wxString GetLocalHistoryDirForPath( const wxString& aProjectPath ) const;
+
+    /**
+     * Resolve the autosave-files root for a project.  In PROJECT_DIR mode this is
+     * the project directory itself (autosave files are written as siblings with
+     * a "_autosave-" prefix in the filename).  In USER_DIR mode it is a
+     * per-project subdirectory under the user data path that mirrors the
+     * project tree.
+     */
+    wxString GetAutosaveRootForProject( const PROJECT* aProject = nullptr ) const;
 
     /**
      * Create a backup archive of the current project.
@@ -479,6 +509,18 @@ private:
     void loadAllColorSettings();
 
     /**
+     * Build "<projectname>-<sha256prefix>" suffix used to disambiguate per-project
+     * subdirectories under the user data path.  Returns an empty string if the
+     * project is null or has no full name yet (e.g., a fresh standalone editor).
+     */
+    static wxString projectKeySuffix( const PROJECT* aProject );
+
+    /**
+     * Pick the project to resolve a backup path against, falling back to Prj().
+     */
+    const PROJECT& resolveProject( const PROJECT* aProject ) const;
+
+    /**
      * Register a #PROJECT_FILE and attempt to load it from disk.
      *
      * @param aProject is the project object to load the file for.
@@ -500,9 +542,6 @@ private:
 
 private:
 
-    /// True if running outside a UI context.
-    bool m_headless;
-
     /// The kiway this settings manager interacts with.
     KIWAY* m_kiway;
 
@@ -516,8 +555,6 @@ private:
 
     // Convenience shortcut
     COMMON_SETTINGS* m_common_settings;
-
-    wxString m_migration_source;
 
     /// If true, the symbol and footprint library tables will be migrated from the previous version.
     bool m_migrateLibraryTables;

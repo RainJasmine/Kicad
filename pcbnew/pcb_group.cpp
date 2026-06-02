@@ -21,15 +21,17 @@
  * or you may write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
+#include "pcb_group.h"
+
 #include <bitmaps.h>
 #include <eda_draw_frame.h>
 #include <geometry/shape_compound.h>
 #include <board.h>
 #include <board_item.h>
+#include <confirm.h>
 #include <footprint.h>
 #include <pcb_generator.h>
-#include <pcb_group.h>
-#include <confirm.h>
+#include <string_utils.h>
 #include <widgets/msgpanel.h>
 #include <view/view.h>
 #include <api/api_enums.h>
@@ -39,6 +41,8 @@
 #include <google/protobuf/any.pb.h>
 
 #include <wx/debug.h>
+#include <properties/property.h>
+#include <properties/property_mgr.h>
 
 PCB_GROUP::PCB_GROUP( BOARD_ITEM* aParent ) :
         BOARD_ITEM( aParent, PCB_GROUP_T )
@@ -76,7 +80,7 @@ bool PCB_GROUP::Deserialize( const google::protobuf::Any &aContainer )
     if( !aContainer.UnpackTo( &group ) )
         return false;
 
-    const_cast<KIID&>( m_Uuid ) = KIID( group.id().value() );
+    SetUuidDirect( KIID( group.id().value() ) );
     SetName( wxString( group.name().c_str(), wxConvUTF8 ) );
 
     BOARD* board = GetBoard();
@@ -131,12 +135,7 @@ EDA_GROUP* getNestedGroup( BOARD_ITEM* aItem, EDA_GROUP* aScope, bool isFootprin
         return nullptr;
 
     while( group && group->AsEdaItem()->GetParentGroup() && group->AsEdaItem()->GetParentGroup() != aScope )
-    {
-        if( group->AsEdaItem()->GetParent()->Type() == PCB_FOOTPRINT_T && isFootprintEditor )
-            break;
-
         group = group->AsEdaItem()->GetParentGroup();
-    }
 
     return group;
 }
@@ -239,6 +238,25 @@ void PCB_GROUP::swapData( BOARD_ITEM* aImage )
     PCB_GROUP* image = static_cast<PCB_GROUP*>( aImage );
 
     std::swap( *this, *image );
+
+    // A group doesn't own its children (they're owned by the board), so undo doesn't do a
+    // deep clone when making an image.  However, it's still safest to update the parentGroup
+    // pointers of the group's children. We must do it in the right order in case any of the
+    // children are shared (ie: image first, "this" second so that any shared children end up
+    // with "this").
+    image->RunOnChildren(
+            [&]( BOARD_ITEM* child )
+            {
+                child->SetParentGroup( image );
+            },
+            RECURSE_MODE::NO_RECURSE );
+
+    RunOnChildren(
+            [&]( BOARD_ITEM* child )
+            {
+                child->SetParentGroup( this );
+            },
+            RECURSE_MODE::NO_RECURSE );
 }
 
 
@@ -250,6 +268,13 @@ bool PCB_GROUP::HitTest( const VECTOR2I& aPosition, int aAccuracy ) const
 
 
 bool PCB_GROUP::HitTest( const BOX2I& aRect, bool aContained, int aAccuracy ) const
+{
+    // Groups are selected by promoting a selection of one of their children
+    return false;
+}
+
+
+bool PCB_GROUP::HitTest( const SHAPE_LINE_CHAIN& aPoly, bool aContained ) const
 {
     // Groups are selected by promoting a selection of one of their children
     return false;
@@ -333,7 +358,7 @@ std::vector<int> PCB_GROUP::ViewGetLayers() const
 
 double PCB_GROUP::ViewGetLOD( int aLayer, const KIGFX::VIEW* aView ) const
 {
-    if( aView->IsLayerVisible( LAYER_ANCHOR ) )
+    if( aView->IsLayerVisibleCached( LAYER_ANCHOR ) )
         return LOD_SHOW;
 
     return LOD_HIDE;

@@ -119,6 +119,7 @@ int SCH_GROUP_TOOL::PickNewMember( const TOOL_EVENT& aEvent )
             break;
     }
 
+    picker->ClearHandlers();
     m_frame->GetCanvas()->SetStatusPopup( nullptr );
 
     return 0;
@@ -142,11 +143,14 @@ int SCH_GROUP_TOOL::Group( const TOOL_EVENT& aEvent )
 
         SCH_ITEM* schItem = static_cast<SCH_ITEM*>( selection[ii] );
 
+        if( schItem->GetParentSymbol() )
+            selection.Remove( schItem );
+
         if( !schItem->IsGroupableType() )
             selection.Remove( schItem );
     }
 
-    if( selection.Empty() )
+    if( selection.GetSize() < 2 )
         return 0;
 
     SCH_GROUP*  group = new SCH_GROUP;

@@ -231,7 +231,6 @@ VERTEX* VERTEX_SET::insertVertex( int aIndex, const VECTOR2I& pt, VERTEX* last, 
 
 VERTEX* VERTEX::split( VERTEX* b )
 {
-    parent->m_vertices.emplace_back( i, x, y, parent, m_userData );
     VERTEX* a2 = parent->insertVertex( i, VECTOR2I( x, y ), nullptr, m_userData );
     parent->m_vertices.emplace_back( b->i, b->x, b->y, parent, m_userData );
     VERTEX* b2 = &parent->m_vertices.back();

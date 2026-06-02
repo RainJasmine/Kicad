@@ -22,24 +22,20 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#ifndef KICAD_SCH_EDIT_TOOL_H
-#define KICAD_SCH_EDIT_TOOL_H
+#pragma once
 
 #include <tools/sch_tool_base.h>
 #include <sch_base_frame.h>
-
-
-class SCH_EDIT_FRAME;
-class SCH_SELECTION_TOOL;
 
 
 class SCH_EDIT_TOOL : public SCH_TOOL_BASE<SCH_EDIT_FRAME>
 {
 public:
     SCH_EDIT_TOOL();
-    ~SCH_EDIT_TOOL() override { }
+    ~SCH_EDIT_TOOL() = default;
 
     static const std::vector<KICAD_T> RotatableItems;
+    static const std::vector<KICAD_T> SwappableItems;
 
     /// @copydoc TOOL_INTERACTIVE::Init()
     bool Init() override;
@@ -47,6 +43,9 @@ public:
     int Rotate( const TOOL_EVENT& aEvent );
     int Mirror( const TOOL_EVENT& aEvent );
     int Swap( const TOOL_EVENT& aEvent );
+    int SwapPins( const TOOL_EVENT& aEvent );
+    int SwapPinLabels( const TOOL_EVENT& aEvent );
+    int SwapUnitLabels( const TOOL_EVENT& aEvent );
 
     int RepeatDrawItem( const TOOL_EVENT& aEvent );
 
@@ -54,13 +53,8 @@ public:
     int EditField( const TOOL_EVENT& aEvent );
     int AutoplaceFields( const TOOL_EVENT& aEvent );
     int ChangeSymbols( const TOOL_EVENT& aEvent );
-    int ChangeBodyStyle( const TOOL_EVENT& aEvent );
+    int CycleBodyStyle( const TOOL_EVENT& aEvent );
     int EditPageNumber( const TOOL_EVENT& aEvent );
-
-    /**
-     * Increment/decrement something about an item.
-     */
-    int Increment( const TOOL_EVENT& aEvent );
 
     /**
      * Change a text type to another one.
@@ -76,23 +70,29 @@ public:
 
     int JustifyText( const TOOL_EVENT& aEvent );
 
-    int BreakWire( const TOOL_EVENT& aEvent );
-
     int CleanupSheetPins( const TOOL_EVENT& aEvent );
     int GlobalEdit( const TOOL_EVENT& aEvent );
+
+    ///< Lock/unlock selected items.
+    int ToggleLock( const TOOL_EVENT& aEvent );
+    int Lock( const TOOL_EVENT& aEvent );
+    int Unlock( const TOOL_EVENT& aEvent );
 
     ///< Delete the selected items, or the item under the cursor.
     int DoDelete( const TOOL_EVENT& aEvent );
 
-    ///< Run the deletion tool.
-    int InteractiveDelete( const TOOL_EVENT& aEvent );
-
     /// Drag and drop
     int DdAppendFile( const TOOL_EVENT& aEvent );
+    int DdAddImage( const TOOL_EVENT& aEvent );
 
     /// Modify Attributes (DNP, Exclude, etc.)  All attributes are
     /// set to true unless all symbols already have the attribute set to true.
     int SetAttribute( const TOOL_EVENT& aEvent );
+
+    void EditProperties( EDA_ITEM* aItem );
+
+    wxString FixERCErrorMenuText( const std::shared_ptr<RC_ITEM>& aERCItem );
+    void FixERCError( const std::shared_ptr<RC_ITEM>& aERCItem );
 
 private:
     void editFieldText( SCH_FIELD* aField );
@@ -100,11 +100,11 @@ private:
     void collectUnits( const SCH_SELECTION& aSelection,
                        std::set<std::pair<SCH_SYMBOL*, SCH_SCREEN*>>& aCollectedUnits );
 
+    ///< How to modify a property for selected items.
+    enum MODIFY_MODE { ON, OFF, TOGGLE };
+
+    int modifyLockSelected( MODIFY_MODE aMode );
+
     ///< Set up handlers for various events.
     void setTransitions() override;
-
-private:
-    EDA_ITEM* m_pickerItem;
 };
-
-#endif //KICAD_SCH_EDIT_TOOL_H

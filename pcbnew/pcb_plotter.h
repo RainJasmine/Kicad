@@ -24,6 +24,7 @@
 #pragma once
 
 #include <pcb_plot_params.h>
+#include <vector>
 
 class BOARD;
 class REPORTER;
@@ -40,7 +41,8 @@ public:
                 bool aOutputPathIsSingle = false,
                 std::optional<wxString> aLayerName = std::nullopt,
                 std::optional<wxString> aSheetName = std::nullopt,
-                std::optional<wxString> aSheetPath = std::nullopt );
+                std::optional<wxString> aSheetPath = std::nullopt,
+                std::vector<wxString>* aOutputFiles = nullptr );
 
     /**
      * All copper layers that are disabled are actually selected

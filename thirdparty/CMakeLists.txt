@@ -24,8 +24,6 @@
 # Disable shared library building for all thirdparty libraries
 set( BUILD_SHARED_LIBS OFF )
 
-# Note: The glew folder isn't added here because it is added inside the main CMakeLists.txt
-
 # If this is not set, then we cannot set things like ARGPARSE_INSTALL to OFF before the
 # argparse subdirectory is added.  Under the new policy, add_option will allow itself to
 # be overridden by a previously-set variable like we want to do here.  Doing it this way
@@ -48,17 +46,20 @@ add_subdirectory( delaunator )
 add_subdirectory( dxflib_qcad )
 add_subdirectory( dynamic_bitset )
 add_subdirectory( expected )
+set( FASTFLOAT_INSTALL OFF )
+add_subdirectory( fast_float )
 set( FMT_INSTALL OFF )
 add_subdirectory( fmt )
+add_subdirectory( glad )
 add_subdirectory( gzip-hpp )
 add_subdirectory( lemon )
 add_subdirectory( libcontext )
 add_subdirectory( libpopcnt )
 add_subdirectory( magic_enum )
 add_subdirectory( markdown2html )
+add_subdirectory( nanoflann )
 add_subdirectory( nanodbc )
 add_subdirectory( nanosvg )
-add_subdirectory( other_math )
 add_subdirectory( rectpack2d )
 add_subdirectory( rtree )
 add_subdirectory( tinyspline_lib )
@@ -71,3 +72,4 @@ add_subdirectory( 3dxware_sdk )
 add_subdirectory( rapidcsv )
 add_subdirectory( turtle )
 add_subdirectory( thread-pool )
+add_subdirectory( zint )

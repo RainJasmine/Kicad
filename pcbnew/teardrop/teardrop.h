@@ -26,13 +26,12 @@
 #define TEARDROP_H
 
 #include <tool/tool_manager.h>
-#include <board.h>
-#include <footprint.h>
-#include <pad.h>
-#include <pcb_track.h>
-#include <zone.h>
 #include <drc/drc_rtree.h>
 #include "teardrop_parameters.h"
+
+class BOARD;
+class PCB_TRACK;
+class ZONE;
 
 
 // A class to store tracks grouped by layer and netcode
@@ -129,11 +128,23 @@ public:
     static int GetWidth( BOARD_ITEM* aItem, PCB_LAYER_ID aLayer );
     static bool IsRound( BOARD_ITEM* aItem, PCB_LAYER_ID aLayer );
 
+    void BuildTrackCaches();
+
 private:
     /**
      * @return true if the given aViaPad + aTrack is located inside a zone of the same netname
      */
     bool areItemsInSameZone( BOARD_ITEM* aPadOrVia, PCB_TRACK* aTrack) const;
+
+    /**
+     * Return the length of the portion of aTrack that lies outside aOther's copper shape
+     * on aLayer. A track that only grazes a pad or via edge tangentially emerges by much
+     * less than its width and is not a credible teardrop anchor: using it misorients the
+     * teardrop axis along the grazing sliver instead of the track's real entry direction.
+     * Returns 0 if the track is fully covered or does not intersect the outline.
+     */
+    int computeEmergingTrackLength( PCB_TRACK* aTrack, BOARD_ITEM* aOther,
+                                    PCB_LAYER_ID aLayer ) const;
 
     /**
      * Compute the curve part points for teardrops connected to a round shape
@@ -151,12 +162,14 @@ private:
     /**
      * Compute the curve part points for teardrops connected to a rectangular/polygonal shape
      * The Bezier curve control points are not optimized for a special shape,
-     * so use computeCurvedForRoundShape() for round shapes for better result
+     * so use computeCurvedForRoundShape() for round shapes for better result.
+     * For rounded rectangles, special handling ensures curves are tangent to corner radii.
      */
     void computeCurvedForRectShape( const TEARDROP_PARAMETERS& aParams,
                                     std::vector<VECTOR2I>& aPoly, int aTdWidth,
                                     int aTrackHalfWidth, std::vector<VECTOR2I>& aPts,
-                                    const VECTOR2I& aIntersection ) const;
+                                    const VECTOR2I& aIntersection, BOARD_ITEM* aOther,
+                                    const VECTOR2I& aOtherPos, PCB_LAYER_ID aLayer ) const;
 
     /**
      * Compute all teardrop points of the polygon shape
@@ -201,12 +214,39 @@ private:
      * @param aPoints is the polygonal shape
      * @param aTrack is the track connected to the starting points of the teardrop
      * (mainly for net info)
+     * @param aCandidate is the pad/via/track that the teardrop connects to (used for UUID)
      */
-    ZONE* createTeardrop( TEARDROP_VARIANT aTeardropVariant,
-                          std::vector<VECTOR2I>& aPoints, PCB_TRACK* aTrack ) const;
+    ZONE* createTeardrop( TEARDROP_VARIANT aTeardropVariant, std::vector<VECTOR2I>& aPoints,
+                          PCB_TRACK* aTrack, BOARD_ITEM* aCandidate ) const;
 
-    ZONE* createTeardropMask( TEARDROP_VARIANT aTeardropVariant,
-                              std::vector<VECTOR2I>& aPoints, PCB_TRACK* aTrack ) const;
+    ZONE* createTeardropMask( TEARDROP_VARIANT aTeardropVariant, std::vector<VECTOR2I>& aPoints,
+                              PCB_TRACK* aTrack, BOARD_ITEM* aCandidate ) const;
+
+    /**
+     * Creates and adds a teardrop with optional mask to the board
+     * @param aCommit the board commit to add the teardrop to
+     * @param aTeardropVariant = variant of the teardrop( attached to a pad, or a track end )
+     * @param aPoints is the polygonal shape
+     * @param aTrack is the track connected to the starting points of the teardrop
+     * @param aCandidate is the pad/via/track that the teardrop connects to
+     */
+    void createAndAddTeardropWithMask( BOARD_COMMIT& aCommit, TEARDROP_VARIANT aTeardropVariant,
+                                       std::vector<VECTOR2I>& aPoints, PCB_TRACK* aTrack,
+                                       BOARD_ITEM* aCandidate );
+
+    /**
+     * Attempts to create a track-to-track teardrop
+     * @param aCommit the board commit to add the teardrop to
+     * @param aParams the teardrop parameters
+     * @param aTeardropVariant = variant of the teardrop( attached to a pad, or a track end )
+     * @param aTrack the source track
+     * @param aCandidate the target item
+     * @param aPos the connection position
+     * @return true if teardrop was created successfully
+     */
+    bool tryCreateTrackTeardrop( BOARD_COMMIT& aCommit, const TEARDROP_PARAMETERS& aParams,
+                                 TEARDROP_VARIANT aTeardropVariant, PCB_TRACK* aTrack,
+                                 BOARD_ITEM* aCandidate, const VECTOR2I& aPos );
 
     /**
      * Set priority of created teardrops. smaller have bigger priority
@@ -232,8 +272,6 @@ private:
                                   VECTOR2I& aEndPoint, VECTOR2I& aIntersection,
                                   PCB_TRACK*& aTrack, BOARD_ITEM* aOther, const VECTOR2I& aOtherPos,
                                   int* aEffectiveTeardropLen ) const;
-
-    void buildTrackCaches();
 
 private:
     int                       m_tolerance;      // max dist between track end point and pad/via

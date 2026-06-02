@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////
-// C++ code generated with wxFormBuilder (version 4.2.1-0-g80c4cb6)
+// C++ code generated with wxFormBuilder (version 4.2.1-0-g80c4cb6a-dirty)
 // http://www.wxformbuilder.org/
 //
 // PLEASE DO *NOT* EDIT THIS FILE!
@@ -35,11 +35,6 @@ class GAL_OPTIONS_PANEL_BASE : public wxPanel
 	private:
 
 	protected:
-		wxBoxSizer* m_renderingSizer;
-		wxStaticText* m_staticText9;
-		wxStaticLine* m_staticline3;
-		wxRadioButton* m_rbAccelerated;
-		wxRadioButton* m_rbFallback;
 		wxStaticText* m_staticText1;
 		wxStaticLine* m_staticline1;
 		wxStaticText* m_gridStyleLabel;
@@ -56,9 +51,10 @@ class GAL_OPTIONS_PANEL_BASE : public wxPanel
 		wxChoice* m_gridSnapOptions;
 		wxStaticText* m_stGridLabel;
 		wxStaticLine* m_staticline2;
-		wxRadioButton* m_rbSmallCrosshairs;
-		wxRadioButton* m_rbFullWindowCrosshairs;
-		wxCheckBox* m_forceCursorDisplay;
+                wxRadioButton* m_rbSmallCrosshairs;
+                wxRadioButton* m_rbFullWindowCrosshairs;
+                wxRadioButton* m_rb45DegreeCrosshairs;
+                wxCheckBox* m_forceCursorDisplay;
 
 	public:
 

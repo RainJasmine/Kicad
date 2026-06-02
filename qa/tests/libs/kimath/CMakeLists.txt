@@ -28,6 +28,7 @@ set( QA_KIMATH_SRCS
     test_kimath.cpp
 
     geometry/geom_test_utils.cpp
+    geometry/test_arc_chord_params.cpp
     geometry/test_chamfer.cpp
     geometry/test_circle.cpp
     geometry/test_distribute.cpp
@@ -37,17 +38,25 @@ set( QA_KIMATH_SRCS
     geometry/test_fillet.cpp
     geometry/test_half_line.cpp
     geometry/test_oval.cpp
+    geometry/test_poly_triangulation.cpp
+    geometry/test_triangulation_benchmark.cpp
+    geometry/test_pip_benchmark.cpp
     geometry/test_segment.cpp
     geometry/test_shape_compound_collision.cpp
     geometry/test_shape_arc.cpp
+    geometry/test_shape_nearest_points.cpp
     geometry/test_shape_poly_set.cpp
     geometry/test_shape_poly_set_arcs.cpp
     geometry/test_shape_poly_set_collision.cpp
     geometry/test_shape_poly_set_distance.cpp
     geometry/test_shape_poly_set_iterator.cpp
+    geometry/test_shape_poly_set_split_outlines.cpp
     geometry/test_shape_line_chain.cpp
     geometry/test_shape_line_chain_collision.cpp
     geometry/test_vector_utils.cpp
+    geometry/test_shape_rect_corner.cpp
+    geometry/test_packed_rtree.cpp
+    geometry/test_dynamic_rtree.cpp
 
     math/test_box2.cpp
     math/test_matrix3x3.cpp
@@ -78,6 +87,8 @@ add_executable( qa_kimath
 target_link_libraries( qa_kimath
     qa_utils
     kimath
+    rtree
+    nlohmann_json
     Boost::headers
     Boost::unit_test_framework
     ${wxWidgets_LIBRARIES}
@@ -91,3 +102,28 @@ target_include_directories( qa_kimath PRIVATE
 kicad_add_boost_test( qa_kimath qa_kimath )
 
 setup_qa_env( qa_kimath )
+
+
+# Spatial index benchmarks — opt-in, not part of the default QA gate.
+# Run manually: ./qa/tests/libs/kimath/bench_spatial_index
+add_executable( bench_spatial_index EXCLUDE_FROM_ALL
+    kimath_test_module.cpp
+    geometry/bench_spatial_index.cpp
+
+    ${CMAKE_SOURCE_DIR}/qa/mocks/kicad/common_mocks.cpp
+)
+
+target_link_libraries( bench_spatial_index
+    qa_utils
+    kimath
+    rtree
+    nlohmann_json
+    Boost::headers
+    Boost::unit_test_framework
+    ${wxWidgets_LIBRARIES}
+)
+
+target_include_directories( bench_spatial_index PRIVATE
+    ${CMAKE_SOURCE_DIR}/qa/mocks/include
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)

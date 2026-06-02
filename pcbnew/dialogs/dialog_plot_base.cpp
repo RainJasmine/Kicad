@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////
-// C++ code generated with wxFormBuilder (version 4.2.1-0-g80c4cb6)
+// C++ code generated with wxFormBuilder (version 4.2.1-0-g80c4cb6a-dirty)
 // http://www.wxformbuilder.org/
 //
 // PLEASE DO *NOT* EDIT THIS FILE!
@@ -19,22 +19,52 @@ DIALOG_PLOT_BASE::DIALOG_PLOT_BASE( wxWindow* parent, wxWindowID id, const wxStr
 
 	m_MainSizer = new wxBoxSizer( wxVERTICAL );
 
-	wxBoxSizer* bupperSizer;
-	bupperSizer = new wxBoxSizer( wxHORIZONTAL );
+	wxFlexGridSizer* fgSizerTop;
+	fgSizerTop = new wxFlexGridSizer( 0, 2, 5, 0 );
+	fgSizerTop->AddGrowableCol( 1 );
+	fgSizerTop->SetFlexibleDirection( wxBOTH );
+	fgSizerTop->SetNonFlexibleGrowMode( wxFLEX_GROWMODE_SPECIFIED );
+
+	wxBoxSizer* bVariantSizer;
+	bVariantSizer = new wxBoxSizer( wxHORIZONTAL );
 
 	m_staticTextPlotFmt = new wxStaticText( this, wxID_ANY, _("Plot format:"), wxDefaultPosition, wxDefaultSize, 0 );
 	m_staticTextPlotFmt->Wrap( -1 );
-	bupperSizer->Add( m_staticTextPlotFmt, 0, wxALIGN_CENTER_VERTICAL|wxALL, 5 );
+	bVariantSizer->Add( m_staticTextPlotFmt, 0, wxALIGN_CENTER_VERTICAL|wxALL, 5 );
 
-	wxString m_plotFormatOptChoices[] = { _("Gerber"), _("Postscript"), _("SVG"), _("DXF"), _("PDF") };
+
+	fgSizerTop->Add( bVariantSizer, 0, wxALIGN_CENTER_VERTICAL, 5 );
+
+	wxBoxSizer* bFormatSizer;
+	bFormatSizer = new wxBoxSizer( wxHORIZONTAL );
+
+	wxString m_plotFormatOptChoices[] = { _("Gerber"), _("Postscript"), _("SVG"), _("DXF"), _("PDF"), _("PNG") };
 	int m_plotFormatOptNChoices = sizeof( m_plotFormatOptChoices ) / sizeof( wxString );
 	m_plotFormatOpt = new wxChoice( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, m_plotFormatOptNChoices, m_plotFormatOptChoices, 0 );
 	m_plotFormatOpt->SetSelection( 0 );
-	bupperSizer->Add( m_plotFormatOpt, 0, wxALIGN_CENTER_VERTICAL|wxRIGHT, 28 );
+	bFormatSizer->Add( m_plotFormatOpt, 0, wxALIGN_CENTER_VERTICAL|wxRIGHT, 28 );
+
+
+	bFormatSizer->Add( 0, 0, 1, wxEXPAND, 5 );
+
+	m_variantLabel = new wxStaticText( this, wxID_ANY, _("Design variant:"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_variantLabel->Wrap( -1 );
+	bFormatSizer->Add( m_variantLabel, 0, wxALIGN_CENTER_VERTICAL|wxALL, 5 );
+
+	wxArrayString m_variantChoiceCtrlChoices;
+	m_variantChoiceCtrl = new wxChoice( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, m_variantChoiceCtrlChoices, 0 );
+	m_variantChoiceCtrl->SetSelection( 0 );
+	bFormatSizer->Add( m_variantChoiceCtrl, 0, wxALIGN_CENTER_VERTICAL|wxLEFT|wxRIGHT, 5 );
+
+
+	fgSizerTop->Add( bFormatSizer, 0, wxEXPAND, 5 );
 
 	m_staticTextDir = new wxStaticText( this, wxID_ANY, _("Output directory:"), wxDefaultPosition, wxDefaultSize, 0 );
 	m_staticTextDir->Wrap( -1 );
-	bupperSizer->Add( m_staticTextDir, 0, wxALL|wxALIGN_CENTER_VERTICAL, 5 );
+	fgSizerTop->Add( m_staticTextDir, 0, wxALL|wxALIGN_CENTER_VERTICAL, 5 );
+
+	wxBoxSizer* bupperSizer;
+	bupperSizer = new wxBoxSizer( wxHORIZONTAL );
 
 	m_outputDirectoryName = new wxTextCtrl( this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0 );
 	m_outputDirectoryName->SetToolTip( _("Target directory for plot files. Can be absolute or relative to the board file location.") );
@@ -53,7 +83,10 @@ DIALOG_PLOT_BASE::DIALOG_PLOT_BASE( wxWindow* parent, wxWindowID id, const wxStr
 	bupperSizer->Add( 0, 0, 0, wxEXPAND|wxRIGHT, 5 );
 
 
-	m_MainSizer->Add( bupperSizer, 0, wxEXPAND|wxTOP|wxRIGHT|wxLEFT, 5 );
+	fgSizerTop->Add( bupperSizer, 0, wxEXPAND, 5 );
+
+
+	m_MainSizer->Add( fgSizerTop, 0, wxALL|wxEXPAND, 5 );
 
 	bmiddleSizer = new wxBoxSizer( wxHORIZONTAL );
 
@@ -110,6 +143,7 @@ DIALOG_PLOT_BASE::DIALOG_PLOT_BASE( wxWindow* parent, wxWindowID id, const wxStr
 	gbSizer1->Add( m_plotPadNumbers, wxGBPosition( 6, 0 ), wxGBSpan( 1, 1 ), wxLEFT, 25 );
 
 	m_zoneFillCheck = new wxCheckBox( sbOptionsSizer->GetStaticBox(), wxID_ANY, _("Check zone fills before plotting"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_zoneFillCheck->SetValue(true);
 	gbSizer1->Add( m_zoneFillCheck, wxGBPosition( 6, 1 ), wxGBSpan( 1, 2 ), wxALIGN_CENTER_VERTICAL|wxLEFT, 30 );
 
 	drillMarksLabel = new wxStaticText( sbOptionsSizer->GetStaticBox(), wxID_ANY, _("Drill marks:"), wxDefaultPosition, wxDefaultSize, 0 );
@@ -119,7 +153,7 @@ DIALOG_PLOT_BASE::DIALOG_PLOT_BASE( wxWindow* parent, wxWindowID id, const wxStr
 	wxString m_drillShapeOptChoices[] = { _("None"), _("Small"), _("Actual size") };
 	int m_drillShapeOptNChoices = sizeof( m_drillShapeOptChoices ) / sizeof( wxString );
 	m_drillShapeOpt = new wxChoice( sbOptionsSizer->GetStaticBox(), wxID_ANY, wxDefaultPosition, wxDefaultSize, m_drillShapeOptNChoices, m_drillShapeOptChoices, 0 );
-	m_drillShapeOpt->SetSelection( 0 );
+	m_drillShapeOpt->SetSelection( 2 );
 	gbSizer1->Add( m_drillShapeOpt, wxGBPosition( 0, 2 ), wxGBSpan( 1, 1 ), wxEXPAND|wxLEFT, 5 );
 
 	scalingLabel = new wxStaticText( sbOptionsSizer->GetStaticBox(), wxID_ANY, _("Scaling:"), wxDefaultPosition, wxDefaultSize, 0 );
@@ -303,17 +337,18 @@ DIALOG_PLOT_BASE::DIALOG_PLOT_BASE( wxWindow* parent, wxWindowID id, const wxStr
 	m_DXF_plotModeOpt = new wxCheckBox( m_SizerDXF_options->GetStaticBox(), wxID_ANY, _("Plot graphic items using their contours"), wxDefaultPosition, wxDefaultSize, 0 );
 	m_DXF_plotModeOpt->SetValue(true);
 	m_DXF_plotModeOpt->SetToolTip( _("Uncheck to plot graphic items using their center lines") );
+	m_DXF_plotModeOpt->SetMinSize( wxSize( 300,-1 ) );
 
 	gbSizer5->Add( m_DXF_plotModeOpt, wxGBPosition( 0, 0 ), wxGBSpan( 1, 2 ), wxALIGN_CENTER_VERTICAL|wxRIGHT|wxLEFT, 5 );
 
 	DXF_exportUnitsLabel = new wxStaticText( m_SizerDXF_options->GetStaticBox(), wxID_ANY, _("Export units:"), wxDefaultPosition, wxDefaultSize, 0 );
 	DXF_exportUnitsLabel->Wrap( -1 );
-	gbSizer5->Add( DXF_exportUnitsLabel, wxGBPosition( 0, 2 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL|wxLEFT, 40 );
+	gbSizer5->Add( DXF_exportUnitsLabel, wxGBPosition( 0, 2 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL|wxLEFT, 5 );
 
 	wxString m_DXF_plotUnitsChoices[] = { _("Inches"), _("Millimeters") };
 	int m_DXF_plotUnitsNChoices = sizeof( m_DXF_plotUnitsChoices ) / sizeof( wxString );
 	m_DXF_plotUnits = new wxChoice( m_SizerDXF_options->GetStaticBox(), wxID_ANY, wxDefaultPosition, wxDefaultSize, m_DXF_plotUnitsNChoices, m_DXF_plotUnitsChoices, 0 );
-	m_DXF_plotUnits->SetSelection( 0 );
+	m_DXF_plotUnits->SetSelection( 1 );
 	m_DXF_plotUnits->SetToolTip( _("The units to use for the exported DXF file") );
 
 	gbSizer5->Add( m_DXF_plotUnits, wxGBPosition( 0, 3 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL, 5 );
@@ -322,6 +357,11 @@ DIALOG_PLOT_BASE::DIALOG_PLOT_BASE( wxWindow* parent, wxWindowID id, const wxStr
 	m_DXF_plotTextStrokeFontOpt->SetToolTip( _("Check to use KiCad stroke font\nUncheck to plot single-line ASCII texts as editable text (using DXF font)") );
 
 	gbSizer5->Add( m_DXF_plotTextStrokeFontOpt, wxGBPosition( 1, 0 ), wxGBSpan( 1, 2 ), wxALIGN_CENTER_VERTICAL|wxRIGHT|wxLEFT, 5 );
+
+	m_DXF_exportAsMultiLayeredFile = new wxCheckBox( m_SizerDXF_options->GetStaticBox(), wxID_ANY, _("Single document"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_DXF_exportAsMultiLayeredFile->SetToolTip( _("Export selected layers into a single DXF") );
+
+	gbSizer5->Add( m_DXF_exportAsMultiLayeredFile, wxGBPosition( 2, 0 ), wxGBSpan( 1, 2 ), wxALIGN_CENTER_VERTICAL|wxLEFT|wxRIGHT, 5 );
 
 
 	m_SizerDXF_options->Add( gbSizer5, 1, wxEXPAND|wxBOTTOM, 5 );
@@ -407,6 +447,30 @@ DIALOG_PLOT_BASE::DIALOG_PLOT_BASE( wxWindow* parent, wxWindowID id, const wxStr
 
 
 	m_PlotOptionsSizer->Add( m_PDFOptionsSizer, 1, wxALL|wxEXPAND, 5 );
+
+	m_pngOptionsSizer = new wxStaticBoxSizer( new wxStaticBox( this, wxID_ANY, _("PNG Options") ), wxHORIZONTAL );
+
+	wxGridBagSizer* gbSizerPng;
+	gbSizerPng = new wxGridBagSizer( 5, 0 );
+	gbSizerPng->SetFlexibleDirection( wxBOTH );
+	gbSizerPng->SetNonFlexibleGrowMode( wxFLEX_GROWMODE_SPECIFIED );
+
+	pngDPILabel = new wxStaticText( m_pngOptionsSizer->GetStaticBox(), wxID_ANY, _("DPI:"), wxDefaultPosition, wxDefaultSize, 0 );
+	pngDPILabel->Wrap( -1 );
+	gbSizerPng->Add( pngDPILabel, wxGBPosition( 0, 0 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL|wxRIGHT|wxLEFT, 5 );
+
+	m_pngDPI = new wxSpinCtrl( m_pngOptionsSizer->GetStaticBox(), wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 72, 2400, 300 );
+	gbSizerPng->Add( m_pngDPI, wxGBPosition( 0, 1 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL|wxRIGHT|wxLEFT, 5 );
+
+	m_pngAntialias = new wxCheckBox( m_pngOptionsSizer->GetStaticBox(), wxID_ANY, _("Anti-alias"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_pngAntialias->SetValue(true);
+	gbSizerPng->Add( m_pngAntialias, wxGBPosition( 1, 0 ), wxGBSpan( 1, 2 ), wxALIGN_CENTER_VERTICAL|wxRIGHT|wxLEFT, 5 );
+
+
+	m_pngOptionsSizer->Add( gbSizerPng, 1, wxEXPAND|wxBOTTOM, 5 );
+
+
+	m_PlotOptionsSizer->Add( m_pngOptionsSizer, 0, wxALL|wxEXPAND, 5 );
 
 
 	bmiddleSizer->Add( m_PlotOptionsSizer, 0, 0, 6 );

@@ -24,10 +24,8 @@
  */
 
 #include <pgm_base.h>
-#include <symbol_library.h>
 #include <settings/settings_manager.h>
 #include <project/project_file.h>
-#include <core/kicad_algo.h>
 #include <symbol_library_common.h>
 #include <confirm.h>
 #include <sch_tool_utils.h>
@@ -38,10 +36,10 @@
 #include <symbol_viewer_frame.h>
 #include <symbol_tree_model_adapter.h>
 #include <symbol_editor/symbol_editor_settings.h>
+#include <algorithm>
 #include <sch_symbol.h>
 #include <sch_commit.h>
 #include <sch_edit_frame.h>
-#include <symbol_lib_table.h>
 #include <tool/tool_manager.h>
 #include <tools/sch_actions.h>
 #include <project_sch.h>
@@ -82,7 +80,7 @@ PICKED_SYMBOL SCH_BASE_FRAME::PickSymbolFromLibrary( const SYMBOL_LIBRARY_FILTER
 
     if( sel.LibId.IsValid() )
     {
-        alg::delete_if( aHistoryList, [&sel]( PICKED_SYMBOL const& i )
+        std::erase_if( aHistoryList, [&sel]( PICKED_SYMBOL const& i )
                                       {
                                           return i.LibId == sel.LibId;
                                       } );
@@ -90,6 +88,8 @@ PICKED_SYMBOL SCH_BASE_FRAME::PickSymbolFromLibrary( const SYMBOL_LIBRARY_FILTER
         aHistoryList.insert( aHistoryList.begin(), sel );
     }
 
+    sel.KeepSymbol = dlg.GetKeepSymbol();
+    sel.PlaceAllUnits = dlg.GetPlaceAllUnits();
     return sel;
 }
 
@@ -119,8 +119,8 @@ void SCH_EDIT_FRAME::SelectUnit( SCH_SYMBOL* aSymbol, int aUnit )
 
     if( otherSymbolRef )
     {
-        const wxString targetUnitName = symbol->GetUnitDisplayName( aUnit );
-        const wxString currUnitName = symbol->GetUnitDisplayName( currentUnit );
+        const wxString targetUnitName = symbol->GetUnitDisplayName( aUnit, false );
+        const wxString currUnitName = symbol->GetUnitDisplayName( currentUnit, false );
         wxString otherSheetName = otherSymbolRef->GetSheetPath().PathHumanReadable( true, true );
 
         if( otherSheetName.IsEmpty() )
@@ -183,36 +183,25 @@ void SCH_EDIT_FRAME::SelectUnit( SCH_SYMBOL* aSymbol, int aUnit )
 }
 
 
-void SCH_EDIT_FRAME::FlipBodyStyle( SCH_SYMBOL* aSymbol )
+void SCH_EDIT_FRAME::SelectBodyStyle( SCH_SYMBOL* aSymbol, int aBodyStyle )
 {
     if( !aSymbol || !aSymbol->GetLibSymbolRef() )
         return;
 
-    SCH_COMMIT commit( m_toolManager );
-    wxString   msg;
+    const int bodyStyleCount = aSymbol->GetLibSymbolRef()->GetBodyStyleCount();
+    const int currentBodyStyle = aSymbol->GetBodyStyle();
 
-    if( !aSymbol->GetLibSymbolRef()->HasAlternateBodyStyle() )
-    {
-        LIB_ID id = aSymbol->GetLibSymbolRef()->GetLibId();
-
-        msg.Printf( _( "No alternate body style found for symbol '%s' in library '%s'." ),
-                    id.GetLibItemName().wx_str(),
-                    id.GetLibNickname().wx_str() );
-        DisplayError( this,  msg );
+    if( bodyStyleCount <= 1 || currentBodyStyle == aBodyStyle )
         return;
-    }
+
+    if( aBodyStyle > bodyStyleCount )
+        aBodyStyle = bodyStyleCount;
+
+    SCH_COMMIT commit( m_toolManager );
 
     commit.Modify( aSymbol, GetScreen() );
 
-    aSymbol->SetBodyStyle( aSymbol->GetBodyStyle() + 1 );
-
-    // ensure m_bodyStyle = 1 or 2
-    // 1 = shape 1 = first (base DeMorgan) alternate body style
-    // 2 = shape 2 = second (DeMorgan conversion) alternate body style
-    // > 2 is not currently supported
-    // When m_bodyStyle = val max, return to the first shape
-    if( aSymbol->GetBodyStyle() > BODY_STYLE::DEMORGAN )
-        aSymbol->SetBodyStyle( BODY_STYLE::BASE );
+    aSymbol->SetBodyStyle( aBodyStyle );
 
     // If selected make sure all the now-included pins are selected
     if( aSymbol->IsSelected() )

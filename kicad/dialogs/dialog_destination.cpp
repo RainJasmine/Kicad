@@ -32,6 +32,7 @@
 
 #include <wx/dirdlg.h>
 #include <wx/filedlg.h>
+#include <kiplatform/ui.h>
 #include <wildcards_and_files_ext.h>
 #include <widgets/std_bitmap_button.h>
 #include <widgets/wx_grid.h>
@@ -61,9 +62,7 @@ DIALOG_DESTINATION::DIALOG_DESTINATION( wxWindow* aParent, JOBSET* aJobsFile,
         m_choiceArchiveformat->Hide();
     }
 
-    m_textCtrlOutputPath->SetValue( m_destination->m_outputHandler->GetOutputPath() );
     m_buttonOutputPath->SetBitmap( KiBitmapBundle( BITMAPS::small_folder ) );
-    m_textCtrlDescription->SetValue( m_destination->GetDescription() );
 
     SetupStandardButtons();
 }
@@ -101,10 +100,24 @@ void DIALOG_DESTINATION::onOutputPathBrowseClicked(wxCommandEvent& event)
                           fileWildcard,
                           wxFD_OVERWRITE_PROMPT | wxFD_SAVE );
 
+        KIPLATFORM::UI::AllowNetworkFileSystems( &dlg );
+
         if( dlg.ShowModal() != wxID_OK )
             return;
 
-        m_textCtrlOutputPath->SetValue( dlg.GetPath() );
+        wxString path = dlg.GetPath();
+
+        if( m_destination->m_type == JOBSET_DESTINATION_T::ARCHIVE )
+        {
+            wxFileName fn( path );
+
+            if( fn.GetExt().IsEmpty() )
+                fn.SetExt( FILEEXT::ArchiveFileExtension );
+
+            path = fn.GetFullPath();
+        }
+
+        m_textCtrlOutputPath->SetValue( path );
     }
 
 }
@@ -152,6 +165,9 @@ bool DIALOG_DESTINATION::TransferDataFromWindow()
 
 bool DIALOG_DESTINATION::TransferDataToWindow()
 {
+    m_textCtrlDescription->SetValue( m_destination->GetDescription() );
+    m_textCtrlOutputPath->SetValue( m_destination->m_outputHandler->GetOutputPath() );
+
     wxArrayString    arrayStr;
     std::vector<int> selectedList;
 

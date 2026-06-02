@@ -21,21 +21,25 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include <unordered_map>
+
 #include <common.h>
 #include <board.h>
+#include <pcb_board_outline.h>
 #include <pcb_track.h>
 #include <geometry/shape_segment.h>
 #include <geometry/seg.h>
 #include <drc/drc_engine.h>
 #include <drc/drc_item.h>
 #include <drc/drc_rule.h>
-#include <drc/drc_test_provider_clearance_base.h>
+#include <drc/drc_test_provider.h>
 #include <drc/drc_rtree.h>
+#include <board_design_settings.h>
 
 /*
     Silk to silk clearance test. Check all silkscreen features against each other.
     Errors generated:
-    - DRCE_OVERLAPPING_SILK
+    - DRCE_SILK_CLEARANCE
 
 */
 
@@ -72,7 +76,7 @@ bool DRC_TEST_PROVIDER_SILK_CLEARANCE::Run()
     // associated exclusions), so we only use that when soldermask min width is > 0.
     bool checkIndividualMaskItems = m_board->GetDesignSettings().m_SolderMaskMinWidth <= 0;
 
-    if( m_drcEngine->IsErrorLimitExceeded( DRCE_OVERLAPPING_SILK )
+    if( m_drcEngine->IsErrorLimitExceeded( DRCE_SILK_CLEARANCE )
             && m_drcEngine->IsErrorLimitExceeded( DRCE_SILK_MASK_CLEARANCE) )
     {
         return true;    // continue with other tests
@@ -110,7 +114,7 @@ bool DRC_TEST_PROVIDER_SILK_CLEARANCE::Run()
                 for( PCB_LAYER_ID layer : { F_SilkS, B_SilkS } )
                 {
                     if( item->IsOnLayer( layer ) )
-                        silkTree.Insert( item, layer );
+                        silkTree.Insert( item, layer, 0, ATOMIC_TABLES );
                 }
 
                 return true;
@@ -123,7 +127,7 @@ bool DRC_TEST_PROVIDER_SILK_CLEARANCE::Run()
                     return false;
 
                 for( PCB_LAYER_ID layer : LSET( item->GetLayerSet() & targetLayers ) )
-                    targetTree.Insert( item, layer );
+                    targetTree.Insert( item, layer, 0, ATOMIC_TABLES );
 
                 return true;
             };
@@ -134,9 +138,28 @@ bool DRC_TEST_PROVIDER_SILK_CLEARANCE::Run()
     forEachGeometryItem( s_allBasicItems, silkLayers, addToSilkTree );
     forEachGeometryItem( s_allBasicItems, targetLayers, addToTargetTree );
 
+    silkTree.Build();
+    targetTree.Build();
+
     REPORT_AUX( wxString::Format( wxT( "Testing %d silkscreen features against %d board items." ),
                                   silkTree.size(),
                                   targetTree.size() ) );
+
+    // Cache the board-outline bounding box and per-subshape collision results so that each
+    // subshape is only tested against the outline once during the visitor sweep.  Without
+    // caching, QueryCollidingPairs invokes the visitor O(silk * target) times and the outline
+    // Collide (which walks the outline's triangulation) was dominating DRC runtime on boards
+    // with many silkscreen/mask polygons (see issue 24007).
+    PCB_BOARD_OUTLINE* boardOutline = m_board->BoardOutline();
+    BOX2I              outlineBBox;
+
+    if( boardOutline && !boardOutline->HasOutline() )
+        boardOutline = nullptr;
+
+    if( boardOutline )
+        outlineBBox = boardOutline->GetOutline().BBoxFromCaches();
+
+    std::unordered_map<const SHAPE*, bool> outlineCollisionCache;
 
     const std::vector<DRC_RTREE::LAYER_PAIR> layerPairs =
     {
@@ -171,7 +194,7 @@ bool DRC_TEST_PROVIDER_SILK_CLEARANCE::Run()
 
                 std::shared_ptr<SHAPE> hole;
 
-                if( m_drcEngine->IsErrorLimitExceeded( DRCE_OVERLAPPING_SILK )
+                if( m_drcEngine->IsErrorLimitExceeded( DRCE_SILK_CLEARANCE )
                         && m_drcEngine->IsErrorLimitExceeded( DRCE_SILK_MASK_CLEARANCE ) )
                 {
                     return false;
@@ -193,7 +216,35 @@ bool DRC_TEST_PROVIDER_SILK_CLEARANCE::Run()
                     }
                 }
 
-                int            errorCode = DRCE_OVERLAPPING_SILK;
+                if( boardOutline )
+                {
+                    if( !testItem->GetBoundingBox().Intersects( outlineBBox ) )
+                        return true;
+
+                    // Only cache for shapes owned by the R-tree (stable pointers).  Hole
+                    // shapes are freshly created per visitor call via shared_ptr, so their
+                    // raw addresses cannot be safely used as cache keys.
+                    bool collidesOutline;
+
+                    if( testShape == aTestItemShape->shape )
+                    {
+                        auto [it, inserted] = outlineCollisionCache.try_emplace( testShape, false );
+
+                        if( inserted )
+                            it->second = testShape->Collide( &boardOutline->GetOutline() );
+
+                        collidesOutline = it->second;
+                    }
+                    else
+                    {
+                        collidesOutline = testShape->Collide( &boardOutline->GetOutline() );
+                    }
+
+                    if( !collidesOutline )
+                        return true;
+                }
+
+                int            errorCode = DRCE_SILK_CLEARANCE;
                 DRC_CONSTRAINT constraint = m_drcEngine->EvalRules( SILK_CLEARANCE_CONSTRAINT,
                                                                     refItem, testItem, aLayers.second );
                 int            minClearance = -1;
@@ -240,19 +291,15 @@ bool DRC_TEST_PROVIDER_SILK_CLEARANCE::Run()
 
                     if( minClearance > 0 )
                     {
-                        wxString msg = formatMsg( _( "(%s clearance %s; actual %s)" ),
-                                                  constraint.GetParentRule()->m_Name,
-                                                  minClearance,
-                                                  actual );
-
-                        drcItem->SetErrorMessage( drcItem->GetErrorText() + wxS( " " ) + msg );
+                        drcItem->SetErrorDetail( formatMsg( _( "(%s clearance %s; actual %s)" ),
+                                                            constraint.GetName(),
+                                                            minClearance,
+                                                            actual ) );
                     }
 
                     drcItem->SetItems( refItem, testItem );
                     drcItem->SetViolatingRule( constraint.GetParentRule() );
-
-                    reportViolation( drcItem, pos, aLayers.second );
-
+                    reportTwoShapeGeometry( drcItem, pos, refShape, testShape, aLayers.second, actual );
                     *aCollisionDetected = true;
                 }
 

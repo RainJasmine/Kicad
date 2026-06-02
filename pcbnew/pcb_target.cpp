@@ -23,11 +23,11 @@
  * or you may write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
+#include "pcb_target.h"
 
 #include <bitmaps.h>
 #include <board.h>
 #include <board_design_settings.h>
-#include <pcb_target.h>
 #include <base_units.h>
 #include <settings/color_settings.h>
 #include <settings/settings_manager.h>
@@ -36,6 +36,9 @@
 #include <geometry/shape_circle.h>
 #include <eda_draw_frame.h>
 #include <pcb_shape.h>
+#include <properties/property.h>
+#include <properties/property_mgr.h>
+
 
 PCB_TARGET::PCB_TARGET( BOARD_ITEM* aParent ) :
     BOARD_ITEM( aParent, PCB_TARGET_T )
@@ -158,12 +161,11 @@ void PCB_TARGET::GetMsgPanelInfo( EDA_DRAW_FRAME* aFrame, std::vector<MSG_PANEL_
 }
 
 
-void PCB_TARGET::TransformShapeToPolygon( SHAPE_POLY_SET& aBuffer, PCB_LAYER_ID aLayer,
-                                          int aClearance, int aError, ERROR_LOC aErrorLoc,
-                                          bool ignoreLineWidth ) const
+void PCB_TARGET::TransformShapeToPolygon( SHAPE_POLY_SET& aBuffer, PCB_LAYER_ID aLayer, int aClearance,
+                                          int aError, ERROR_LOC aErrorLoc, bool ignoreLineWidth ) const
 {
-    int size = GetShape() ? GetSize() / 1.5 : GetSize() / 2.0;
-    int radius = GetShape() ? GetSize() / 2.0 : GetSize() / 3.0;
+    int size = KiROUND( GetShape() ? GetSize() / 1.5 : GetSize() / 2.0 );
+    int radius = KiROUND( GetShape() ? GetSize() / 2.0 : GetSize() / 3.0 );
 
     PCB_SHAPE line1, line2;
     PCB_SHAPE circle( nullptr, SHAPE_T::CIRCLE );
@@ -183,8 +185,7 @@ void PCB_TARGET::TransformShapeToPolygon( SHAPE_POLY_SET& aBuffer, PCB_LAYER_ID 
     {
         item->SetWidth( GetWidth() );
         item->Move( GetPosition() );
-        item->TransformShapeToPolygon( aBuffer, aLayer, aClearance, aError, aErrorLoc,
-                                       ignoreLineWidth );
+        item->TransformShapeToPolygon( aBuffer, aLayer, aClearance, aError, aErrorLoc, ignoreLineWidth );
     }
 }
 

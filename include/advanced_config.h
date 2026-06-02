@@ -24,8 +24,12 @@
 #pragma once
 
 #include <kicommon.h>
+#include <memory>
+#include <vector>
+#include <config_params.h>
 
 class wxConfigBase;
+class PARAM_CFG;
 
 /**
  * @defgroup advanced_config Advanced Configuration Variables
@@ -58,7 +62,7 @@ class wxConfigBase;
  * config files, and why you might want to set them, see #AC_KEYS
  *
  */
-
+#include <wx/string.h>
 class KICOMMON_API ADVANCED_CFG
 {
 public:
@@ -69,6 +73,18 @@ public:
      * their config files at ~/.config/kicad/advanced, or the platform equivalent.
      */
     static const ADVANCED_CFG& GetCfg();
+
+    /**
+     * Reload the configuration from the configuration file.
+     */
+    void Reload();
+
+    /**
+     * Save the configuration to the configuration file.
+     */
+    void Save();
+
+    const std::vector<std::unique_ptr<PARAM_CFG>>& GetEntries() const { return m_entries; }
 
     ///@{
     /// \ingroup advanced_config
@@ -307,6 +323,63 @@ public:
     bool m_DebugPDFWriter;
 
     /**
+     * Stroke font line width factor relative to EM size for PDF stroke fonts.
+     *
+     * Setting name: "PDFStrokeFontWidthFactor"
+     * Valid values: 0.0 to 1.0 (practical range 0.005 - 0.1)
+     * Default value: 0.04
+     */
+    double m_PDFStrokeFontWidthFactor;
+
+    /**
+     * Horizontal offset factor applied to stroke font glyph coordinates (in EM units) after
+     * to compensate misalignment. Positive values move glyphs right.
+     *
+     * Setting name: "PDFStrokeFontXOffset"
+     * Valid values: -1.0 to 1.0
+     * Default value: 0.0
+     */
+    double m_PDFStrokeFontXOffset;
+
+    /**
+     * Vertical offset factor applied to stroke font glyph coordinates (in EM units) after
+     * Y inversion to compensate baseline misalignment. Positive values move glyphs up.
+     *
+     * Setting name: "PDFStrokeFontYOffset"
+     * Valid values: -1.0 to 1.0
+     * Default value: 0.0
+     */
+    double m_PDFStrokeFontYOffset;
+
+    /**
+     * Multiplier applied to stroke width factor when rendering bold stroke font subsets.
+     *
+     * Setting name: "PDFStrokeFontBoldMultiplier"
+     * Valid values: 1.0 to 5.0
+     * Default value: 1.6
+     */
+    double m_PDFStrokeFontBoldMultiplier;
+
+    /**
+     * Kerning (spacing) factor applied to glyph advance (width). Values < 1 tighten spacing.
+     * Applied uniformly across stroke font PDF output.
+     *
+     * Setting name: "PDFStrokeFontKerningFactor"
+     * Valid values: 0.5 to 2.0
+     * Default value: 0.9
+     */
+    double m_PDFStrokeFontKerningFactor;
+
+    /**
+     * Use legacy wxWidgets-based printing.
+     *
+     * Setting name: "UsePdfPrint"
+     * Valid values: 0 or 1
+     * Default value: 0
+     */
+    bool m_UsePdfPrint;
+
+    /**
      * The diameter of the drill marks on print and plot outputs (in mm) when the "Drill marks"
      * option is set to "Small mark".
      *
@@ -377,15 +450,6 @@ public:
      * Default value: 0
      */
     bool m_HideVersionFromTitle;
-
-    /**
-     * Enable showing schematic repair output.
-     *
-     * Setting name: "ShowRepairSchematic"
-     * Valid values: 0 or 1
-     * Default value: 0
-     */
-    bool m_ShowRepairSchematic;
 
     /**
      * Shows debugging event counters in various places.
@@ -677,6 +741,26 @@ public:
     bool m_EnableSnapAnchorsDebug;
 
     /**
+     * Hysteresis in pixels used for snap activation and deactivation.
+     *
+     * Setting name: "SnapHysteresis"
+     * Default value: 5
+     * Valid values: 0 to 100
+     */
+    int m_SnapHysteresis;
+
+    /**
+     * Margin multiplier for preferring anchors over construction line snaps.
+     * When an anchor is within (distance * margin) of a construction line snap,
+     * the anchor will be preferred.
+     *
+     * Setting name: "SnapToAnchorMargin"
+     * Default value: 1.1
+     * Valid values: 1.0 to 2.0
+     */
+    double m_SnapToAnchorMargin;
+
+    /**
      * Minimum overlapping angle for which an arc is considered to be parallel
      * to its paired arc.
      *
@@ -705,15 +789,6 @@ public:
     int m_MaximumThreads;
 
     /**
-     * When finding overlapped marker a minium distance (in mm) between two DRC markers required
-     * to mark it as overlapped
-     *
-     * Setting name: "MinimumMarkerSeparationDistance"
-     * Default value: 0.15
-     */
-    double m_MinimumMarkerSeparationDistance;
-
-    /**
      * When updating the net inspector, it either recalculates all nets or iterates through items
      * one-by-one. This value controls the threshold at which all nets are recalculated rather than
      * iterating over the items.
@@ -732,20 +807,21 @@ public:
     int m_ExcludeFromSimulationLineWidth;
 
     /**
+     * Maximum number of tuner combinations simulated when using multi-run mode.
+     *
+     * Setting name: "SimulatorMultiRunCombinationLimit"
+     * Valid values: 1 to 100
+     * Default value: 12
+     */
+    int m_SimulatorMultiRunCombinationLimit;
+
+    /**
      * The interval in milliseconds to refresh the git icons in the project tree.
      *
      * Setting name: "GitIconRefreshInterval"
      * Default value: 10000
      */
     int m_GitIconRefreshInterval;
-
-    /**
-     * Enable the UI to configure toolbars.
-     *
-     * Setting name: "ConfigurableToolbars"
-     * Default value: false
-     */
-    bool m_ConfigurableToolbars;
 
     /**
      * Set the maximum number of characters that can be pasted without warning.  Long
@@ -766,10 +842,170 @@ public:
      */
     int m_PNSProcessClusterTimeout;
 
+    /**
+     * Timeout for the PNS router's followBranch path search, in milliseconds.
+     *
+     * This limits how long the router will spend searching for the longest path
+     * through a complex track topology before returning the best path found so far.
+     *
+     * Setting name: "FollowBranchTimeoutMs"
+     * Valid values: 50 to 5000
+     * Default value: 500
+     */
+    int m_FollowBranchTimeout;
+
+    /**
+     * Skip importing component bodies when importing some format files, such as Altium.
+     *
+     * This can be used to drastically speed up the import when testing
+     * import of boards when the bodies are not needed.
+     *
+     * Setting name: "ImportSkipComponentBodies"
+     * Valid values: 0 or 1
+     * Default value: 0
+     */
+    bool m_ImportSkipComponentBodies;
+
+    /**
+     * Skip the layer mapping step when importing.
+     *
+     * This can be convenient to speed up imports when testing other aspects of the import,
+     * as you don't need to interact with the layer mapping dialog.
+     *
+     * Setting name: "ImportSkipLayerMapping"
+     * Valid values: 0 or 1
+     * Default value: 0
+     */
+    bool m_ImportSkipLayerMapping;
+
+    /**
+     * Screen DPI setting for display calculations.
+     *
+     * This setting controls the assumed screen DPI for various display calculations.
+     * Can be used to adjust sizing for high-DPI displays or unusual screen configurations.
+     *
+     * Setting name: "ScreenDPI"
+     * Valid values: 50 to 500
+     * Default value: 91
+     */
+    int m_ScreenDPI;
+
+    /**
+     * Enable use Aui Perspective to store/load geometry of main editor frames.
+     * the saved prms are position/size of toolbars and some other widgets
+     *
+     * Setting name: "EnableUseAuiPerspective"
+     * Valid values: 0 or 1
+     * Default value: 1
+     */
+    bool m_EnableUseAuiPerspective;
+
+    /**
+     * Stale lock timeout for local history repository locks, in seconds.
+     *
+     * When a KiCad process crashes while holding a lock on the .history repository,
+     * the lock file remains. This setting controls how old a lock file must be
+     * before it is considered "stale" and can be automatically removed.
+     *
+     * Setting name: "HistoryLockStaleTimeout"
+     * Valid values: 10 to 86400 (10 seconds to 24 hours)
+     * Default value: 300 (5 minutes)
+     */
+    int m_HistoryLockStaleTimeout;
+
+    /**
+     * PADS text height scale factor for PCB imports.
+     * PADS text height includes leading/descender; multiply by this to get
+     * character cell height.
+     *
+     * Setting name: "PadsPcbTextHeightScale"
+     * Valid values: 0.1 to 1.0
+     * Default value: 0.69
+     */
+    double m_PadsPcbTextHeightScale;
+
+    /**
+     * PADS text width scale factor for PCB imports.
+     *
+     * Setting name: "PadsPcbTextWidthScale"
+     * Valid values: 0.1 to 1.0
+     * Default value: 0.64
+     */
+    double m_PadsPcbTextWidthScale;
+
+    /**
+     * PADS text height scale factor for schematic imports.
+     *
+     * Setting name: "PadsSchTextHeightScale"
+     * Valid values: 0.1 to 1.0
+     * Default value: 0.50
+     */
+    double m_PadsSchTextHeightScale;
+
+    /**
+     * PADS text width scale factor for schematic imports.
+     *
+     * Setting name: "PadsSchTextWidthScale"
+     * Valid values: 0.1 to 1.0
+     * Default value: 0.46
+     */
+    double m_PadsSchTextWidthScale;
+
+    /**
+     * PADS text anchor offset in nanometers for PCB imports.
+     * Compensates for the difference between PADS and KiCad text anchor positions.
+     *
+     * Setting name: "PadsTextAnchorOffsetNm"
+     * Valid values: 0 to 1000000
+     * Default value: 350000
+     */
+    int m_PadsTextAnchorOffsetNm;
+
+    /**
+     * Minimum object size in nanometers for PCB imports.
+     * Any dimension (pad size, track width, via size, circle radius) that would be
+     * smaller than this value is clamped to it, preventing zero-size objects that
+     * can crash the renderer or cause division-by-zero in DRC.
+     *
+     * Setting name: "PcbImportMinObjectSizeNm"
+     * Valid values: 100 to 1000000
+     * Default value: 1000
+     */
+    int m_PcbImportMinObjectSizeNm;
+
+    /**
+     * Enable iterative zone filling to handle isolated islands in higher priority zones.
+     *
+     * When enabled, zones are filled in priority batches. After each batch, isolated islands
+     * are identified and removed, then lower priority zones are refilled to occupy the newly
+     * available space. This fixes issue 21746 where lower priority zones incorrectly knock
+     * out areas that should fill after higher priority zone islands are removed.
+     *
+     * Setting name: "ZoneFillIterativeRefill"
+     * Valid values: true or false
+     * Default value: true
+     */
+    bool m_ZoneFillIterativeRefill;
+
+    /**
+     * Router test case directory.
+     * 
+     * Directory where the router stores the test cases (the '0' key dump)
+     * Used to make creating test cases easier (a simple dialog instead of manually copying files)
+     * 
+     * Setting name: "RouterTestCaseDirectory"
+     * Valid values: directory name
+     * Default value: ""
+     */
+    wxString m_RouterTestCaseDirectory;
+
+    wxString m_traceMasks; ///< Trace masks for wxLogTrace, loaded from the config file.
     ///@}
 
 private:
     ADVANCED_CFG();
+
+    ADVANCED_CFG( ADVANCED_CFG&& other ) = default;
 
     /**
      * Load the config from the normal configuration file.
@@ -780,4 +1016,6 @@ private:
      * Load config from the given configuration base.
      */
     void loadSettings( wxConfigBase& aCfg );
+
+    std::vector<std::unique_ptr<PARAM_CFG>> m_entries;
 };

@@ -21,12 +21,8 @@
 
 #include <import_export.h>
 
-#ifndef SWIG
-	#if defined( KICOMMON_DLL )
-		#define KICOMMON_API APIEXPORT
-	#else
-		#define KICOMMON_API APIIMPORT
-	#endif
+#if defined( KICOMMON_DLL )
+	#define KICOMMON_API APIEXPORT
 #else
-#define KICOMMON_API
+	#define KICOMMON_API APIIMPORT
 #endif

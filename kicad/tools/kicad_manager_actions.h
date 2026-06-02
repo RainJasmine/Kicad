@@ -32,7 +32,6 @@ class KICAD_MANAGER_ACTIONS : public ACTIONS
 {
 public:
     static TOOL_ACTION newProject;
-    static TOOL_ACTION newFromTemplate;
     static TOOL_ACTION newFromRepository;
     static TOOL_ACTION newJobsetFile;
     static TOOL_ACTION openDemoProject;
@@ -59,6 +58,8 @@ public:
     static TOOL_ACTION archiveProject;
     static TOOL_ACTION unarchiveProject;
     static TOOL_ACTION openProjectDirectory;
+    static TOOL_ACTION restoreLocalHistory;
+    static TOOL_ACTION showLocalHistory;
 };
 
 

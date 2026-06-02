@@ -31,31 +31,15 @@ enum KIFACE_ADDR_ID : int
 {
     KIFACE_ID_INVALID,
 
-    /**
-     * Return a pointer to the global instance of FOOTPRINT_LIST from pcbnew.
-     * Type is FOOTPRINT_LIST*
-     * Caller does NOT own.
-     */
-    KIFACE_FOOTPRINT_LIST,
+    KIFACE_FOOTPRINT_LIBRARY_ADAPTER,
 
-    /**
-     * Return a new FP_LIB_TABLE with the global table installed as a fallback.
-     * Type is FP_LIB_TABLE*
-     * Caller takes ownership
-     */
-    KIFACE_NEW_FOOTPRINT_TABLE,
-
-    /**
-     * Return the global FP_LIB_TABLE.
-     * Type is FP_LIB_TABLE*
-     * Caller does NOT own.
-     */
-    KIFACE_GLOBAL_FOOTPRINT_TABLE,
+    /// Function pointer type: wxString (*)(const wxString& aFilterJson)
+    /// Input JSON: {"pin_count": N, "filters": ["pattern1", ...], "zero_filters": bool, "max_results": N}
+    /// Output JSON: ["lib:footprint1", "lib:footprint2", ...]
+    KIFACE_FILTER_FOOTPRINTS,
 
     KIFACE_LOAD_SCHEMATIC,
     KIFACE_NETLIST_SCHEMATIC,
-    KIFACE_SCRIPTING_LEGACY,
-    KIFACE_SCRIPTING,
 
     KIFACE_TEST_FOOTPRINT_LINK,
     KIFACE_TEST_FOOTPRINT_LINK_NO_LIBRARY,

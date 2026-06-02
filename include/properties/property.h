@@ -46,6 +46,7 @@
 #include <memory>
 #include <typeindex>
 #include <type_traits>
+#include <wx/translation.h>
 #include "std_optional_variants.h"
 
 class wxPGProperty;
@@ -66,6 +67,7 @@ enum PROPERTY_DISPLAY
     PT_DECIDEGREE, ///< Angle expressed in decidegrees
     PT_RATIO,
     PT_TIME, ///< Time expressed in ps
+    PT_NET,        ///< Net selection property
 };
 
 ///< Macro to generate unique identifier for a type
@@ -227,6 +229,8 @@ public:
         return empty;
     }
 
+    virtual void TranslateChoices() {}
+
     /**
      * Set the possible values for for the property.
      */
@@ -241,7 +245,7 @@ public:
      */
     virtual bool HasChoices() const
     {
-        return false;
+        return m_choicesFunc != nullptr;
     }
 
     /**
@@ -258,6 +262,20 @@ public:
     PROPERTY_BASE& SetAvailableFunc( std::function<bool(INSPECTABLE*)> aFunc )
     {
         m_availFunc = std::move( aFunc );
+        return *this;
+    }
+
+    wxPGChoices GetChoices( INSPECTABLE* aObject ) const
+    {
+        if( m_choicesFunc )
+            return m_choicesFunc( aObject );
+
+        return {};
+    }
+
+    PROPERTY_BASE& SetChoicesFunc( std::function<wxPGChoices(INSPECTABLE*)> aFunc )
+    {
+        m_choicesFunc = std::move( aFunc );
         return *this;
     }
 
@@ -434,6 +452,8 @@ private:
 
     std::function<bool(INSPECTABLE*)> m_writeableFunc;   ///< Eval to determine if prop is read-only
 
+    std::function<wxPGChoices(INSPECTABLE*)> m_choicesFunc;
+
     PROPERTY_VALIDATOR_FN m_validator;
 
     friend class INSPECTABLE;
@@ -512,11 +532,12 @@ protected:
     {
         wxCHECK( m_setter, /*void*/ );
 
-        if( !v.CheckType<T>() )
+        BASE_TYPE value;
+
+        if( !v.GetAs( &value ) )
             throw std::invalid_argument( "Invalid type requested" );
 
         Owner* o = reinterpret_cast<Owner*>( obj );
-        BASE_TYPE value = wxANY_AS(v, BASE_TYPE);
         (*m_setter)( o, value );
     }
 
@@ -556,11 +577,13 @@ public:
           PROPERTY<Owner, T, Base>( aName,
                                     METHOD<Owner, T, Base>::Wrap( aSetter ),
                                     METHOD<Owner, T, Base>::Wrap( aGetter ),
-                                    aDisplay )
+                                    aDisplay ),
+          m_choicesFromENUM_MAP( false )
     {
         if ( std::is_enum<T>::value )
         {
             m_choices = ENUM_MAP<T>::Instance().Choices();
+            m_choicesFromENUM_MAP = true;
             wxASSERT_MSG( m_choices.GetCount() > 0, wxT( "No enum choices defined" ) );
         }
     }
@@ -574,11 +597,13 @@ public:
             PROPERTY<Owner, T, Base>( aName,
                                       METHOD<Owner, T, Base>::Wrap( aSetter ),
                                       METHOD<Owner, T, Base>::Wrap( aGetter ),
-                                      aDisplay, aCoordType )
+                                      aDisplay, aCoordType ),
+           m_choicesFromENUM_MAP( false )
     {
         if ( std::is_enum<T>::value )
         {
             m_choices = ENUM_MAP<T>::Instance().Choices();
+            m_choicesFromENUM_MAP = true;
             wxASSERT_MSG( m_choices.GetCount() > 0, wxT( "No enum choices defined" ) );
         }
     }
@@ -616,9 +641,23 @@ public:
         return m_choices.GetCount() > 0 ? m_choices : ENUM_MAP<T>::Instance().Choices();
     }
 
+    void TranslateChoices() override
+    {
+        if( m_choicesFromENUM_MAP && std::is_enum<T>::value )
+        {
+            m_choices.Clear();
+
+            wxPGChoices& choices = ENUM_MAP<T>::Instance().Choices();
+
+            for( unsigned ii = 0; ii < choices.GetCount(); ++ii )
+                m_choices.Add( wxGetTranslation( choices.GetLabel( ii ) ), choices.GetValue( ii ) );
+        }
+    }
+
     void SetChoices( const wxPGChoices& aChoices ) override
     {
         m_choices = aChoices;
+        m_choicesFromENUM_MAP = false;
     }
 
     bool HasChoices() const override
@@ -627,6 +666,7 @@ public:
     }
 
 protected:
+    bool        m_choicesFromENUM_MAP;
     wxPGChoices m_choices;
 };
 

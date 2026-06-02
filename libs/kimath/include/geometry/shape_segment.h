@@ -54,6 +54,8 @@ public:
         m_width( aWidth )
     {};
 
+    static SHAPE_SEGMENT BySizeAndCenter( const VECTOR2I& aSize, const VECTOR2I& aCenter, const EDA_ANGLE& aRotation );
+
     ~SHAPE_SEGMENT() {};
 
     SHAPE* Clone() const override
@@ -130,14 +132,35 @@ public:
         return m_seg;
     }
 
-    void SetWidth( int aWidth )
+    VECTOR2I GetStart() const override { return m_seg.A; }
+    VECTOR2I GetEnd() const override { return m_seg.B; }
+
+    void SetWidth( int aWidth ) override
     {
         m_width = aWidth;
     }
 
-    int GetWidth() const
+    int GetWidth() const override
     {
         return m_width;
+    }
+
+    /**
+     * Get the total length of the segment, from tip to tip.
+     */
+    int GetTotalLength() const
+    {
+        return m_seg.Length() + m_width;
+    }
+
+    VECTOR2I GetCenter() const
+    {
+        return m_seg.Center();
+    }
+
+    EDA_ANGLE GetAngle() const
+    {
+        return EDA_ANGLE( m_seg.B - m_seg.A );
     }
 
     bool IsSolid() const override

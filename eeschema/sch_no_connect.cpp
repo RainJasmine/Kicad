@@ -31,12 +31,15 @@
 #include <plotters/plotter.h>
 #include <bitmaps.h>
 #include <schematic.h>
+#include <geometry/geometry_utils.h>
 #include <sch_no_connect.h>
 #include <settings/color_settings.h>
 #include <default_values.h>    // For some default values
 #include <core/mirror.h>
 #include <trigo.h>
 #include <gr_basic.h>
+#include <api/api_utils.h>
+#include <api/schematic/schematic_types.pb.h>
 
 
 SCH_NO_CONNECT::SCH_NO_CONNECT( const VECTOR2I& pos ) :
@@ -52,6 +55,39 @@ SCH_NO_CONNECT::SCH_NO_CONNECT( const VECTOR2I& pos ) :
 EDA_ITEM* SCH_NO_CONNECT::Clone() const
 {
     return new SCH_NO_CONNECT( *this );
+}
+
+
+void SCH_NO_CONNECT::Serialize( google::protobuf::Any& aContainer ) const
+{
+    using namespace kiapi::common;
+
+    kiapi::schematic::types::NoConnectMarker marker;
+
+    marker.mutable_id()->set_value( m_Uuid.AsStdString() );
+    PackVector2( *marker.mutable_position(), m_pos, schIUScale );
+    PackDistance( *marker.mutable_size(), m_size, schIUScale );
+    marker.set_locked( IsLocked() ? types::LockedState::LS_LOCKED
+                                  : types::LockedState::LS_UNLOCKED );
+
+    aContainer.PackFrom( marker );
+}
+
+
+bool SCH_NO_CONNECT::Deserialize( const google::protobuf::Any& aContainer )
+{
+    using namespace kiapi::common;
+
+    kiapi::schematic::types::NoConnectMarker marker;
+
+    if( !aContainer.UnpackTo( &marker ) )
+        return false;
+
+    const_cast<KIID&>( m_Uuid ) = KIID( marker.id().value() );
+    m_pos = UnpackVector2( marker.position(), schIUScale );
+    m_size = UnpackDistance( marker.size(), schIUScale );
+    SetLocked( marker.locked() == types::LockedState::LS_LOCKED );
+    return true;
 }
 
 
@@ -171,6 +207,12 @@ bool SCH_NO_CONNECT::HitTest( const BOX2I& aRect, bool aContained, int aAccuracy
 }
 
 
+bool SCH_NO_CONNECT::HitTest( const SHAPE_LINE_CHAIN& aPoly, bool aContained ) const
+{
+    return KIGEOM::BoxHitTest( aPoly, GetBoundingBox(), aContained );
+}
+
+
 void SCH_NO_CONNECT::Plot( PLOTTER* aPlotter, bool aBackground, const SCH_PLOT_OPTS& aPlotOpts,
                            int aUnit, int aBodyStyle, const VECTOR2I& aOffset, bool aDimmed )
 {
@@ -182,8 +224,13 @@ void SCH_NO_CONNECT::Plot( PLOTTER* aPlotter, bool aBackground, const SCH_PLOT_O
     int pY = m_pos.y;
     int penWidth = GetEffectivePenWidth( getRenderSettings( aPlotter ) );
 
+    COLOR4D color = aPlotter->RenderSettings()->GetLayerColor( LAYER_NOCONNECT );
+
+    if( color.m_text && Schematic() )
+        color = COLOR4D( ResolveText( *color.m_text, &Schematic()->CurrentSheet() ) );
+
     aPlotter->SetCurrentLineWidth( penWidth );
-    aPlotter->SetColor( aPlotter->RenderSettings()->GetLayerColor( LAYER_NOCONNECT ) );
+    aPlotter->SetColor( color );
     aPlotter->MoveTo( VECTOR2I( pX - delta, pY - delta ) );
     aPlotter->FinishTo( VECTOR2I( pX + delta, pY + delta ) );
     aPlotter->MoveTo( VECTOR2I( pX + delta, pY - delta ) );

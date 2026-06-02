@@ -29,16 +29,16 @@
 #include <macros.h>
 #include <kiway.h>
 #include <kiway_player.h>
-#include <kiway_express.h>
+#include <kiway_mail.h>
 #include <pgm_base.h>
 #include <config.h>
-#include <core/arraydim.h>
 #include <id.h>
 #include <kiplatform/app.h>
 #include <kiplatform/environment.h>
 #include <settings/settings_manager.h>
 #include <tool/action_manager.h>
 #include <logging.h>
+#include <local_history.h>
 
 #include <wx/dynlib.h>
 #include <wx/stdpaths.h>
@@ -46,14 +46,15 @@
 #include <wx/utils.h>
 #include <confirm.h>
 
-KIFACE* KIWAY::m_kiface[KIWAY_FACE_COUNT];
-int     KIWAY::m_kiface_version[KIWAY_FACE_COUNT];
+std::array<KIFACE*, KIWAY::FACE_T::KIWAY_FACE_COUNT> KIWAY::m_kiface;
+std::array<int, KIWAY::FACE_T::KIWAY_FACE_COUNT>     KIWAY::m_kiface_version;
 
 
 
 KIWAY::KIWAY( int aCtlBits, wxFrame* aTop ):
-     m_ctl( aCtlBits ), m_top( nullptr ), m_blockingDialog( wxID_NONE )
+     m_ctl( aCtlBits ), m_top( nullptr ), m_blockingDialog( wxID_NONE ), m_local_history( nullptr )
 {
+    m_local_history = new LOCAL_HISTORY();
     SetTop( aTop );     // hook player_destroy_handler() into aTop.
 
     // Set the array of all known frame window IDs to empty = wxID_NONE,
@@ -64,6 +65,12 @@ KIWAY::KIWAY( int aCtlBits, wxFrame* aTop ):
     //   to allow a call to wxWindow::FindWindowById() using a FRAME_T frame type
     for( int n = 0; n < KIWAY_PLAYER_COUNT; n++ )
         m_playerFrameId[n] = wxID_NONE;
+}
+
+
+KIWAY::~KIWAY()
+{
+    delete m_local_history;
 }
 
 
@@ -117,7 +124,6 @@ const wxString KIWAY::dso_search_path( FACE_T aFaceId )
     case FACE_PL_EDITOR:        name = KIFACE_PREFIX "pl_editor";           break;
     case FACE_PCB_CALCULATOR:   name = KIFACE_PREFIX "pcb_calculator";      break;
     case FACE_BMP2CMP:          name = KIFACE_PREFIX "bitmap2component";    break;
-    case FACE_PYTHON:           name = KIFACE_PREFIX "kipython";            break;
 
     default:
         wxASSERT_MSG( 0, wxT( "caller has a bug, passed a bad aFaceId" ) );
@@ -131,7 +137,15 @@ const wxString KIWAY::dso_search_path( FACE_T aFaceId )
     {
         // The 2 *.cpp program launchers: single_top.cpp and kicad.cpp expect
         // the *.kiface's to reside in same directory as their binaries do.
-        path = wxStandardPaths::Get().GetExecutablePath();
+        wxString appDir;
+
+        // When running inside an AppImage, the bundled ld-linux is invoked as a wrapper
+        // which causes /proc/self/exe to resolve to the dynamic linker rather than the
+        // actual binary. Use APPDIR to construct the correct executable path.
+        if( wxGetEnv( wxT( "APPDIR" ), &appDir ) )
+            path = appDir + wxT( "/usr/bin/kicad" );
+        else
+            path = wxStandardPaths::Get().GetExecutablePath();
     }
 
     wxFileName fn = path;
@@ -172,7 +186,6 @@ const wxString KIWAY::dso_search_path( FACE_T aFaceId )
         switch( aFaceId )
         {
             case FACE_PL_EDITOR: dirName = "pagelayout_editor";   break;
-            case FACE_PYTHON:    dirName = "scripting";           break;
             default:             dirName = name + 1;              break;
         }
 
@@ -199,11 +212,8 @@ KIFACE* KIWAY::KiFACE( FACE_T aFaceId, bool doLoad )
 {
     // Since this will be called from python, cannot assume that code will
     // not pass a bad aFaceId.
-    if( (unsigned) aFaceId >= arrayDim( m_kiface ) )
+    if( (unsigned) aFaceId >= m_kiface.size() )
     {
-        // @todo : throw an exception here for python's benefit, at least that
-        // way it gets some explanatory text.
-
         wxASSERT_MSG( 0, wxT( "caller has a bug, passed a bad aFaceId" ) );
         return nullptr;
     }
@@ -353,9 +363,6 @@ KIWAY::FACE_T KIWAY::KifaceType( FRAME_T aFrameType )
     case FRAME_CVPCB_DISPLAY:
         return FACE_CVPCB;
 
-    case FRAME_PYTHON:
-        return FACE_PYTHON;
-
     case FRAME_GERBER:
         return FACE_GERBVIEW;
 
@@ -398,9 +405,6 @@ KIWAY_PLAYER* KIWAY::Player( FRAME_T aFrameType, bool doCreate, wxTopLevelWindow
     // not pass a bad aFrameType.
     if( (unsigned) aFrameType >= KIWAY_PLAYER_COUNT )
     {
-        // @todo : throw an exception here for python's benefit, at least that
-        // way it gets some explanatory text.
-
         wxASSERT_MSG( 0, wxT( "caller has a bug, passed a bad aFrameType" ) );
         return nullptr;
     }
@@ -454,9 +458,6 @@ bool KIWAY::PlayerClose( FRAME_T aFrameType, bool doForce )
     // not pass a bad aFrameType.
     if( (unsigned) aFrameType >= KIWAY_PLAYER_COUNT )
     {
-        // @todo : throw an exception here for python's benefit, at least that
-        // way it gets some explanatory text.
-
         wxASSERT_MSG( 0, wxT( "caller has a bug, passed a bad aFrameType" ) );
         return false;
     }
@@ -497,11 +498,15 @@ void KIWAY::PlayerDidClose( FRAME_T aFrameType )
 
 
 void KIWAY::ExpressMail( FRAME_T aDestination, MAIL_T aCommand, std::string& aPayload,
-                         wxWindow* aSource )
+                         wxWindow* aSource, bool aFromOtherThread  )
 {
-    KIWAY_EXPRESS   mail( aDestination, aCommand, aPayload, aSource );
+    std::unique_ptr<KIWAY_MAIL_EVENT> mail =
+            std::make_unique<KIWAY_MAIL_EVENT>( aDestination, aCommand, aPayload, aSource );
 
-    ProcessEvent( mail );
+    if( aFromOtherThread )
+        QueueEvent( mail.release() );
+    else
+        ProcessEvent( *mail );
 }
 
 
@@ -599,6 +604,15 @@ void KIWAY::CommonSettingsChanged( int aFlags )
             top->CommonSettingsChanged( aFlags );
     }
 
+    if( aFlags & ENVVARS_CHANGED )
+    {
+        if( KIFACE* sch = KiFACE( FACE_SCH, false ) )
+            sch->PreloadLibraries( this );
+
+        if( KIFACE* pcb = KiFACE( FACE_PCB, false ) )
+            pcb->PreloadLibraries( this );
+    }
+
     for( unsigned i=0;  i < KIWAY_PLAYER_COUNT;  ++i )
     {
         KIWAY_PLAYER* frame = GetPlayerFrame( ( FRAME_T )i );
@@ -609,9 +623,39 @@ void KIWAY::CommonSettingsChanged( int aFlags )
 }
 
 
+void KIWAY::ClearFileHistory()
+{
+    if( m_ctl & KFCTL_CPP_PROJECT_SUITE )
+    {
+        // A dynamic_cast could be better, but creates link issues
+        // (some basic_frame functions not found) on some platforms,
+        // so a static_cast is used.
+        EDA_BASE_FRAME* top = static_cast<EDA_BASE_FRAME*>( m_top );
+
+        if( top )
+            top->ClearFileHistory();
+    }
+
+    for( unsigned i=0;  i < KIWAY_PLAYER_COUNT;  ++i )
+    {
+        KIWAY_PLAYER* frame = GetPlayerFrame( ( FRAME_T )i );
+
+        if( frame )
+            frame->ClearFileHistory();
+    }
+}
+
+
 void KIWAY::ProjectChanged()
 {
+    // Skip project change notifications during application shutdown to avoid
+    // clearing savers and re-registering them unnecessarily
+    if( PgmOrNull() && Pgm().m_Quitting )
+        return;
+
     APP_MONITOR::AddNavigationBreadcrumb( "Changing project", "kiway.projectchanged" );
+
+    LocalHistory().ClearAllSavers();
 
     if( m_ctl & KFCTL_CPP_PROJECT_SUITE )
     {
@@ -623,6 +667,15 @@ void KIWAY::ProjectChanged()
         if( top )
             top->ProjectChanged();
     }
+
+    // Cancel an in-progress load of libraries; handled through the schematic and PCB ifaces.
+    // Use doLoad=false: only notify already-loaded kifaces, don't force-load absent ones
+    // (e.g. eeschema kiface isn't available in standalone pcbnew).
+    if ( KIFACE* schface = KiFACE( KIWAY::FACE_SCH, false ) )
+        schface->ProjectChanged();
+
+    if ( KIFACE* pcbface = KiFACE( KIWAY::FACE_PCB, false ) )
+        pcbface->ProjectChanged();
 
     for( unsigned i=0;  i < KIWAY_PLAYER_COUNT;  ++i )
     {
@@ -651,7 +704,7 @@ void KIWAY::SetBlockingDialog( wxWindow* aWin )
 
 bool KIWAY::ProcessEvent( wxEvent& aEvent )
 {
-    KIWAY_EXPRESS* mail = dynamic_cast<KIWAY_EXPRESS*>( &aEvent );
+    KIWAY_MAIL_EVENT* mail = dynamic_cast<KIWAY_MAIL_EVENT*>( &aEvent );
 
     if( mail )
     {
@@ -675,6 +728,25 @@ bool KIWAY::ProcessEvent( wxEvent& aEvent )
 }
 
 
+void KIWAY::QueueEvent( wxEvent* aEvent )
+{
+    KIWAY_MAIL_EVENT* mail = dynamic_cast<KIWAY_MAIL_EVENT*>( aEvent );
+
+    if( mail )
+    {
+        FRAME_T dest = mail->Dest();
+
+        // see if recipient is alive
+        KIWAY_PLAYER* alive = Player( dest, false );
+
+        if( alive )
+        {
+            alive->GetEventHandler()->QueueEvent( aEvent );
+        }
+    }
+}
+
+
 int KIWAY::ProcessJob( KIWAY::FACE_T aFace, JOB* job, REPORTER* aReporter, PROGRESS_REPORTER* aProgressReporter )
 {
     KIFACE* kiface = KiFACE( aFace );
@@ -688,6 +760,40 @@ bool KIWAY::ProcessJobConfigDialog( KIWAY::FACE_T aFace, JOB* aJob, wxWindow* aW
     KIFACE* kiface = KiFACE( aFace );
 
     return kiface->HandleJobConfig( aJob, aWindow );
+}
+
+
+bool KIWAY::ProcessApiOpenDocument( KIWAY::FACE_T aFace, const wxString& aPath, KICAD_API_SERVER* aServer,
+                                    wxString* aError )
+{
+    KIFACE* kiface = KiFACE( aFace );
+
+    if( !kiface )
+    {
+        if( aError )
+            *aError = wxS( "Failed to load requested face" );
+
+        return false;
+    }
+
+    return kiface->HandleApiOpenDocument( aPath, aServer, aError );
+}
+
+
+bool KIWAY::ProcessApiCloseDocument( KIWAY::FACE_T aFace, const wxString& aPath, KICAD_API_SERVER* aServer,
+                                     wxString* aError )
+{
+    KIFACE* kiface = KiFACE( aFace );
+
+    if( !kiface )
+    {
+        if( aError )
+            *aError = wxS( "Failed to load requested face" );
+
+        return false;
+    }
+
+    return kiface->HandleApiCloseDocument( aPath, aServer, aError );
 }
 
 

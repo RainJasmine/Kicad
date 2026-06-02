@@ -23,12 +23,11 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#ifndef SCH_COLLECTORS_H
-#define SCH_COLLECTORS_H
+#pragma once
+
 
 #include <lib_symbol.h>
 #include <collector.h>
-#include <dialogs/dialog_schematic_find.h>
 #include <sch_item.h>
 
 
@@ -42,6 +41,7 @@ public:
     static const std::vector<KICAD_T> EditableItems;
     static const std::vector<KICAD_T> MovableItems;
     static const std::vector<KICAD_T> FieldOwners;
+    static const std::vector<KICAD_T> DeletableItems;
 
     SCH_COLLECTOR( const std::vector<KICAD_T>& aScanTypes = { SCH_LOCATE_ANY_T } ) :
             m_Unit( 0 ),
@@ -75,10 +75,10 @@ public:
      *                   the priority order of the resulting collection.
      * @param aPos are the coordinates to use in hit testing.
      * @param aUnit is the symbol unit filter (for symbol editor).
-     * @param aConvert is the DeMorgan filter (for symbol editor)
+     * @param aBodyStyle is the body style filter (for symbol editor)
      */
     void Collect( SCH_SCREEN* aScreen, const std::vector<KICAD_T>& aScanTypes,
-                  const VECTOR2I& aPos, int aUnit = 0, int aConvert = 0 );
+                  const VECTOR2I& aPos, int aUnit = 0, int aBodyStyle = 0 );
 
     /**
      * Scan an #EDA_ITEM using this class's Inspector method which does the collection.
@@ -88,10 +88,10 @@ public:
      *                   and the priority order of the resulting collection.
      * @param aPos are the coordinates to use in hit testing.
      * @param aUnit is the symbol unit filter (for symbol editor).
-     * @param aConvert is the DeMorgan filter (for symbol editor).
+     * @param aBodyStyle is the body style filter (for symbol editor).
      */
     void Collect( LIB_ITEMS_CONTAINER& aItems, const std::vector<KICAD_T>& aScanTypes,
-                  const VECTOR2I& aPos, int aUnit = 0, int aConvert = 0 );
+                  const VECTOR2I& aPos, int aUnit = 0, int aBodyStyle = 0 );
 
     /**
      * Test if the collected items form a corner of two line segments.
@@ -102,7 +102,7 @@ public:
 
 public:
     int      m_Unit;            // Fixed symbol unit filter (for symbol editor)
-    int      m_BodyStyle;       // Fixed DeMorgan filter (for symbol editor)
+    int      m_BodyStyle;       // Fixed body style filter (for symbol editor)
 
     bool     m_ShowPinElectricalTypes;
 };
@@ -110,5 +110,3 @@ public:
 
 void CollectOtherUnits( const wxString& thisRef, int thisUnit, const LIB_ID& aLibId,
                         SCH_SHEET_PATH& aSheet, std::vector<SCH_SYMBOL*>* otherUnits );
-
-#endif // SCH_COLLECTORS_H

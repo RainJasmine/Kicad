@@ -33,8 +33,7 @@
 #include <tools/cvpcb_actions.h>
 
 FOOTPRINTS_LISTBOX::FOOTPRINTS_LISTBOX( CVPCB_MAINFRAME* parent, wxWindowID id ) :
-        ITEMS_LISTBOX_BASE( parent, id, wxDefaultPosition, wxDefaultSize,
-                            wxLC_SINGLE_SEL | wxNO_BORDER )
+        ITEMS_LISTBOX_BASE( parent, id, wxDefaultPosition, wxDefaultSize, wxLC_SINGLE_SEL | wxNO_BORDER )
 {
 }
 
@@ -133,7 +132,13 @@ void FOOTPRINTS_LISTBOX::SetFootprints( FOOTPRINT_LIST& aList, const wxString& a
         filter.FilterByFootprintFilters( aComponent->GetFootprintFilters() );
 
     if( aFilterType & FILTERING_BY_PIN_COUNT && aComponent )
-        filter.FilterByPinCount( aComponent->GetPinCount() );
+    {
+        int pc = aComponent->GetPinCount();
+        wxLogTrace( "CVPCB_PINCOUNT",
+                    wxT( "FOOTPRINTS_LISTBOX::SetFootprints: ref='%s' pinCount filter=%d" ),
+                    aComponent->GetReference(), pc );
+        filter.FilterByPinCount( pc );
+    }
 
     if( aFilterType & FILTERING_BY_LIBRARY )
         filter.FilterByLibrary( aLibName );
@@ -187,18 +192,27 @@ END_EVENT_TABLE()
 
 void FOOTPRINTS_LISTBOX::OnLeftClick( wxListEvent& event )
 {
+    if( m_isClosing )
+        return;
+
     GetParent()->RefreshFootprintViewer();
 }
 
 
 void FOOTPRINTS_LISTBOX::OnLeftDClick( wxListEvent& event )
 {
+    if( m_isClosing )
+        return;
+
     GetParent()->GetToolManager()->RunAction( CVPCB_ACTIONS::associate );
 }
 
 
 void FOOTPRINTS_LISTBOX::OnChar( wxKeyEvent& event )
 {
+    if( m_isClosing )
+        return;
+
     wxLogTrace( kicadTraceKeyEvent, wxS( "FOOTPRINTS_LISTBOX::OnChar %s" ), dump( event ) );
 
     int key = event.GetKeyCode();

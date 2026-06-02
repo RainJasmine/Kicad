@@ -21,10 +21,12 @@
  */
 
 #include <wx/log.h>
+#include <wx/srchctrl.h>
 #include <wx/wupdlock.h>
 #include <core/profile.h>
 #include <tool/tool_manager.h>
 #include <kiface_base.h>
+#include <confirm.h>
 #include <sch_edit_frame.h>
 #include <sch_bus_entry.h>
 #include <sch_line.h>
@@ -36,6 +38,12 @@
 #include <connection_graph.h>
 #include <widgets/wx_aui_utils.h>
 #include <tools/sch_actions.h>
+#include <mail_type.h>
+#include <wx/filename.h>
+#include <wildcards_and_files_ext.h>
+#include <wx/clntdata.h>
+#include <regex>
+#include <eeschema_settings.h>
 
 
 static wxString GetNetNavigatorItemText( const SCH_ITEM* aItem,
@@ -54,7 +62,7 @@ static wxString GetNetNavigatorItemText( const SCH_ITEM* aItem,
 
         if( aItem->GetLayer() == LAYER_WIRE )
         {
-            retv.Printf( _( "Wire from %s, %s to %s, %s" ),
+            retv.Printf( _( "Wire from (%s, %s) to (%s, %s)" ),
                          aUnitsProvider->MessageTextFromValue( line->GetStartPoint().x ),
                          aUnitsProvider->MessageTextFromValue( line->GetStartPoint().y ),
                          aUnitsProvider->MessageTextFromValue( line->GetEndPoint().x ),
@@ -62,7 +70,7 @@ static wxString GetNetNavigatorItemText( const SCH_ITEM* aItem,
         }
         else if( aItem->GetLayer() == LAYER_BUS )
         {
-            retv.Printf( _( "Bus from %s, %s to %s, %s" ),
+            retv.Printf( _( "Bus from (%s, %s) to (%s, %s)" ),
                          aUnitsProvider->MessageTextFromValue( line->GetStartPoint().x ),
                          aUnitsProvider->MessageTextFromValue( line->GetStartPoint().y ),
                          aUnitsProvider->MessageTextFromValue( line->GetEndPoint().x ),
@@ -110,7 +118,7 @@ static wxString GetNetNavigatorItemText( const SCH_ITEM* aItem,
     {
         const SCH_LABEL* label = static_cast<const SCH_LABEL*>( aItem );
 
-        retv.Printf( _( "Label '%s' at %s, %s" ),
+        retv.Printf( _( "Label '%s' at (%s, %s)" ),
                      UnescapeString( label->GetText() ),
                      aUnitsProvider->MessageTextFromValue( label->GetPosition().x ),
                      aUnitsProvider->MessageTextFromValue( label->GetPosition().y ) );
@@ -120,7 +128,7 @@ static wxString GetNetNavigatorItemText( const SCH_ITEM* aItem,
     {
         const SCH_GLOBALLABEL* label = static_cast<const SCH_GLOBALLABEL*>( aItem );
 
-        retv.Printf( _( "Global label '%s' at %s, %s" ),
+        retv.Printf( _( "Global label '%s' at (%s, %s)" ),
                      UnescapeString( label->GetText() ),
                      aUnitsProvider->MessageTextFromValue( label->GetPosition().x ),
                      aUnitsProvider->MessageTextFromValue( label->GetPosition().y ) );
@@ -130,7 +138,7 @@ static wxString GetNetNavigatorItemText( const SCH_ITEM* aItem,
     {
         const SCH_HIERLABEL* label = static_cast<const SCH_HIERLABEL*>( aItem );
 
-        retv.Printf( _( "Hierarchical label '%s' at %s, %s" ),
+        retv.Printf( _( "Hierarchical label '%s' at (%s, %s)" ),
                      UnescapeString( label->GetText() ),
                      aUnitsProvider->MessageTextFromValue( label->GetPosition().x ),
                      aUnitsProvider->MessageTextFromValue( label->GetPosition().y ) );
@@ -140,7 +148,7 @@ static wxString GetNetNavigatorItemText( const SCH_ITEM* aItem,
     {
         const SCH_JUNCTION* junction = static_cast<const SCH_JUNCTION*>( aItem );
 
-        retv.Printf( _( "Junction at %s, %s" ),
+        retv.Printf( _( "Junction at (%s, %s)" ),
                      aUnitsProvider->MessageTextFromValue( junction->GetPosition().x ),
                      aUnitsProvider->MessageTextFromValue( junction->GetPosition().y ) );
         break;
@@ -149,7 +157,7 @@ static wxString GetNetNavigatorItemText( const SCH_ITEM* aItem,
     {
         const SCH_NO_CONNECT* nc = static_cast<const SCH_NO_CONNECT*>( aItem );
 
-        retv.Printf( _( "No-Connect at %s, %s" ),
+        retv.Printf( _( "No-Connect at (%s, %s)" ),
                      aUnitsProvider->MessageTextFromValue( nc->GetPosition().x ),
                      aUnitsProvider->MessageTextFromValue( nc->GetPosition().y ) );
         break;
@@ -158,7 +166,7 @@ static wxString GetNetNavigatorItemText( const SCH_ITEM* aItem,
     {
         const SCH_BUS_WIRE_ENTRY* entry = static_cast<const SCH_BUS_WIRE_ENTRY*>( aItem );
 
-        retv.Printf( _( "Bus to wire entry from %s, %s to %s, %s" ),
+        retv.Printf( _( "Bus to wire entry from (%s, %s) to (%s, %s)" ),
                      aUnitsProvider->MessageTextFromValue( entry->GetPosition().x ),
                      aUnitsProvider->MessageTextFromValue( entry->GetPosition().y ),
                      aUnitsProvider->MessageTextFromValue( entry->GetEnd().x ),
@@ -169,7 +177,7 @@ static wxString GetNetNavigatorItemText( const SCH_ITEM* aItem,
     {
         const SCH_BUS_BUS_ENTRY* entry = static_cast<const SCH_BUS_BUS_ENTRY*>( aItem );
 
-        retv.Printf( _( "Bus to bus entry from %s, %s to %s, %s" ),
+        retv.Printf( _( "Bus to bus entry from (%s, %s) to (%s, %s)" ),
                      aUnitsProvider->MessageTextFromValue( entry->GetPosition().x ),
                      aUnitsProvider->MessageTextFromValue( entry->GetPosition().y ),
                      aUnitsProvider->MessageTextFromValue( entry->GetEnd().x ),
@@ -180,7 +188,7 @@ static wxString GetNetNavigatorItemText( const SCH_ITEM* aItem,
     {
         const SCH_DIRECTIVE_LABEL* entry = static_cast<const SCH_DIRECTIVE_LABEL*>( aItem );
 
-        retv.Printf( _( "Netclass label '%s' at %s, %s" ),
+        retv.Printf( _( "Netclass label '%s' at (%s, %s)" ),
                      UnescapeString( entry->GetText() ),
                      aUnitsProvider->MessageTextFromValue( entry->GetPosition().x ),
                      aUnitsProvider->MessageTextFromValue( entry->GetPosition().y ) );
@@ -241,8 +249,29 @@ void SCH_EDIT_FRAME::MakeNetNavigatorNode( const wxString& aNetName, wxTreeItemI
 
         itemData = new NET_NAVIGATOR_ITEM_DATA( sheetPath, nullptr );
 
-        bool stripTrailingSeparator = !sheetPath.Last()->IsRootSheet();
-        wxString txt =  sheetPath.PathHumanReadable( true, stripTrailingSeparator );
+        // Build path string for net navigator - include top-level sheet name to distinguish
+        // multiple top-level sheets
+        wxString txt;
+
+        if( !sheetPath.empty() && sheetPath.at( 0 )->GetScreen() )
+        {
+            // Get the top-level sheet name
+            txt = sheetPath.at( 0 )->GetField( FIELD_T::SHEET_NAME )->GetShownText( false );
+
+            if( txt.IsEmpty() )
+            {
+                wxFileName fn( sheetPath.at( 0 )->GetScreen()->GetFileName() );
+                txt = fn.GetName();
+            }
+
+            // Add sub-sheet names
+            for( unsigned i = 1; i < sheetPath.size(); i++ )
+                txt << wxS( "/" ) << sheetPath.at( i )->GetField( FIELD_T::SHEET_NAME )->GetShownText( false );
+        }
+        else
+        {
+            txt = sheetPath.PathHumanReadable( true, true );
+        }
 
         wxTreeItemId sheetId;
 
@@ -297,16 +326,55 @@ void SCH_EDIT_FRAME::MakeNetNavigatorNode( const wxString& aNetName, wxTreeItemI
 
 void SCH_EDIT_FRAME::RefreshNetNavigator( const NET_NAVIGATOR_ITEM_DATA* aSelection )
 {
-    wxCHECK( m_netNavigator, /* void */ );
+    wxCHECK( m_netNavigator && m_schematic, /* void */ );
 
-    if( !m_netNavigator->IsShown() )
+    if( !m_netNavigator->IsShownOnScreen() || !m_schematic->HasHierarchy() )
         return;
+
+    if( m_netNavigatorFilter )
+        m_netNavigatorFilter->Enable( m_highlightedConn.IsEmpty() );
 
     bool   singleSheetSchematic = m_schematic->Hierarchy().size() == 1;
     size_t nodeCnt = 0;
 
     wxWindowUpdateLocker updateLock( m_netNavigator );
     PROF_TIMER           timer;
+
+    wxString filter = m_highlightedConn.IsEmpty() ? m_netNavigatorFilterValue : wxString();
+
+    // Determine search mode from settings
+    EESCHEMA_SETTINGS* cfg = eeconfig();
+    bool useWildcard = cfg ? cfg->m_AuiPanels.net_nav_search_mode_wildcard : true;
+
+    // For wildcard mode, wrap filter with wildcards for substring matching by default
+    // unless user has already specified wildcards
+    wxString globFilter;
+    std::unique_ptr<std::regex> regexFilter;
+
+    if( !filter.IsEmpty() )
+    {
+        if( useWildcard )
+        {
+            globFilter = filter;
+            if( !globFilter.Contains( wxT( "*" ) ) && !globFilter.Contains( wxT( "?" ) ) )
+                globFilter = wxT( "*" ) + globFilter + wxT( "*" );
+        }
+        else
+        {
+            // Regex mode - compile the regex pattern
+            try
+            {
+                regexFilter = std::make_unique<std::regex>(
+                        filter.ToStdString(),
+                        std::regex_constants::icase | std::regex_constants::ECMAScript );
+            }
+            catch( const std::regex_error& )
+            {
+                // Invalid regex - no filtering
+                regexFilter.reset();
+            }
+        }
+    }
 
     if( m_highlightedConn.IsEmpty() )
     {
@@ -323,12 +391,39 @@ void SCH_EDIT_FRAME::RefreshNetNavigator( const NET_NAVIGATOR_ITEM_DATA* aSelect
             if( net.first.Name.IsEmpty() )
                 continue;
 
-            nodeCnt++;
-            wxTreeItemId netId = m_netNavigator->AppendItem( rootId, UnescapeString( net.first.Name ) );
-            MakeNetNavigatorNode( net.first.Name, netId, aSelection, singleSheetSchematic );
-        }
+            wxString displayName = UnescapeString( net.first.Name );
 
-        m_netNavigator->Expand( rootId );
+            // Apply filter based on mode
+            if( !filter.IsEmpty() )
+            {
+                bool matches = false;
+
+                if( useWildcard && !globFilter.IsEmpty() )
+                {
+                    // Use glob-based matching (supports * and ? wildcards), case-insensitive
+                    matches = WildCompareString( globFilter, displayName, false );
+                }
+                else if( !useWildcard && regexFilter )
+                {
+                    // Use regex matching
+                    try
+                    {
+                        matches = std::regex_search( displayName.ToStdString(), *regexFilter );
+                    }
+                    catch( const std::regex_error& )
+                    {
+                        matches = false;
+                    }
+                }
+
+                if( !matches )
+                    continue;
+            }
+
+            nodeCnt++;
+            wxTreeItemId netId = m_netNavigator->AppendItem( rootId, displayName, -1, -1 );
+            MakeNetNavigatorNode( net.first.Name, netId, aSelection, singleSheetSchematic );
+        }        m_netNavigator->Expand( rootId );
     }
     else if( !m_netNavigator->IsEmpty() )
     {
@@ -340,7 +435,7 @@ void SCH_EDIT_FRAME::RefreshNetNavigator( const NET_NAVIGATOR_ITEM_DATA* aSelect
 
             nodeCnt++;
 
-            wxTreeItemId rootId = m_netNavigator->AddRoot( UnescapeString( m_highlightedConn ), 0 );
+            wxTreeItemId rootId = m_netNavigator->AddRoot( UnescapeString( m_highlightedConn ) );
 
             MakeNetNavigatorNode( m_highlightedConn, rootId, aSelection, singleSheetSchematic );
         }
@@ -356,7 +451,7 @@ void SCH_EDIT_FRAME::RefreshNetNavigator( const NET_NAVIGATOR_ITEM_DATA* aSelect
             m_netNavigator->DeleteAllItems();
             nodeCnt++;
 
-            wxTreeItemId rootId = m_netNavigator->AddRoot( UnescapeString( m_highlightedConn ), 0 );
+            wxTreeItemId rootId = m_netNavigator->AddRoot( UnescapeString( m_highlightedConn ) );
 
             MakeNetNavigatorNode( m_highlightedConn, rootId, itemData, singleSheetSchematic );
         }
@@ -365,7 +460,7 @@ void SCH_EDIT_FRAME::RefreshNetNavigator( const NET_NAVIGATOR_ITEM_DATA* aSelect
     {
         nodeCnt++;
 
-        wxTreeItemId rootId = m_netNavigator->AddRoot( UnescapeString( m_highlightedConn ), 0 );
+        wxTreeItemId rootId = m_netNavigator->AddRoot( UnescapeString( m_highlightedConn ) );
 
         MakeNetNavigatorNode( m_highlightedConn, rootId, aSelection, singleSheetSchematic );
     }
@@ -631,6 +726,32 @@ void SCH_EDIT_FRAME::ToggleNetNavigator()
 }
 
 
+void SCH_EDIT_FRAME::FindNetInInspector( const wxString& aNetName )
+{
+    if( !m_netNavigator || aNetName.IsEmpty() )
+        return;
+
+    // Ensure the net navigator is shown
+    wxAuiPaneInfo& netNavigatorPane = m_auimgr.GetPane( NetNavigatorPaneName() );
+
+    if( !netNavigatorPane.IsShown() )
+        ToggleNetNavigator();
+
+    // Clear any net highlights
+    m_highlightedConn = wxEmptyString;
+    GetToolManager()->RunAction( SCH_ACTIONS::updateNetHighlighting );
+
+    // Set the search text to the aNetName
+    if( m_netNavigatorFilter )
+        m_netNavigatorFilter->SetValue( aNetName );
+
+    m_netNavigatorFilterValue = aNetName;
+
+    // Refresh the tree
+    RefreshNetNavigator();
+}
+
+
 void SCH_EDIT_FRAME::onResizeNetNavigator( wxSizeEvent& aEvent )
 {
     aEvent.Skip();
@@ -643,7 +764,9 @@ void SCH_EDIT_FRAME::onResizeNetNavigator( wxSizeEvent& aEvent )
 
     EESCHEMA_SETTINGS* cfg = dynamic_cast<EESCHEMA_SETTINGS*>( Kiface().KifaceSettings() );
 
-    wxCHECK( cfg, /* void */ );
+    // During deletion/cleanup operations, settings may be temporarily unavailable
+    if( !cfg )
+        return;
 
     wxAuiPaneInfo& netNavigatorPane = m_auimgr.GetPane( NetNavigatorPaneName() );
 

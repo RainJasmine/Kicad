@@ -25,14 +25,18 @@
 #define _GIT_COMMON_H_
 
 #include <git/kicad_git_errors.h>
+#include <import_export.h>
 
 #include <git2.h>
+#include <atomic>
 #include <mutex>
 #include <set>
 
 #include <wx/string.h>
 
-class KIGIT_COMMON
+class LIBGIT_BACKEND;
+
+class APIEXPORT KIGIT_COMMON
 {
 
 public:
@@ -89,11 +93,11 @@ public:
     };
 
     wxString GetUsername() const { return m_username; }
-    wxString GetPassword() const { return m_password; }
+    wxString GetPassword();
     GIT_CONN_TYPE GetConnType() const;
 
-    void SetUsername( const wxString& aUsername ) { m_username = aUsername; }
-    void SetPassword( const wxString& aPassword ) { m_password = aPassword; }
+    void SetUsername( const wxString& aUsername ) { m_username = aUsername; m_secretFetched = false; }
+    void SetPassword( const wxString& aPassword ) { m_password = aPassword; m_secretFetched = true; }
     void SetSSHKey( const wxString& aSSHKey );
 
     // Holds a temporary variable that can be used by the authentication callback
@@ -114,6 +118,22 @@ public:
 
     wxString GetRemotename() const;
 
+    /// Returns GetRemotename() when non-empty, otherwise "origin".  Centralizes the
+    /// fallback policy used by push/pull/fetch paths.
+    wxString GetRemoteNameOrDefault() const;
+
+    /**
+     * Set the project directory path, preserving any symlinks in the path.
+     * This is used to ensure git status paths match the paths used in the project tree.
+     */
+    void SetProjectDir( const wxString& aProjectDir ) { m_projectDir = aProjectDir; }
+
+    /**
+     * Get the project directory path. If a symlink-preserving path was set via
+     * SetProjectDir(), returns that path. Otherwise falls back to git_repository_workdir().
+     */
+    wxString GetProjectDir() const;
+
     void ResetNextKey() { m_nextPublicKey = 0; }
 
     wxString GetNextPublicKey()
@@ -127,6 +147,8 @@ public:
     void SetRemote( const wxString& aRemote )
     {
         m_remote = aRemote;
+        m_password.clear();
+        m_secretFetched = false;
         updateConnectionType();
     }
 
@@ -146,8 +168,20 @@ public:
         return wxString( error->message );
     }
 
+    bool IsCancelled() const
+    {
+        return m_cancel.load();
+    }
+
+    void SetCancelled( bool aCancel )
+    {
+        m_cancel.store( aCancel );
+    }
+
 protected:
     git_repository* m_repo;
+
+    wxString m_projectDir;  // Project directory path preserving symlinks
 
     GIT_CONN_TYPE m_connType;
     wxString m_remote;      // This is the full connection string
@@ -163,6 +197,7 @@ protected:
     friend class GIT_PUSH_HANDLER;
     friend class GIT_PULL_HANDLER;
     friend class GIT_CLONE_HANDLER;
+    friend class LIBGIT_BACKEND;
     friend class PROJECT_TREE_PANE;
 
 private:
@@ -171,25 +206,28 @@ private:
 
     std::vector<wxString> m_publicKeys;
     int m_nextPublicKey;
+    bool m_secretFetched;
+
+    std::atomic<bool> m_cancel;  // Set to true when the user cancels an operation
 
     // Create a dummy flag to tell if we have tested ssh agent credentials separately
     // from the ssh key credentials
     static const unsigned KIGIT_CREDENTIAL_SSH_AGENT = 1 << sizeof( m_testedTypes - 1 );
 };
 
-extern "C" int  progress_cb( const char* str, int len, void* data );
-extern "C" void clone_progress_cb( const char* str, size_t len, size_t total, void* data );
-extern "C" int transfer_progress_cb( const git_transfer_progress* aStats, void* aPayload );
-extern "C" int update_cb( const char* aRefname, const git_oid* aFirst, const git_oid* aSecond,
-                          void* aPayload );
-extern "C" int push_transfer_progress_cb( unsigned int aCurrent, unsigned int aTotal,
-                                          size_t aBytes, void* aPayload );
-extern "C" int push_update_reference_cb( const char* aRefname, const char* aStatus,
-                                         void* aPayload );
+extern "C" APIEXPORT int  progress_cb( const char* str, int len, void* data );
+extern "C" APIEXPORT void clone_progress_cb( const char* str, size_t len, size_t total, void* data );
+extern "C" APIEXPORT int transfer_progress_cb( const git_transfer_progress* aStats, void* aPayload );
+extern "C" APIEXPORT int update_cb( const char* aRefname, const git_oid* aFirst, const git_oid* aSecond,
+                                    void* aPayload );
+extern "C" APIEXPORT int push_transfer_progress_cb( unsigned int aCurrent, unsigned int aTotal,
+                                                    size_t aBytes, void* aPayload );
+extern "C" APIEXPORT int push_update_reference_cb( const char* aRefname, const char* aStatus,
+                                                   void* aPayload );
 
-extern "C" int fetchhead_foreach_cb( const char*, const char*,
-                                     const git_oid* aOID, unsigned int aIsMerge, void* aPayload );
-extern "C" int credentials_cb( git_cred** aOut, const char* aUrl, const char* aUsername,
-                               unsigned int aAllowedTypes, void* aPayload );
+extern "C" APIEXPORT int fetchhead_foreach_cb( const char*, const char*,
+                                               const git_oid* aOID, unsigned int aIsMerge, void* aPayload );
+extern "C" APIEXPORT int credentials_cb( git_cred** aOut, const char* aUrl, const char* aUsername,
+                                         unsigned int aAllowedTypes, void* aPayload );
 
 #endif // _GIT_COMMON_H_

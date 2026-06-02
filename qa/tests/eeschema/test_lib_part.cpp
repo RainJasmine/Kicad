@@ -72,10 +72,10 @@ BOOST_AUTO_TEST_CASE( DefaultProperties )
 
     // no sub units
     BOOST_CHECK_EQUAL( m_part_no_data.GetUnitCount(), 1 );
-    BOOST_CHECK_EQUAL( m_part_no_data.IsMulti(), false );
+    BOOST_CHECK_EQUAL( m_part_no_data.IsMultiUnit(), false );
 
-    // no conversion
-    BOOST_CHECK_EQUAL( m_part_no_data.HasAlternateBodyStyle(), false );
+    // single body style
+    BOOST_CHECK_EQUAL( m_part_no_data.HasDeMorganBodyStyles(), false );
 }
 
 
@@ -86,7 +86,7 @@ BOOST_AUTO_TEST_CASE( DefaultDrawings )
 {
     // default drawings exist
     BOOST_CHECK_EQUAL( m_part_no_data.GetDrawItems().size(), 5 );
-    BOOST_CHECK_EQUAL( m_part_no_data.GetPins().size(), 0 );
+    BOOST_CHECK_EQUAL( m_part_no_data.GetGraphicalPins( 0, 0 ).size(), 0 );
 }
 
 
@@ -383,12 +383,12 @@ BOOST_AUTO_TEST_CASE( Compare )
     testPart.SetLibId( id );
 
     // Unit count comparison tests.
-    testPart.SetUnitCount( 2 );
+    testPart.SetUnitCount( 2, true );
     BOOST_CHECK( m_part_no_data.Compare( testPart ) < 0 );
-    testPart.SetUnitCount( 1 );
-    m_part_no_data.SetUnitCount( 2 );
+    testPart.SetUnitCount( 1, true );
+    m_part_no_data.SetUnitCount( 2, true );
     BOOST_CHECK( m_part_no_data.Compare( testPart ) > 0 );
-    m_part_no_data.SetUnitCount( 1 );
+    m_part_no_data.SetUnitCount( 1, true );
 
     // Options flag comparison tests.
     testPart.SetGlobalPower();
@@ -486,6 +486,14 @@ BOOST_AUTO_TEST_CASE( Compare )
     BOOST_CHECK( m_part_no_data.Compare( testPart, SCH_ITEM::COMPARE_FLAGS::EQUALITY ) < 0 );
     m_part_no_data.SetExcludedFromBoard( false );
 
+    // Include in position files support tests.
+    testPart.SetExcludedFromPosFiles( true );
+    BOOST_CHECK( m_part_no_data.Compare( testPart, SCH_ITEM::COMPARE_FLAGS::EQUALITY ) > 0 );
+    testPart.SetExcludedFromPosFiles( false );
+    m_part_no_data.SetExcludedFromPosFiles( true );
+    BOOST_CHECK( m_part_no_data.Compare( testPart, SCH_ITEM::COMPARE_FLAGS::EQUALITY ) < 0 );
+    m_part_no_data.SetExcludedFromPosFiles( false );
+
     // Show pin names flag comparison tests.
     m_part_no_data.SetShowPinNames( false );
     BOOST_CHECK( m_part_no_data.Compare( testPart, SCH_ITEM::COMPARE_FLAGS::EQUALITY ) < 0 );
@@ -534,7 +542,7 @@ BOOST_AUTO_TEST_CASE( GetUnitItems )
     // Two unique units with pin 1 assigned to unit 1 and body style 1 and pin 2 assigned to
     // unit 2 and body style 1.
     SCH_PIN* pin2 = new SCH_PIN( &m_part_no_data );
-    m_part_no_data.SetUnitCount( 2 );
+    m_part_no_data.SetUnitCount( 2, true );
     pin2->SetUnit( 2 );
     pin2->SetBodyStyle( 2 );
     pin2->SetNumber( "4" );
@@ -587,8 +595,7 @@ BOOST_AUTO_TEST_CASE( Inheritance )
     BOOST_CHECK( child->IsDerived() );
     BOOST_CHECK_EQUAL( child->GetInheritanceDepth(), 1 );
 
-    std::unique_ptr<LIB_SYMBOL> grandChild = std::make_unique<LIB_SYMBOL>( "grandchild",
-                                                                           child.get() );
+    std::unique_ptr<LIB_SYMBOL> grandChild = std::make_unique<LIB_SYMBOL>( "grandchild", child.get() );
     BOOST_CHECK( grandChild->IsDerived() );
     BOOST_CHECK_EQUAL( grandChild->GetInheritanceDepth(), 2 );
 
@@ -596,20 +603,20 @@ BOOST_AUTO_TEST_CASE( Inheritance )
     BOOST_CHECK( child->GetRootSymbol().get() == parent.get() );
     BOOST_CHECK( grandChild->GetRootSymbol().get() == parent.get() );
 
-    LIB_SYMBOL_SPTR parentRef = child->GetParent().lock();
+    std::shared_ptr<LIB_SYMBOL> parentRef = child->GetParent().lock();
     BOOST_CHECK( parentRef );
     BOOST_CHECK( parentRef == parent->SharedPtr() );
     BOOST_CHECK_EQUAL( parent->SharedPtr().use_count(), 3 );
 
-    LIB_SYMBOL_SPTR childRef = grandChild->GetParent().lock();
+    std::shared_ptr<LIB_SYMBOL> childRef = grandChild->GetParent().lock();
     BOOST_CHECK( childRef );
     BOOST_CHECK( childRef == child->SharedPtr() );
     BOOST_CHECK_EQUAL( child->SharedPtr().use_count(), 3 );
 
     BOOST_CHECK_EQUAL( child->GetUnitCount(), 1 );
-    parent->SetUnitCount( 4 );
+    parent->SetUnitCount( 4, true );
     BOOST_CHECK_EQUAL( child->GetUnitCount(), 4 );
-    parent->SetUnitCount( 1 );
+    parent->SetUnitCount( 1, true );
 
     parent->GetField( FIELD_T::DATASHEET )->SetText( "https://kicad/resistors.pdf" );
     ref->GetField( FIELD_T::DATASHEET )->SetText( "https://kicad/resistors.pdf" );
@@ -693,6 +700,55 @@ BOOST_AUTO_TEST_CASE( IsPowerTest )
     // pin->SetVisible( false );
     // symbol->AddDrawItem( pin );
     // BOOST_CHECK( !symbol->IsPower() );
+}
+
+
+/**
+ * Regression test for https://gitlab.com/kicad/code/kicad/-/issues/23788
+ *
+ * SetUnitCount() must reject values less than 1. Previously, an importer (Altium .schdoc)
+ * could pass a negative or zero unit count, which caused the deletion loop to erase the
+ * mandatory fields (REFERENCE, VALUE, etc.) because their m_unit (== 0) was greater than
+ * the requested aCount. The symbol then crashed later when GetReferenceField() returned
+ * a null pointer that was implicitly dereferenced.
+ */
+BOOST_AUTO_TEST_CASE( SetUnitCountRejectsInvalidValues )
+{
+    auto checkMandatoryFields = []( LIB_SYMBOL& aSymbol )
+    {
+        BOOST_CHECK_EQUAL( aSymbol.GetUnitCount(), 1 );
+        BOOST_CHECK_NE( aSymbol.GetField( FIELD_T::REFERENCE ), nullptr );
+        BOOST_CHECK_NE( aSymbol.GetField( FIELD_T::VALUE ), nullptr );
+        BOOST_CHECK_NE( aSymbol.GetField( FIELD_T::FOOTPRINT ), nullptr );
+        BOOST_CHECK_NE( aSymbol.GetField( FIELD_T::DATASHEET ), nullptr );
+        BOOST_CHECK_NE( aSymbol.GetField( FIELD_T::DESCRIPTION ), nullptr );
+
+        // Reading the reference field text must not crash. This was the original SIGSEGV
+        // path through CONNECTION_SUBGRAPH::GetDriverPriority() reported in issue 23788.
+        BOOST_CHECK_NO_THROW( (void) aSymbol.GetReferenceField().GetText() );
+    };
+
+    // Sanity check the freshly constructed symbol.
+    LIB_SYMBOL baseline( wxS( "test_part" ) );
+    checkMandatoryFields( baseline );
+
+    // When wxDEBUG_LEVEL > 0 the wxCHECK fires (caught by CHECK_WX_ASSERT) and the function
+    // does not modify the symbol. With wxDEBUG_LEVEL == 0 the wxCHECK is silent and the
+    // function returns early without modification. Cover both call paths so the test
+    // exercises the actual SetUnitCount entry on every build configuration.
+    LIB_SYMBOL zeroCount( wxS( "test_part" ) );
+    CHECK_WX_ASSERT( zeroCount.SetUnitCount( 0, true ) );
+#if wxDEBUG_LEVEL == 0
+    zeroCount.SetUnitCount( 0, true );
+#endif
+    checkMandatoryFields( zeroCount );
+
+    LIB_SYMBOL negativeCount( wxS( "test_part" ) );
+    CHECK_WX_ASSERT( negativeCount.SetUnitCount( -1, true ) );
+#if wxDEBUG_LEVEL == 0
+    negativeCount.SetUnitCount( -1, true );
+#endif
+    checkMandatoryFields( negativeCount );
 }
 
 

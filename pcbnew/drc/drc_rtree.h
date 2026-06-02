@@ -26,19 +26,20 @@
 #define DRC_RTREE_H_
 
 #include <board_item.h>
-#include <pad.h>
 #include <pcb_field.h>
 #include <memory>
 #include <unordered_set>
 #include <set>
 #include <vector>
 
-#include <geometry/rtree.h>
+#include <geometry/rtree/packed_rtree.h>
 #include <geometry/shape.h>
 #include <geometry/shape_segment.h>
 #include <math/vector2d.h>
 #include "geometry/shape_null.h"
 #include "board.h"
+
+#define ATOMIC_TABLES true
 
 /**
  * Implement an R-tree for fast spatial and layer indexing of connectable items.
@@ -46,9 +47,7 @@
  */
 class DRC_RTREE
 {
-
 public:
-
     struct ITEM_WITH_SHAPE
     {
         ITEM_WITH_SHAPE( BOARD_ITEM *aParent, const SHAPE* aShape,
@@ -74,36 +73,28 @@ public:
     };
 
 private:
-
-    using drc_rtree = RTree<ITEM_WITH_SHAPE*, int, 2, double>;
+    using drc_rtree = KIRTREE::PACKED_RTREE<ITEM_WITH_SHAPE*, int, 2>;
+    using drc_rtree_builder = typename drc_rtree::Builder;
 
 public:
-
     DRC_RTREE()
     {
-        for( int layer : LSET::AllLayersMask() )
-            m_tree[layer] = new drc_rtree();
-
         m_count = 0;
     }
 
     ~DRC_RTREE()
     {
-        for( auto& [_, tree] : m_tree )
-        {
-            for( DRC_RTREE::ITEM_WITH_SHAPE* el : *tree )
-                delete el;
-
-            delete tree;
-        }
+        for( ITEM_WITH_SHAPE* p : m_owned )
+            delete p;
     }
 
     /**
      * Insert an item into the tree on a particular layer with an optional worst clearance.
+     * Items are staged into per-layer builders; call Build() to finalize.
      */
-    void Insert( BOARD_ITEM* aItem, PCB_LAYER_ID aLayer, int aWorstClearance = 0 )
+    void Insert( BOARD_ITEM* aItem, PCB_LAYER_ID aLayer, int aWorstClearance = 0, bool aAtomicTables = false )
     {
-        Insert( aItem, aLayer, aLayer, aWorstClearance );
+        Insert( aItem, aLayer, aLayer, aWorstClearance, aAtomicTables );
     }
 
     /**
@@ -111,12 +102,19 @@ public:
      * source layer to be different from the tree layer.
      */
     void Insert( BOARD_ITEM* aItem, PCB_LAYER_ID aRefLayer, PCB_LAYER_ID aTargetLayer,
-                 int aWorstClearance )
+                 int aWorstClearance, bool aAtomicTables = false )
     {
         wxCHECK( aTargetLayer != UNDEFINED_LAYER, /* void */ );
+        wxCHECK_MSG( !m_tree.count( aTargetLayer ), /* void */,
+                     wxT( "Insert after Build() is silently wrong" ) );
 
         if( aItem->Type() == PCB_FIELD_T && !static_cast<PCB_FIELD*>( aItem )->IsVisible() )
             return;
+
+        BOARD_ITEM* parent = aItem;
+
+        if( aAtomicTables && aItem->Type() == PCB_TABLECELL_T )
+            parent = aItem->GetParent();
 
         std::vector<const SHAPE*> subshapes;
         std::shared_ptr<SHAPE> shape = aItem->GetEffectiveShape( aRefLayer );
@@ -139,9 +137,10 @@ public:
 
             const int        mmin[2] = { bbox.GetX(), bbox.GetY() };
             const int        mmax[2] = { bbox.GetRight(), bbox.GetBottom() };
-            ITEM_WITH_SHAPE* itemShape = new ITEM_WITH_SHAPE( aItem, subshape, shape );
+            ITEM_WITH_SHAPE* itemShape = new ITEM_WITH_SHAPE( parent, subshape, shape );
 
-            m_tree[aTargetLayer]->Insert( mmin, mmax, itemShape );
+            m_owned.push_back( itemShape );
+            m_builders[aTargetLayer].Add( mmin, mmax, itemShape );
             m_count++;
         }
 
@@ -154,11 +153,24 @@ public:
 
             const int        mmin[2] = { bbox.GetX(), bbox.GetY() };
             const int        mmax[2] = { bbox.GetRight(), bbox.GetBottom() };
-            ITEM_WITH_SHAPE* itemShape = new ITEM_WITH_SHAPE( aItem, hole, shape );
+            ITEM_WITH_SHAPE* itemShape = new ITEM_WITH_SHAPE( parent, hole, shape );
 
-            m_tree[aTargetLayer]->Insert( mmin, mmax, itemShape );
+            m_owned.push_back( itemShape );
+            m_builders[aTargetLayer].Add( mmin, mmax, itemShape );
             m_count++;
         }
+    }
+
+    /**
+     * Finalize all pending inserts by bulk-building packed R-trees from the staged items.
+     * Must be called after all Insert() calls and before any queries.
+     */
+    void Build()
+    {
+        for( auto& [layer, builder] : m_builders )
+            m_tree[layer] = builder.Build();
+
+        m_builders.clear();
     }
 
     /**
@@ -166,9 +178,12 @@ public:
      */
     void clear()
     {
-        for( auto& [_, tree] : m_tree )
-            tree->RemoveAll();
+        for( ITEM_WITH_SHAPE* p : m_owned )
+            delete p;
 
+        m_owned.clear();
+        m_tree.clear();
+        m_builders.clear();
         m_count = 0;
     }
 
@@ -201,7 +216,7 @@ public:
                 };
 
         if( auto it = m_tree.find( aTargetLayer ); it != m_tree.end() )
-            it->second->Search( min, max, visit );
+            it->second.Search( min, max, visit );
 
         return count > 0;
     }
@@ -275,7 +290,7 @@ public:
                 };
 
         if( auto it = m_tree.find( aTargetLayer ); it != m_tree.end() )
-            it->second->Search( min, max, visit );
+            it->second.Search( min, max, visit );
 
         return count;
     }
@@ -324,7 +339,7 @@ public:
                 };
 
         if( auto it = m_tree.find( aLayer ); it != m_tree.end() )
-            it->second->Search( min, max, visit );
+            it->second.Search( min, max, visit );
 
         if( collision )
         {
@@ -399,15 +414,16 @@ public:
 
                     return true;
                 };
+
         auto it = m_tree.find( aLayer );
 
         if( it == m_tree.end() )
             return false;
 
         if( poly && poly->OutlineCount() == 1 && poly->HoleCount( 0 ) == 0 )
-            it->second->Search( min, max, polyVisitor );
+            it->second.Search( min, max, polyVisitor );
         else
-            it->second->Search( min, max, visitor );
+            it->second.Search( min, max, visitor );
 
         return collision;
     }
@@ -432,7 +448,10 @@ public:
                     return true;
                 };
 
-        m_tree[aLayer]->Search( min, max, visitor );
+        auto it = m_tree.find( aLayer );
+
+        if( it != m_tree.end() )
+            it->second.Search( min, max, visitor );
 
         return retval;
     }
@@ -487,7 +506,7 @@ public:
                 auto it = m_tree.find( targetLayer );
 
                 if( it != m_tree.end() )
-                    it->second->Search( min, max, visit );
+                    it->second.Search( min, max, visit );
             };
         }
 
@@ -542,8 +561,6 @@ public:
         return m_count == 0;
     }
 
-    using iterator = typename drc_rtree::Iterator;
-
     /**
      * The DRC_LAYER struct provides a layer-specific auto-range iterator to the RTree.  Using
      * this struct, one can write lines like:
@@ -554,55 +571,60 @@ public:
      */
     struct DRC_LAYER
     {
-        DRC_LAYER( drc_rtree* aTree ) : layer_tree( aTree )
-        {
-            m_rect = { { INT_MIN, INT_MIN }, { INT_MAX, INT_MAX } };
-        };
+        DRC_LAYER() = default;
 
-        DRC_LAYER( drc_rtree* aTree, const BOX2I& aRect ) : layer_tree( aTree )
+        DRC_LAYER( const drc_rtree& aTree )
         {
-            m_rect = { { aRect.GetX(), aRect.GetY() },
-                       { aRect.GetRight(), aRect.GetBottom() } };
-        };
-
-        drc_rtree::Rect m_rect;
-        drc_rtree*      layer_tree;
-
-        iterator begin()
-        {
-            return layer_tree->begin( m_rect );
+            for( ITEM_WITH_SHAPE* item : aTree )
+                m_items.push_back( item );
         }
 
-        iterator end()
+        DRC_LAYER( const drc_rtree& aTree, const BOX2I& aRect )
         {
-            return layer_tree->end( m_rect );
+            int min[2] = { aRect.GetX(), aRect.GetY() };
+            int max[2] = { aRect.GetRight(), aRect.GetBottom() };
+
+            auto collector = [this]( ITEM_WITH_SHAPE* aItem ) -> bool
+            {
+                m_items.push_back( aItem );
+                return true;
+            };
+
+            aTree.Search( min, max, collector );
         }
+
+        std::vector<ITEM_WITH_SHAPE*> m_items;
+
+        std::vector<ITEM_WITH_SHAPE*>::iterator begin() { return m_items.begin(); }
+        std::vector<ITEM_WITH_SHAPE*>::iterator end() { return m_items.end(); }
     };
 
     DRC_LAYER OnLayer( PCB_LAYER_ID aLayer ) const
     {
-        auto it = m_tree.find( int( aLayer ) );
-        return it == m_tree.end() ? DRC_LAYER( nullptr ) : DRC_LAYER( it->second );
+        auto it = m_tree.find( aLayer );
+        return it == m_tree.end() ? DRC_LAYER() : DRC_LAYER( it->second );
     }
 
     DRC_LAYER Overlapping( PCB_LAYER_ID aLayer, const VECTOR2I& aPoint, int aAccuracy = 0 ) const
     {
         BOX2I rect( aPoint, VECTOR2I( 0, 0 ) );
         rect.Inflate( aAccuracy );
-        auto it = m_tree.find( int( aLayer ) );
-        return it == m_tree.end() ? DRC_LAYER( nullptr ) : DRC_LAYER( it->second, rect );
+        auto it = m_tree.find( aLayer );
+        return it == m_tree.end() ? DRC_LAYER() : DRC_LAYER( it->second, rect );
     }
 
     DRC_LAYER Overlapping( PCB_LAYER_ID aLayer, const BOX2I& aRect ) const
     {
-        auto it = m_tree.find( int( aLayer ) );
-        return it == m_tree.end() ? DRC_LAYER( nullptr ) : DRC_LAYER( it->second, aRect );
+        auto it = m_tree.find( aLayer );
+        return it == m_tree.end() ? DRC_LAYER() : DRC_LAYER( it->second, aRect );
     }
 
 
 private:
-    std::map<int, drc_rtree*> m_tree;
-    size_t                    m_count;
+    std::map<int, drc_rtree>         m_tree;
+    std::map<int, drc_rtree_builder> m_builders;
+    std::vector<ITEM_WITH_SHAPE*>    m_owned;
+    size_t                           m_count = 0;
 };
 
 

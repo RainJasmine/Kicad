@@ -253,28 +253,28 @@ void DIALOG_CREATE_ARRAY::OnSelectCenterButton( wxCommandEvent& event )
 {
     event.Skip();
 
-    PCB_PICKER_TOOL* pickerTool = m_frame->GetToolManager()->GetTool<PCB_PICKER_TOOL>();
+    TOOL_MANAGER*    toolMgr = m_frame->GetToolManager();
+    PCB_PICKER_TOOL* pickerTool = toolMgr->GetTool<PCB_PICKER_TOOL>();
     wxCHECK( pickerTool, /* void */ );
+
+    // Keep the dialog visible, but disable while picking.
+    // Hiding the dialog on GTK causes the controls to not accept their new values
+    Disable();
 
     if( event.GetEventObject() == m_btnSelectCenterItem )
     {
-        m_frame->GetToolManager()->RunAction(
-                PCB_ACTIONS::selectItemInteractively,
-                PCB_PICKER_TOOL::INTERACTIVE_PARAMS{ this, _( "Select center item..." ) } );
+        toolMgr->RunAction( PCB_ACTIONS::selectItemInteractively,
+                            PCB_PICKER_TOOL::INTERACTIVE_PARAMS { this, _( "Select center item..." ) } );
     }
     else if( event.GetEventObject() == m_btnSelectCenterPoint )
     {
-        m_frame->GetToolManager()->RunAction(
-                PCB_ACTIONS::selectPointInteractively,
-                PCB_PICKER_TOOL::INTERACTIVE_PARAMS{ this, _( "Select center point..." ) } );
+        toolMgr->RunAction( PCB_ACTIONS::selectPointInteractively,
+                            PCB_PICKER_TOOL::INTERACTIVE_PARAMS { this, _( "Select center point..." ) } );
     }
     else
     {
         wxFAIL_MSG( "Unknown event source" );
     }
-
-    // Hide, but do not close, the dialog
-    Hide();
 }
 
 
@@ -326,7 +326,7 @@ void DIALOG_CREATE_ARRAY::UpdatePickedItem( const EDA_ITEM* aItem )
         m_vCentre.SetValue( aItem->GetPosition().y );
     }
 
-    Show( true );
+    Enable( true );
 }
 
 
@@ -338,7 +338,7 @@ void DIALOG_CREATE_ARRAY::UpdatePickedPoint( const std::optional<VECTOR2I>& aPoi
         m_vCentre.SetValue( aPoint->y );
     }
 
-    Show( true );
+    Enable( true );
 }
 
 
@@ -431,6 +431,18 @@ bool DIALOG_CREATE_ARRAY::TransferDataFromWindow()
         newGrid->m_delta.x = m_hSpacing.GetIntValue();
         newGrid->m_delta.y = m_vSpacing.GetIntValue();
 
+        if( ( newGrid->m_nx > 1 ) && ( newGrid->m_delta.x == 0 ) )
+        {
+            errors.Add( wxString::Format( _( "horizontal delta of zero with %ld objects" ), newGrid->m_nx ) );
+            ok = false;
+        }
+
+        if( ( newGrid->m_ny > 1 ) && ( newGrid->m_delta.y == 0 ) )
+        {
+            errors.Add( wxString::Format( _( "vertical delta of zero with %ld objects" ), newGrid->m_ny ) );
+            ok = false;
+        }
+
         newGrid->m_offset.x = m_hOffset.GetIntValue();
         newGrid->m_offset.y = m_vOffset.GetIntValue();
 
@@ -499,6 +511,12 @@ bool DIALOG_CREATE_ARRAY::TransferDataFromWindow()
 
         newCirc->m_rotateItems = m_entryRotateItemsCb->GetValue();
         newCirc->SetShouldNumber( m_isFootprintEditor );
+
+        if( ( newCirc->m_nPts > 1 ) && newCirc->m_angle.IsZero() )
+        {
+            errors.Add( wxString::Format( _( "angular delta of zero with %ld objects" ), newCirc->m_nPts ) );
+            ok = false;
+        }
 
         if( m_isFootprintEditor )
         {

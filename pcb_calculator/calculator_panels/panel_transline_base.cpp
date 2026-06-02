@@ -1,11 +1,10 @@
 ///////////////////////////////////////////////////////////////////////////
-// C++ code generated with wxFormBuilder (version 4.2.1-0-g80c4cb6)
+// C++ code generated with wxFormBuilder (version 4.2.1-0-g80c4cb6a-dirty)
 // http://www.wxformbuilder.org/
 //
 // PLEASE DO *NOT* EDIT THIS FILE!
 ///////////////////////////////////////////////////////////////////////////
 
-#include "widgets/std_bitmap_button.h"
 #include "widgets/unit_selector.h"
 
 #include "panel_transline_base.h"
@@ -20,22 +19,14 @@ PANEL_TRANSLINE_BASE::PANEL_TRANSLINE_BASE( wxWindow* parent, wxWindowID id, con
 	wxBoxSizer* bLeftSizer;
 	bLeftSizer = new wxBoxSizer( wxVERTICAL );
 
-    wxString m_TranslineSelectionChoices[] = { _( "Microstrip Line" ),
-                                               _( "Coupled Microstrip Line" ),
-                                               _( "Stripline" ),
-                                               _( "Coupled Stripline" ),
-                                               _( "Coplanar wave guide" ),
-                                               _( "Coplanar wave guide w/ ground plane" ),
-                                               _( "Rectangular Waveguide" ),
-                                               _( "Coaxial Line" ),
-                                               _( "Twisted Pair" ) };
-    int      m_TranslineSelectionNChoices = sizeof( m_TranslineSelectionChoices ) / sizeof( wxString );
-    m_TranslineSelection = new wxRadioBox( this, wxID_ANY, _("Transmission Line Type"), wxDefaultPosition, wxDefaultSize, m_TranslineSelectionNChoices, m_TranslineSelectionChoices, 1, wxRA_SPECIFY_COLS );
-    m_TranslineSelection->SetSelection( 0 );
-    bLeftSizer->Add( m_TranslineSelection, 0, wxTOP | wxRIGHT | wxLEFT | wxEXPAND, 5 );
+	wxString m_TranslineSelectionChoices[] = { _("Microstrip Line"), _("Coupled Microstrip Line"), _("Stripline"), _("Coupled Stripline"), _("Coplanar wave guide"), _("Coplanar wave guide w/ ground plane"), _("Rectangular Waveguide"), _("Coaxial Line"), _("Twisted Pair") };
+	int m_TranslineSelectionNChoices = sizeof( m_TranslineSelectionChoices ) / sizeof( wxString );
+	m_TranslineSelection = new wxRadioBox( this, wxID_ANY, _("Transmission Line Type"), wxDefaultPosition, wxDefaultSize, m_TranslineSelectionNChoices, m_TranslineSelectionChoices, 1, wxRA_SPECIFY_COLS );
+	m_TranslineSelection->SetSelection( 0 );
+	bLeftSizer->Add( m_TranslineSelection, 0, wxTOP|wxRIGHT|wxLEFT|wxEXPAND, 5 );
 
 
-    bLeftSizer->Add( 0, 5, 0, wxEXPAND, 5 );
+	bLeftSizer->Add( 0, 5, 0, wxEXPAND, 5 );
 
 	m_translineBitmap = new wxStaticBitmap( this, wxID_ANY, wxNullBitmap, wxDefaultPosition, wxDefaultSize, 0 );
 	bLeftSizer->Add( m_translineBitmap, 0, wxALIGN_CENTER_HORIZONTAL|wxTOP|wxBOTTOM, 10 );
@@ -49,15 +40,84 @@ PANEL_TRANSLINE_BASE::PANEL_TRANSLINE_BASE( wxWindow* parent, wxWindowID id, con
 	wxStaticBoxSizer* sbSubstrateBoxSizer;
 	sbSubstrateBoxSizer = new wxStaticBoxSizer( new wxStaticBox( this, wxID_ANY, _("Substrate Parameters") ), wxVERTICAL );
 
+	wxBoxSizer* bSizerDielectricModel;
+	bSizerDielectricModel = new wxBoxSizer( wxHORIZONTAL );
+
+	m_dielectricModelLabel = new wxStaticText( sbSubstrateBoxSizer->GetStaticBox(), wxID_ANY, _("Dielectric model:"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_dielectricModelLabel->Wrap( -1 );
+	bSizerDielectricModel->Add( m_dielectricModelLabel, 0, wxALIGN_CENTER_VERTICAL|wxLEFT|wxRIGHT, 5 );
+
+	wxString m_dielectricModelChoiceChoices[] = { _("Constant (εr, tan δ)"), _("Djordjevic-Sarkar causal") };
+	int m_dielectricModelChoiceNChoices = sizeof( m_dielectricModelChoiceChoices ) / sizeof( wxString );
+	m_dielectricModelChoice = new wxChoice( sbSubstrateBoxSizer->GetStaticBox(), wxID_ANY, wxDefaultPosition, wxDefaultSize, m_dielectricModelChoiceNChoices, m_dielectricModelChoiceChoices, 0 );
+	m_dielectricModelChoice->SetSelection( 0 );
+	bSizerDielectricModel->Add( m_dielectricModelChoice, 1, wxEXPAND|wxRIGHT, 5 );
+
+
+	sbSubstrateBoxSizer->Add( bSizerDielectricModel, 0, wxEXPAND|wxTOP|wxBOTTOM, 3 );
+
+	wxBoxSizer* bSizerSoldermaskRow1;
+	bSizerSoldermaskRow1 = new wxBoxSizer( wxHORIZONTAL );
+
+	m_soldermaskPresentCheck = new wxCheckBox( sbSubstrateBoxSizer->GetStaticBox(), wxID_ANY, _("Soldermask present"), wxDefaultPosition, wxDefaultSize, 0 );
+	bSizerSoldermaskRow1->Add( m_soldermaskPresentCheck, 0, wxALIGN_CENTER_VERTICAL|wxLEFT|wxRIGHT, 5 );
+
+	m_soldermaskFillsGapsCheck = new wxCheckBox( sbSubstrateBoxSizer->GetStaticBox(), wxID_ANY, _("Mask fills gaps"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_soldermaskFillsGapsCheck->SetValue(true);
+	bSizerSoldermaskRow1->Add( m_soldermaskFillsGapsCheck, 0, wxALIGN_CENTER_VERTICAL|wxLEFT|wxRIGHT, 5 );
+
+
+	sbSubstrateBoxSizer->Add( bSizerSoldermaskRow1, 0, wxEXPAND|wxTOP|wxBOTTOM, 3 );
+
 	wxFlexGridSizer* fgSizerSubstPrms;
-	fgSizerSubstPrms = new wxFlexGridSizer( 9, 3, 3, 0 );
+	fgSizerSubstPrms = new wxFlexGridSizer( 13, 3, 3, 0 );
 	fgSizerSubstPrms->AddGrowableCol( 1 );
 	fgSizerSubstPrms->SetFlexibleDirection( wxBOTH );
 	fgSizerSubstPrms->SetNonFlexibleGrowMode( wxFLEX_GROWMODE_SPECIFIED );
 
+	m_soldermaskThicknessLabel = new wxStaticText( sbSubstrateBoxSizer->GetStaticBox(), wxID_ANY, _("Mask thickness:"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_soldermaskThicknessLabel->Wrap( -1 );
+	fgSizerSubstPrms->Add( m_soldermaskThicknessLabel, 0, wxALIGN_CENTER_VERTICAL, 5 );
+
+	m_soldermaskThicknessValue = new wxTextCtrl( sbSubstrateBoxSizer->GetStaticBox(), wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0 );
+	fgSizerSubstPrms->Add( m_soldermaskThicknessValue, 0, wxEXPAND|wxLEFT|wxRIGHT, 5 );
+
+	m_soldermaskThicknessUnit = new wxStaticText( sbSubstrateBoxSizer->GetStaticBox(), wxID_ANY, _("µm"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_soldermaskThicknessUnit->Wrap( -1 );
+	fgSizerSubstPrms->Add( m_soldermaskThicknessUnit, 0, wxALIGN_CENTER_VERTICAL|wxRIGHT, 5 );
+
+	m_soldermaskEpsilonRLabel = new wxStaticText( sbSubstrateBoxSizer->GetStaticBox(), wxID_ANY, _("Mask εr:"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_soldermaskEpsilonRLabel->Wrap( -1 );
+	fgSizerSubstPrms->Add( m_soldermaskEpsilonRLabel, 0, wxALIGN_CENTER_VERTICAL, 5 );
+
+	m_soldermaskEpsilonRValue = new wxTextCtrl( sbSubstrateBoxSizer->GetStaticBox(), wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0 );
+	fgSizerSubstPrms->Add( m_soldermaskEpsilonRValue, 0, wxEXPAND|wxLEFT|wxRIGHT, 5 );
+
+
+	fgSizerSubstPrms->Add( 0, 0, 1, wxEXPAND, 5 );
+
+	m_soldermaskTanDLabel = new wxStaticText( sbSubstrateBoxSizer->GetStaticBox(), wxID_ANY, _("Mask tan δ:"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_soldermaskTanDLabel->Wrap( -1 );
+	fgSizerSubstPrms->Add( m_soldermaskTanDLabel, 0, wxALIGN_CENTER_VERTICAL|wxBOTTOM, 5 );
+
+	m_soldermaskTanDValue = new wxTextCtrl( sbSubstrateBoxSizer->GetStaticBox(), wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0 );
+	fgSizerSubstPrms->Add( m_soldermaskTanDValue, 0, wxBOTTOM|wxEXPAND|wxLEFT|wxRIGHT, 5 );
+
+
+	fgSizerSubstPrms->Add( 0, 0, 1, wxEXPAND, 5 );
+
+	m_staticline1 = new wxStaticLine( sbSubstrateBoxSizer->GetStaticBox(), wxID_ANY, wxDefaultPosition, wxDefaultSize, wxLI_HORIZONTAL );
+	fgSizerSubstPrms->Add( m_staticline1, 0, wxBOTTOM|wxEXPAND|wxTOP, 0 );
+
+	m_staticline2 = new wxStaticLine( sbSubstrateBoxSizer->GetStaticBox(), wxID_ANY, wxDefaultPosition, wxDefaultSize, wxLI_HORIZONTAL );
+	fgSizerSubstPrms->Add( m_staticline2, 0, wxEXPAND | wxALL, 0 );
+
+	m_staticline3 = new wxStaticLine( sbSubstrateBoxSizer->GetStaticBox(), wxID_ANY, wxDefaultPosition, wxDefaultSize, wxLI_HORIZONTAL );
+	fgSizerSubstPrms->Add( m_staticline3, 0, wxEXPAND | wxALL, 0 );
+
 	m_EpsilonR_label = new wxStaticText( sbSubstrateBoxSizer->GetStaticBox(), wxID_ANY, _("Er:"), wxDefaultPosition, wxDefaultSize, 0 );
 	m_EpsilonR_label->Wrap( -1 );
-	fgSizerSubstPrms->Add( m_EpsilonR_label, 0, wxALIGN_CENTER_VERTICAL, 5 );
+	fgSizerSubstPrms->Add( m_EpsilonR_label, 0, wxALIGN_CENTER_VERTICAL|wxTOP, 5 );
 
 	wxBoxSizer* bSizer441;
 	bSizer441 = new wxBoxSizer( wxHORIZONTAL );
@@ -69,7 +129,7 @@ PANEL_TRANSLINE_BASE::PANEL_TRANSLINE_BASE( wxWindow* parent, wxWindowID id, con
 	bSizer441->Add( m_button_EpsilonR, 0, wxEXPAND|wxLEFT|wxRIGHT, 5 );
 
 
-	fgSizerSubstPrms->Add( bSizer441, 1, wxEXPAND, 5 );
+	fgSizerSubstPrms->Add( bSizer441, 1, wxEXPAND|wxTOP, 5 );
 
 
 	fgSizerSubstPrms->Add( 0, 0, 1, wxEXPAND, 5 );
@@ -197,7 +257,7 @@ PANEL_TRANSLINE_BASE::PANEL_TRANSLINE_BASE( wxWindow* parent, wxWindowID id, con
 	sbCmpPrmsSizer = new wxStaticBoxSizer( new wxStaticBox( this, wxID_ANY, _("Component Parameters") ), wxVERTICAL );
 
 	wxFlexGridSizer* fgSizeCmpPrms;
-	fgSizeCmpPrms = new wxFlexGridSizer( 1, 3, 0, 0 );
+	fgSizeCmpPrms = new wxFlexGridSizer( 2, 3, 0, 0 );
 	fgSizeCmpPrms->AddGrowableCol( 1 );
 	fgSizeCmpPrms->SetFlexibleDirection( wxBOTH );
 	fgSizeCmpPrms->SetNonFlexibleGrowMode( wxFLEX_GROWMODE_SPECIFIED );
@@ -213,6 +273,18 @@ PANEL_TRANSLINE_BASE::PANEL_TRANSLINE_BASE( wxWindow* parent, wxWindowID id, con
 	m_choiceUnit_Frequency = new UNIT_SELECTOR_FREQUENCY( sbCmpPrmsSizer->GetStaticBox(), wxID_ANY, wxDefaultPosition, wxDefaultSize, m_choiceUnit_FrequencyChoices, 0 );
 	m_choiceUnit_Frequency->SetSelection( 0 );
 	fgSizeCmpPrms->Add( m_choiceUnit_Frequency, 0, wxEXPAND, 5 );
+
+	m_SpecFrequency_label = new wxStaticText( sbCmpPrmsSizer->GetStaticBox(), wxID_ANY, _("Spec frequency:"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_SpecFrequency_label->Wrap( -1 );
+	fgSizeCmpPrms->Add( m_SpecFrequency_label, 0, wxALIGN_CENTER_VERTICAL|wxALIGN_RIGHT, 5 );
+
+	m_Value_SpecFrequency_Ctrl = new wxTextCtrl( sbCmpPrmsSizer->GetStaticBox(), wxID_ANY, _("1"), wxDefaultPosition, wxDefaultSize, 0 );
+	fgSizeCmpPrms->Add( m_Value_SpecFrequency_Ctrl, 0, wxRIGHT|wxLEFT|wxEXPAND, 5 );
+
+	wxArrayString m_choiceUnit_SpecFrequencyChoices;
+	m_choiceUnit_SpecFrequency = new UNIT_SELECTOR_FREQUENCY( sbCmpPrmsSizer->GetStaticBox(), wxID_ANY, wxDefaultPosition, wxDefaultSize, m_choiceUnit_SpecFrequencyChoices, 0 );
+	m_choiceUnit_SpecFrequency->SetSelection( 0 );
+	fgSizeCmpPrms->Add( m_choiceUnit_SpecFrequency, 0, wxEXPAND, 5 );
 
 
 	sbCmpPrmsSizer->Add( fgSizeCmpPrms, 0, wxALL|wxEXPAND, 5 );
@@ -307,17 +379,11 @@ PANEL_TRANSLINE_BASE::PANEL_TRANSLINE_BASE( wxWindow* parent, wxWindowID id, con
 	m_AnalyseButton = new wxButton( this, wxID_ANY, _("Analyze"), wxDefaultPosition, wxDefaultSize, 0 );
 	bSizerButtons->Add( m_AnalyseButton, 0, wxRIGHT|wxALIGN_CENTER_VERTICAL, 5 );
 
-	m_bpButtonAnalyze = new STD_BITMAP_BUTTON( this, wxID_ANY, wxNullBitmap, wxDefaultPosition, wxDefaultSize, wxBU_AUTODRAW|0 );
-	bSizerButtons->Add( m_bpButtonAnalyze, 0, wxALIGN_CENTER_VERTICAL|wxTOP|wxBOTTOM|wxRIGHT, 5 );
-
 
 	bSizerButtons->Add( 30, 0, 1, wxEXPAND, 5 );
 
 	m_SynthetizeButton = new wxButton( this, wxID_ANY, _("Synthesize"), wxDefaultPosition, wxDefaultSize, 0 );
 	bSizerButtons->Add( m_SynthetizeButton, 0, wxLEFT|wxALIGN_CENTER_VERTICAL, 5 );
-
-	m_bpButtonSynthetize = new STD_BITMAP_BUTTON( this, wxID_ANY, wxNullBitmap, wxDefaultPosition, wxDefaultSize, wxBU_AUTODRAW|0 );
-	bSizerButtons->Add( m_bpButtonSynthetize, 0, wxALL|wxALIGN_CENTER_VERTICAL, 5 );
 
 
 	btranslineButtonsSizer->Add( bSizerButtons, 0, wxLEFT, 5 );
@@ -490,13 +556,14 @@ PANEL_TRANSLINE_BASE::PANEL_TRANSLINE_BASE( wxWindow* parent, wxWindowID id, con
 
 	// Connect Events
 	m_TranslineSelection->Connect( wxEVT_COMMAND_RADIOBOX_SELECTED, wxCommandEventHandler( PANEL_TRANSLINE_BASE::OnTranslineSelection ), NULL, this );
+	m_dielectricModelChoice->Connect( wxEVT_COMMAND_CHOICE_SELECTED, wxCommandEventHandler( PANEL_TRANSLINE_BASE::OnDielectricModelChanged ), NULL, this );
+	m_soldermaskPresentCheck->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( PANEL_TRANSLINE_BASE::OnSoldermaskChanged ), NULL, this );
+	m_soldermaskFillsGapsCheck->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( PANEL_TRANSLINE_BASE::OnSoldermaskChanged ), NULL, this );
 	m_button_EpsilonR->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( PANEL_TRANSLINE_BASE::OnTranslineEpsilonR_Button ), NULL, this );
 	m_button_TanD->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( PANEL_TRANSLINE_BASE::OnTranslineTanD_Button ), NULL, this );
 	m_button_Rho->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( PANEL_TRANSLINE_BASE::OnTranslineRho_Button ), NULL, this );
 	m_AnalyseButton->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( PANEL_TRANSLINE_BASE::OnTranslineAnalyse ), NULL, this );
-	m_bpButtonAnalyze->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( PANEL_TRANSLINE_BASE::OnTranslineAnalyse ), NULL, this );
 	m_SynthetizeButton->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( PANEL_TRANSLINE_BASE::OnTranslineSynthetize ), NULL, this );
-	m_bpButtonSynthetize->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( PANEL_TRANSLINE_BASE::OnTranslineSynthetize ), NULL, this );
 	m_buttonTransLineReset->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( PANEL_TRANSLINE_BASE::OnTransLineResetButtonClick ), NULL, this );
 }
 
@@ -504,13 +571,14 @@ PANEL_TRANSLINE_BASE::~PANEL_TRANSLINE_BASE()
 {
 	// Disconnect Events
 	m_TranslineSelection->Disconnect( wxEVT_COMMAND_RADIOBOX_SELECTED, wxCommandEventHandler( PANEL_TRANSLINE_BASE::OnTranslineSelection ), NULL, this );
+	m_dielectricModelChoice->Disconnect( wxEVT_COMMAND_CHOICE_SELECTED, wxCommandEventHandler( PANEL_TRANSLINE_BASE::OnDielectricModelChanged ), NULL, this );
+	m_soldermaskPresentCheck->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( PANEL_TRANSLINE_BASE::OnSoldermaskChanged ), NULL, this );
+	m_soldermaskFillsGapsCheck->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( PANEL_TRANSLINE_BASE::OnSoldermaskChanged ), NULL, this );
 	m_button_EpsilonR->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( PANEL_TRANSLINE_BASE::OnTranslineEpsilonR_Button ), NULL, this );
 	m_button_TanD->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( PANEL_TRANSLINE_BASE::OnTranslineTanD_Button ), NULL, this );
 	m_button_Rho->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( PANEL_TRANSLINE_BASE::OnTranslineRho_Button ), NULL, this );
 	m_AnalyseButton->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( PANEL_TRANSLINE_BASE::OnTranslineAnalyse ), NULL, this );
-	m_bpButtonAnalyze->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( PANEL_TRANSLINE_BASE::OnTranslineAnalyse ), NULL, this );
 	m_SynthetizeButton->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( PANEL_TRANSLINE_BASE::OnTranslineSynthetize ), NULL, this );
-	m_bpButtonSynthetize->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( PANEL_TRANSLINE_BASE::OnTranslineSynthetize ), NULL, this );
 	m_buttonTransLineReset->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( PANEL_TRANSLINE_BASE::OnTransLineResetButtonClick ), NULL, this );
 
 }

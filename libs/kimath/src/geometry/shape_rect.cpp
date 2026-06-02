@@ -26,9 +26,16 @@
 
 #include <geometry/shape_rect.h>
 #include <convert_basic_shapes_to_polygon.h>
+#include <geometry/roundrect.h>
 
 bool SHAPE_RECT::Collide( const SEG& aSeg, int aClearance, int* aActual, VECTOR2I* aLocation ) const
 {
+    if( m_radius > 0 )
+    {
+        SHAPE_LINE_CHAIN lineChain( Outline() );
+        return lineChain.Collide( aSeg, aClearance, aActual, aLocation );
+    }
+
     BOX2I bbox( BBox() );
 
     if( bbox.Contains( aSeg.A ) )
@@ -114,15 +121,23 @@ const std::string SHAPE_RECT::Format( bool aCplusPlus ) const
     ss << m_w;
     ss << ", ";
     ss << m_h;
+    ss << ", ";
+    ss << m_radius;
     ss << ");";
 
     return ss.str();
 }
 
 
-void SHAPE_RECT::TransformToPolygon( SHAPE_POLY_SET& aBuffer, int aError,
-                                     ERROR_LOC aErrorLoc ) const
+void SHAPE_RECT::TransformToPolygon( SHAPE_POLY_SET& aBuffer, int aError, ERROR_LOC aErrorLoc ) const
 {
+    if( m_radius > 0 )
+    {
+        ROUNDRECT rr( *this, m_radius );
+        rr.TransformToPolygon( aBuffer, aError );
+        return;
+    }
+
     int idx = aBuffer.NewOutline();
     SHAPE_LINE_CHAIN& outline = aBuffer.Outline( idx );
 
@@ -131,4 +146,33 @@ void SHAPE_RECT::TransformToPolygon( SHAPE_POLY_SET& aBuffer, int aError,
     outline.Append( { m_p0.x + m_w, m_p0.y + m_h } );
     outline.Append( { m_p0.x, m_p0.y + m_h } );
     outline.SetClosed( true );
+}
+
+
+const SHAPE_LINE_CHAIN SHAPE_RECT::Outline() const
+{
+    // TODO: we're DEPENDING on clients of this routine to use the actual arcs (if any)
+    // inserted into the SHAPE_LINE_CHAIN.  They must NOT use the approximated segments
+    // because we don't know what IUScale to generate them in.
+
+    SHAPE_POLY_SET buffer;
+    TransformToPolygon( buffer, SHAPE_ARC::DefaultAccuracyForPCB(), ERROR_INSIDE );
+    return std::move( buffer.Outline( 0 ) );
+}
+
+
+void SHAPE_RECT::Normalize()
+{
+    // Ensure that the height and width are positive.
+    if( m_w < 0 )
+    {
+        m_w = -m_w;
+        m_p0.x -= m_w;
+    }
+
+    if( m_h < 0 )
+    {
+        m_h = -m_h;
+        m_p0.y -= m_h;
+    }
 }

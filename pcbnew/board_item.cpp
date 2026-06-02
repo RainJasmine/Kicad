@@ -23,8 +23,6 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#include <pybind11/pybind11.h>
-
 #include <wx/debug.h>
 #include <wx/msgdlg.h>
 #include <i18n_utility.h>
@@ -36,6 +34,8 @@
 #include <pcb_generator.h>
 #include <footprint.h>
 #include <font/font.h>
+#include <properties/property.h>
+#include <properties/property_mgr.h>
 
 
 bool BOARD_ITEM::IsGroupableType() const
@@ -62,6 +62,7 @@ bool BOARD_ITEM::IsGroupableType() const
     case PCB_DIM_RADIAL_T:
     case PCB_DIM_ORTHOGONAL_T:
     case PCB_ZONE_T:
+    case PCB_BARCODE_T:
         return true;
     default:
         return false;
@@ -97,6 +98,27 @@ BOARD* BOARD_ITEM::GetBoard()
 FOOTPRINT* BOARD_ITEM::GetParentFootprint() const
 {
     return static_cast<FOOTPRINT*>( findParent( PCB_FOOTPRINT_T ) );
+}
+
+
+void BOARD_ITEM::SetUuid( const KIID& aUuid )
+{
+    if( m_Uuid == aUuid )
+        return;
+
+    if( BOARD* board = GetBoard(); board && board->IsItemIndexedById( this ) )
+    {
+        board->RebindItemUuid( this, aUuid );
+        return;
+    }
+
+    SetUuidDirect( aUuid );
+}
+
+
+void BOARD_ITEM::SetUuidDirect( const KIID& aUuid )
+{
+    const_cast<KIID&>( m_Uuid ) = aUuid;
 }
 
 
@@ -204,7 +226,7 @@ bool BOARD_ITEM::IsSideSpecific() const
 }
 
 
-wxString BOARD_ITEM::layerMaskDescribe() const
+wxString BOARD_ITEM::LayerMaskDescribe() const
 {
     const BOARD* board = GetBoard();
     LSET         layers = GetLayerSet();
@@ -273,17 +295,30 @@ void BOARD_ITEM::SwapItemData( BOARD_ITEM* aImage )
         return;
 
     EDA_ITEM* parent = GetParent();
+    BOARD*    board = GetBoard();
+
+    // Evict children from the item-by-id cache before the swap moves them to the
+    // image.  The image is typically deleted after the swap (undo/redo, commit revert),
+    // which would leave the cache holding dangling pointers to the destroyed children.
+    if( board )
+    {
+        board->UncacheChildrenById( this );
+    }
 
     swapData( aImage );
-
     SetParent( parent );
+
+    if( board )
+    {
+        board->CacheChildrenById( this );
+    }
 }
 
 
 BOARD_ITEM* BOARD_ITEM::Duplicate( bool addToParentGroup, BOARD_COMMIT* aCommit ) const
 {
     BOARD_ITEM* dupe = static_cast<BOARD_ITEM*>( Clone() );
-    const_cast<KIID&>( dupe->m_Uuid ) = KIID();
+    dupe->ResetUuid();
 
     if( addToParentGroup )
     {
@@ -304,8 +339,8 @@ void BOARD_ITEM::TransformShapeToPolygon( SHAPE_POLY_SET& aBuffer, PCB_LAYER_ID 
                                           int aClearance, int aError, ERROR_LOC aErrorLoc,
                                           bool ignoreLineWidth ) const
 {
-    wxFAIL_MSG( wxString::Format( wxT( "%s doesn't implement TransformShapeToPolygon()" ), GetClass() ) );
-};
+    wxLogDebug( wxT( "%s doesn't implement TransformShapeToPolygon()" ), GetClass() );
+}
 
 
 bool BOARD_ITEM::ptr_cmp::operator() ( const BOARD_ITEM* a, const BOARD_ITEM* b ) const
@@ -398,6 +433,15 @@ wxString BOARD_ITEM::GetParentAsString() const
 }
 
 
+const std::vector<wxString>* BOARD_ITEM::GetEmbeddedFonts()
+{
+    if( BOARD* board = GetBoard() )
+        return board->GetFontFiles();
+
+    return nullptr;
+}
+
+
 static struct BOARD_ITEM_DESC
 {
     BOARD_ITEM_DESC()
@@ -421,6 +465,13 @@ static struct BOARD_ITEM_DESC
                 .SetIsHiddenFromLibraryEditors()
                 .SetIsHiddenFromPropertiesManager();
 
+        auto isNotFootprintHolder =
+                []( INSPECTABLE* aItem ) -> bool
+                {
+                    BOARD_ITEM* item = dynamic_cast<BOARD_ITEM*>( aItem );
+                    return item && item->GetBoard() && !item->GetBoard()->IsFootprintHolder();
+                };
+
         propMgr.AddProperty( new PROPERTY<BOARD_ITEM, int>( _HKI( "Position X" ),
                     &BOARD_ITEM::SetX, &BOARD_ITEM::GetX, PROPERTY_DISPLAY::PT_COORD,
                     ORIGIN_TRANSFORMS::ABS_X_COORD ) );
@@ -431,12 +482,7 @@ static struct BOARD_ITEM_DESC
                     &BOARD_ITEM::SetLayer, &BOARD_ITEM::GetLayer ) );
         propMgr.AddProperty( new PROPERTY<BOARD_ITEM, bool>( _HKI( "Locked" ),
                     &BOARD_ITEM::SetLocked, &BOARD_ITEM::IsLocked ) )
-               .SetAvailableFunc(
-                    [=]( INSPECTABLE* aItem ) -> bool
-                    {
-                        BOARD_ITEM* item = dynamic_cast<BOARD_ITEM*>( aItem );
-                        return item && item->GetBoard() && !item->GetBoard()->IsFootprintHolder();
-                    } );
+               .SetAvailableFunc( isNotFootprintHolder );
     }
 } _BOARD_ITEM_DESC;
 

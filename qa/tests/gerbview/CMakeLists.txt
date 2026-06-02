@@ -24,6 +24,8 @@ set( QA_GERBVIEW_SRCS
     # The main test entry points
     test_module.cpp
 
+    test_aperture_macro.cpp
+
     # Shared between programs, but dependent on the BIU
     ${CMAKE_SOURCE_DIR}/qa/tests/common/test_format_units.cpp
 )
@@ -51,6 +53,7 @@ target_compile_definitions( qa_gerbview
 
 target_include_directories( qa_gerbview PRIVATE
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/gerbview
     ${CMAKE_SOURCE_DIR}/qa/mocks/include
 )
 
@@ -68,7 +71,6 @@ target_link_libraries( qa_gerbview
     qa_utils
     ${wxWidgets_LIBRARIES}
     ${GDI_PLUS_LIBRARIES}
-    ${PYTHON_LIBRARIES}
     Boost::headers
     Boost::unit_test_framework
     ${PCBNEW_EXTRA_LIBS}    # -lrt must follow Boost

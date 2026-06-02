@@ -58,6 +58,7 @@ set( QA_SPICE_SRCS
     test_library_spice.cpp
     test_sim_model_inference.cpp
     test_sim_model_ngspice.cpp
+    test_sim_model_source_pwl.cpp
     test_sim_regressions.cpp
 
     # IBIS files
@@ -86,8 +87,6 @@ target_link_libraries( qa_spice
 PRIVATE
     eeschema_kiface_objects
     common
-    pcbcommon
-    scripting
     kimath
     qa_utils
     qa_schematic_utils
@@ -117,3 +116,4 @@ target_compile_definitions( qa_spice
 
 kicad_add_boost_test( qa_spice qa_spice )
 
+setup_qa_env( qa_spice )

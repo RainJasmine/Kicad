@@ -32,6 +32,7 @@
 #include <pad.h>
 #include <pcb_group.h>
 #include <board_design_settings.h>
+#include <drc/drc_engine.h>
 #include <progress_reporter.h>
 #include <widgets/wx_infobar.h>
 #include <widgets/wx_progress_reporters.h>
@@ -47,7 +48,7 @@
 #include <core/profile.h>
 
 ZONE_FILLER_TOOL::ZONE_FILLER_TOOL() :
-    PCB_TOOL_BASE( "pcbnew.ZoneFiller" ),
+    PCB_TOOL_BASE( ZONE_FILLER_TOOL_NAME ),
     m_fillInProgress( false )
 {
 }
@@ -115,14 +116,17 @@ void ZONE_FILLER_TOOL::singleShotRefocus( wxIdleEvent& )
 }
 
 
-void ZONE_FILLER_TOOL::FillAllZones( wxWindow* aCaller, PROGRESS_REPORTER* aReporter )
+void ZONE_FILLER_TOOL::FillAllZones( wxWindow* aCaller, PROGRESS_REPORTER* aReporter, bool aHeadless )
 {
     if( m_fillInProgress )
         return;
 
     m_fillInProgress = true;
 
-    PCB_EDIT_FRAME*                       frame = getEditFrame<PCB_EDIT_FRAME>();
+    PCB_EDIT_FRAME*                       frame = nullptr;
+    if( !aHeadless )
+        frame = getEditFrame<PCB_EDIT_FRAME>();
+
     BOARD_COMMIT                          commit( this );
     std::unique_ptr<WX_PROGRESS_REPORTER> reporter;
     TEARDROP_MANAGER                      teardropMgr( board(), m_toolMgr );
@@ -137,7 +141,7 @@ void ZONE_FILLER_TOOL::FillAllZones( wxWindow* aCaller, PROGRESS_REPORTER* aRepo
 
     m_filler = std::make_unique<ZONE_FILLER>( board(), &commit );
 
-    if( !board()->GetDesignSettings().m_DRCEngine->RulesValid() )
+    if( !aHeadless && !board()->GetDesignSettings().m_DRCEngine->RulesValid() )
     {
         WX_INFOBAR* infobar = frame->GetInfoBar();
         wxHyperlinkCtrl* button = new wxHyperlinkCtrl( infobar, wxID_ANY, _( "Show DRC rules" ), wxEmptyString );
@@ -160,7 +164,7 @@ void ZONE_FILLER_TOOL::FillAllZones( wxWindow* aCaller, PROGRESS_REPORTER* aRepo
     {
         m_filler->SetProgressReporter( aReporter );
     }
-    else
+    else if( !aHeadless )
     {
         reporter = std::make_unique<WX_PROGRESS_REPORTER>( aCaller, _( "Fill All Zones" ), 5, PR_CAN_ABORT );
         m_filler->SetProgressReporter( reporter.get() );
@@ -168,28 +172,35 @@ void ZONE_FILLER_TOOL::FillAllZones( wxWindow* aCaller, PROGRESS_REPORTER* aRepo
 
     if( m_filler->Fill( toFill ) )
     {
-        m_filler->GetProgressReporter()->AdvancePhase();
+        if( m_filler->GetProgressReporter() )
+            m_filler->GetProgressReporter()->AdvancePhase();
 
         commit.Push( _( "Fill Zone(s)" ), SKIP_CONNECTIVITY | ZONE_FILL_OP );
-        frame->m_ZoneFillsDirty = false;
+        if( !aHeadless )
+            frame->m_ZoneFillsDirty = false;
     }
     else
     {
         commit.Revert();
     }
 
-    rebuildConnectivity();
-    refresh();
+    rebuildConnectivity( aHeadless );
 
-    if( m_filler->IsDebug() )
-        frame->UpdateUserInterface();
+    if( !aHeadless )
+    {
+        refresh();
+
+        if( m_filler->IsDebug() )
+            frame->UpdateUserInterface();
+    }
 
     m_fillInProgress = false;
     m_filler.reset( nullptr );
 
-    // wxWidgets has keyboard focus issues after the progress reporter.  Re-setting the focus
-    // here doesn't work, so we delay it to an idle event.
-    canvas()->Bind( wxEVT_IDLE, &ZONE_FILLER_TOOL::singleShotRefocus, this );
+    if( !aHeadless )
+        // wxWidgets has keyboard focus issues after the progress reporter.  Re-setting the focus
+        // here doesn't work, so we delay it to an idle event.
+        canvas()->Bind( wxEVT_IDLE, &ZONE_FILLER_TOOL::singleShotRefocus, this );
 }
 
 
@@ -440,11 +451,12 @@ PROGRESS_REPORTER* ZONE_FILLER_TOOL::GetProgressReporter()
 }
 
 
-void ZONE_FILLER_TOOL::rebuildConnectivity()
+void ZONE_FILLER_TOOL::rebuildConnectivity( bool aHeadless )
 {
     board()->BuildConnectivity();
     m_toolMgr->PostEvent( EVENTS::ConnectivityChangedEvent );
-    canvas()->RedrawRatsnest();
+    if( !aHeadless )
+        canvas()->RedrawRatsnest();
 }
 
 

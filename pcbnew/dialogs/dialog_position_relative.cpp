@@ -33,7 +33,7 @@
 #include <trigo.h>
 
 // initialise statics
-DIALOG_POSITION_RELATIVE::POSITION_RELATIVE_OPTIONS DIALOG_POSITION_RELATIVE::m_options;
+DIALOG_POSITION_RELATIVE::ANCHOR_TYPE DIALOG_POSITION_RELATIVE::s_anchorType = DIALOG_POSITION_RELATIVE::ANCHOR_ITEM;
 
 
 DIALOG_POSITION_RELATIVE::DIALOG_POSITION_RELATIVE( PCB_BASE_FRAME* aParent ) :
@@ -60,12 +60,7 @@ DIALOG_POSITION_RELATIVE::DIALOG_POSITION_RELATIVE( PCB_BASE_FRAME* aParent ) :
 
     SetInitialFocus( m_xEntry );
 
-    // and set up the entries according to the saved options
-    m_polarCoords->SetValue( m_options.polarCoords );
     updateDialogControls( m_polarCoords->IsChecked() );
-
-    m_xOffset.SetDoubleValue( m_options.entry1 );
-    m_yOffset.SetDoubleValue( m_options.entry2 );
 
     SetupStandardButtons();
 
@@ -217,10 +212,10 @@ void DIALOG_POSITION_RELATIVE::OnSelectItemClick( wxCommandEvent& event )
     PCB_PICKER_TOOL* pickerTool = m_toolMgr->GetTool<PCB_PICKER_TOOL>();
     wxCHECK( pickerTool, /* void */ );
 
+    Hide();
+
     m_toolMgr->RunAction( PCB_ACTIONS::selectItemInteractively,
                           PCB_PICKER_TOOL::INTERACTIVE_PARAMS{ this, _( "Select reference item..." ) } );
-
-    Hide();
 }
 
 
@@ -231,16 +226,17 @@ void DIALOG_POSITION_RELATIVE::OnSelectPointClick( wxCommandEvent& event )
     PCB_PICKER_TOOL* pickerTool = m_toolMgr->GetTool<PCB_PICKER_TOOL>();
     wxCHECK( pickerTool, /* void */ );
 
-    m_toolMgr->RunAction( PCB_ACTIONS::selectPointInteractively,
-                          PCB_PICKER_TOOL::INTERACTIVE_PARAMS{ this, _( "Select reference point..." ) } );
-
+    // Hide, but do not close, the dialog
     Hide();
+
+    m_toolMgr->RunAction( PCB_ACTIONS::selectPointInteractively,
+                          PCB_PICKER_TOOL::INTERACTIVE_PARAMS { this, _( "Select reference point..." ) } );
 }
 
 
 void DIALOG_POSITION_RELATIVE::updateAnchorInfo( const BOARD_ITEM* aItem )
 {
-    switch( m_options.anchorType )
+    switch( s_anchorType )
     {
     case ANCHOR_GRID_ORIGIN:
         m_referenceInfo->SetLabel( _( "Reference location: grid origin" ) );
@@ -263,10 +259,9 @@ void DIALOG_POSITION_RELATIVE::updateAnchorInfo( const BOARD_ITEM* aItem )
     }
 
     case ANCHOR_POINT:
-        m_referenceInfo->SetLabel( wxString::Format(
-            _( "Reference location: selected point (%s, %s)" ),
-            m_parentFrame->MessageTextFromValue( m_anchorItemPosition.x ),
-            m_parentFrame->MessageTextFromValue( m_anchorItemPosition.y ) ) );
+        m_referenceInfo->SetLabel( wxString::Format( _( "Reference location: selected point (%s, %s)" ),
+                                                     m_parentFrame->MessageTextFromValue( m_anchorItemPosition.x ),
+                                                     m_parentFrame->MessageTextFromValue( m_anchorItemPosition.y ) ) );
         break;
     }
 }
@@ -274,7 +269,7 @@ void DIALOG_POSITION_RELATIVE::updateAnchorInfo( const BOARD_ITEM* aItem )
 
 VECTOR2I DIALOG_POSITION_RELATIVE::getAnchorPos()
 {
-    switch( m_options.anchorType )
+    switch( s_anchorType )
     {
     case ANCHOR_GRID_ORIGIN:
         return static_cast<BOARD*>( m_toolMgr->GetModel() )->GetDesignSettings().GetGridOrigin();
@@ -294,14 +289,14 @@ VECTOR2I DIALOG_POSITION_RELATIVE::getAnchorPos()
 
 void DIALOG_POSITION_RELATIVE::OnUseGridOriginClick( wxCommandEvent& event )
 {
-    m_options.anchorType = ANCHOR_GRID_ORIGIN;
+    s_anchorType = ANCHOR_GRID_ORIGIN;
     updateAnchorInfo( nullptr );
 }
 
 
 void DIALOG_POSITION_RELATIVE::OnUseUserOriginClick( wxCommandEvent& event )
 {
-    m_options.anchorType = ANCHOR_USER_ORIGIN;
+    s_anchorType = ANCHOR_USER_ORIGIN;
     updateAnchorInfo( nullptr );
 }
 
@@ -313,19 +308,21 @@ void DIALOG_POSITION_RELATIVE::UpdatePickedItem( const EDA_ITEM* aItem )
     if( aItem && aItem->IsBOARD_ITEM() )
         item = static_cast<const BOARD_ITEM*>( aItem );
 
-    m_options.anchorType = ANCHOR_ITEM;
+    s_anchorType = ANCHOR_ITEM;
     updateAnchorInfo( item );
 
     if( item )
         m_anchorItemPosition = item->GetPosition();
 
     Show( true );
+    Raise();
+    SetFocus();
 }
 
 
 void DIALOG_POSITION_RELATIVE::UpdatePickedPoint( const std::optional<VECTOR2I>& aPoint )
 {
-    m_options.anchorType = ANCHOR_POINT;
+    s_anchorType = ANCHOR_POINT;
 
     if( aPoint )
         m_anchorItemPosition = *aPoint;
@@ -333,6 +330,8 @@ void DIALOG_POSITION_RELATIVE::UpdatePickedPoint( const std::optional<VECTOR2I>&
     updateAnchorInfo( nullptr );
 
     Show( true );
+    Raise();
+    SetFocus();
 }
 
 
@@ -343,11 +342,6 @@ void DIALOG_POSITION_RELATIVE::OnOkClick( wxCommandEvent& event )
 
     if( getTranslationInIU( translation, m_polarCoords->IsChecked() ) )
     {
-        // save the settings
-        m_options.polarCoords = m_polarCoords->GetValue();
-        m_options.entry1      = m_xOffset.GetDoubleValue();
-        m_options.entry2      = m_yOffset.GetDoubleValue();
-
         POSITION_RELATIVE_TOOL* posrelTool = m_toolMgr->GetTool<POSITION_RELATIVE_TOOL>();
 
         posrelTool->RelativeItemSelectionMove( getAnchorPos(), translation );

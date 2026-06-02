@@ -53,16 +53,16 @@ public:
         int pin_step;
     };
 
-    struct DIALOG_IMPORT_GRAPHICS
+    struct PANEL_LIB_FIELDS_TABLE
     {
-        bool     interactive_placement;
-        wxString last_file;
-        double   dxf_line_width;
-        int      dxf_line_width_units;
-        int      origin_units;
-        double   origin_x;
-        double   origin_y;
-        int      dxf_units;
+        std::map<std::string, int> field_widths;
+        int                        sash_pos;
+        bool                       sidebar_collapsed;
+    };
+
+    struct PIN_TABLE
+    {
+        bool crossprobe_on_selection;
     };
 
     SYMBOL_EDITOR_SETTINGS();
@@ -77,8 +77,6 @@ public:
 
     REPEAT m_Repeat;
 
-    DIALOG_IMPORT_GRAPHICS m_ImportGraphics;
-
     bool m_ShowPinElectricalType;
     bool m_ShowHiddenPins;
     bool m_ShowHiddenFields;
@@ -91,13 +89,15 @@ public:
 
     int m_LibrarySortMode;
 
-    wxString m_EditSymbolVisibleColumns;
-
-    wxString m_PinTableVisibleColumns;
-
     bool m_UseEeschemaColorSettings;
 
+    ARC_EDIT_MODE m_ArcEditMode;
+
     SCH_SELECTION_FILTER_OPTIONS m_SelectionFilter;
+
+    PANEL_LIB_FIELDS_TABLE m_LibFieldEditor;
+
+    PIN_TABLE m_PinTable;
 
 protected:
 

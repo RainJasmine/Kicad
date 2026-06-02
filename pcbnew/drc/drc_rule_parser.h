@@ -32,7 +32,8 @@
 
 
 class BOARD_ITEM;
-
+class COMPONENT_CLASS_ASSIGNMENT_RULE;
+class REPORTER;
 
 #define DRC_RULE_FILE_VERSION      20200610
 
@@ -43,6 +44,8 @@ public:
     DRC_RULES_PARSER( const wxString& aSource, const wxString& aSourceDescr );
 
     void Parse( std::vector<std::shared_ptr<DRC_RULE>>& aRules, REPORTER* aReporter );
+    
+    bool VerifyParseCondition( REPORTER* aReporter );
 
     void ParseComponentClassAssignmentRules(
             std::vector<std::shared_ptr<COMPONENT_CLASS_ASSIGNMENT_RULE>>& aRules,
@@ -61,8 +64,10 @@ private:
     void parseUnknown();
     wxString parseExpression();
 
-    void reportError( const wxString& aMessage );
+    void reportError( const wxString& aMessage, int aOffset = 0 );
     void reportDeprecation( const wxString& oldToken, const wxString& newToken );
+    bool checkUnresolvedTextVariable();
+    void expected( const wxString& expectedTokens );
 
 private:
     int       m_requiredVersion;

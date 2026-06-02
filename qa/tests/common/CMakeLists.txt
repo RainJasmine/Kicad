@@ -30,28 +30,60 @@ set( QA_COMMON_SRCS
 
     wximage_test_utils.cpp
 
+    test_angle_item.cpp
+
     test_array_axis.cpp
+    test_atomic_save.cpp
+    test_backup_settings.cpp
     test_base_set.cpp
     test_bitmap_base.cpp
+    test_clipboard.cpp
+    test_collector.cpp
     test_color4d.cpp
+    test_commit.cpp
     test_coroutine.cpp
     test_eda_shape.cpp
     test_eda_text.cpp
     test_embedded_file_compress.cpp
+    test_expand_text_vars.cpp
+    test_text_var_dependency.cpp
+    test_drawing_sheet_reactive.cpp
+    test_file_history.cpp
+    test_filename_resolver.cpp
+    test_hotkey_store.cpp
     test_increment.cpp
+    test_item_realignment.cpp
     test_ki_any.cpp
-    test_lib_table.cpp
+    test_library_tables.cpp
     test_markup_parser.cpp
     test_kicad_string.cpp
     test_kicad_stroke_font.cpp
+    test_gerber_plotter.cpp
+    test_pdf_unicode_plot.cpp
+    test_png_plotter.cpp
     test_kiid.cpp
     test_layer_ids.cpp
+    test_lib_id.cpp
     test_layer_range.cpp
     test_lset.cpp
+    test_markup_parser.cpp
+    test_notifications_manager.cpp
     test_property.cpp
+    test_property_holder.cpp
+    test_reporting.cpp
+    test_rc_tree_model.cpp
     test_refdes_utils.cpp
+    test_grid_helper.cpp
+    test_string_utils.cpp
     test_richio.cpp
     test_text_attributes.cpp
+    text_eval/test_text_eval_parser.cpp
+    text_eval/test_text_eval_parser_core.cpp
+    text_eval/test_text_eval_parser_datetime.cpp
+    text_eval/test_text_eval_parser_vcs.cpp
+    text_eval/test_text_eval_parser_integration.cpp
+    text_eval/test_text_eval_numeric_compat.cpp
+    text_eval/test_text_eval_render.cpp
     test_title_block.cpp
     test_types.cpp
     test_utf8.cpp
@@ -60,6 +92,20 @@ set( QA_COMMON_SRCS
 
     libeval/test_numeric_evaluator.cpp
 
+    transline_calculations/test_coax.cpp
+    transline_calculations/test_coplanar.cpp
+    transline_calculations/test_dielectric_selector.cpp
+    transline_calculations/test_djordjevic_sarkar.cpp
+    transline_calculations/test_djordjevic_sarkar_integration.cpp
+    transline_calculations/test_coupled_microstrip.cpp
+    transline_calculations/test_coupled_stripline.cpp
+    transline_calculations/test_coupled_stripline_offset.cpp
+    transline_calculations/test_microstrip_cover.cpp
+    transline_calculations/test_rectwaveguide.cpp
+    transline_calculations/test_soldermask.cpp
+    transline_calculations/test_transline_roundtrip.cpp
+    transline_calculations/test_twistedpair.cpp
+
     io/test_csv.cpp
     io/altium/test_altium_parser.cpp
     io/altium/test_altium_parser_utils.cpp
@@ -67,7 +113,42 @@ set( QA_COMMON_SRCS
 
     io/cadstar/test_cadstar_archive_parser.cpp
 
+    io/pads/test_pads_attribute_mapper.cpp
+    io/pads/test_pads_common.cpp
+    io/pads/test_pads_unit_converter.cpp
+
+    test_kigit_common.cpp
+    test_kigit_orphan_registry.cpp
+    test_throttle.cpp
     view/test_zoom_controller.cpp
+
+    test_netname_validator.cpp
+
+    # GAL tests
+    test_gal_xor_mode.cpp
+
+    # Graphics import tests
+    test_graphics_importer_buffer.cpp
+    test_svg_import.cpp
+
+    # Project template tests (source included directly since it's from kicad executable)
+    test_project_template.cpp
+    ${CMAKE_SOURCE_DIR}/kicad/project_template.cpp
+
+    # Project file tests
+    test_project_file.cpp
+    test_remote_provider_metadata.cpp
+    test_remote_provider_client.cpp
+    test_remote_provider_settings.cpp
+    test_oauth_loopback_server.cpp
+    test_oauth_pkce.cpp
+    test_secure_token_store.cpp
+
+    # Job tests
+    test_job_export_pcb_variants.cpp
+    test_job_export_sch_plot.cpp
+    test_job_sch_erc.cpp
+    test_jobs_runner.cpp
 )
 
 if( KICAD_TEST_DATABASE_LIBRARIES )
@@ -96,19 +177,31 @@ target_link_libraries( qa_common
     common
     libcontext
     gal
+    pads_common
     qa_utils
     Boost::headers
     Boost::unit_test_framework
     ${wxWidgets_LIBRARIES}
+    ZLIB::ZLIB
     )
+
+if( TARGET api_schema_build_copy )
+    add_dependencies( qa_common api_schema_build_copy )
+endif()
 
 include_directories(
     ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/kicad
     ${CMAKE_SOURCE_DIR}/pcbnew
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/common/io/pads
     ${CMAKE_SOURCE_DIR}/qa/mocks/include
     ${INC_AFTER}
 )
+
+set_source_files_properties( test_remote_provider_metadata.cpp test_remote_provider_client.cpp PROPERTIES
+        COMPILE_DEFINITIONS "QA_SRC_ROOT=(\"${CMAKE_SOURCE_DIR}\")"
+        )
 
 if( KICAD_TEST_DATABASE_LIBRARIES )
     set_source_files_properties( test_database.cpp PROPERTIES

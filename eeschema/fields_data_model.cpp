@@ -20,6 +20,7 @@
 #include <wx/string.h>
 #include <wx/debug.h>
 #include <wx/grid.h>
+#include <wx/settings.h>
 #include <common.h>
 #include <widgets/wx_grid.h>
 #include <sch_reference_list.h>
@@ -30,12 +31,218 @@
 #include "fields_data_model.h"
 
 
+/**      
+ * Cell renderer that shows the expanded result of text variables (e.g. "${VALUE}" is
+ * displayed as "10K").  The actual cell still stores the raw variable so it can be                                   
+ * edited directly.                                                                                                   
+ */
+class GRID_CELL_RESOLVED_TEXT_RENDERER : public wxGridCellStringRenderer
+{
+public:
+    GRID_CELL_RESOLVED_TEXT_RENDERER() :
+            wxGridCellStringRenderer()
+    {
+    }
+
+    void Draw( wxGrid& aGrid, wxGridCellAttr& aAttr, wxDC& aDC, const wxRect& aRect, int aRow, int aCol,
+               bool isSelected ) override
+    {
+        wxString value = aGrid.GetCellValue( aRow, aCol );
+
+        if( auto* model = dynamic_cast<FIELDS_EDITOR_GRID_DATA_MODEL*>( aGrid.GetTable() ) )
+            value = model->GetResolvedValue( aRow, aCol );
+
+        wxRect rect = aRect;
+        rect.Inflate( -1 );
+
+        wxGridCellRenderer::Draw( aGrid, aAttr, aDC, aRect, aRow, aCol, isSelected );
+        SetTextColoursAndFont( aGrid, aAttr, aDC, isSelected );
+        aGrid.DrawTextRectangle( aDC, value, rect, wxALIGN_LEFT, wxALIGN_CENTRE );
+    }
+
+    wxSize GetBestSize( wxGrid& aGrid, wxGridCellAttr& aAttr, wxDC& aDC, int aRow, int aCol ) override
+    {
+        wxString value = aGrid.GetCellValue( aRow, aCol );
+
+        if( auto* model = dynamic_cast<FIELDS_EDITOR_GRID_DATA_MODEL*>( aGrid.GetTable() ) )
+            value = model->GetResolvedValue( aRow, aCol );
+
+        return wxGridCellStringRenderer::DoGetBestSize( aAttr, aDC, value );
+    }
+
+    wxGridCellRenderer* Clone() const override { return new GRID_CELL_RESOLVED_TEXT_RENDERER(); }
+};
+
+
+/**
+ * Create a unique key for the data store by combining the #KIID_PATH from the
+ * #SCH_SHEET_PATH with the symbol's UUID.
+ *
+ * @param aSheetPath The sheet path containing the symbol
+ * @param aSymbol The symbol to create a key for
+ * @return A KIID_PATH representing the full #SCH_SHEET_PATH + symbol UUID.
+ */
+static KIID_PATH makeDataStoreKey( const SCH_SHEET_PATH& aSheetPath, const SCH_SYMBOL& aSymbol )
+{
+    KIID_PATH path = aSheetPath.Path();
+    path.push_back( aSymbol.m_Uuid );
+    return path;
+}
+
+
+wxString VIEW_CONTROLS_GRID_DATA_MODEL::GetColLabelValue( int aCol )
+{
+    switch( aCol )
+    {
+    case DISPLAY_NAME_COLUMN: return _( "Field" );
+    case LABEL_COLUMN:        return m_forBOM ? _( "BOM Name" ) : _( "Label" );
+    case SHOW_FIELD_COLUMN:   return _( "Include" );
+    case GROUP_BY_COLUMN:     return _( "Group By" );
+    default:                  return wxT( "unknown column" );
+    };
+}
+
+
+wxString VIEW_CONTROLS_GRID_DATA_MODEL::GetValue( int aRow, int aCol )
+{
+    wxCHECK( aRow < GetNumberRows(), wxT( "bad row!" ) );
+
+    BOM_FIELD& rowData = m_fields[aRow];
+
+    switch( aCol )
+    {
+    case DISPLAY_NAME_COLUMN:
+        for( FIELD_T fieldId : MANDATORY_FIELDS )
+        {
+            if( GetDefaultFieldName( fieldId, !DO_TRANSLATE ) == rowData.name )
+                return GetDefaultFieldName( fieldId, DO_TRANSLATE );
+        }
+
+        return rowData.name;
+
+    case LABEL_COLUMN:
+        return rowData.label;
+
+    default:
+        // we can't assert here because wxWidgets sometimes calls this without checking
+        // the column type when trying to see if there's an overflow
+        return wxT( "bad wxWidgets!" );
+    }
+}
+
+
+bool VIEW_CONTROLS_GRID_DATA_MODEL::GetValueAsBool( int aRow, int aCol )
+{
+    wxCHECK( aRow < GetNumberRows(), false );
+
+    BOM_FIELD& rowData = m_fields[aRow];
+
+    switch( aCol )
+    {
+    case SHOW_FIELD_COLUMN: return rowData.show;
+    case GROUP_BY_COLUMN:   return rowData.groupBy;
+
+    default:
+        wxFAIL_MSG( wxString::Format( wxT( "column %d doesn't hold a bool value" ), aCol ) );
+        return false;
+    }
+}
+
+
+void VIEW_CONTROLS_GRID_DATA_MODEL::SetValue( int aRow, int aCol, const wxString &aValue )
+{
+    wxCHECK( aRow < GetNumberRows(), /*void*/ );
+
+    BOM_FIELD& rowData = m_fields[aRow];
+
+    switch( aCol )
+    {
+    case DISPLAY_NAME_COLUMN:
+        // Not editable
+        break;
+
+    case LABEL_COLUMN:
+        rowData.label = aValue;
+        break;
+
+    default:
+        wxFAIL_MSG( wxString::Format( wxT( "column %d doesn't hold a string value" ), aCol ) );
+    }
+
+    GetView()->Refresh();
+}
+
+
+void VIEW_CONTROLS_GRID_DATA_MODEL::SetValueAsBool( int aRow, int aCol, bool aValue )
+{
+    wxCHECK( aRow < GetNumberRows(), /*void*/ );
+
+    BOM_FIELD& rowData = m_fields[aRow];
+
+    switch( aCol )
+    {
+    case SHOW_FIELD_COLUMN: rowData.show = aValue;    break;
+    case GROUP_BY_COLUMN:   rowData.groupBy = aValue; break;
+
+    default:
+        wxFAIL_MSG( wxString::Format( wxT( "column %d doesn't hold a bool value" ), aCol ) );
+    }
+}
+
+
+void VIEW_CONTROLS_GRID_DATA_MODEL::AppendRow( const wxString& aFieldName, const wxString& aBOMName,
+                                               bool aShow, bool aGroupBy )
+{
+    m_fields.emplace_back( BOM_FIELD{ aFieldName, aBOMName, aShow, aGroupBy } );
+
+    if( wxGrid* grid = GetView() )
+    {
+        wxGridTableMessage msg( this, wxGRIDTABLE_NOTIFY_ROWS_APPENDED, 1 );
+        grid->ProcessTableMessage( msg );
+    }
+}
+
+
+void VIEW_CONTROLS_GRID_DATA_MODEL::DeleteRow( int aRow )
+{
+    wxCHECK( aRow >= 0 && aRow < GetNumberRows(), /* void */ );
+
+    m_fields.erase( m_fields.begin() + aRow );
+
+    if( wxGrid* grid = GetView() )
+    {
+        wxGridTableMessage msg( this, wxGRIDTABLE_NOTIFY_ROWS_DELETED, aRow, 1 );
+        grid->ProcessTableMessage( msg );
+    }
+}
+
+
+wxString VIEW_CONTROLS_GRID_DATA_MODEL::GetCanonicalFieldName( int aRow )
+{
+    wxCHECK( aRow >= 0 && aRow < GetNumberRows(), wxEmptyString );
+
+    BOM_FIELD& rowData = m_fields[aRow];
+
+    return rowData.name;
+}
+
+
+void VIEW_CONTROLS_GRID_DATA_MODEL::SetCanonicalFieldName( int aRow, const wxString& aName )
+{
+    wxCHECK( aRow >= 0 && aRow < GetNumberRows(), /* void */ );
+
+    BOM_FIELD& rowData = m_fields[aRow];
+
+    rowData.name = aName;
+}
+
+
 const wxString FIELDS_EDITOR_GRID_DATA_MODEL::QUANTITY_VARIABLE = wxS( "${QUANTITY}" );
 const wxString FIELDS_EDITOR_GRID_DATA_MODEL::ITEM_NUMBER_VARIABLE = wxS( "${ITEM_NUMBER}" );
 
 
 void FIELDS_EDITOR_GRID_DATA_MODEL::AddColumn( const wxString& aFieldName, const wxString& aLabel,
-                                               bool aAddedByUser )
+                                               bool aAddedByUser, const wxString& aVariantName )
 {
     // Don't add a field twice
     if( GetFieldNameCol( aFieldName ) != -1 )
@@ -44,40 +251,47 @@ void FIELDS_EDITOR_GRID_DATA_MODEL::AddColumn( const wxString& aFieldName, const
     m_cols.push_back( { aFieldName, aLabel, aAddedByUser, false, false } );
 
     for( unsigned i = 0; i < m_symbolsList.GetCount(); ++i )
-    {
-        if( SCH_SYMBOL* symbol = m_symbolsList[i].GetSymbol() )
-            updateDataStoreSymbolField( *symbol, aFieldName );
-    }
+        updateDataStoreSymbolField( m_symbolsList[i], aFieldName, aVariantName );
 }
 
 
-void FIELDS_EDITOR_GRID_DATA_MODEL::updateDataStoreSymbolField( const SCH_SYMBOL& aSymbol,
-                                                                const wxString&   aFieldName )
+void FIELDS_EDITOR_GRID_DATA_MODEL::updateDataStoreSymbolField( const SCH_REFERENCE& aSymbolRef,
+                                                                const wxString& aFieldName,
+                                                                const wxString& aVariantName )
 {
+    const SCH_SYMBOL* symbol = aSymbolRef.GetSymbol();
+
+    if( !symbol )
+        return;
+
+    KIID_PATH key = makeDataStoreKey( aSymbolRef.GetSheetPath(), *symbol );
+
     if( isAttribute( aFieldName ) )
     {
-        m_dataStore[aSymbol.m_Uuid][aFieldName] = getAttributeValue( aSymbol, aFieldName );
+        m_dataStore[key][aFieldName] = getAttributeValue( aSymbolRef, aFieldName, aVariantName );
     }
-    else if( const SCH_FIELD* field = aSymbol.GetField( aFieldName ) )
+    else if( const SCH_FIELD* field = symbol->FindFieldCaseInsensitive( aFieldName ) )
     {
         if( field->IsPrivate() )
         {
-            m_dataStore[aSymbol.m_Uuid][aFieldName] = wxEmptyString;
+            m_dataStore[key][aFieldName] = wxEmptyString;
             return;
         }
 
-        wxString value = aSymbol.Schematic()->ConvertKIIDsToRefs( field->GetText() );
-        m_dataStore[aSymbol.m_Uuid][aFieldName] = value;
+        wxString value = symbol->Schematic()->ConvertKIIDsToRefs( field->GetText( &aSymbolRef.GetSheetPath(),
+                                                                                  aVariantName ) );
+
+        m_dataStore[key][aFieldName] = value;
     }
     else if( IsGeneratedField( aFieldName ) )
     {
         // Handle generated fields with variables as names (e.g. ${QUANTITY}) that are not present in
         // the symbol by giving them the correct value
-        m_dataStore[aSymbol.m_Uuid][aFieldName] = aFieldName;
+        m_dataStore[key][aFieldName] = aFieldName;
     }
     else
     {
-        m_dataStore[aSymbol.m_Uuid][aFieldName] = wxEmptyString;
+        m_dataStore[key][aFieldName] = wxEmptyString;
     }
 }
 
@@ -87,10 +301,19 @@ void FIELDS_EDITOR_GRID_DATA_MODEL::RemoveColumn( int aCol )
     for( unsigned i = 0; i < m_symbolsList.GetCount(); ++i )
     {
         if( SCH_SYMBOL* symbol = m_symbolsList[i].GetSymbol() )
-            m_dataStore[symbol->m_Uuid].erase( m_cols[aCol].m_fieldName );
+        {
+            KIID_PATH key = makeDataStoreKey( m_symbolsList[i].GetSheetPath(), *symbol );
+            m_dataStore[key].erase( m_cols[aCol].m_fieldName );
+        }
     }
 
     m_cols.erase( m_cols.begin() + aCol );
+
+    if( wxGrid* grid = GetView() )
+    {
+        wxGridTableMessage msg( this, wxGRIDTABLE_NOTIFY_COLS_DELETED, aCol, 1 );
+        grid->ProcessTableMessage( msg );
+    }
 }
 
 
@@ -99,12 +322,13 @@ void FIELDS_EDITOR_GRID_DATA_MODEL::RenameColumn( int aCol, const wxString& newN
     for( unsigned i = 0; i < m_symbolsList.GetCount(); ++i )
     {
         SCH_SYMBOL* symbol = m_symbolsList[i].GetSymbol();
+        KIID_PATH key = makeDataStoreKey( m_symbolsList[i].GetSheetPath(), *symbol );
 
         // Careful; field may have already been renamed from another sheet instance
-        if( auto node = m_dataStore[symbol->m_Uuid].extract( m_cols[aCol].m_fieldName ) )
+        if( auto node = m_dataStore[key].extract( m_cols[aCol].m_fieldName ) )
         {
             node.key() = newName;
-            m_dataStore[symbol->m_Uuid].insert( std::move( node ) );
+            m_dataStore[key].insert( std::move( node ) );
         }
     }
 
@@ -117,7 +341,7 @@ int FIELDS_EDITOR_GRID_DATA_MODEL::GetFieldNameCol( const wxString& aFieldName )
 {
     for( size_t i = 0; i < m_cols.size(); i++ )
     {
-        if( m_cols[i].m_fieldName == aFieldName )
+        if( m_cols[i].m_fieldName.CmpNoCase( aFieldName ) == 0 )
             return static_cast<int>( i );
     }
 
@@ -158,47 +382,164 @@ void FIELDS_EDITOR_GRID_DATA_MODEL::SetFieldsOrder( const std::vector<wxString>&
 }
 
 
-wxString FIELDS_EDITOR_GRID_DATA_MODEL::GetValue( int aRow, int aCol )
+bool FIELDS_EDITOR_GRID_DATA_MODEL::IsExpanderColumn( int aCol ) const
 {
-    if( ColIsReference( aCol ) )
+    // Check if aCol is the first visible column
+    for( int col = 0; col < aCol; ++col )
     {
-        // Poor-man's tree controls
-        if( m_rows[aRow].m_Flag == GROUP_COLLAPSED )
-            return wxT( ">  " ) + GetValue( m_rows[aRow], aCol );
-        else if( m_rows[aRow].m_Flag == GROUP_EXPANDED )
-            return wxT( "v  " ) + GetValue( m_rows[aRow], aCol );
-        else if( m_rows[aRow].m_Flag == CHILD_ITEM )
-            return wxT( "        " ) + GetValue( m_rows[aRow], aCol );
-        else
-            return wxT( "    " ) + GetValue( m_rows[aRow], aCol );
+        if( m_cols[col].m_show )
+            return false;
     }
-    else
-    {
-        return GetValue( m_rows[aRow], aCol );
-    }
+
+    return true;
 }
 
 
-wxGridCellAttr* FIELDS_EDITOR_GRID_DATA_MODEL::GetAttr( int aRow, int aCol,
-                                                        wxGridCellAttr::wxAttrKind aKind )
+wxString FIELDS_EDITOR_GRID_DATA_MODEL::GetValue( int aRow, int aCol )
 {
+    GetView()->SetReadOnly( aRow, aCol, IsExpanderColumn( aCol ) );
+    return GetValue( m_rows[aRow], aCol );
+}
+
+
+wxString FIELDS_EDITOR_GRID_DATA_MODEL::GetResolvedValue( int aRow, int aCol )
+{
+    return GetValue( m_rows[aRow], aCol, wxT( ", " ), wxT( "-" ), true, false );
+}
+
+
+wxGridCellAttr* FIELDS_EDITOR_GRID_DATA_MODEL::GetAttr( int aRow, int aCol, wxGridCellAttr::wxAttrKind aKind )
+{
+    wxGridCellAttr* attr = nullptr;
+    bool            needsUrlEditor = false;
+    bool            needsVariantHighlight = false;
+    bool            needsTextVarRenderer = false;
+    wxColour        highlightColor;
+
+    // Check if we need URL editor
     if( GetColFieldName( aCol ) == GetCanonicalFieldName( FIELD_T::DATASHEET )
             || IsURL( GetValue( m_rows[aRow], aCol ) ) )
     {
         if( m_urlEditor )
+            needsUrlEditor = true;
+    }
+
+    // Check if the raw value contains a text variable that should be resolved for display
+    if( aRow >= 0 && aRow < (int) m_rows.size() && aCol >= 0 && aCol < (int) m_cols.size() && !ColIsReference( aCol )
+        && !ColIsQuantity( aCol ) && !ColIsItemNumber( aCol ) )
+    {
+        wxString rawValue = GetValue( m_rows[aRow], aCol );
+
+        if( rawValue.Contains( wxT( "${" ) ) )
+            needsTextVarRenderer = true;
+    }
+
+    // Check if we need variant highlighting
+    if( !m_currentVariant.IsEmpty() && aRow >= 0 && aRow < (int) m_rows.size()
+            && aCol >= 0 && aCol < (int) m_cols.size() )
+    {
+        const wxString& fieldName = m_cols[aCol].m_fieldName;
+
+        // Skip Reference and generated fields (like ${QUANTITY}) for highlighting
+        if( !ColIsReference( aCol ) && !ColIsQuantity( aCol ) && !ColIsItemNumber( aCol ) )
         {
-            m_urlEditor->IncRef();
-            return enhanceAttr( m_urlEditor, aRow, aCol, aKind );
+            const DATA_MODEL_ROW& row = m_rows[aRow];
+
+            // Check if any symbol in this row has a variant-specific value
+            for( const SCH_REFERENCE& ref : row.m_Refs )
+            {
+                wxString defaultValue = getDefaultFieldValue( ref, fieldName );
+
+                KIID_PATH symbolKey = KIID_PATH();
+
+                if( const SCH_SYMBOL* symbol = ref.GetSymbol() )
+                {
+                    symbolKey = ref.GetSheetPath().Path();
+                    symbolKey.push_back( symbol->m_Uuid );
+                }
+
+                // Get the current value from the data store
+                wxString currentValue;
+
+                if( m_dataStore.contains( symbolKey ) && m_dataStore[symbolKey].contains( fieldName ) )
+                    currentValue = m_dataStore[symbolKey][fieldName];
+
+                if( currentValue != defaultValue )
+                {
+                    needsVariantHighlight = true;
+
+                    // Use a subtle highlight color that works in both light and dark themes
+                    wxColour bg = wxSystemSettings::GetColour( wxSYS_COLOUR_WINDOW );
+                    bool     isDark = ( bg.Red() + bg.Green() + bg.Blue() ) < 384;
+
+                    if( isDark )
+                        highlightColor = wxColour( 80, 80, 40 );   // Dark gold/brown
+                    else
+                        highlightColor = wxColour( 255, 255, 200 ); // Light yellow
+
+                    break;
+                }
+            }
         }
     }
 
-    if( m_colAttrs[aCol] )
+    // If we don't need any custom attributes, use the base class behavior
+    if( !needsUrlEditor && !needsVariantHighlight && !needsTextVarRenderer )
+        return WX_GRID_TABLE_BASE::GetAttr( aRow, aCol, aKind );
+
+    // URL cells: use m_urlEditor as base, potentially with variant highlight overlay
+    if( needsUrlEditor )
     {
-        m_colAttrs[aCol]->IncRef();
-        return enhanceAttr( m_colAttrs[aCol], aRow, aCol, aKind );
+        if( needsVariantHighlight )
+        {
+            // Clone the URL editor attribute and add highlight color
+            attr = m_urlEditor->Clone();
+            attr->SetBackgroundColour( highlightColor );
+        }
+        else
+        {
+            // Just use the URL editor attribute directly
+            m_urlEditor->IncRef();
+            attr = m_urlEditor;
+        }
+
+        return enhanceAttr( attr, aRow, aCol, aKind );
     }
 
-    return nullptr;
+    // Non-URL cells: start with column attributes if they exist.
+    // This preserves checkbox renderers and other column-specific settings.
+    if( m_colAttrs.find( aCol ) != m_colAttrs.end() && m_colAttrs[aCol] )
+    {
+        attr = m_colAttrs[aCol]->Clone();
+    }
+    else
+    {
+        attr = new wxGridCellAttr();
+    }
+
+    if( needsVariantHighlight )
+        attr->SetBackgroundColour( highlightColor );
+
+    if( needsTextVarRenderer )
+    {
+        if( !m_textVarRenderer )
+            m_textVarRenderer = new GRID_CELL_RESOLVED_TEXT_RENDERER();
+
+        m_textVarRenderer->IncRef();
+        attr->SetRenderer( m_textVarRenderer );
+
+        // Tint text-var cells if not already highlighted by variant
+        if( !needsVariantHighlight )
+        {
+            wxColour bg = wxSystemSettings::GetColour( wxSYS_COLOUR_WINDOW );
+            bool     isDark = ( bg.Red() + bg.Green() + bg.Blue() ) < 384;
+
+            attr->SetBackgroundColour( isDark ? wxColour( 80, 70, 30 )       // Dark amber
+                                              : wxColour( 255, 252, 200 ) ); // Light yellow
+        }
+    }
+
+    return enhanceAttr( attr, aRow, aCol, aKind );
 }
 
 
@@ -220,15 +561,12 @@ wxString FIELDS_EDITOR_GRID_DATA_MODEL::GetValue( const DATA_MODEL_ROW& group, i
         }
         else // Other columns are either a single value or ROW_MULTI_ITEMS
         {
-            const KIID& symbolID = ref.GetSymbol()->m_Uuid;
+            KIID_PATH symbolKey = makeDataStoreKey( ref.GetSheetPath(), *ref.GetSymbol() );
 
-            if( !m_dataStore.count( symbolID )
-                || !m_dataStore[symbolID].count( m_cols[aCol].m_fieldName ) )
-            {
+            if( !m_dataStore.contains( symbolKey ) || !m_dataStore[symbolKey].contains( m_cols[aCol].m_fieldName ) )
                 return INDETERMINATE_STATE;
-            }
 
-            wxString refFieldValue = m_dataStore[symbolID][m_cols[aCol].m_fieldName];
+            wxString refFieldValue = m_dataStore[symbolKey][m_cols[aCol].m_fieldName];
 
             if( resolveVars )
             {
@@ -327,8 +665,45 @@ void FIELDS_EDITOR_GRID_DATA_MODEL::SetValue( int aRow, int aCol, const wxString
 
     DATA_MODEL_ROW& rowGroup = m_rows[aRow];
 
+    const SCH_SYMBOL* sharedSymbol = nullptr;
+    bool isSharedInstance = false;
+
     for( const SCH_REFERENCE& ref : rowGroup.m_Refs )
-        m_dataStore[ref.GetSymbol()->m_Uuid][m_cols[aCol].m_fieldName] = aValue;
+    {
+        const SCH_SCREEN* screen = nullptr;
+
+        // Check to see if the symbol associated with this row has more than one instance.
+        if( const SCH_SYMBOL* symbol = ref.GetSymbol() )
+        {
+            screen = static_cast<const SCH_SCREEN*>( symbol->GetParent() );
+
+            isSharedInstance = ( screen && ( screen->GetRefCount() > 1 ) );
+            sharedSymbol = symbol;
+        }
+
+        KIID_PATH key = makeDataStoreKey( ref.GetSheetPath(), *ref.GetSymbol() );
+        m_dataStore[key][m_cols[aCol].m_fieldName] = aValue;
+    }
+
+    // Update all of the other instances for the shared symbol as required.
+    if( isSharedInstance
+      && ( ( rowGroup.m_Flag == GROUP_SINGLETON ) || ( rowGroup.m_Flag == CHILD_ITEM ) ) )
+    {
+        for( DATA_MODEL_ROW& row : m_rows )
+        {
+            if( row.m_ItemNumber == aRow + 1 )
+                continue;
+
+            for( const SCH_REFERENCE& ref : row.m_Refs )
+            {
+                if( ref.GetSymbol() != sharedSymbol )
+                    continue;
+
+                KIID_PATH key = makeDataStoreKey( ref.GetSheetPath(), *ref.GetSymbol() );
+                m_dataStore[key][m_cols[aCol].m_fieldName] = aValue;
+            }
+        }
+    }
 
     m_edited = true;
 }
@@ -395,8 +770,8 @@ bool FIELDS_EDITOR_GRID_DATA_MODEL::cmp( const DATA_MODEL_ROW&          lhGroup,
     if( sortCol < 0 || sortCol >= dataModel->GetNumberCols() )
         sortCol = 0;
 
-    wxString lhs = dataModel->GetValue( lhGroup, sortCol ).Trim( true ).Trim( false );
-    wxString rhs = dataModel->GetValue( rhGroup, sortCol ).Trim( true ).Trim( false );
+    wxString lhs = dataModel->GetValue( lhGroup, sortCol, wxT( ", " ), wxT( "-" ), true ).Trim( true ).Trim( false );
+    wxString rhs = dataModel->GetValue( rhGroup, sortCol, wxT( ", " ), wxT( "-" ), true ).Trim( true ).Trim( false );
 
     if( lhs == rhs || dataModel->ColIsReference( sortCol ) )
     {
@@ -436,6 +811,7 @@ void FIELDS_EDITOR_GRID_DATA_MODEL::Sort()
 
     // Time to renumber the item numbers
     int itemNumber = 1;
+
     for( DATA_MODEL_ROW& row : m_rows )
     {
         row.m_ItemNumber = itemNumber++;
@@ -445,8 +821,7 @@ void FIELDS_EDITOR_GRID_DATA_MODEL::Sort()
 }
 
 
-bool FIELDS_EDITOR_GRID_DATA_MODEL::unitMatch( const SCH_REFERENCE& lhRef,
-                                               const SCH_REFERENCE& rhRef )
+bool FIELDS_EDITOR_GRID_DATA_MODEL::unitMatch( const SCH_REFERENCE& lhRef, const SCH_REFERENCE& rhRef )
 {
     // If items are unannotated then we can't tell if they're units of the same symbol or not
     if( lhRef.GetRefNumber() == wxT( "?" ) )
@@ -456,9 +831,7 @@ bool FIELDS_EDITOR_GRID_DATA_MODEL::unitMatch( const SCH_REFERENCE& lhRef,
 }
 
 
-bool FIELDS_EDITOR_GRID_DATA_MODEL::groupMatch( const SCH_REFERENCE& lhRef,
-                                                const SCH_REFERENCE& rhRef )
-
+bool FIELDS_EDITOR_GRID_DATA_MODEL::groupMatch( const SCH_REFERENCE& lhRef, const SCH_REFERENCE& rhRef )
 {
     int  refCol = GetFieldNameCol( GetCanonicalFieldName( FIELD_T::REFERENCE ) );
     bool matchFound = false;
@@ -477,8 +850,8 @@ bool FIELDS_EDITOR_GRID_DATA_MODEL::groupMatch( const SCH_REFERENCE& lhRef,
         matchFound = true;
     }
 
-    const KIID& lhRefID = lhRef.GetSymbol()->m_Uuid;
-    const KIID& rhRefID = rhRef.GetSymbol()->m_Uuid;
+    KIID_PATH lhRefKey = makeDataStoreKey( lhRef.GetSheetPath(), *lhRef.GetSymbol() );
+    KIID_PATH rhRefKey = makeDataStoreKey( rhRef.GetSheetPath(), *rhRef.GetSymbol() );
 
     // Now check all the other columns.
     for( size_t i = 0; i < m_cols.size(); ++i )
@@ -496,26 +869,24 @@ bool FIELDS_EDITOR_GRID_DATA_MODEL::groupMatch( const SCH_REFERENCE& lhRef,
         wxString lh, rh;
 
         if( IsGeneratedField( m_cols[i].m_fieldName )
-            || IsGeneratedField( m_dataStore[lhRefID][m_cols[i].m_fieldName] ) )
+            || IsGeneratedField( m_dataStore[lhRefKey][m_cols[i].m_fieldName] ) )
         {
             lh = getFieldShownText( lhRef, m_cols[i].m_fieldName );
         }
         else
         {
-            lh = m_dataStore[lhRefID][m_cols[i].m_fieldName];
+            lh = m_dataStore[lhRefKey][m_cols[i].m_fieldName];
         }
 
         if( IsGeneratedField( m_cols[i].m_fieldName )
-            || IsGeneratedField( m_dataStore[rhRefID][m_cols[i].m_fieldName] ) )
+            || IsGeneratedField( m_dataStore[rhRefKey][m_cols[i].m_fieldName] ) )
         {
             rh = getFieldShownText( rhRef, m_cols[i].m_fieldName );
         }
         else
         {
-            rh = m_dataStore[rhRefID][m_cols[i].m_fieldName];
+            rh = m_dataStore[rhRefKey][m_cols[i].m_fieldName];
         }
-
-        wxString fieldName = m_cols[i].m_fieldName;
 
         if( lh != rh )
             return false;
@@ -569,36 +940,87 @@ bool FIELDS_EDITOR_GRID_DATA_MODEL::isAttribute( const wxString& aFieldName )
 }
 
 
-wxString FIELDS_EDITOR_GRID_DATA_MODEL::getAttributeValue( const SCH_SYMBOL& aSymbol,
-                                                           const wxString&   aAttributeName )
+wxString FIELDS_EDITOR_GRID_DATA_MODEL::getAttributeValue( const SCH_REFERENCE& aRef, const wxString& aAttributeName,
+                                                           const wxString& aVariantName )
 {
     if( aAttributeName == wxS( "${DNP}" ) )
-        return aSymbol.GetDNP() ? wxS( "1" ) : wxS( "0" );
+        return aRef.GetSymbolDNP( aVariantName ) ? wxS( "1" ) : wxS( "0" );
 
     if( aAttributeName == wxS( "${EXCLUDE_FROM_BOARD}" ) )
-        return aSymbol.GetExcludedFromBoard() ? wxS( "1" ) : wxS( "0" );
+        return aRef.GetSymbolExcludedFromBoard() ? wxS( "1" ) : wxS( "0" );
 
     if( aAttributeName == wxS( "${EXCLUDE_FROM_BOM}" ) )
-        return aSymbol.GetExcludedFromBOM() ? wxS( "1" ) : wxS( "0" );
+        return aRef.GetSymbolExcludedFromBOM( aVariantName ) ? wxS( "1" ) : wxS( "0" );
 
     if( aAttributeName == wxS( "${EXCLUDE_FROM_SIM}" ) )
-        return aSymbol.GetExcludedFromSim() ? wxS( "1" ) : wxS( "0" );
+        return aRef.GetSymbolExcludedFromSim( aVariantName ) ? wxS( "1" ) : wxS( "0" );
 
     return wxS( "0" );
 }
 
-void FIELDS_EDITOR_GRID_DATA_MODEL::setAttributeValue( SCH_SYMBOL&     aSymbol,
-                                                       const wxString& aAttributeName,
-                                                       const wxString& aValue )
+
+wxString FIELDS_EDITOR_GRID_DATA_MODEL::getDefaultFieldValue( const SCH_REFERENCE& aRef,
+                                                               const wxString& aFieldName )
 {
+    const SCH_SYMBOL* symbol = aRef.GetSymbol();
+
+    if( !symbol )
+        return wxEmptyString;
+
+    // For attributes, get the default (non-variant) value
+    if( isAttribute( aFieldName ) )
+        return getAttributeValue( aRef, aFieldName, wxEmptyString );
+
+    // For regular fields, get the text without variant override
+    if( const SCH_FIELD* field = symbol->GetField( aFieldName ) )
+    {
+        if( field->IsPrivate() )
+            return wxEmptyString;
+
+        // Get the field text with empty variant name (default value)
+        wxString value = symbol->Schematic()->ConvertKIIDsToRefs(
+                field->GetText( &aRef.GetSheetPath(), wxEmptyString ) );
+        return value;
+    }
+
+    // For generated fields, return the field name itself
+    if( IsGeneratedField( aFieldName ) )
+        return aFieldName;
+
+    return wxEmptyString;
+}
+
+
+bool FIELDS_EDITOR_GRID_DATA_MODEL::setAttributeValue( SCH_REFERENCE&  aRef,
+                                                       const wxString& aAttributeName,
+                                                       const wxString& aValue,
+                                                       const wxString& aVariantName )
+{
+    bool attrChanged = false;
+    bool newValue = aValue == wxS( "1" );
+
     if( aAttributeName == wxS( "${DNP}" ) )
-        aSymbol.SetDNP( aValue == wxS( "1" ) );
+    {
+        attrChanged = aRef.GetSymbolDNP( aVariantName ) != newValue;
+        aRef.SetSymbolDNP( newValue, aVariantName );
+    }
     else if( aAttributeName == wxS( "${EXCLUDE_FROM_BOARD}" ) )
-        aSymbol.SetExcludedFromBoard( aValue == wxS( "1" ) );
+    {
+        attrChanged = aRef.GetSymbolExcludedFromBoard() != newValue;
+        aRef.SetSymbolExcludedFromBoard( newValue );
+    }
     else if( aAttributeName == wxS( "${EXCLUDE_FROM_BOM}" ) )
-        aSymbol.SetExcludedFromBOM( aValue == wxS( "1" ) );
+    {
+        attrChanged = aRef.GetSymbolExcludedFromBOM( aVariantName ) != newValue;
+        aRef.SetSymbolExcludedFromBOM( newValue, aVariantName );
+    }
     else if( aAttributeName == wxS( "${EXCLUDE_FROM_SIM}" ) )
-        aSymbol.SetExcludedFromSim( aValue == wxS( "1" ) );
+    {
+        attrChanged = aRef.GetSymbolExcludedFromSim( aVariantName ) != newValue;
+        aRef.SetSymbolExcludedFromSim( newValue, aVariantName );
+    }
+
+    return attrChanged;
 }
 
 
@@ -640,16 +1062,56 @@ void FIELDS_EDITOR_GRID_DATA_MODEL::RebuildRows()
         if( !m_filter.IsEmpty() && !matcher.Find( ref.GetFullRef().Lower() ) )
             continue;
 
-        if( m_excludeDNP && ( ref.GetSymbol()->GetDNP()
-                              || ref.GetSheetPath().GetDNP() ) )
+        if( m_excludeDNP )
         {
-            continue;
+            bool isDNP = false;
+
+            if( !m_variantNames.empty() )
+            {
+                for( const wxString& variantName : m_variantNames )
+                {
+                    if( ref.GetSymbol()->ResolveDNP( &ref.GetSheetPath(), variantName )
+                        || ref.GetSheetPath().GetDNP( variantName ) )
+                    {
+                        isDNP = true;
+                        break;
+                    }
+                }
+            }
+            else
+            {
+                isDNP = ref.GetSymbol()->ResolveDNP( &ref.GetSheetPath(), m_currentVariant )
+                        || ref.GetSheetPath().GetDNP( m_currentVariant );
+            }
+
+            if( isDNP )
+                continue;
         }
 
-        if( !m_includeExcluded && ( ref.GetSymbol()->GetExcludedFromBOM()
-                                    || ref.GetSheetPath().GetExcludedFromBOM() ) )
+        if( !m_includeExcluded )
         {
-            continue;
+            bool isExcluded = false;
+
+            if( !m_variantNames.empty() )
+            {
+                for( const wxString& variantName : m_variantNames )
+                {
+                    if( ref.GetSymbol()->ResolveExcludedFromBOM( &ref.GetSheetPath(), variantName )
+                        || ref.GetSheetPath().GetExcludedFromBOM( variantName ) )
+                    {
+                        isExcluded = true;
+                        break;
+                    }
+                }
+            }
+            else
+            {
+                isExcluded = ref.GetSymbol()->ResolveExcludedFromBOM( &ref.GetSheetPath(), m_currentVariant )
+                             || ref.GetSheetPath().GetExcludedFromBOM( m_currentVariant );
+            }
+
+            if( isExcluded )
+                continue;
         }
 
         // Check if the symbol if on the current sheet or, in the sheet path somewhere
@@ -801,23 +1263,32 @@ void FIELDS_EDITOR_GRID_DATA_MODEL::ExpandAfterSort()
 }
 
 
-void FIELDS_EDITOR_GRID_DATA_MODEL::ApplyData( SCH_COMMIT& aCommit, TEMPLATES& aTemplateFieldnames )
+void FIELDS_EDITOR_GRID_DATA_MODEL::ApplyData( SCH_COMMIT& aCommit, TEMPLATES& aTemplateFieldnames,
+                                               const wxString& aVariantName )
 {
+    bool symbolModified = false;
+    std::unique_ptr<SCH_SYMBOL> symbolCopy;
 
-    for( const SCH_REFERENCE& instance : m_symbolsList )
+    for( size_t i = 0; i < m_symbolsList.GetCount(); i++ )
     {
-        SCH_SYMBOL& symbol = *instance.GetSymbol();
+        SCH_SYMBOL* symbol = m_symbolsList[i].GetSymbol();
+        SCH_SYMBOL* nextSymbol = nullptr;
 
-        aCommit.Modify( &symbol, instance.GetSheetPath().LastScreen() );
+        if( ( i + 1 ) < m_symbolsList.GetCount() )
+            nextSymbol = m_symbolsList[i + 1].GetSymbol();
 
-        const std::map<wxString, wxString>& fieldStore = m_dataStore[symbol.m_Uuid];
+        if( i == 0 )
+            symbolCopy = std::make_unique<SCH_SYMBOL>( *symbol );
+
+        KIID_PATH key = makeDataStoreKey( m_symbolsList[i].GetSheetPath(), *symbol );
+        const std::map<wxString, wxString>& fieldStore = m_dataStore[key];
 
         for( const auto& [srcName, srcValue] : fieldStore )
         {
             // Attributes bypass the field logic, so handle them first
             if( isAttribute( srcName ) )
             {
-                setAttributeValue( symbol, srcName, srcValue );
+                symbolModified |= setAttributeValue( m_symbolsList[i], srcName, srcValue, aVariantName );
                 continue;
             }
 
@@ -826,7 +1297,13 @@ void FIELDS_EDITOR_GRID_DATA_MODEL::ApplyData( SCH_COMMIT& aCommit, TEMPLATES& a
             if( IsGeneratedField( srcName ) )
                 continue;
 
-            SCH_FIELD* destField = symbol.GetField( srcName );
+            SCH_FIELD* destField = symbol->FindFieldCaseInsensitive( srcName );
+
+            if( destField && !destField->IsMandatory() && destField->GetName() != srcName )
+            {
+                destField->SetName( srcName );
+                symbolModified = true;
+            }
 
             if( destField && destField->IsPrivate() )
             {
@@ -844,36 +1321,66 @@ void FIELDS_EDITOR_GRID_DATA_MODEL::ApplyData( SCH_COMMIT& aCommit, TEMPLATES& a
 
             if( createField )
             {
-                destField = symbol.AddField( SCH_FIELD( &symbol, FIELD_T::USER, srcName ) );
-                destField->SetTextAngle( symbol.GetField( FIELD_T::REFERENCE )->GetTextAngle() );
+                destField = symbol->AddField( SCH_FIELD( symbol, FIELD_T::USER, srcName ) );
+                destField->SetTextAngle( symbol->GetField( FIELD_T::REFERENCE )->GetTextAngle() );
 
                 if( const TEMPLATE_FIELDNAME* srcTemplate = aTemplateFieldnames.GetFieldName( srcName ) )
                     destField->SetVisible( srcTemplate->m_Visible );
                 else
                     destField->SetVisible( false );
 
-                destField->SetTextPos( symbol.GetPosition() );
+                destField->SetTextPos( symbol->GetPosition() );
+                symbolModified = true;
             }
 
             if( !destField )
                 continue;
 
+            // Reference is not editable from this dialog
             if( destField->GetId() == FIELD_T::REFERENCE )
-            {
-                // Reference is not editable from this dialog
                 continue;
-            }
 
-            destField->SetText( symbol.Schematic()->ConvertRefsToKIIDs( srcValue ) );
+            wxString previousValue = destField->GetText( &m_symbolsList[i].GetSheetPath(), aVariantName );
+
+            destField->SetText( symbol->Schematic()->ConvertRefsToKIIDs( srcValue ), &m_symbolsList[i].GetSheetPath(),
+                                aVariantName );
+
+            if( !createField && ( previousValue != srcValue ) )
+                symbolModified = true;
         }
 
-        for( int ii = static_cast<int>( symbol.GetFields().size() ) - 1; ii >= 0; ii-- )
+        for( int ii = static_cast<int>( symbol->GetFields().size() ) - 1; ii >= 0; ii-- )
         {
-            if( symbol.GetFields()[ii].IsMandatory() || symbol.GetFields()[ii].IsPrivate() )
+            if( symbol->GetFields()[ii].IsMandatory() || symbol->GetFields()[ii].IsPrivate() )
                 continue;
 
-            if( fieldStore.count( symbol.GetFields()[ii].GetName() ) == 0 )
-                symbol.GetFields().erase( symbol.GetFields().begin() + ii );
+            const wxString& existingName = symbol->GetFields()[ii].GetName();
+
+            bool stillTracked = std::any_of( fieldStore.begin(), fieldStore.end(),
+                                             [&]( const auto& kv )
+                                             {
+                                                 return kv.first.IsSameAs( existingName, false );
+                                             } );
+
+            if( !stillTracked )
+            {
+                symbol->GetFields().erase( symbol->GetFields().begin() + ii );
+                symbolModified = true;
+            }
+        }
+
+        if( symbolModified && ( symbol != nextSymbol ) )
+            aCommit.Modified( symbol, symbolCopy.release(), m_symbolsList[i].GetSheetPath().LastScreen() );
+
+        // Only reset the modified flag and next symbol copy if the next symbol is different from the current one.
+        if( symbol != nextSymbol )
+        {
+            if( nextSymbol )
+                symbolCopy = std::make_unique<SCH_SYMBOL>( *nextSymbol );
+            else
+                symbolCopy.reset( nullptr );
+
+            symbolModified = false;
         }
     }
 
@@ -896,8 +1403,9 @@ int FIELDS_EDITOR_GRID_DATA_MODEL::GetDataWidth( int aCol )
 
         for( unsigned symbolRef = 0; symbolRef < m_symbolsList.GetCount(); ++symbolRef )
         {
-            const KIID& symbolID = m_symbolsList[symbolRef].GetSymbol()->m_Uuid;
-            wxString    text = m_dataStore[symbolID][fieldName];
+            KIID_PATH key = makeDataStoreKey( m_symbolsList[symbolRef].GetSheetPath(),
+                                              *m_symbolsList[symbolRef].GetSymbol() );
+            wxString text = m_dataStore[key][fieldName];
 
             width = std::max( width, KIUI::GetTextSize( text, GetView() ).x );
         }
@@ -907,7 +1415,7 @@ int FIELDS_EDITOR_GRID_DATA_MODEL::GetDataWidth( int aCol )
 }
 
 
-void FIELDS_EDITOR_GRID_DATA_MODEL::ApplyBomPreset( const BOM_PRESET& aPreset )
+void FIELDS_EDITOR_GRID_DATA_MODEL::ApplyBomPreset( const BOM_PRESET& aPreset, const wxString& aVariantName )
 {
     // Hide and un-group everything by default
     for( size_t i = 0; i < m_cols.size(); i++ )
@@ -935,7 +1443,7 @@ void FIELDS_EDITOR_GRID_DATA_MODEL::ApplyBomPreset( const BOM_PRESET& aPreset )
         // they won't be saved to the symbols anyway
         if( col == -1 )
         {
-            AddColumn( field.name, field.label, true );
+            AddColumn( field.name, field.label, true, aVariantName );
             col = GetFieldNameCol( field.name );
         }
         else
@@ -963,6 +1471,7 @@ void FIELDS_EDITOR_GRID_DATA_MODEL::ApplyBomPreset( const BOM_PRESET& aPreset )
     SetFilter( aPreset.filterString );
     SetExcludeDNP( aPreset.excludeDNP );
     SetIncludeExcludedFromBOM( aPreset.includeExcludedFromBOM );
+    SetCurrentVariant( aVariantName );
 
     RebuildRows();
 }
@@ -1065,6 +1574,8 @@ wxString FIELDS_EDITOR_GRID_DATA_MODEL::Export( const BOM_FMT_PRESET& settings )
 
 void FIELDS_EDITOR_GRID_DATA_MODEL::AddReferences( const SCH_REFERENCE_LIST& aRefs )
 {
+    bool refListChanged = false;
+
     for( const SCH_REFERENCE& ref : aRefs )
     {
         if( !m_symbolsList.Contains( ref ) )
@@ -1072,6 +1583,8 @@ void FIELDS_EDITOR_GRID_DATA_MODEL::AddReferences( const SCH_REFERENCE_LIST& aRe
             SCH_SYMBOL* symbol = ref.GetSymbol();
 
             m_symbolsList.AddItem( ref );
+
+            KIID_PATH key = makeDataStoreKey( ref.GetSheetPath(), *symbol );
 
             // Update the fields of every reference
             for( const SCH_FIELD& field : symbol->GetFields() )
@@ -1081,11 +1594,16 @@ void FIELDS_EDITOR_GRID_DATA_MODEL::AddReferences( const SCH_REFERENCE_LIST& aRe
                     wxString name = field.GetCanonicalName();
                     wxString value = symbol->Schematic()->ConvertKIIDsToRefs( field.GetText() );
 
-                    m_dataStore[symbol->m_Uuid][name] = value;
+                    m_dataStore[key][name] = value;
                 }
             }
+
+            refListChanged = true;
         }
     }
+
+    if( refListChanged )
+        m_symbolsList.SortBySymbolPtr();
 }
 
 
@@ -1094,7 +1612,20 @@ void FIELDS_EDITOR_GRID_DATA_MODEL::RemoveSymbol( const SCH_SYMBOL& aSymbol )
     // The schematic event listener passes us the symbol after it has been removed,
     // so we can't just work with a SCH_REFERENCE_LIST like the other handlers as the
     // references are already gone. Instead we need to prune our list.
-    m_dataStore[aSymbol.m_Uuid].clear();
+
+    // Since we now use full KIID_PATH as keys, we need to find and remove all entries
+    // that correspond to this symbol (their keys end with the symbol's UUID)
+    KIID symbolUuid = aSymbol.m_Uuid;
+    std::vector<KIID_PATH> keysToRemove;
+
+    for( const auto& [key, value] : m_dataStore )
+    {
+        if( !key.empty() && ( key.back() ==  symbolUuid ) )
+            keysToRemove.push_back( key );
+    }
+
+    for( const KIID_PATH& key : keysToRemove )
+        m_dataStore.erase( key );
 
     // Remove all refs that match this symbol using remove_if
     m_symbolsList.erase( std::remove_if( m_symbolsList.begin(), m_symbolsList.end(),
@@ -1114,27 +1645,122 @@ void FIELDS_EDITOR_GRID_DATA_MODEL::RemoveReferences( const SCH_REFERENCE_LIST& 
 
         if( index != -1 )
         {
+            KIID_PATH key = makeDataStoreKey( ref.GetSheetPath(), *ref.GetSymbol() );
+            m_dataStore.erase( key );
             m_symbolsList.RemoveItem( index );
-
-            // If we're out of instances then remove the symbol, too
-            if( ref.GetSymbol()->GetInstances().empty() )
-                m_dataStore.erase( ref.GetSymbol()->m_Uuid );
         }
     }
 }
 
 
-void FIELDS_EDITOR_GRID_DATA_MODEL::UpdateReferences( const SCH_REFERENCE_LIST& aRefs )
+void FIELDS_EDITOR_GRID_DATA_MODEL::UpdateReferences( const SCH_REFERENCE_LIST& aRefs,
+                                                      const wxString& aVariantName )
 {
+    bool refListChanged = false;
+
     for( const SCH_REFERENCE& ref : aRefs )
     {
         // Update the fields of every reference. Do this by iterating through the data model
         // columns; we must have all fields in the symbol added to the data model at this point,
         // and some of the data model columns may be variables that are not present in the symbol
         for( const DATA_MODEL_COL& col : m_cols )
-            updateDataStoreSymbolField( *ref.GetSymbol(), col.m_fieldName );
+            updateDataStoreSymbolField( ref, col.m_fieldName, aVariantName );
 
-        if( !m_symbolsList.Contains( ref ) )
+        if( SCH_REFERENCE* listRef = m_symbolsList.FindItem( ref ) )
+        {
+            *listRef = ref;
+        }
+        else
+        {
             m_symbolsList.AddItem( ref );
+            refListChanged = true;
+        }
     }
+
+    if( refListChanged )
+        m_symbolsList.SortBySymbolPtr();
+}
+
+
+bool FIELDS_EDITOR_GRID_DATA_MODEL::DeleteRows( size_t aPosition, size_t aNumRows )
+{
+    size_t curNumRows = m_rows.size();
+
+    if( aPosition >= curNumRows )
+    {
+       wxFAIL_MSG( wxString::Format( wxT( "Called FIELDS_EDITOR_GRID_DATA_MODEL::DeleteRows(aPosition=%lu, "
+                                          "aNumRows=%lu)\nPosition value is invalid for present table with %lu rows" ),
+                                      (unsigned long) aPosition, (unsigned long) aNumRows,
+                                      (unsigned long) curNumRows ) );
+
+        return false;
+    }
+
+    if( aNumRows > curNumRows - aPosition )
+    {
+        aNumRows = curNumRows - aPosition;
+    }
+
+    if( aNumRows >= curNumRows )
+    {
+        m_rows.clear();
+        m_dataStore.clear();
+    }
+    else
+    {
+        const auto first = m_rows.begin() + aPosition;
+        std::vector<SCH_REFERENCE> dataMapRefs = first->m_Refs;
+        m_rows.erase( first, first + aNumRows );
+
+        for( const SCH_REFERENCE& ref : dataMapRefs )
+            m_dataStore.erase( ref.GetSheetPath().Path() );
+    }
+
+    if( GetView() )
+    {
+        wxGridTableMessage msg( this, wxGRIDTABLE_NOTIFY_ROWS_DELETED, aPosition, aNumRows );
+        GetView()->ProcessTableMessage( msg );
+    }
+
+    return true;
+}
+
+
+std::vector<FIELD_CASE_CONFLICT> DetectFieldCaseConflicts( const SCH_REFERENCE_LIST& aSymbols )
+{
+    std::vector<FIELD_CASE_CONFLICT> conflicts;
+
+    for( unsigned i = 0; i < aSymbols.GetCount(); ++i )
+    {
+        SCH_SYMBOL* symbol = aSymbols[i].GetSymbol();
+
+        if( !symbol )
+            continue;
+
+        std::map<wxString, std::vector<std::pair<wxString, wxString>>> groups;
+
+        for( const SCH_FIELD& field : symbol->GetFields() )
+        {
+            if( field.IsMandatory() || field.IsPrivate() )
+                continue;
+
+            groups[field.GetName().Lower()].emplace_back( field.GetName(), field.GetText() );
+        }
+
+        for( const auto& [key, members] : groups )
+        {
+            if( members.size() < 2 )
+                continue;
+
+            FIELD_CASE_CONFLICT c;
+            c.symbol = symbol;
+            c.sheetPath = aSymbols[i].GetSheetPath();
+            c.reference = symbol->GetRef( &c.sheetPath );
+            c.caseFoldedKey = key;
+            c.variants = members;
+            conflicts.push_back( std::move( c ) );
+        }
+    }
+
+    return conflicts;
 }

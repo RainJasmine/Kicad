@@ -22,8 +22,7 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#ifndef _DIALOG_ERC_H_
-#define _DIALOG_ERC_H_
+#pragma once
 
 #include <wx/htmllbox.h>
 
@@ -49,6 +48,8 @@ public:
     DIALOG_ERC( SCH_EDIT_FRAME* parent );
     ~DIALOG_ERC();
 
+    bool TransferDataToWindow() override;
+
     // PROGRESS_REPORTER_BASE calls
     bool updateUI() override;
     void AdvancePhase( const wxString& aMessage ) override;
@@ -66,10 +67,15 @@ public:
      */
     void ExcludeMarker( SCH_MARKER* aMarker = nullptr );
 
+    void UpdateData();
     void UpdateAnnotationWarning();
 
 private:
+    int getSeverities();
+
     // from DIALOG_ERC_BASE:
+    void OnMenu( wxCommandEvent& aEvent ) override;
+    void OnCharHook( wxKeyEvent& aEvt ) override;
     void OnCloseErcDialog( wxCloseEvent& event ) override;
     void OnRunERCClick( wxCommandEvent& event ) override;
     void OnDeleteOneClick( wxCommandEvent& event ) override;
@@ -92,8 +98,6 @@ private:
 
     void testErc();
 
-    bool writeReport( const wxString& aFullFileName );
-
     void deleteAllMarkers( bool aIncludeExclusions );
 
     void syncCheckboxes();
@@ -114,10 +118,7 @@ private:
 
     const SCH_MARKER*  m_centerMarkerOnIdle;
 
-    int                m_severities;
+    bool               m_crossprobe;
+    bool               m_scroll_on_crossprobe;
+    bool               m_showAllErrors;
 };
-
-
-#endif
-
-// _DIALOG_ERC_H_

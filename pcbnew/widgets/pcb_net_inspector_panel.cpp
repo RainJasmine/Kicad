@@ -17,6 +17,7 @@
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <properties/property.h>
 #include <widgets/pcb_net_inspector_panel.h>
 #include <widgets/pcb_net_inspector_panel_data_model.h>
 
@@ -33,15 +34,18 @@
 #include <pcb_painter.h>
 #include <pgm_base.h>
 #include <settings/settings_manager.h>
+#include <string_utils.h>
 #include <validators.h>
 #include <wildcards_and_files_ext.h>
 #include <eda_pattern_match.h>
 
 #include <wx/wupdlock.h>
 #include <wx/filedlg.h>
+#include <kiplatform/ui.h>
 
 #include <algorithm>
 #include <thread_pool.h>
+#include <properties/property_mgr.h>
 
 PCB_NET_INSPECTOR_PANEL::PCB_NET_INSPECTOR_PANEL( wxWindow* parent, PCB_EDIT_FRAME* aFrame ) :
         NET_INSPECTOR_PANEL( parent, aFrame ),
@@ -145,66 +149,51 @@ void PCB_NET_INSPECTOR_PANEL::buildColumns()
     const std::vector<std::function<void( void )>> add_col{
         [&]()
         {
-            m_netsList->AppendTextColumn( m_columns[COLUMN_NAME].display_name,
-                                          m_columns[COLUMN_NAME], wxDATAVIEW_CELL_INERT, -1,
-                                          wxALIGN_LEFT,
-                                          wxDATAVIEW_COL_RESIZABLE | wxDATAVIEW_COL_SORTABLE );
+            m_netsList->AppendTextColumn( m_columns[COLUMN_NAME].display_name, m_columns[COLUMN_NAME],
+                                          wxDATAVIEW_CELL_INERT, -1, wxALIGN_LEFT,
+                                          wxDATAVIEW_COL_RESIZABLE|wxDATAVIEW_COL_SORTABLE );
         },
         [&]()
         {
-            m_netsList->AppendTextColumn( m_columns[COLUMN_NETCLASS].display_name,
-                                          m_columns[COLUMN_NETCLASS], wxDATAVIEW_CELL_INERT, -1,
-                                          wxALIGN_LEFT,
-                                          wxDATAVIEW_COL_RESIZABLE | wxDATAVIEW_COL_REORDERABLE
-                                                  | wxDATAVIEW_COL_SORTABLE );
+            m_netsList->AppendTextColumn( m_columns[COLUMN_NETCLASS].display_name, m_columns[COLUMN_NETCLASS],
+                                          wxDATAVIEW_CELL_INERT, -1, wxALIGN_LEFT,
+                                          wxDATAVIEW_COL_RESIZABLE|wxDATAVIEW_COL_REORDERABLE|wxDATAVIEW_COL_SORTABLE );
         },
         [&]()
         {
-            m_netsList->AppendTextColumn( m_columns[COLUMN_TOTAL_LENGTH].display_name,
-                                          m_columns[COLUMN_TOTAL_LENGTH], wxDATAVIEW_CELL_INERT, -1,
-                                          wxALIGN_CENTER,
-                                          wxDATAVIEW_COL_RESIZABLE | wxDATAVIEW_COL_REORDERABLE
-                                                  | wxDATAVIEW_COL_SORTABLE );
+            m_netsList->AppendTextColumn( m_columns[COLUMN_TOTAL_LENGTH].display_name, m_columns[COLUMN_TOTAL_LENGTH],
+                                          wxDATAVIEW_CELL_INERT, -1, wxALIGN_CENTER,
+                                          wxDATAVIEW_COL_RESIZABLE|wxDATAVIEW_COL_REORDERABLE|wxDATAVIEW_COL_SORTABLE );
         },
         [&]()
         {
-            m_netsList->AppendTextColumn( m_columns[COLUMN_VIA_COUNT].display_name,
-                                          m_columns[COLUMN_VIA_COUNT], wxDATAVIEW_CELL_INERT, -1,
-                                          wxALIGN_CENTER,
-                                          wxDATAVIEW_COL_RESIZABLE | wxDATAVIEW_COL_REORDERABLE
-                                                  | wxDATAVIEW_COL_SORTABLE );
+            m_netsList->AppendTextColumn( m_columns[COLUMN_VIA_COUNT].display_name, m_columns[COLUMN_VIA_COUNT],
+                                          wxDATAVIEW_CELL_INERT, -1, wxALIGN_CENTER,
+                                          wxDATAVIEW_COL_RESIZABLE|wxDATAVIEW_COL_REORDERABLE|wxDATAVIEW_COL_SORTABLE );
         },
         [&]()
         {
-            m_netsList->AppendTextColumn( m_columns[COLUMN_VIA_LENGTH].display_name,
-                                          m_columns[COLUMN_VIA_LENGTH], wxDATAVIEW_CELL_INERT, -1,
-                                          wxALIGN_CENTER,
-                                          wxDATAVIEW_COL_RESIZABLE | wxDATAVIEW_COL_REORDERABLE
-                                                  | wxDATAVIEW_COL_SORTABLE );
+            m_netsList->AppendTextColumn( m_columns[COLUMN_VIA_LENGTH].display_name, m_columns[COLUMN_VIA_LENGTH],
+                                          wxDATAVIEW_CELL_INERT, -1, wxALIGN_CENTER,
+                                          wxDATAVIEW_COL_RESIZABLE|wxDATAVIEW_COL_REORDERABLE|wxDATAVIEW_COL_SORTABLE );
         },
         [&]()
         {
-            m_netsList->AppendTextColumn( m_columns[COLUMN_BOARD_LENGTH].display_name,
-                                          m_columns[COLUMN_BOARD_LENGTH], wxDATAVIEW_CELL_INERT, -1,
-                                          wxALIGN_CENTER,
-                                          wxDATAVIEW_COL_RESIZABLE | wxDATAVIEW_COL_REORDERABLE
-                                                  | wxDATAVIEW_COL_SORTABLE );
+            m_netsList->AppendTextColumn( m_columns[COLUMN_BOARD_LENGTH].display_name, m_columns[COLUMN_BOARD_LENGTH],
+                                          wxDATAVIEW_CELL_INERT, -1, wxALIGN_CENTER,
+                                          wxDATAVIEW_COL_RESIZABLE|wxDATAVIEW_COL_REORDERABLE|wxDATAVIEW_COL_SORTABLE );
         },
         [&]()
         {
             m_netsList->AppendTextColumn( m_columns[COLUMN_PAD_DIE_LENGTH].display_name,
-                                          m_columns[COLUMN_PAD_DIE_LENGTH], wxDATAVIEW_CELL_INERT,
-                                          -1, wxALIGN_CENTER,
-                                          wxDATAVIEW_COL_RESIZABLE | wxDATAVIEW_COL_REORDERABLE
-                                                  | wxDATAVIEW_COL_SORTABLE );
+                                          m_columns[COLUMN_PAD_DIE_LENGTH], wxDATAVIEW_CELL_INERT, -1, wxALIGN_CENTER,
+                                          wxDATAVIEW_COL_RESIZABLE|wxDATAVIEW_COL_REORDERABLE|wxDATAVIEW_COL_SORTABLE );
         },
         [&]()
         {
-            m_netsList->AppendTextColumn( m_columns[COLUMN_PAD_COUNT].display_name,
-                                          m_columns[COLUMN_PAD_COUNT], wxDATAVIEW_CELL_INERT, -1,
-                                          wxALIGN_CENTER,
-                                          wxDATAVIEW_COL_RESIZABLE | wxDATAVIEW_COL_REORDERABLE
-                                                  | wxDATAVIEW_COL_SORTABLE );
+            m_netsList->AppendTextColumn( m_columns[COLUMN_PAD_COUNT].display_name, m_columns[COLUMN_PAD_COUNT],
+                                          wxDATAVIEW_CELL_INERT, -1, wxALIGN_CENTER,
+                                          wxDATAVIEW_COL_RESIZABLE|wxDATAVIEW_COL_REORDERABLE|wxDATAVIEW_COL_SORTABLE );
         }
     };
 
@@ -224,7 +213,7 @@ void PCB_NET_INSPECTOR_PANEL::buildColumns()
     }
 
     // Reset the column display settings if column count doesn't match
-    const int totalNumColumns = add_col.size() + m_board->GetCopperLayerCount();
+    const int totalNumColumns = (int) add_col.size() + m_board->GetCopperLayerCount();
 
     if( (int) cfg->col_order.size() != totalNumColumns
         || (int) cfg->col_hidden.size() != totalNumColumns )
@@ -241,6 +230,7 @@ void PCB_NET_INSPECTOR_PANEL::buildColumns()
 
     // Check that all rows are unique to protect against corrupted settings data
     std::set<int> col_order_set( cfg->col_order.begin(), cfg->col_order.end() );
+
     if( col_order_set.size() != cfg->col_order.size() )
     {
         for( std::size_t i = 0; i < cfg->col_order.size(); ++i )
@@ -266,8 +256,7 @@ void PCB_NET_INSPECTOR_PANEL::buildColumns()
         {
             m_netsList->AppendTextColumn( m_board->GetLayerName( m_columns[addModelColumn].layer ),
                                           m_columns[addModelColumn], wxDATAVIEW_CELL_INERT, -1, wxALIGN_CENTER,
-                                          wxDATAVIEW_COL_RESIZABLE | wxDATAVIEW_COL_REORDERABLE
-                                                  | wxDATAVIEW_COL_SORTABLE );
+                                          wxDATAVIEW_COL_RESIZABLE|wxDATAVIEW_COL_REORDERABLE|wxDATAVIEW_COL_SORTABLE );
         }
         else
         {
@@ -285,9 +274,64 @@ void PCB_NET_INSPECTOR_PANEL::buildColumns()
 
     // Delete the temporary config if used
     if( !m_boardLoaded )
-    {
         delete cfg;
+}
+
+
+int PCB_NET_INSPECTOR_PANEL::getMinColumnWidth( int aModelColumn ) const
+{
+    constexpr int margins = 15;
+    constexpr int extra_width = 30;
+
+    int headerWidth = GetTextExtent( m_columns[aModelColumn].display_name ).x;
+    headerWidth += ( aModelColumn == COLUMN_NAME ) ? extra_width : margins;
+
+    return headerWidth;
+}
+
+
+void PCB_NET_INSPECTOR_PANEL::autosizeColumn( wxDataViewColumn* aCol )
+{
+    if( !aCol || aCol->IsHidden() )
+        return;
+
+    const unsigned int modelCol = aCol->GetModelColumn();
+
+    if( modelCol >= m_columns.size() )
+        return;
+
+    constexpr int margins = 15;
+    constexpr int extra_width = 30;
+    const bool    isNameCol = ( modelCol == COLUMN_NAME );
+    const int     padding = isNameCol ? extra_width : margins;
+    const int     indent = m_netsList->GetIndent();
+
+    int maxWidth = getMinColumnWidth( modelCol );
+
+    for( unsigned int row = 0; row < m_dataModel->itemCount(); ++row )
+    {
+        wxVariant value = m_dataModel->valueAt( modelCol, row );
+        int       textWidth = GetTextExtent( value.GetString() ).x + padding;
+        maxWidth = std::max( maxWidth, textWidth );
+
+        const LIST_ITEM& item = m_dataModel->itemAt( row );
+
+        if( item.GetIsGroup() )
+        {
+            for( auto it = item.ChildrenBegin(); it != item.ChildrenEnd(); ++it )
+            {
+                wxVariant childValue = m_dataModel->valueForItem( *it, modelCol );
+                int       childWidth = GetTextExtent( childValue.GetString() ).x + padding;
+
+                if( isNameCol )
+                    childWidth += indent;
+
+                maxWidth = std::max( maxWidth, childWidth );
+            }
+        }
     }
+
+    aCol->SetWidth( maxWidth );
 }
 
 
@@ -339,9 +383,11 @@ void PCB_NET_INSPECTOR_PANEL::adjustListColumnSizes( PANEL_NET_INSPECTOR_SETTING
 
         for( size_t ii = 0; ii < m_columns.size(); ++ii )
         {
+            const int modelCol = static_cast<int>( m_netsList->GetColumn( ii )->GetModelColumn() );
+            const int minWidth = getMinColumnWidth( modelCol );
             const int newWidth = cfg->col_widths[ii];
-            // Make sure we end up with something non-zero so we can resize it
-            m_netsList->GetColumn( ii )->SetWidth( std::max( newWidth, 10 ) );
+
+            m_netsList->GetColumn( ii )->SetWidth( std::max( newWidth, minWidth ) );
             m_netsList->GetColumn( ii )->SetHidden( cfg->col_hidden[ii] );
         }
     }
@@ -373,9 +419,7 @@ wxDataViewColumn* PCB_NET_INSPECTOR_PANEL::getDisplayedColumnForModelField( cons
         wxDataViewColumn* col = m_netsList->GetColumn( i );
 
         if( static_cast<int>( col->GetModelColumn() ) == columnId )
-        {
             return col;
-        }
     }
 
     return nullptr;
@@ -418,8 +462,7 @@ void PCB_NET_INSPECTOR_PANEL::buildNetsList( const bool rebuildColumns )
         cfg->expanded_rows.clear();
         DATA_MODEL* model = static_cast<DATA_MODEL*>( m_netsList->GetModel() );
 
-        for( const auto& groupItems = model->getGroupDataViewItems();
-             auto& [groupName, groupItem] : groupItems )
+        for( const auto& [groupName, groupItem] : model->getGroupDataViewItems() )
         {
             if( m_netsList->IsExpanded( groupItem ) )
                 cfg->expanded_rows.push_back( groupName );
@@ -602,11 +645,10 @@ std::vector<CN_ITEM*> PCB_NET_INSPECTOR_PANEL::relevantConnectivityItems() const
 {
     // Pre-filter the connectivity items and sort them by netcode. This avoids quadratic runtime when building the whole
     // net list.
-    const auto type_bits = std::bitset<MAX_STRUCT_TYPE_ID>()
-                                   .set( PCB_TRACE_T )
-                                   .set( PCB_ARC_T )
-                                   .set( PCB_VIA_T )
-                                   .set( PCB_PAD_T );
+    const auto type_bits = std::bitset<MAX_STRUCT_TYPE_ID>().set( PCB_TRACE_T )
+                                                            .set( PCB_ARC_T )
+                                                            .set( PCB_VIA_T )
+                                                            .set( PCB_PAD_T );
 
     std::vector<CN_ITEM*> cn_items;
     cn_items.reserve( 1024 );
@@ -635,7 +677,7 @@ PCB_NET_INSPECTOR_PANEL::calculateNets( const std::vector<NETINFO_ITEM*>& aNetCo
     // Precondition: conItems and aNetCodes are sorted in increasing netcode value
     // Functionality: This extracts any items from conItems which have a netcode which is present in aNetCodes
     std::unordered_map<int, std::vector<LENGTH_DELAY_CALCULATION_ITEM>> netItemsMap;
-    std::vector<NETINFO_ITEM*>                                    foundNets;
+    std::vector<NETINFO_ITEM*>                                          foundNets;
 
     auto itemItr = conItems.begin();
     auto netCodeItr = aNetCodes.begin();
@@ -674,42 +716,44 @@ PCB_NET_INSPECTOR_PANEL::calculateNets( const std::vector<NETINFO_ITEM*>& aNetCo
     std::mutex   resultsMutex;
     thread_pool& tp = GetKiCadThreadPool();
 
-    auto resultsFuture = tp.parallelize_loop(
+    auto resultsFuture = tp.submit_loop(
             0, foundNets.size(),
-            [&, this, calc]( const int start, const int end )
+            [&, this, calc]( const int i )
             {
-                for( int i = start; i < end; ++i )
+                int netCode = foundNets[i]->GetNetCode();
+
+                constexpr PATH_OPTIMISATIONS opts = { .OptimiseVias = true,
+                                                      .MergeTracks = true,
+                                                      .OptimiseTracesInPads = true,
+                                                      .InferViaInPad = false };
+
+                LENGTH_DELAY_STATS lengthDetails = calc->CalculateLengthDetails(
+                                        netItemsMap[netCode],
+                                        opts,
+                                        nullptr,
+                                        nullptr,
+                                        LENGTH_DELAY_LAYER_OPT::WITH_LAYER_DETAIL,
+                                        m_showTimeDomainDetails ? LENGTH_DELAY_DOMAIN_OPT::WITH_DELAY_DETAIL
+                                                                : LENGTH_DELAY_DOMAIN_OPT::NO_DELAY_DETAIL );
+
+                if( aIncludeZeroPadNets || lengthDetails.NumPads > 0 )
                 {
-                    int            netCode = foundNets[i]->GetNetCode();
+                    std::unique_ptr<LIST_ITEM> new_item = std::make_unique<LIST_ITEM>( foundNets[i] );
 
-                    constexpr PATH_OPTIMISATIONS opts = { .OptimiseViaLayers = true,
-                                                          .MergeTracks = true,
-                                                          .OptimiseTracesInPads = true,
-                                                          .InferViaInPad = false };
-                    LENGTH_DELAY_STATS           lengthDetails = calc->CalculateLengthDetails(
-                            netItemsMap[netCode], opts, nullptr, nullptr, LENGTH_DELAY_LAYER_OPT::WITH_LAYER_DETAIL,
-                            m_showTimeDomainDetails ? LENGTH_DELAY_DOMAIN_OPT::WITH_DELAY_DETAIL
-                                                              : LENGTH_DELAY_DOMAIN_OPT::NO_DELAY_DETAIL );
+                    new_item->SetPadCount( lengthDetails.NumPads );
+                    new_item->SetLayerCount( m_board->GetCopperLayerCount() );
+                    new_item->SetPadDieLength( lengthDetails.PadToDieLength );
+                    new_item->SetPadDieDelay( lengthDetails.PadToDieDelay );
+                    new_item->SetViaCount( lengthDetails.NumVias );
+                    new_item->SetViaLength( lengthDetails.ViaLength );
+                    new_item->SetViaDelay( lengthDetails.ViaDelay );
+                    new_item->SetLayerWireLengths( *lengthDetails.LayerLengths );
 
-                    if( aIncludeZeroPadNets || lengthDetails.NumPads > 0 )
-                    {
-                        std::unique_ptr<LIST_ITEM> new_item = std::make_unique<LIST_ITEM>( foundNets[i] );
+                    if( m_showTimeDomainDetails )
+                        new_item->SetLayerWireDelays( *lengthDetails.LayerDelays );
 
-                        new_item->SetPadCount( lengthDetails.NumPads );
-                        new_item->SetLayerCount( m_board->GetCopperLayerCount() );
-                        new_item->SetPadDieLength( lengthDetails.PadToDieLength );
-                        new_item->SetPadDieDelay( lengthDetails.PadToDieDelay );
-                        new_item->SetViaCount( lengthDetails.NumVias );
-                        new_item->SetViaLength( lengthDetails.ViaLength );
-                        new_item->SetViaDelay( lengthDetails.ViaDelay );
-                        new_item->SetLayerWireLengths( *lengthDetails.LayerLengths );
-
-                        if( m_showTimeDomainDetails )
-                            new_item->SetLayerWireDelays( *lengthDetails.LayerDelays );
-
-                        std::scoped_lock lock( resultsMutex );
-                        results.emplace_back( std::move( new_item ) );
-                    }
+                    std::scoped_lock lock( resultsMutex );
+                    results.emplace_back( std::move( new_item ) );
                 }
             } );
 
@@ -965,8 +1009,7 @@ void PCB_NET_INSPECTOR_PANEL::OnBoardItemChanged( BOARD& aBoard, BOARD_ITEM* aBo
 }
 
 
-void PCB_NET_INSPECTOR_PANEL::OnBoardItemsChanged( BOARD&                    aBoard,
-                                                   std::vector<BOARD_ITEM*>& aBoardItems )
+void PCB_NET_INSPECTOR_PANEL::OnBoardItemsChanged( BOARD& aBoard, std::vector<BOARD_ITEM*>& aBoardItems )
 {
     updateBoardItems( aBoardItems );
 }
@@ -1048,13 +1091,11 @@ void PCB_NET_INSPECTOR_PANEL::OnNetsListContextMenu( wxDataViewEvent& event )
     wxMenu menu;
 
     // Net edit menu items
-    wxMenuItem* highlightNet = new wxMenuItem( &menu, ID_HIGHLIGHT_SELECTED_NETS,
-                                               _( "Highlight Selected Net" ),
+    wxMenuItem* highlightNet = new wxMenuItem( &menu, ID_HIGHLIGHT_SELECTED_NETS, _( "Highlight Selected Net" ),
                                                wxEmptyString, wxITEM_NORMAL );
     menu.Append( highlightNet );
 
-    wxMenuItem* clearHighlighting = new wxMenuItem( &menu, ID_CLEAR_HIGHLIGHTING,
-                                                    _( "Clear Net Highlighting" ),
+    wxMenuItem* clearHighlighting = new wxMenuItem( &menu, ID_CLEAR_HIGHLIGHTING, _( "Clear Net Highlighting" ),
                                                     wxEmptyString, wxITEM_NORMAL );
     menu.Append( clearHighlighting );
 
@@ -1066,18 +1107,17 @@ void PCB_NET_INSPECTOR_PANEL::OnNetsListContextMenu( wxDataViewEvent& event )
 
     menu.AppendSeparator();
 
-    wxMenuItem* renameNet = new wxMenuItem( &menu, ID_RENAME_NET, _( "Rename Selected Net..." ),
-                                            wxEmptyString, wxITEM_NORMAL );
+    wxMenuItem* renameNet = new wxMenuItem( &menu, ID_RENAME_NET, _( "Rename Selected Net..." ), wxEmptyString,
+                                            wxITEM_NORMAL );
     menu.Append( renameNet );
 
-    wxMenuItem* deleteNet = new wxMenuItem( &menu, ID_DELETE_NET, _( "Delete Selected Net" ),
-                                            wxEmptyString, wxITEM_NORMAL );
+    wxMenuItem* deleteNet = new wxMenuItem( &menu, ID_DELETE_NET, _( "Delete Selected Net" ), wxEmptyString,
+                                            wxITEM_NORMAL );
     menu.Append( deleteNet );
 
     menu.AppendSeparator();
 
-    wxMenuItem* addNet = new wxMenuItem( &menu, ID_ADD_NET, _( "Add Net..." ),
-                                         wxEmptyString, wxITEM_NORMAL );
+    wxMenuItem* addNet = new wxMenuItem( &menu, ID_ADD_NET, _( "Add Net..." ), wxEmptyString, wxITEM_NORMAL );
     menu.Append( addNet );
 
     if( !selItem && !multipleSelections )
@@ -1125,8 +1165,7 @@ void PCB_NET_INSPECTOR_PANEL::onAddGroup()
     NETNAME_VALIDATOR validator( &newGroupName );
 
     WX_TEXT_ENTRY_DIALOG dlg( this, _( "Group name / pattern:" ), _( "New Group" ), newGroupName );
-    wxStaticText* help = new wxStaticText( &dlg, wxID_ANY,
-                                           _( "(Use /.../ to indicate a regular expression.)" ) );
+    wxStaticText* help = new wxStaticText( &dlg, wxID_ANY, _( "(Use /.../ to indicate a regular expression.)" ) );
     help->SetFont( KIUI::GetInfoFont( this ).Italic() );
    	dlg.m_ContentSizer->Add( help, 0, wxALL|wxEXPAND, 5 );
     dlg.SetTextValidator( validator );
@@ -1147,8 +1186,7 @@ void PCB_NET_INSPECTOR_PANEL::onAddGroup()
                               } )
         == m_custom_group_rules.end() )
     {
-        m_custom_group_rules.push_back( std::make_unique<EDA_COMBINED_MATCHER>( newGroupName,
-                                                                                CTX_NET ) );
+        m_custom_group_rules.push_back( std::make_unique<EDA_COMBINED_MATCHER>( newGroupName, CTX_NET ) );
         SaveSettings();
     }
 
@@ -1175,9 +1213,16 @@ void PCB_NET_INSPECTOR_PANEL::OnExpandCollapseRow( wxCommandEvent& event )
 }
 
 
-void PCB_NET_INSPECTOR_PANEL::OnHeaderContextMenu( wxCommandEvent& event )
+void PCB_NET_INSPECTOR_PANEL::OnHeaderContextMenu( wxDataViewEvent& event )
 {
+    m_contextMenuColumn = event.GetDataViewColumn();
+
     wxMenu menu;
+
+    menu.Append( ID_AUTOFIT_COLUMN, _( "Auto-fit Column" ) );
+    menu.Append( ID_AUTOFIT_ALL_COLUMNS, _( "Auto-fit All Columns" ) );
+    menu.AppendSeparator();
+
     generateShowHideColumnMenu( &menu );
     menu.Bind( wxEVT_COMMAND_MENU_SELECTED, &PCB_NET_INSPECTOR_PANEL::onContextMenuSelection, this );
     PopupMenu( &menu );
@@ -1199,14 +1244,12 @@ void PCB_NET_INSPECTOR_PANEL::OnConfigButton( wxCommandEvent& event )
     wxMenu menu;
 
     // Filtering menu items
-    wxMenuItem* filterByNetName = new wxMenuItem( &menu, ID_FILTER_BY_NET_NAME,
-                                                  _( "Filter by Net Name" ),
+    wxMenuItem* filterByNetName = new wxMenuItem( &menu, ID_FILTER_BY_NET_NAME, _( "Filter by Net Name" ),
                                                   wxEmptyString, wxITEM_CHECK );
     menu.Append( filterByNetName );
     filterByNetName->Check( cfg.filter_by_net_name );
 
-    wxMenuItem* filterByNetclass = new wxMenuItem( &menu, ID_FILTER_BY_NETCLASS,
-                                                   _( "Filter by Netclass" ),
+    wxMenuItem* filterByNetclass = new wxMenuItem( &menu, ID_FILTER_BY_NETCLASS, _( "Filter by Netclass" ),
                                                    wxEmptyString, wxITEM_CHECK );
     menu.Append( filterByNetclass );
     filterByNetclass->Check( cfg.filter_by_netclass );
@@ -1220,8 +1263,7 @@ void PCB_NET_INSPECTOR_PANEL::OnConfigButton( wxCommandEvent& event )
     //groupConstraint->Check( m_group_by_constraint );
     //menu.Append( groupConstraint );
 
-    wxMenuItem* groupNetclass = new wxMenuItem( &menu, ID_GROUP_BY_NETCLASS,
-                                                _( "Group by Netclass" ),
+    wxMenuItem* groupNetclass = new wxMenuItem( &menu, ID_GROUP_BY_NETCLASS, _( "Group by Netclass" ),
                                                 wxEmptyString, wxITEM_CHECK );
     menu.Append( groupNetclass );
     groupNetclass->Check( m_groupByNetclass );
@@ -1240,22 +1282,19 @@ void PCB_NET_INSPECTOR_PANEL::OnConfigButton( wxCommandEvent& event )
     if( !selItem || !selItem->GetIsGroup() )
         removeSelectedGroup->Enable( false );
 
-    wxMenuItem* removeCustomGroups = new wxMenuItem( &menu, ID_REMOVE_GROUPS,
-                                                     _( "Remove All Custom Groups" ),
+    wxMenuItem* removeCustomGroups = new wxMenuItem( &menu, ID_REMOVE_GROUPS, _( "Remove All Custom Groups" ),
                                                      wxEmptyString, wxITEM_NORMAL );
     menu.Append( removeCustomGroups );
     removeCustomGroups->Enable( m_custom_group_rules.size() != 0 );
 
     menu.AppendSeparator();
 
-    wxMenuItem* showZeroNetPads = new wxMenuItem( &menu, ID_SHOW_ZERO_NET_PADS,
-                                                  _( "Show Zero Pad Nets" ),
+    wxMenuItem* showZeroNetPads = new wxMenuItem( &menu, ID_SHOW_ZERO_NET_PADS, _( "Show Zero Pad Nets" ),
                                                   wxEmptyString, wxITEM_CHECK );
     menu.Append( showZeroNetPads );
     showZeroNetPads->Check( m_showZeroPadNets );
 
-    wxMenuItem* showUnconnectedNets = new wxMenuItem( &menu, ID_SHOW_UNCONNECTED_NETS,
-                                                      _( "Show Unconnected Nets" ),
+    wxMenuItem* showUnconnectedNets = new wxMenuItem( &menu, ID_SHOW_UNCONNECTED_NETS, _( "Show Unconnected Nets" ),
                                                       wxEmptyString, wxITEM_CHECK );
     menu.Append( showUnconnectedNets );
     showUnconnectedNets->Check( m_showUnconnectedNets );
@@ -1263,15 +1302,15 @@ void PCB_NET_INSPECTOR_PANEL::OnConfigButton( wxCommandEvent& event )
     menu.AppendSeparator();
 
     wxMenuItem* showTimeDomainDetails = new wxMenuItem( &menu, ID_SHOW_TIME_DOMAIN_DETAILS,
-                                                        _( "Show Time Domain Details" ), wxEmptyString, wxITEM_CHECK );
+                                                        _( "Show Time Domain Details" ),
+                                                        wxEmptyString, wxITEM_CHECK );
     menu.Append( showTimeDomainDetails );
     showTimeDomainDetails->Check( m_showTimeDomainDetails );
 
     menu.AppendSeparator();
 
     // Report generation
-    wxMenuItem* generateReport = new wxMenuItem( &menu, ID_GENERATE_REPORT,
-                                                 _( "Save Net Inspector Report..." ),
+    wxMenuItem* generateReport = new wxMenuItem( &menu, ID_GENERATE_REPORT, _( "Save Net Inspector Report..." ),
                                                  wxEmptyString, wxITEM_NORMAL );
     menu.Append( generateReport );
 
@@ -1334,13 +1373,21 @@ void PCB_NET_INSPECTOR_PANEL::onContextMenuSelection( wxCommandEvent& event )
         onAddGroup();
         break;
 
-    case ID_GROUP_BY_CONSTRAINT: m_groupByConstraint = !m_groupByConstraint; break;
+    case ID_GROUP_BY_CONSTRAINT:
+        m_groupByConstraint = !m_groupByConstraint;
+        break;
 
-    case ID_GROUP_BY_NETCLASS: m_groupByNetclass = !m_groupByNetclass; break;
+    case ID_GROUP_BY_NETCLASS:
+        m_groupByNetclass = !m_groupByNetclass;
+        break;
 
-    case ID_FILTER_BY_NET_NAME: m_filterByNetName = !m_filterByNetName; break;
+    case ID_FILTER_BY_NET_NAME:
+        m_filterByNetName = !m_filterByNetName;
+        break;
 
-    case ID_FILTER_BY_NETCLASS: m_filterByNetclass = !m_filterByNetclass; break;
+    case ID_FILTER_BY_NETCLASS:
+        m_filterByNetclass = !m_filterByNetclass;
+        break;
 
     case ID_REMOVE_SELECTED_GROUP:
         onRemoveSelectedGroup();
@@ -1350,11 +1397,17 @@ void PCB_NET_INSPECTOR_PANEL::onContextMenuSelection( wxCommandEvent& event )
         m_custom_group_rules.clear();
         break;
 
-    case ID_SHOW_ZERO_NET_PADS: m_showZeroPadNets = !m_showZeroPadNets; break;
+    case ID_SHOW_ZERO_NET_PADS:
+        m_showZeroPadNets = !m_showZeroPadNets;
+        break;
 
-    case ID_SHOW_UNCONNECTED_NETS: m_showUnconnectedNets = !m_showUnconnectedNets; break;
+    case ID_SHOW_UNCONNECTED_NETS:
+        m_showUnconnectedNets = !m_showUnconnectedNets;
+        break;
 
-    case ID_SHOW_TIME_DOMAIN_DETAILS: m_showTimeDomainDetails = !m_showTimeDomainDetails; break;
+    case ID_SHOW_TIME_DOMAIN_DETAILS:
+        m_showTimeDomainDetails = !m_showTimeDomainDetails;
+        break;
 
     case ID_GENERATE_REPORT:
         generateReport();
@@ -1368,6 +1421,20 @@ void PCB_NET_INSPECTOR_PANEL::onContextMenuSelection( wxCommandEvent& event )
 
     case ID_CLEAR_HIGHLIGHTING:
         onClearHighlighting();
+        saveAndRebuild = false;
+        break;
+
+    case ID_AUTOFIT_COLUMN:
+        if( m_contextMenuColumn )
+            autosizeColumn( m_contextMenuColumn );
+
+        saveAndRebuild = false;
+        break;
+
+    case ID_AUTOFIT_ALL_COLUMNS:
+        for( unsigned int i = 0; i < m_netsList->GetColumnCount(); ++i )
+            autosizeColumn( m_netsList->GetColumn( i ) );
+
         saveAndRebuild = false;
         break;
 
@@ -1403,8 +1470,8 @@ void PCB_NET_INSPECTOR_PANEL::onRemoveSelectedGroup()
             const auto     groupIter = std::ranges::find_if( m_custom_group_rules,
                                                              [&]( std::unique_ptr<EDA_COMBINED_MATCHER>& rule )
                                                              {
-                                                             return rule->GetPattern() == groupName;
-                                                         } );
+                                                                 return rule->GetPattern() == groupName;
+                                                             } );
 
             if( groupIter != m_custom_group_rules.end() )
             {
@@ -1422,6 +1489,8 @@ void PCB_NET_INSPECTOR_PANEL::generateReport()
     wxFileDialog dlg( this, _( "Save Net Inspector Report File" ), "", "",
                       _( "Report file" ) + AddFileExtListToFilter( { "csv" } ),
                       wxFD_SAVE | wxFD_OVERWRITE_PROMPT );
+
+    KIPLATFORM::UI::AllowNetworkFileSystems( &dlg );
 
     if( dlg.ShowModal() == wxID_CANCEL )
         return;
@@ -1566,8 +1635,7 @@ void PCB_NET_INSPECTOR_PANEL::onAddNet()
 
         if( m_board->FindNet( newNetName ) )
         {
-            DisplayError( this,
-                          wxString::Format( _( "Net name '%s' is already in use." ), newNetName ) );
+            DisplayError( this, wxString::Format( _( "Net name '%s' is already in use." ), newNetName ) );
             newNetName = wxEmptyString;
         }
         else
@@ -1624,8 +1692,7 @@ void PCB_NET_INSPECTOR_PANEL::onRenameSelectedNet()
 
             if( unescapedShortName.IsEmpty() )
             {
-                DisplayError( this, wxString::Format( _( "Net name cannot be empty." ),
-                                                      unescapedShortName ) );
+                DisplayError( this, _( "Net name cannot be empty." ) );
                 continue;
             }
 
@@ -1634,8 +1701,7 @@ void PCB_NET_INSPECTOR_PANEL::onRenameSelectedNet()
 
             if( m_board->FindNet( shortNetName ) || m_board->FindNet( fullNetName ) )
             {
-                DisplayError( this, wxString::Format( _( "Net name '%s' is already in use." ),
-                                                      unescapedShortName ) );
+                DisplayError( this, wxString::Format( _( "Net name '%s' is already in use." ), unescapedShortName ) );
                 unescapedShortName = wxEmptyString;
             }
             else
@@ -1692,8 +1758,7 @@ void PCB_NET_INSPECTOR_PANEL::onDeleteSelectedNet()
     auto delete_one = [this]( const LIST_ITEM* i )
     {
         if( i->GetPadCount() == 0
-            || IsOK( this, wxString::Format( _( "Net '%s' is in use.  Delete anyway?" ),
-                                             i->GetNetName() ) ) )
+            || IsOK( this, wxString::Format( _( "Net '%s' is in use.  Delete anyway?" ), i->GetNetName() ) ) )
         {
             // This is a bit hacky, but it will do for now, since this is the only path
             // outside the netlist updater where you can remove a net from a BOARD.
@@ -1733,8 +1798,7 @@ void PCB_NET_INSPECTOR_PANEL::onDeleteSelectedNet()
         if( ii->GetIsGroup() )
         {
             if( ii->ChildrenCount() != 0
-                && IsOK( this, wxString::Format( _( "Delete all nets in group '%s'?" ),
-                                                 ii->GetGroupName() ) ) )
+                && IsOK( this, wxString::Format( _( "Delete all nets in group '%s'?" ), ii->GetGroupName() ) ) )
             {
                 // we can't be iterating the children container and deleting items from
                 // it at the same time.  thus take a copy of it first.

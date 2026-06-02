@@ -22,6 +22,7 @@
 #define _APP_SETTINGS_H
 
 #include <gal/color4d.h>
+#include <json_common.h>
 #include <settings/json_settings.h>
 #include <settings/grid_settings.h>
 
@@ -34,7 +35,13 @@ struct KICOMMON_API CROSS_PROBING_SETTINGS
     bool center_on_items; ///< Automatically pan to cross-probed items.
     bool zoom_to_fit;     ///< Zoom to fit items (ignored if center_on_items is off).
     bool auto_highlight;  ///< Automatically turn on highlight mode in the target frame.
+    bool flash_selection; ///< Flash newly cross-probed selection (visual attention aid).
 };
+
+namespace KIGFX
+{
+    enum class CROSS_HAIR_MODE : int;
+}
 
 /**
  * Common cursor settings, available to every frame.
@@ -42,7 +49,7 @@ struct KICOMMON_API CROSS_PROBING_SETTINGS
 struct KICOMMON_API CURSOR_SETTINGS
 {
     bool always_show_cursor;
-    bool fullscreen_cursor;
+    KIGFX::CROSS_HAIR_MODE cross_hair_mode;
 };
 
 /**
@@ -91,6 +98,7 @@ struct KICOMMON_API WINDOW_SETTINGS
     WINDOW_STATE state;
     wxString mru_path;
     wxString perspective;
+    nlohmann::json aui_state;
     std::vector<double> zoom_factors;
 
     CURSOR_SETTINGS cursor;
@@ -136,7 +144,6 @@ public:
 
     struct GRAPHICS
     {
-        int   canvas_type;
         float highlight_factor;         ///< How much to brighten highlighted objects by.
         float select_factor;            ///< How much to brighten selected objects by.
     };
@@ -171,13 +178,18 @@ public:
 
     struct PRINTING
     {
-        bool             background;    ///< Whether or not to print background color.
-        bool             monochrome;    ///< Whether or not to print in monochrome.
-        double           scale;         ///< Printout scale.
-        bool             use_theme;     ///< If false, display color theme will be used.
-        wxString         color_theme;   ///< Color theme to use for printing.
-        bool             title_block;   ///< Whether or not to print title block.
-        std::vector<int> layers;        ///< List of enabled layers for printing.
+        bool             background;             ///< Whether or not to print background color.
+        bool             monochrome;             ///< Whether or not to print in monochrome.
+        double           scale;                  ///< Printout scale.
+        bool             use_theme;              ///< If false, display color theme will be used.
+        wxString         color_theme;            ///< Color theme to use for printing.
+        bool             title_block;            ///< Whether or not to print title block.
+        std::vector<int> layers;                 ///< List of enabled layers for printing.
+        bool             mirror;                 ///< Print mirrored.
+        int              drill_marks;            ///< Drill marks type (0=none, 1=small, 2=real).
+        int              pagination;             ///< 0=all layers on one page, 1=one page per layer.
+        bool             edge_cuts_on_all_pages; ///< Print board edges on all pages.
+        bool             as_item_checkboxes;     ///< Honor checkboxes in appearance manager.
     };
 
     struct SYSTEM
@@ -267,7 +279,8 @@ protected:
      * @param aWindow is the target window settings object.
      * @param aJsonPath is the path to read parameters from.
      */
-    void addParamsForWindow( WINDOW_SETTINGS* aWindow, const std::string& aJsonPath );
+    void addParamsForWindow( WINDOW_SETTINGS* aWindow, const std::string& aJsonPath,
+                             int aDefaultWidth = 0, int aDefaultHeight = 0 );
 
     /**
      * Migrate the library tree width setting from a single column (Item) to multi-column.

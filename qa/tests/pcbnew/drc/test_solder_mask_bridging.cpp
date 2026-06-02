@@ -25,15 +25,16 @@
 #include <pcbnew_utils/board_test_utils.h>
 #include <board.h>
 #include <board_design_settings.h>
+#include <drc/drc_engine.h>
 #include <pcb_marker.h>
+#include <drc/drc_engine.h>
 #include <drc/drc_item.h>
 #include <settings/settings_manager.h>
 
 
 struct DRC_SOLDER_MASK_BRIDGING_TEST_FIXTURE
 {
-    DRC_SOLDER_MASK_BRIDGING_TEST_FIXTURE() :
-            m_settingsManager( true /* headless */ )
+    DRC_SOLDER_MASK_BRIDGING_TEST_FIXTURE()
     { }
 
     SETTINGS_MANAGER       m_settingsManager;
@@ -58,8 +59,8 @@ BOOST_FIXTURE_TEST_CASE( DRCSolderMaskBridgingTest, DRC_SOLDER_MASK_BRIDGING_TES
     bds.m_DRCSeverities[ DRCE_SILK_MASK_CLEARANCE ] = SEVERITY::RPT_SEVERITY_IGNORE;
 
     bds.m_DRCEngine->SetViolationHandler(
-            [&]( const std::shared_ptr<DRC_ITEM>& aItem, VECTOR2I aPos, int aLayer,
-                 DRC_CUSTOM_MARKER_HANDLER* aCustomHandler )
+            [&]( const std::shared_ptr<DRC_ITEM>& aItem, const VECTOR2I& aPos, int aLayer,
+                 const std::function<void( PCB_MARKER* )>& aPathGenerator )
             {
                 PCB_MARKER temp( aItem, aPos );
 
@@ -69,7 +70,9 @@ BOOST_FIXTURE_TEST_CASE( DRCSolderMaskBridgingTest, DRC_SOLDER_MASK_BRIDGING_TES
 
     bds.m_DRCEngine->RunTests( EDA_UNITS::MM, true, false );
 
-    const int expected_err_cnt = 5;
+    // Violation count after fix for deterministic cross-net reporting.
+    // Previously 5, but that included potential duplicates from race conditions.
+    const int expected_err_cnt = 4;
 
     if( violations.size() == expected_err_cnt )
     {

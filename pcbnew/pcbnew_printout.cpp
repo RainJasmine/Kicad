@@ -54,14 +54,10 @@ void PCBNEW_PRINTOUT_SETTINGS::Load( APP_SETTINGS_BASE* aConfig )
 {
     BOARD_PRINTOUT_SETTINGS::Load( aConfig );
 
-    if( PCBNEW_SETTINGS* cfg = GetAppSettings<PCBNEW_SETTINGS>( "pcbnew" ) )
-    {
-        m_DrillMarks = static_cast<DRILL_MARKS>( cfg->m_Plot.pads_drill_mode );
-        m_Pagination = static_cast<PAGINATION_T>( cfg->m_Plot.all_layers_on_one_page );
-        m_PrintEdgeCutsOnAllPages = cfg->m_Plot.edgecut_on_all_layers;
-        m_Mirror                  = cfg->m_Plot.mirror;
-        m_AsItemCheckboxes        = cfg->m_Plot.as_item_checkboxes;
-    }
+    m_DrillMarks = static_cast<DRILL_MARKS>( aConfig->m_Printing.drill_marks );
+    m_Pagination = static_cast<PAGINATION_T>( aConfig->m_Printing.pagination );
+    m_PrintEdgeCutsOnAllPages = aConfig->m_Printing.edge_cuts_on_all_pages;
+    m_AsItemCheckboxes = aConfig->m_Printing.as_item_checkboxes;
 }
 
 
@@ -69,14 +65,10 @@ void PCBNEW_PRINTOUT_SETTINGS::Save( APP_SETTINGS_BASE* aConfig )
 {
     BOARD_PRINTOUT_SETTINGS::Save( aConfig );
 
-    if( PCBNEW_SETTINGS* cfg = GetAppSettings<PCBNEW_SETTINGS>( "pcbnew" ) )
-    {
-        cfg->m_Plot.pads_drill_mode        = (int)m_DrillMarks;
-        cfg->m_Plot.all_layers_on_one_page = m_Pagination;
-        cfg->m_Plot.edgecut_on_all_layers  = m_PrintEdgeCutsOnAllPages;
-        cfg->m_Plot.mirror                 = m_Mirror;
-        cfg->m_Plot.as_item_checkboxes     = m_AsItemCheckboxes;
-    }
+    aConfig->m_Printing.drill_marks = static_cast<int>( m_DrillMarks );
+    aConfig->m_Printing.pagination = static_cast<int>( m_Pagination );
+    aConfig->m_Printing.edge_cuts_on_all_pages = m_PrintEdgeCutsOnAllPages;
+    aConfig->m_Printing.as_item_checkboxes = m_AsItemCheckboxes;
 }
 
 
@@ -178,15 +170,15 @@ void PCBNEW_PRINTOUT::setupViewLayers( KIGFX::VIEW& aView, const LSET& aLayerSet
         setVisibility( LAYER_TRACKS );
         setVisibility( LAYER_VIAS );
         setVisibility( LAYER_VIA_MICROVIA );
-        setVisibility( LAYER_VIA_BBLIND );
+        setVisibility( LAYER_VIA_BLIND );
+        setVisibility( LAYER_VIA_BURIED );
         setVisibility( LAYER_VIA_THROUGH );
         setVisibility( LAYER_ZONES );
         setVisibility( LAYER_FILLED_SHAPES );
 
         setVisibility( LAYER_DRC_WARNING );
         setVisibility( LAYER_DRC_ERROR );
-        setVisibility( LAYER_DRC_SHAPE1 );
-        setVisibility( LAYER_DRC_SHAPE2 );
+        setVisibility( LAYER_DRC_SHAPES );
         setVisibility( LAYER_DRC_EXCLUSION );
         setVisibility( LAYER_ANCHOR );
         setVisibility( LAYER_DRAWINGSHEET );
@@ -195,7 +187,7 @@ void PCBNEW_PRINTOUT::setupViewLayers( KIGFX::VIEW& aView, const LSET& aLayerSet
     else
     {
         // Enable items on copper layers, but do not draw holes
-        for( GAL_LAYER_ID layer : { LAYER_VIA_THROUGH, LAYER_VIA_MICROVIA, LAYER_VIA_BBLIND } )
+        for( GAL_LAYER_ID layer : { LAYER_VIA_THROUGH, LAYER_VIA_MICROVIA, LAYER_VIA_BLIND, LAYER_VIA_BURIED } )
         {
             if( ( aLayerSet & LSET::AllCuMask() ).any() )   // Items visible on any copper layer
                 aView.SetLayerVisible( layer, true );
@@ -281,7 +273,7 @@ void PCBNEW_PRINTOUT::setupGal( KIGFX::GAL* aGal )
 
 BOX2I PCBNEW_PRINTOUT::getBoundingBox()
 {
-    return m_board->ComputeBoundingBox( false );
+    return m_board->ComputeBoundingBox( false, false );
 }
 
 

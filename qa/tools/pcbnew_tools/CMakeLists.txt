@@ -20,6 +20,8 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 
 add_executable( qa_pcbnew_tools
+    # This is needed for the global mock objects
+    ${CMAKE_SOURCE_DIR}/qa/mocks/kicad/common_mocks.cpp
 
     # The main entry point
     pcbnew_tools.cpp
@@ -29,6 +31,15 @@ add_executable( qa_pcbnew_tools
     tools/polygon_generator/polygon_generator.cpp
 
     tools/polygon_triangulation/polygon_triangulation.cpp
+
+    tools/extract_zone_fills/extract_zone_fills.cpp
+)
+
+include_directories(
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/qa/mocks/include
+    ${INC_AFTER}
 )
 
 # Anytime we link to the kiface_objects, we have to add a dependency on the last object
@@ -51,11 +62,9 @@ target_link_libraries( qa_pcbnew_tools
     common
     qa_utils
     markdown_lib
-    scripting
     ${PCBNEW_IO_LIBRARIES}
     ${wxWidgets_LIBRARIES}
     ${GDI_PLUS_LIBRARIES}
-    ${PYTHON_LIBRARIES}
     Boost::headers
     ${PCBNEW_EXTRA_LIBS}    # -lrt must follow Boost
 )

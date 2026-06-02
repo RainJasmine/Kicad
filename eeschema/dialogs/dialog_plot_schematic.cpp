@@ -37,26 +37,23 @@
 #include <plotters/plotters_pslike.h>
 #include <reporter.h>
 #include <trace_helpers.h>
+#include <settings/color_settings.h>
 #include <settings/settings_manager.h>
 #include <wx_filename.h>
+#include <gestfich.h>
 #include <pgm_base.h>
 #include <sch_edit_frame.h>
 #include <sch_painter.h>
-
 #include <wx/dirdlg.h>
 #include <wx/msgdlg.h>
 #include <kiplatform/environment.h>
-#include <wx/log.h>
 
 #include <jobs/job_export_sch_plot.h>
-
-
-// static members (static to remember last state):
-int DIALOG_PLOT_SCHEMATIC::m_pageSizeSelect = PAGE_SIZE_AUTO;
+#include <confirm.h>
 
 
 DIALOG_PLOT_SCHEMATIC::DIALOG_PLOT_SCHEMATIC( SCH_EDIT_FRAME* aEditFrame ) :
-        DIALOG_PLOT_SCHEMATIC( aEditFrame, aEditFrame )
+        DIALOG_PLOT_SCHEMATIC( aEditFrame, aEditFrame, nullptr )
 {
 }
 
@@ -65,19 +62,17 @@ DIALOG_PLOT_SCHEMATIC::DIALOG_PLOT_SCHEMATIC( SCH_EDIT_FRAME* aEditFrame, wxWind
                                               JOB_EXPORT_SCH_PLOT* aJob ) :
         DIALOG_PLOT_SCHEMATIC_BASE( aEditFrame ),
         m_editFrame( aEditFrame ),
-        m_plotFormat( PLOT_FORMAT::UNDEFINED ),
         m_defaultLineWidth( aEditFrame, m_lineWidthLabel, m_lineWidthCtrl, m_lineWidthUnits ),
         m_job( aJob )
 {
-    m_configChanged = false;
-
     if( !m_job )
     {
         m_browseButton->SetBitmap( KiBitmapBundle( BITMAPS::small_folder ) );
         m_MessagesBox->SetFileName( Prj().GetProjectPath() + wxT( "report.txt" ) );
-        SetupStandardButtons( { { wxID_OK, _( "Plot All Pages" ) },
-                                { wxID_APPLY, _( "Plot Current Page" ) },
-                                { wxID_CANCEL, _( "Close" ) } } );
+
+        SetupStandardButtons( { { wxID_OK,     _( "Plot All Pages" )    },
+                                { wxID_APPLY,  _( "Plot Current Page" ) },
+                                { wxID_CANCEL, _( "Close" )             } } );
     }
     else
     {
@@ -93,92 +88,39 @@ DIALOG_PLOT_SCHEMATIC::DIALOG_PLOT_SCHEMATIC( SCH_EDIT_FRAME* aEditFrame, wxWind
     }
 
     // DIALOG_SHIM needs a unique hash_key because classname will be the same for both job and
-    // non-job versions (which have different sizes).
+    // non-job versions.
     m_hash_key = TO_UTF8( GetTitle() );
 
-    initDlg();
+    for( COLOR_SETTINGS* settings : Pgm().GetSettingsManager().GetColorSettingsList() )
+        m_colorTheme->Append( settings->GetName(), static_cast<void*>( settings ) );
+
+    m_variantChoiceCtrl->Append( m_editFrame->Schematic().GetVariantNamesForUI() );
+    m_variantChoiceCtrl->Select( 0 );
+
 
     // Now all widgets have the size fixed, call FinishDialogSettings
     finishDialogSettings();
 }
 
 
-void DIALOG_PLOT_SCHEMATIC::initDlg()
+bool DIALOG_PLOT_SCHEMATIC::TransferDataToWindow()
 {
-    auto cfg = dynamic_cast<EESCHEMA_SETTINGS*>( Kiface().KifaceSettings() );
-    wxASSERT( cfg );
-
     if( !m_job )
     {
-        if( cfg )
+        EESCHEMA_SETTINGS* cfg = dynamic_cast<EESCHEMA_SETTINGS*>( Kiface().KifaceSettings() );
+        wxASSERT( cfg );
+
+        if( m_lineWidthCtrl->GetValue().IsEmpty() && cfg )
         {
-            for( COLOR_SETTINGS* settings : Pgm().GetSettingsManager().GetColorSettingsList() )
-            {
-                int idx = m_colorTheme->Append( settings->GetName(),
-                                                static_cast<void*>( settings ) );
-
-                if( settings->GetFilename() == cfg->m_PlotPanel.color_theme )
-                    m_colorTheme->SetSelection( idx );
-            }
-
-            m_colorTheme->Enable( cfg->m_PlotPanel.color );
-
-            m_plotBackgroundColor->Enable( cfg->m_PlotPanel.color );
-            m_plotBackgroundColor->SetValue( cfg->m_PlotPanel.background_color );
-
-            // Set color or B&W plot option
-            setModeColor( cfg->m_PlotPanel.color );
-
-            // Set plot or not frame reference option
-            setPlotDrawingSheet( cfg->m_PlotPanel.frame_reference );
-
-            setOpenFileAfterPlot( cfg->m_PlotPanel.open_file_after_plot );
-
-            m_plotPDFPropertyPopups->SetValue( cfg->m_PlotPanel.pdf_property_popups );
-            m_plotPDFHierarchicalLinks->SetValue( cfg->m_PlotPanel.pdf_hierarchical_links );
-            m_plotPDFMetadata->SetValue( cfg->m_PlotPanel.pdf_metadata );
-
-            // Switch to the last save plot format
-            PLOT_FORMAT fmt = static_cast<PLOT_FORMAT>( cfg->m_PlotPanel.format );
-
-            switch( fmt )
-            {
-            default:
-            case PLOT_FORMAT::POST: m_plotFormatOpt->SetSelection( 0 ); break;
-            case PLOT_FORMAT::PDF:  m_plotFormatOpt->SetSelection( 1 ); break;
-            case PLOT_FORMAT::SVG:  m_plotFormatOpt->SetSelection( 2 ); break;
-            case PLOT_FORMAT::DXF:  m_plotFormatOpt->SetSelection( 3 ); break;
-            case PLOT_FORMAT::HPGL: /* no longer supported */           break;
-            }
-
-            if( fmt == PLOT_FORMAT::DXF )
-                m_plotBackgroundColor->Disable();
-
-            // Set the default line width (pen width which should be used for
-            // items that do not have a pen size defined (like frame ref)
-            // the default line width is stored in mils in config
+            // Set the default line width (pen width which should be used for items that do not have a
+            // pen size defined (like frame ref).
+            // The default line width is stored in mils in config
             m_defaultLineWidth.SetValue( schIUScale.MilsToIU( cfg->m_Drawing.default_line_thickness ) );
         }
-
-        // Plot directory
-        SCHEMATIC_SETTINGS& settings = m_editFrame->Schematic().Settings();
-        wxString            path = settings.m_PlotDirectoryName;
-#ifdef __WINDOWS__
-        path.Replace( '/', '\\' );
-#endif
-        m_outputPath->SetValue( path );
     }
-    else if( m_job )
+    else
     {
-        for( COLOR_SETTINGS* settings : Pgm().GetSettingsManager().GetColorSettingsList() )
-        {
-            int idx = m_colorTheme->Append( settings->GetName(), static_cast<void*>( settings ) );
-
-            if( settings->GetName() == m_job->m_theme )
-                m_colorTheme->SetSelection( idx );
-        }
-
-        if( m_colorTheme->GetSelection() == wxNOT_FOUND )
+        if( !m_colorTheme->SetStringSelection( m_job->m_theme ) )
             m_colorTheme->SetSelection( 0 );
 
         m_plotBackgroundColor->SetValue( m_job->m_useBackgroundColor );
@@ -186,9 +128,14 @@ void DIALOG_PLOT_SCHEMATIC::initDlg()
         m_plotPDFPropertyPopups->SetValue( m_job->m_PDFPropertyPopups );
         m_plotPDFHierarchicalLinks->SetValue( m_job->m_PDFHierarchicalLinks );
         m_plotPDFMetadata->SetValue( m_job->m_PDFMetadata );
-        m_pageSizeSelect = static_cast<int>( m_job->m_pageSizeSelect );
+
+        int paperSizeIndex = (int) m_job->m_pageSizeSelect;
+
+        if( paperSizeIndex >= 0 && paperSizeIndex < (int) m_paperSizeOption->GetCount() )
+            m_paperSizeOption->SetSelection( paperSizeIndex );
+
         m_plotDrawingSheet->SetValue( m_job->m_plotDrawingSheet );
-        setModeColor( !m_job->m_blackAndWhite );
+        m_ModeColorOption->SetSelection( m_job->m_blackAndWhite ? 1 : 0 );
 
         // Set the plot format
         switch( m_job->m_plotFormat )
@@ -198,14 +145,45 @@ void DIALOG_PLOT_SCHEMATIC::initDlg()
         case SCH_PLOT_FORMAT::PDF:  m_plotFormatOpt->SetSelection( 1 ); break;
         case SCH_PLOT_FORMAT::SVG:  m_plotFormatOpt->SetSelection( 2 ); break;
         case SCH_PLOT_FORMAT::DXF:  m_plotFormatOpt->SetSelection( 3 ); break;
+        case SCH_PLOT_FORMAT::PNG:  m_plotFormatOpt->SetSelection( 4 ); break;
         case SCH_PLOT_FORMAT::HPGL: /* no longer supported */           break;
+        }
+
+        if( JOB_EXPORT_SCH_PLOT_PNG* pngJob = dynamic_cast<JOB_EXPORT_SCH_PLOT_PNG*>( m_job ) )
+        {
+            m_pngDPI->SetValue( pngJob->m_dpi );
+            m_pngAntialias->SetValue( pngJob->m_antialias );
         }
 
         // And then hide it
         m_plotFormatOpt->Hide();
 
         m_outputPath->SetValue( m_job->GetConfiguredOutputPath() );
+
+        // The job exposes both a scalar (m_variant, dialog-edited) and a list (m_variantNames,
+        // CLI-populated).  Prefer the scalar when present, fall back to the first list entry.
+        wxString selectedVariant = m_job->m_variant;
+
+        if( selectedVariant.IsEmpty() && !m_job->m_variantNames.empty() )
+            selectedVariant = m_job->m_variantNames.front();
+
+        if( !selectedVariant.IsEmpty() )
+        {
+            int idx = m_variantChoiceCtrl->FindString( selectedVariant );
+
+            if( idx != wxNOT_FOUND )
+                m_variantChoiceCtrl->SetSelection( idx );
+        }
+
+        // Must readjust dialog sizing after hiding plot format
+        Layout();
+        GetSizer()->SetSizeHints( this );
     }
+
+    wxCommandEvent dummy;
+    onPlotFormatSelection( dummy );
+
+    return true;
 }
 
 
@@ -240,7 +218,6 @@ void DIALOG_PLOT_SCHEMATIC::onOutputDirectoryBrowseClicked( wxCommandEvent& even
 
     wxFileName fn( Prj().AbsolutePath( m_editFrame->Schematic().Root().GetFileName() ) );
     wxString defaultPath = fn.GetPathWithSep();
-    wxString msg;
     wxFileName relPathTest; // Used to test if we can make the path relative
 
     relPathTest.Assign( dirDialog.GetPath() );
@@ -248,12 +225,7 @@ void DIALOG_PLOT_SCHEMATIC::onOutputDirectoryBrowseClicked( wxCommandEvent& even
     // Test if making the path relative is possible before asking the user if they want to do it
     if( relPathTest.MakeRelativeTo( defaultPath ) )
     {
-        msg.Printf( _( "Do you want to use a path relative to\n'%s'?" ), defaultPath );
-
-        wxMessageDialog dialog( this, msg, _( "Plot Output Directory" ),
-                                wxYES_NO | wxICON_QUESTION | wxYES_DEFAULT );
-
-        if( dialog.ShowModal() == wxID_YES )
+        if( IsOK( this, wxString::Format( _( "Do you want to use a path relative to\n'%s'?" ), defaultPath ) ) )
             dirName.MakeRelativeTo( defaultPath );
     }
 
@@ -261,7 +233,7 @@ void DIALOG_PLOT_SCHEMATIC::onOutputDirectoryBrowseClicked( wxCommandEvent& even
 }
 
 
-PLOT_FORMAT DIALOG_PLOT_SCHEMATIC::GetPlotFileFormat()
+PLOT_FORMAT DIALOG_PLOT_SCHEMATIC::getPlotFileFormat()
 {
     switch( m_plotFormatOpt->GetSelection() )
     {
@@ -270,74 +242,32 @@ PLOT_FORMAT DIALOG_PLOT_SCHEMATIC::GetPlotFileFormat()
     case 1: return PLOT_FORMAT::PDF;
     case 2: return PLOT_FORMAT::SVG;
     case 3: return PLOT_FORMAT::DXF;
+    case 4: return PLOT_FORMAT::PNG;
     }
 }
 
 
-void DIALOG_PLOT_SCHEMATIC::OnPageSizeSelected( wxCommandEvent& event )
+void DIALOG_PLOT_SCHEMATIC::onColorMode( wxCommandEvent& aEvent )
 {
-    m_pageSizeSelect = m_paperSizeOption->GetSelection();
-}
+    bool backgroundColorAvailable = getPlotFileFormat() == PLOT_FORMAT::POST
+                                    || getPlotFileFormat() == PLOT_FORMAT::PDF
+                                    || getPlotFileFormat() == PLOT_FORMAT::SVG
+                                    || getPlotFileFormat() == PLOT_FORMAT::PNG;
 
+    m_colorThemeLabel->Enable( getModeColor() );
+    m_colorTheme->Enable( getModeColor() );
+    m_plotBackgroundColor->Enable( backgroundColorAvailable && getModeColor() );
 
-void DIALOG_PLOT_SCHEMATIC::OnUpdateUI( wxUpdateUIEvent& event )
-{
-    PLOT_FORMAT fmt = GetPlotFileFormat();
-
-    if( fmt != m_plotFormat )
-    {
-        m_plotFormat = fmt;
-
-        wxArrayString paperSizes;
-        paperSizes.push_back( _( "Schematic size" ) );
-
-        int selection;
-
-        paperSizes.push_back( _( "A4" ) );
-        paperSizes.push_back( _( "A" ) );
-
-        selection = m_pageSizeSelect;
-
-        m_openFileAfterPlot->Enable( fmt == PLOT_FORMAT::PDF );
-        m_plotPDFPropertyPopups->Enable( fmt == PLOT_FORMAT::PDF );
-        m_plotPDFHierarchicalLinks->Enable( fmt == PLOT_FORMAT::PDF );
-        m_plotPDFMetadata->Enable( fmt == PLOT_FORMAT::PDF );
-
-        m_paperSizeOption->Set( paperSizes );
-        m_paperSizeOption->SetSelection( selection );
-
-        m_defaultLineWidth.Enable( fmt == PLOT_FORMAT::POST
-                                   || fmt == PLOT_FORMAT::PDF
-                                   || fmt == PLOT_FORMAT::SVG );
-
-        m_plotBackgroundColor->Enable( fmt == PLOT_FORMAT::POST
-                                       || fmt == PLOT_FORMAT::PDF
-                                       || fmt == PLOT_FORMAT::SVG );
-    }
+    aEvent.Skip();
 }
 
 
 void DIALOG_PLOT_SCHEMATIC::getPlotOptions( RENDER_SETTINGS* aSettings )
 {
-    EESCHEMA_SETTINGS* cfg = dynamic_cast<EESCHEMA_SETTINGS*>( Kiface().KifaceSettings() );
-    wxASSERT( cfg );
+    if( EESCHEMA_SETTINGS* cfg = dynamic_cast<EESCHEMA_SETTINGS*>( Kiface().KifaceSettings() ) )
+        aSettings->SetDefaultFont( cfg->m_Appearance.default_font );
 
     COLOR_SETTINGS* colors = getColorSettings();
-
-    if( cfg )
-    {
-        cfg->m_PlotPanel.background_color = m_plotBackgroundColor->GetValue();
-        cfg->m_PlotPanel.color            = getModeColor();
-        cfg->m_PlotPanel.color_theme      = colors->GetFilename();
-        cfg->m_PlotPanel.frame_reference  = getPlotDrawingSheet();
-        cfg->m_PlotPanel.format           = static_cast<int>( GetPlotFileFormat() );
-        cfg->m_PlotPanel.pdf_property_popups    = m_plotPDFPropertyPopups->GetValue();
-        cfg->m_PlotPanel.pdf_hierarchical_links = m_plotPDFHierarchicalLinks->GetValue();
-        cfg->m_PlotPanel.pdf_metadata           = m_plotPDFMetadata->GetValue();
-        cfg->m_PlotPanel.open_file_after_plot   = getOpenFileAfterPlot();
-
-        aSettings->SetDefaultFont( cfg->m_Appearance.default_font );
-    }
 
     aSettings->LoadColors( colors );
     aSettings->SetMinPenWidth( (int) m_defaultLineWidth.GetValue() );
@@ -346,17 +276,6 @@ void DIALOG_PLOT_SCHEMATIC::getPlotOptions( RENDER_SETTINGS* aSettings )
         aSettings->SetBackgroundColor( colors->GetColor( LAYER_SCHEMATIC_BACKGROUND ) );
     else
         aSettings->SetBackgroundColor( COLOR4D::UNSPECIFIED );
-
-    // Plot directory
-    wxString path = m_outputPath->GetValue();
-    path.Replace( '\\', '/' );
-
-    SCHEMATIC_SETTINGS& settings = m_editFrame->Schematic().Settings();
-
-    if( settings.m_PlotDirectoryName != path )
-        m_configChanged = true;
-
-    settings.m_PlotDirectoryName = path;
 }
 
 
@@ -368,6 +287,36 @@ COLOR_SETTINGS* DIALOG_PLOT_SCHEMATIC::getColorSettings()
         return ::GetColorSettings( COLOR_SETTINGS::COLOR_BUILTIN_DEFAULT );
 
     return static_cast<COLOR_SETTINGS*>( m_colorTheme->GetClientData( selection ) );
+}
+
+
+void DIALOG_PLOT_SCHEMATIC::onPlotFormatSelection( wxCommandEvent& event )
+{
+    PLOT_FORMAT fmt = getPlotFileFormat();
+
+    m_openFileAfterPlot->Enable( fmt == PLOT_FORMAT::PDF );
+    m_plotPDFPropertyPopups->Enable( fmt == PLOT_FORMAT::PDF );
+    m_plotPDFHierarchicalLinks->Enable( fmt == PLOT_FORMAT::PDF );
+    m_plotPDFMetadata->Enable( fmt == PLOT_FORMAT::PDF );
+
+    // Currently kicad-cli always exports in mm (also true in Pcbnew)
+    m_staticTextDXF->Enable( fmt == PLOT_FORMAT::DXF && m_job == nullptr );
+    m_DXF_plotUnits->Enable( fmt == PLOT_FORMAT::DXF && m_job == nullptr );
+
+    m_paperSizeOption->SetSelection( m_paperSizeOption->GetSelection() );
+
+    m_defaultLineWidth.Enable( fmt == PLOT_FORMAT::POST || fmt == PLOT_FORMAT::PDF
+                               || fmt == PLOT_FORMAT::SVG || fmt == PLOT_FORMAT::PNG );
+
+    m_sizerPNGOptions->GetStaticBox()->Show( fmt == PLOT_FORMAT::PNG );
+    m_sizerPNGOptions->Show( fmt == PLOT_FORMAT::PNG );
+
+    Layout();
+
+    wxCommandEvent dummy;
+    onColorMode( dummy );
+
+    event.Skip();
 }
 
 
@@ -388,19 +337,29 @@ void DIALOG_PLOT_SCHEMATIC::OnPlotAll( wxCommandEvent& event )
         m_job->m_blackAndWhite = !getModeColor();
         m_job->m_useBackgroundColor = m_plotBackgroundColor->GetValue();
         m_job->m_minPenWidth = m_defaultLineWidth.GetIntValue();
-
-        m_job->m_pageSizeSelect = static_cast<JOB_PAGE_SIZE>( m_pageSizeSelect );
+        m_job->m_pageSizeSelect = static_cast<JOB_PAGE_SIZE>( m_paperSizeOption->GetSelection() );
         m_job->m_PDFPropertyPopups = m_plotPDFPropertyPopups->GetValue();
         m_job->m_PDFHierarchicalLinks = m_plotPDFHierarchicalLinks->GetValue();
         m_job->m_PDFMetadata = m_plotPDFMetadata->GetValue();
         m_job->m_plotDrawingSheet = m_plotDrawingSheet->GetValue();
         m_job->m_plotAll = true;
         m_job->SetConfiguredOutputPath( m_outputPath->GetValue() );
+        m_job->m_theme = getColorSettings()->GetName();
+        // Keep m_variant (scalar) and m_variantNames (list) in sync so reload + edit + run
+        // honors the dialog selection regardless of which field the executor consults.
+        m_job->m_variant = getSelectedVariant();
+        m_job->m_variantNames.clear();
 
-        COLOR_SETTINGS* colors = getColorSettings();
-        m_job->m_theme = colors->GetName();
+        if( !m_job->m_variant.IsEmpty() )
+            m_job->m_variantNames.push_back( m_job->m_variant );
 
-        event.Skip();   // Allow normal close action
+        if( JOB_EXPORT_SCH_PLOT_PNG* pngJob = dynamic_cast<JOB_EXPORT_SCH_PLOT_PNG*>( m_job ) )
+        {
+            pngJob->m_dpi = m_pngDPI->GetValue();
+            pngJob->m_antialias = m_pngAntialias->GetValue();
+        }
+
+        event.Skip(); // Allow normal close action
     }
 }
 
@@ -417,35 +376,37 @@ void DIALOG_PLOT_SCHEMATIC::plotSchematic( bool aPlotAll )
 
     std::unique_ptr<SCH_PLOTTER> schPlotter = std::make_unique<SCH_PLOTTER>( m_editFrame );
 
-    COLOR_SETTINGS*   colors = getColorSettings();
-
     SCH_PLOT_OPTS plotOpts;
-    plotOpts.m_plotDrawingSheet = getPlotDrawingSheet();
+    plotOpts.m_plotDrawingSheet = m_plotDrawingSheet->GetValue();
     plotOpts.m_plotAll = aPlotAll;
     plotOpts.m_blackAndWhite = !getModeColor();
     plotOpts.m_useBackgroundColor = m_plotBackgroundColor->GetValue();
-    plotOpts.m_theme = colors->GetFilename();
+    plotOpts.m_theme = getColorSettings()->GetFilename();
     plotOpts.m_PDFPropertyPopups = m_plotPDFPropertyPopups->GetValue();
     plotOpts.m_PDFHierarchicalLinks = m_plotPDFHierarchicalLinks->GetValue();
     plotOpts.m_PDFMetadata = m_plotPDFMetadata->GetValue();
     plotOpts.m_outputDirectory = getOutputPath();
-    plotOpts.m_pageSizeSelect = m_pageSizeSelect;
-    plotOpts.m_plotHopOver = m_editFrame->Schematic().Settings().m_HopOverScale > 0.0;
+    plotOpts.m_pageSizeSelect = m_paperSizeOption->GetSelection();
+    plotOpts.m_plotHopOver = m_editFrame->Schematic().Settings().GetHopOverScale() > 0.0;
 
-    schPlotter->Plot( GetPlotFileFormat(), plotOpts, &renderSettings, &m_MessagesBox->Reporter() );
+    // Select the DXF file unit
+    plotOpts.m_DXF_File_Unit = m_DXF_plotUnits->GetSelection() == 0 ? DXF_UNITS::INCH : DXF_UNITS::MM;
+    plotOpts.m_pngDPI = m_pngDPI->GetValue();
+    plotOpts.m_pngAntialias = m_pngAntialias->GetValue();
+    plotOpts.m_variant = getSelectedVariant();
+    schPlotter->Plot( getPlotFileFormat(), plotOpts, &renderSettings, &m_MessagesBox->Reporter() );
 
-    if( GetPlotFileFormat() == PLOT_FORMAT::PDF && getOpenFileAfterPlot() )
-        wxLaunchDefaultApplication( schPlotter->GetLastOutputFilePath() );
+    if( getPlotFileFormat() == PLOT_FORMAT::PDF && m_openFileAfterPlot->GetValue() )
+        OpenPDF( schPlotter->GetLastOutputFilePath() );
 }
 
 
 wxString DIALOG_PLOT_SCHEMATIC::getOutputPath()
 {
-    wxString msg;
-    wxString extMsg;
-    wxFileName fn;
+    wxString extMsg = wxString::Format( _( "Falling back to user path '%s'." ),
+                                          KIPLATFORM::ENV::GetDocumentsPath() );
 
-    extMsg.Printf( _( "Falling back to user path '%s'." ), KIPLATFORM::ENV::GetDocumentsPath() );
+    wxFileName fn;
 
     // Build the absolute path of current output directory to preselect it in the file browser.
     std::function<bool( wxString* )> textResolver =
@@ -474,8 +435,8 @@ wxString DIALOG_PLOT_SCHEMATIC::getOutputPath()
         if( screen && !screen->GetFileName().IsEmpty() )
         {
             fn = screen->GetFileName();
-            msg.Printf( _( "Cannot normalize path '%s%s'." ), fn.GetPathWithSep(), path );
-            fn.SetPath( fn.GetPathWithSep() + path );
+            path = fn.GetPathWithSep() + path;
+            fn.SetPath( path );
 
             // Normalize always returns true for a non-empty file name so clear the file name
             // and extension so that only the path is normalized.
@@ -488,34 +449,22 @@ wxString DIALOG_PLOT_SCHEMATIC::getOutputPath()
             }
             else
             {
-                wxMessageDialog dlg( this, msg, _( "Warning" ), wxOK | wxCENTER | wxRESIZE_BORDER
-                                     | wxICON_EXCLAMATION | wxSTAY_ON_TOP );
-
-                dlg.SetExtendedMessage( extMsg );
-                dlg.ShowModal();
-
+                DisplayErrorMessage( this, wxString::Format( _( "Cannot normalize path '%s'." ), path ), extMsg );
                 path = KIPLATFORM::ENV::GetDocumentsPath();
             }
         }
         else
         {
-            msg = _( "No project or path defined for the current schematic." );
-
-            wxMessageDialog dlg( this, msg, _( "Warning" ), wxOK | wxCENTER | wxRESIZE_BORDER
-                                 | wxICON_EXCLAMATION | wxSTAY_ON_TOP );
-            dlg.SetExtendedMessage( extMsg );
-            dlg.ShowModal();
-
+            DisplayErrorMessage( this, _( "No project or path defined for the current schematic." ), extMsg );
             // Always fall back to user's document path if no other absolute path can be normalized.
             path = KIPLATFORM::ENV::GetDocumentsPath();
         }
     }
     else
     {
-        msg.Printf( _( "Cannot normalize path '%s%s'." ), Prj().GetProjectPath(), path );
-
         // Build the absolute path of current output directory and the project path.
-        fn.SetPath( Prj().GetProjectPath() + path );
+        path = Prj().GetProjectPath() + path;
+        fn.SetPath( path );
 
         if( fn.Normalize( FN_NORMALIZE_FLAGS | wxPATH_NORM_ENV_VARS ) )
         {
@@ -523,16 +472,22 @@ wxString DIALOG_PLOT_SCHEMATIC::getOutputPath()
         }
         else
         {
-            wxMessageDialog dlg( this, msg, _( "Warning" ),
-                                 wxOK | wxCENTER | wxRESIZE_BORDER | wxICON_EXCLAMATION |
-                                 wxSTAY_ON_TOP );
-
-            dlg.SetExtendedMessage( extMsg );
-            dlg.ShowModal();
-
+            DisplayErrorMessage( this, wxString::Format( _( "Cannot normalize path '%s'." ), path ), extMsg );
             path = KIPLATFORM::ENV::GetDocumentsPath();
         }
     }
 
     return path;
+}
+
+
+wxString DIALOG_PLOT_SCHEMATIC::getSelectedVariant() const
+{
+    wxString variant;
+    int      selection = m_variantChoiceCtrl->GetSelection();
+
+    if( ( selection != 0 ) && ( selection != wxNOT_FOUND ) )
+        variant = m_variantChoiceCtrl->GetString( selection );
+
+    return variant;
 }

@@ -25,6 +25,7 @@
 #include <sch_actions.h>
 #include <optional>
 #include <symbol_edit_frame.h>
+#include <widgets/wx_infobar.h>
 #include <sch_commit.h>
 #include <gal/graphics_abstraction_layer.h>
 #include <tools/symbol_editor_drawing_tools.h>
@@ -215,14 +216,13 @@ int SYMBOL_EDITOR_DRAWING_TOOLS::TwoClickPlace( const TOOL_EVENT& aEvent )
                 switch( type )
                 {
                 case SCH_PIN_T:
-                {
                     item = pinTool->CreatePin( cursorPos, symbol );
 
                     if( item )
                         g_lastPin = item->m_Uuid;
 
                     break;
-                }
+
                 case SCH_TEXT_T:
                 {
                     SCH_TEXT* text = new SCH_TEXT( cursorPos, wxEmptyString, LAYER_DEVICE );
@@ -252,6 +252,7 @@ int SYMBOL_EDITOR_DRAWING_TOOLS::TwoClickPlace( const TOOL_EVENT& aEvent )
 
                     break;
                 }
+
                 default:
                     wxFAIL_MSG( "TwoClickPlace(): unknown type" );
                 }
@@ -267,7 +268,7 @@ int SYMBOL_EDITOR_DRAWING_TOOLS::TwoClickPlace( const TOOL_EVENT& aEvent )
                 else
                 {
                     getViewControls()->PinCursorInsideNonAutoscrollArea( true );
-                    cursorPos = getViewControls()->GetMousePosition();
+                    cursorPos = grid.Align( getViewControls()->GetMousePosition(), grid.GetItemGrid( item ) );
                 }
 
                 if( item )
@@ -283,7 +284,10 @@ int SYMBOL_EDITOR_DRAWING_TOOLS::TwoClickPlace( const TOOL_EVENT& aEvent )
                     setCursor();
                 }
 
-                controls->SetCursorPosition( cursorPos, false );
+                if( m_frame->GetMoveWarpsCursor() )
+                    controls->SetCursorPosition( cursorPos, false );
+
+                m_toolMgr->PostAction( ACTIONS::refreshPreview );
             }
             // ... and second click places:
             else
@@ -323,8 +327,10 @@ int SYMBOL_EDITOR_DRAWING_TOOLS::TwoClickPlace( const TOOL_EVENT& aEvent )
         }
         else if( evt->IsAction( &ACTIONS::increment ) )
         {
-            m_toolMgr->RunSynchronousAction( ACTIONS::increment, &commit,
-                                             evt->Parameter<ACTIONS::INCREMENT>() );
+            if( evt->HasParameter() )
+                m_toolMgr->RunSynchronousAction( ACTIONS::increment, &commit, evt->Parameter<ACTIONS::INCREMENT>() );
+            else
+                m_toolMgr->RunSynchronousAction( ACTIONS::increment, &commit, ACTIONS::INCREMENT { 1, 0 } );
         }
         else if( item && ( evt->IsAction( &ACTIONS::refreshPreview ) || evt->IsMotion() ) )
         {

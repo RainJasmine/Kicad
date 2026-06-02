@@ -40,8 +40,7 @@
 
 KI_TEST::SCHEMATIC_TEST_FIXTURE::SCHEMATIC_TEST_FIXTURE() :
         m_schematic( nullptr ),
-        m_pi( SCH_IO_MGR::FindPlugin( SCH_IO_MGR::SCH_KICAD ) ),
-        m_manager( true )
+        m_pi( SCH_IO_MGR::FindPlugin( SCH_IO_MGR::SCH_KICAD ) )
 {
 }
 
@@ -51,9 +50,9 @@ KI_TEST::SCHEMATIC_TEST_FIXTURE::~SCHEMATIC_TEST_FIXTURE()
 }
 
 
-void KI_TEST::SCHEMATIC_TEST_FIXTURE::LoadSchematic( const wxString& aBaseName )
+void KI_TEST::SCHEMATIC_TEST_FIXTURE::LoadSchematic( const wxFileName& aFn )
 {
-    wxFileName fn = GetSchematicPath( aBaseName );
+    wxFileName fn( aFn );
 
     BOOST_TEST_CHECKPOINT( "Loading schematic " << fn.GetFullPath() );
 
@@ -65,14 +64,20 @@ void KI_TEST::SCHEMATIC_TEST_FIXTURE::LoadSchematic( const wxString& aBaseName )
 
     m_manager.LoadProject( pro.GetFullPath() );
 
-    m_manager.Prj().SetElem( PROJECT::ELEM::SCH_SYMBOL_LIBS, nullptr );
+    m_manager.Prj().SetElem( PROJECT::ELEM::LEGACY_SYMBOL_LIBS, nullptr );
 
     m_schematic = std::make_unique<SCHEMATIC>( &m_manager.Prj() );
-    m_schematic->SetRoot( m_pi->LoadSchematicFile( fn.GetFullPath(), m_schematic.get() ) );
+    m_schematic->Reset();
+    SCH_SHEET* defaultSheet = m_schematic->GetTopLevelSheet( 0 );
+
+    SCH_SHEET* root = m_pi->LoadSchematicFile( fn.GetFullPath(), m_schematic.get() );
+    m_schematic->AddTopLevelSheet( root );
+
+    m_schematic->RemoveTopLevelSheet( defaultSheet );
+    delete defaultSheet;
 
     BOOST_REQUIRE_EQUAL( m_pi->GetError().IsEmpty(), true );
 
-    m_schematic->CurrentSheet().push_back( &m_schematic->Root() );
 
     SCH_SCREENS screens( m_schematic->Root() );
 
@@ -117,7 +122,7 @@ void KI_TEST::SCHEMATIC_TEST_FIXTURE::LoadSchematic( const wxString& aBaseName )
 }
 
 
-wxFileName KI_TEST::SCHEMATIC_TEST_FIXTURE::GetSchematicPath( const wxString& aBaseName )
+wxFileName KI_TEST::SCHEMATIC_TEST_FIXTURE::SchematicQAPath( const wxString& aBaseName )
 {
     wxFileName fn( KI_TEST::GetEeschemaTestDataDir() );
     fn.AppendDir( "netlists" );
@@ -132,7 +137,7 @@ wxFileName KI_TEST::SCHEMATIC_TEST_FIXTURE::GetSchematicPath( const wxString& aB
 template <typename Exporter>
 wxString TEST_NETLIST_EXPORTER_FIXTURE<Exporter>::GetNetlistPath( bool aTest )
 {
-    wxFileName netFile = m_schematic->Prj().GetProjectFullName();
+    wxFileName netFile = m_schematic->Project().GetProjectFullName();
 
     if( aTest )
         netFile.SetName( netFile.GetName() + "_test" );
@@ -173,7 +178,7 @@ void TEST_NETLIST_EXPORTER_FIXTURE<Exporter>::Cleanup()
 template <typename Exporter>
 void TEST_NETLIST_EXPORTER_FIXTURE<Exporter>::TestNetlist( const wxString& aBaseName )
 {
-    LoadSchematic( aBaseName );
+    LoadSchematic( SchematicQAPath( aBaseName ) );
     WriteNetlist();
     CompareNetlists();
     Cleanup();

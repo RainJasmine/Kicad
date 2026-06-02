@@ -90,7 +90,7 @@ public:
     int ShowFootprintLinks( const TOOL_EVENT& aEvent );
 
     int DiffFootprint( const TOOL_EVENT& aEvent );
-    void DiffFootprint( FOOTPRINT* aFootprint );
+    void DiffFootprint( FOOTPRINT* aFootprint, wxTopLevelWindow* aReparentTo = nullptr );
 
     /**
      * @return true if a net or nets to highlight have been set
@@ -129,6 +129,14 @@ private:
                        REPORTER* r );
 
     FOOTPRINT_DIFF_WIDGET* constructDiffPanel( wxPanel* aParentPanel );
+
+    void reportClearance( BOARD_ITEM* aItemA, BOARD_ITEM* aItemB );
+
+    void filterCollectorForInspection( GENERAL_COLLECTOR& aCollector, const VECTOR2I& aPos );
+
+    BOARD_ITEM* pickItemForInspection( const TOOL_EVENT& aEvent, const wxString& aPrompt,
+                                       const std::vector<KICAD_T>& aTypes,
+                                       BOARD_ITEM* aLockedHighlight );
 
 private:
     PCB_EDIT_FRAME*     m_frame;    // Pointer to the currently used edit frame.

@@ -50,31 +50,79 @@ set( QA_EESCHEMA_SRCS
     ${CMAKE_SOURCE_DIR}/qa/tests/common/test_array_options.cpp
 
     sch_io/altium/test_altium_parser_sch.cpp
+    sch_io/pads/test_pads_sch_parser.cpp
+    sch_io/pads/test_pads_sch_import.cpp
+    sch_io/geda/test_geda_sch_import.cpp
 
     erc/test_erc_four_way.cpp
 	erc/test_erc_label_not_connected.cpp
 	erc/test_erc_multiple_pin_to_pin.cpp
+	erc/test_erc_rule_area.cpp
 	erc/test_erc_stacking_pins.cpp
     erc/test_erc_label_names.cpp
 	erc/test_erc_global_labels.cpp
 	erc/test_erc_no_connect.cpp
     erc/test_erc_hierarchical_schematics.cpp
     erc/test_erc_label_multiple_wires.cpp
+    erc/test_erc_shared_pin_multiunit.cpp
     erc/test_erc_unconnected_wire_endpoints.cpp
     erc/test_erc_wire_bus_entry.cpp
+    erc/test_erc_ground_pins.cpp
+    erc/test_erc_bus_member_label_local_pins.cpp
+    erc/test_erc_marker_deduplication.cpp
 
+    test_schematic_text_var_reactive.cpp
+    test_annotation_refdes_tracker_units.cpp
+    test_annotation_units_conflicts.cpp
+    test_annotation_units_integration.cpp
     test_connectivity_algo.cpp
+    test_issue18119_bus_hierarchy.cpp
+    test_issue18299_bus_member_rename.cpp
+    test_issue23840_bus_group_to_vector.cpp
+    test_issue20173_paste_subsheet.cpp
+    test_issue22286_pin_alternate.cpp
+    test_issue22620_group_annotation.cpp
+    test_issue22651_sheet_annotation.cpp
+    test_issue22864_align_sheet_pins.cpp
+    test_issue22938_local_power.cpp
+    test_issue23058_jumper_pin_groups.cpp
+    test_issue23143_junction_midpoint.cpp
+    test_issue23403_shared_subsheet_screen.cpp
+    test_issue22576_subsheet_standalone.cpp
+    test_issue22694_global_hier_label.cpp
+    test_issue24044_expression_net_names.cpp
+    test_issue23719_global_label_chain.cpp
+    test_issue24107_multiunit_grouping.cpp
+    test_issue24072_symbol_arc_edit_mode.cpp
+    test_issue16915_bus_netclass.cpp
+    test_nc_pin_connectivity.cpp
+    test_crossing_label.cpp
     test_eagle_plugin.cpp
     test_junction_helpers.cpp
+    test_junction_place.cpp
+    test_bus_alias_whitespace.cpp
+    test_bus_entry_concurrency.cpp
+    test_bus_net_name_determinism.cpp
+    test_bus_parsing.cpp
+    test_label_bus_connectivity.cpp
+    test_label_bounding_box.cpp
     test_lib_part.cpp
+    test_ee_grid_helper.cpp
     test_netlist_exporter_kicad.cpp
     test_ee_item.cpp
     test_incremental_netlister.cpp
     test_legacy_power_symbols.cpp
+    test_history_autosave_legacy.cpp
+    test_sch_api_enums.cpp
+    test_sch_api_hittest.cpp
+    test_sch_api_proto.cpp
+    test_sch_commit.cpp
+    test_shape_corner_radius.cpp
     test_sch_group.cpp
     test_pin_numbers.cpp
     test_sch_netclass.cpp
     test_sch_pin.cpp
+    test_sch_rule_area_destruction.cpp
     test_sch_rtree.cpp
     test_sch_reference_list.cpp
     test_sch_screen.cpp
@@ -82,8 +130,36 @@ set( QA_EESCHEMA_SRCS
     test_sch_sheet_path.cpp
     test_sch_sheet_list.cpp
     test_sch_symbol.cpp
+    test_sch_table.cpp
+    test_sch_textbox.cpp
     test_schematic.cpp
+    test_flat_hierarchy.cpp
+    test_multi_top_level_sheets.cpp
+    test_save_load_schematic.cpp
+    test_project_name_instances.cpp
+    test_legacy_load.cpp
     test_symbol_library_manager.cpp
+    test_symbol_import_manager.cpp
+    test_stacked_pin_nomenclature.cpp
+    test_stacked_pin_conversion.cpp
+    test_pin_stacked_layout.cpp
+    test_pin_text_overlap.cpp
+    test_remote_symbol_download_security.cpp
+    test_remote_symbol_import.cpp
+    test_remote_symbol_load_from_payload.cpp
+    test_backannotate_unit_swap.cpp
+    test_netlist_exporter_xml_stacked.cpp
+    test_resolve_drivers.cpp
+    test_saveas_copy_subsheets.cpp
+    test_update_items_connectivity.cpp
+    test_design_block_duplicate.cpp
+    test_symbol_library.cpp
+    test_symbol_library_parse_error.cpp
+    test_symbol_embedded_files.cpp
+    test_symbol_clipboard_export.cpp
+    test_schematic_clipboard_export.cpp
+    test_autoplace_fields.cpp
+    test_field_case_conflicts.cpp
 )
 
 if( WIN32 )
@@ -108,9 +184,7 @@ PRIVATE
     eeschema_kiface_objects
     common
     kicommon
-    pcbcommon
-    3d-viewer
-    scripting
+    pads_common
     kimath
     qa_utils
     qa_schematic_utils

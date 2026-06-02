@@ -34,13 +34,18 @@
 #include <optional>
 
 class SCH_EDIT_FRAME;
-class SYMBOL_LIB_TABLE;
 class LIB_SYMBOL;
 class LIB_TREE_NODE;
 class LIB_ID;
 class LIB_SYMBOL_LIBRARY_MANAGER;
 class SYMBOL_EDITOR_SETTINGS;
 class EDA_LIST_DIALOG;
+
+
+#define UNITS_ALL _HKI( "ALL" )
+#define DEMORGAN_ALL _HKI( "ALL" )
+#define DEMORGAN_STD _HKI( "Standard" )
+#define DEMORGAN_ALT _HKI( "Alternate" )
 
 
 /**
@@ -180,6 +185,7 @@ public:
     void DuplicateSymbol( bool aFromClipboard );
 
     void OnSelectUnit( wxCommandEvent& event );
+    void OnSelectBodyStyle( wxCommandEvent& event );
 
     void ToggleProperties() override;
 
@@ -189,10 +195,13 @@ public:
     void FreezeLibraryTree();
     void ThawLibraryTree();
 
+    bool IsSyncLibrariesInProgress() const { return m_syncLibrariesInProgress; }
+
     void OnUpdateUnitNumber( wxUpdateUIEvent& event );
+    void OnUpdateBodyStyle( wxUpdateUIEvent& event );
 
     void UpdateAfterSymbolProperties( wxString* aOldName = nullptr );
-    void RebuildSymbolUnitsList();
+    void RebuildSymbolUnitAndBodyStyleLists();
 
     bool canCloseWindow( wxCloseEvent& aCloseEvent ) override;
     void doCloseWindow() override;
@@ -232,10 +241,7 @@ public:
     void SetUnit( int aUnit );
 
     int  GetBodyStyle() const { return m_bodyStyle; }
-    void SetBodyStyle( int aBodyStyle ) { m_bodyStyle = aBodyStyle; }
-
-    bool GetShowDeMorgan() const { return m_showDeMorgan; }
-    void SetShowDeMorgan( bool show ) { m_showDeMorgan = show; }
+    void SetBodyStyle( int aBodyStyle );
 
     bool GetShowInvisibleFields();
     bool GetShowInvisiblePins();
@@ -370,9 +376,9 @@ public:
      */
     void HardRedraw() override;
 
-    void KiwayMailIn( KIWAY_EXPRESS& mail ) override;
+    void KiwayMailIn( KIWAY_MAIL_EVENT& mail ) override;
 
-    void FocusOnItem( EDA_ITEM* aItem ) override;
+    void FocusOnItem( EDA_ITEM* aItem, bool aAllowScroll = true ) override;
 
     /**
      * Load a symbol from the schematic to edit in place.
@@ -400,6 +406,8 @@ public:
 
     ///< Restore the empty editor screen, without any symbol or library selected.
     void emptyScreen();
+
+    void ClearToolbarControl( int aId ) override;
 
 protected:
     void configureToolbars() override;
@@ -488,12 +496,6 @@ private:
     ///< Rename LIB_SYMBOL aliases to avoid conflicts before adding a symbol to a library.
     void ensureUniqueName( LIB_SYMBOL* aSymbol, const wxString& aLibrary );
 
-    enum TABLE_SCOPE
-    {
-        GLOBAL_LIB_TABLE,
-        PROJECT_LIB_TABLE
-    };
-
     /**
      * Add \a aLibFile to the symbol library table defined by \a aScope.
      *
@@ -503,7 +505,8 @@ private:
      * @param aScope defines if \a aLibFile is added to the global or project library table.
      * @return true if successful or false if a failure occurs.
      */
-    bool addLibTableEntry( const wxString& aLibFile, TABLE_SCOPE aScope = GLOBAL_LIB_TABLE );
+    bool addLibTableEntry( const wxString& aLibFile,
+                           LIBRARY_TABLE_SCOPE aScope = LIBRARY_TABLE_SCOPE::GLOBAL );
 
     /**
      * Replace the file path of the symbol library table entry \a aLibNickname with \a aLibFile.
@@ -545,17 +548,18 @@ public:
 
 private:
     ///< Helper screen used when no symbol is loaded
-    SCH_SCREEN*             m_dummyScreen;
+    SCH_SCREEN*         m_dummyScreen;
 
-    LIB_SYMBOL*             m_symbol;            // a symbol I own, it is not in any library, but a
-                                                 // copy could be.
-    wxComboBox*             m_unitSelectBox;     // a ComboBox to select a unit to edit (if the
-                                                 // symbol has multiple units)
-    SYMBOL_TREE_PANE*       m_treePane;          // symbol search tree widget
+    LIB_SYMBOL*         m_symbol;                // a symbol I own, it is not in any library, but a copy could be.
+    wxComboBox*         m_unitSelectBox;         // a ComboBox to select a unit to edit (if the
+                                                 //   symbol has multiple units)
+    wxComboBox*         m_bodyStyleSelectBox;    // a ComboBox to select a body style to edit (if the symbol has
+                                                 //   multiple body styles)
+    SYMBOL_TREE_PANE*           m_treePane;      // symbol search tree widget
     LIB_SYMBOL_LIBRARY_MANAGER* m_libMgr;        // manager taking care of temporary modifications
-    SYMBOL_EDITOR_SETTINGS* m_settings;          // Handle to the settings
+    SYMBOL_EDITOR_SETTINGS*     m_settings;      // Handle to the settings
 
-    LIB_ID                  m_centerItemOnIdle;
+    LIB_ID                      m_centerItemOnIdle;
 
     // The unit number to edit and show
     int         m_unit;
@@ -574,6 +578,12 @@ private:
     // They are enabled when the loaded symbol has graphic items for converted shape
     // But under some circumstances (New symbol created) these tools must left enabled
     static bool m_showDeMorgan;
+
+    // Guard against re-entrant SyncLibraries calls.  The progress dialog used during sync
+    // yields the event loop, which can dispatch queued UI events (e.g. menu clicks that
+    // accumulated while the app was busy).  Without this guard, opening the symbol library
+    // table dialog from within an active SyncLibraries call corrupts the library tree.
+    bool        m_syncLibrariesInProgress;
 };
 
 #endif  // SYMBOL_EDIT_FRAME_H

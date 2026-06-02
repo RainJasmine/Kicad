@@ -39,17 +39,19 @@
 #include <set>
 #include <string> // for char_traits, operator!=
 #include <unordered_set>
+#include <thread>
 #include <utility> // for swap, move
 #include <vector>
+#include <array>
 
 #include <clipper2/clipper.h>
-#include <math_for_graphics.h>
 #include <geometry/geometry_utils.h>
 #include <geometry/polygon_triangulation.h>
 #include <geometry/seg.h>                    // for SEG, OPT_VECTOR2I
 #include <geometry/shape.h>
 #include <geometry/shape_line_chain.h>
 #include <geometry/shape_poly_set.h>
+#include <geometry/rtree/dynamic_rtree.h>
 #include <math/box2.h>                       // for BOX2I
 #include <math/util.h>                       // for KiROUND, rescale
 #include <math/vector2d.h>                   // for VECTOR2I, VECTOR2D, VECTOR2
@@ -126,6 +128,9 @@ SHAPE_POLY_SET::SHAPE_POLY_SET( const SHAPE_POLY_SET& aOther ) :
         m_hashValid = false;
         m_triangulationValid = false;
     }
+
+    m_failedHash = aOther.m_failedHash;
+    m_failedHashValid.store( aOther.m_failedHashValid.load() );
 }
 
 
@@ -744,7 +749,7 @@ void SHAPE_POLY_SET::RebuildHolesFromContours()
         process( topParentId, -1, std::move( path ) );
     }
 
-    *this = result;
+    *this = std::move( result );
 }
 
 
@@ -923,11 +928,11 @@ void SHAPE_POLY_SET::inflate2( int aAmount, int aCircleSegCount, CORNER_STRATEGY
         bool aSimplify )
 {
     using namespace Clipper2Lib;
-    // A static table to avoid repetitive calculations of the coefficient
+    // A thread-local table to avoid repetitive calculations of the coefficient
     // 1.0 - cos( M_PI / aCircleSegCount )
     // aCircleSegCount is most of time <= 64 and usually 8, 12, 16, 32
     #define SEG_CNT_MAX 64
-    static double arc_tolerance_factor[SEG_CNT_MAX + 1];
+    static thread_local double arc_tolerance_factor[SEG_CNT_MAX + 1];
 
     ClipperOffset c;
 
@@ -1027,11 +1032,11 @@ void SHAPE_POLY_SET::inflateLine2( const SHAPE_LINE_CHAIN& aLine, int aAmount, i
                                    CORNER_STRATEGY aCornerStrategy, bool aSimplify )
 {
     using namespace Clipper2Lib;
-    // A static table to avoid repetitive calculations of the coefficient
+    // A thread-local table to avoid repetitive calculations of the coefficient
     // 1.0 - cos( M_PI / aCircleSegCount )
     // aCircleSegCount is most of time <= 64 and usually 8, 12, 16, 32
     #define SEG_CNT_MAX 64
-    static double arc_tolerance_factor[SEG_CNT_MAX + 1];
+    static thread_local double arc_tolerance_factor[SEG_CNT_MAX + 1];
 
     ClipperOffset c;
 
@@ -1661,9 +1666,10 @@ void SHAPE_POLY_SET::fractureSingle( POLYGON& paths )
 }
 
 
-void SHAPE_POLY_SET::Fracture()
+void SHAPE_POLY_SET::Fracture( bool aSimplify )
 {
-    Simplify();    // remove overlapping holes/degeneracy
+    if( aSimplify )
+        Simplify();    // remove overlapping holes/degeneracy
 
     for( POLYGON& paths : m_polys )
         fractureSingle( paths );
@@ -1861,8 +1867,327 @@ void SHAPE_POLY_SET::Unfracture()
 }
 
 
+bool SHAPE_POLY_SET::isExteriorWaist( const SEG& aSegA, const SEG& aSegB ) const
+{
+    const VECTOR2I da = aSegA.B - aSegA.A;
+
+    int axis = std::abs( da.x ) >= std::abs( da.y ) ? 0 : 1;
+
+    std::array<VECTOR2I,4> pts = { aSegA.A, aSegA.B, aSegB.A, aSegB.B };
+
+    std::sort( pts.begin(), pts.end(), [axis]( const VECTOR2I& p, const VECTOR2I& q )
+    {
+        if( axis == 0 )
+            return p.x < q.x || ( p.x == q.x && p.y < q.y );
+        else
+            return p.y < q.y || ( p.y == q.y && p.x < q.x );
+    } );
+
+    VECTOR2I s = pts[1];
+    VECTOR2I e = pts[2];
+
+    // Check if there is polygon material on either side of the overlapping segments
+    // Get the midpoint between s and e for testing
+    VECTOR2I midpoint = ( s + e ) / 2;
+
+    // Create perpendicular offset vector to check both sides
+    VECTOR2I segDir = e - s;
+
+    if( segDir.EuclideanNorm() > 25 )
+    {
+        VECTOR2I perp = segDir.Perpendicular().Resize( 10 );
+
+        // Both sides must be outside for this to be an exterior waist. Short-circuit if
+        // either side is inside the polygon to avoid the second O(N) point-in-polygon test.
+        if( !PointInside( midpoint + perp ) && !PointInside( midpoint - perp ) )
+        {
+            wxLogTrace( wxT( "collinear" ), wxT( "Found exterior waist between (%d,%d)-(%d,%d) and (%d,%d)-(%d,%d)" ),
+                        aSegA.A.x, aSegA.A.y, aSegA.B.x, aSegA.B.y,
+                        aSegB.A.x, aSegB.A.y, aSegB.B.x, aSegB.B.y );
+            return true;
+        }
+    }
+
+    return false;
+}
+
+
+void SHAPE_POLY_SET::splitCollinearOutlines()
+{
+    for( size_t polyIdx = 0; polyIdx < m_polys.size(); ++polyIdx )
+    {
+        bool changed = true;
+
+        while( changed )
+        {
+            changed = false;
+
+            SHAPE_LINE_CHAIN& outline = m_polys[polyIdx][0];
+            intptr_t count = outline.PointCount();
+
+            KIRTREE::DYNAMIC_RTREE<intptr_t, intptr_t, 2> rtree;
+
+            for( intptr_t i = 0; i < count; ++i )
+            {
+                const VECTOR2I& a = outline.CPoint( i );
+                const VECTOR2I& b = outline.CPoint( ( i + 1 ) % count );
+                intptr_t min[2] = { std::min( a.x, b.x ), std::min( a.y, b.y ) };
+                intptr_t max[2] = { std::max( a.x, b.x ), std::max( a.y, b.y ) };
+                rtree.Insert( min, max, i );
+            }
+
+            bool found = false;
+            int segA = -1;
+            int segB = -1;
+
+            for( intptr_t i = 0; i < count && !found; ++i )
+            {
+                const VECTOR2I& a = outline.CPoint( i );
+                const VECTOR2I& b = outline.CPoint( ( i + 1 ) % count );
+                SEG seg( a, b );
+                intptr_t min[2] = { std::min( a.x, b.x ), std::min( a.y, b.y ) };
+                intptr_t max[2] = { std::max( a.x, b.x ), std::max( a.y, b.y ) };
+
+                auto visitor =
+                        [&]( const intptr_t& j ) -> bool
+                        {
+                            if( j == i || j == ( ( i + 1 ) % count ) || j == ( ( i + count - 1 ) % count ) )
+                                return true;
+
+                            VECTOR2I oa = outline.CPoint( j );
+                            VECTOR2I ob = outline.CPoint( ( j + 1 ) % count );
+                            SEG other( oa, ob );
+
+                            // Skip segments that share start/end points.  This is the case for
+                            // fractured segments
+                            if( oa == a && ob == b )
+                                return true;
+
+                            if( oa == b && ob == a )
+                                return true;
+
+                            if( seg.ApproxCollinear( other, 10 ) && isExteriorWaist( seg, other ) )
+                            {
+                                segA = i;
+                                segB = j;
+                                found = true;
+                                return false;
+                            }
+
+                            return true;
+                        };
+
+                rtree.Search( min, max, visitor );
+            }
+
+            if( !found )
+                break;
+
+            int a0 = segA;
+            int a1 = ( segA + 1 ) % outline.PointCount();
+            int b0 = segB;
+            int b1 = ( segB + 1 ) % outline.PointCount();
+
+            SHAPE_LINE_CHAIN lc1;
+            int idx = a1;
+            lc1.Append( outline.CPoint( idx ) );
+
+            while( idx != b0 )
+            {
+                idx = ( idx + 1 ) % outline.PointCount();
+                lc1.Append( outline.CPoint( idx ) );
+            }
+
+            lc1.SetClosed( true );
+
+            SHAPE_LINE_CHAIN lc2;
+            idx = b1;
+            lc2.Append( outline.CPoint( idx ) );
+
+            while( idx != a0 )
+            {
+                idx = ( idx + 1 ) % outline.PointCount();
+                lc2.Append( outline.CPoint( idx ) );
+            }
+
+            lc2.SetClosed( true );
+
+            m_polys[polyIdx][0] = std::move( lc1 );
+
+            POLYGON np;
+            np.push_back( std::move( lc2 ) );
+            m_polys.push_back( std::move( np ) );
+
+            changed = true;
+        }
+    }
+}
+
+
+void SHAPE_POLY_SET::splitSelfTouchingOutlines()
+{
+    for( size_t polyIdx = 0; polyIdx < m_polys.size(); ++polyIdx )
+    {
+        bool changed = true;
+
+        while( changed )
+        {
+            changed = false;
+
+            SHAPE_LINE_CHAIN& outline = m_polys[polyIdx][0];
+            const int count = outline.PointCount();
+
+            if( count < 4 )
+                break;
+
+            int insertSegIdx = -1;
+            int insertVertIdx = -1;
+
+            // For small polygons, direct O(n²) search is faster than R-tree overhead
+            constexpr int RTREE_THRESHOLD = 32;
+
+            if( count < RTREE_THRESHOLD )
+            {
+                for( int vertIdx = 0; vertIdx < count && insertSegIdx < 0; ++vertIdx )
+                {
+                    const VECTOR2I& pt = outline.CPoint( vertIdx );
+                    const int prevSeg = ( vertIdx + count - 1 ) % count;
+
+                    for( int segIdx = 0; segIdx < count; ++segIdx )
+                    {
+                        // Skip adjacent segments
+                        if( segIdx == prevSeg || segIdx == vertIdx )
+                            continue;
+
+                        const VECTOR2I& a = outline.CPoint( segIdx );
+                        const VECTOR2I& b = outline.CPoint( ( segIdx + 1 ) % count );
+
+                        // SquaredDistance returns 0 only when pt lies exactly on the
+                        // segment.  Clipper2 rounds corridor-cut vertices to integer
+                        // coordinates; they can land within 1nm of an endpoint but are
+                        // not true pinch points.
+                        if( pt != a && pt != b && SEG( a, b ).SquaredDistance( pt ) == 0 )
+                        {
+                            insertSegIdx = segIdx;
+                            insertVertIdx = vertIdx;
+                            break;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                KIRTREE::DYNAMIC_RTREE<intptr_t, int, 2> rtree;
+
+                for( int i = 0; i < count; ++i )
+                {
+                    const VECTOR2I& a = outline.CPoint( i );
+                    const VECTOR2I& b = outline.CPoint( ( i + 1 ) % count );
+                    int bmin[2] = { std::min( a.x, b.x ), std::min( a.y, b.y ) };
+                    int bmax[2] = { std::max( a.x, b.x ), std::max( a.y, b.y ) };
+                    rtree.Insert( bmin, bmax, i );
+                }
+
+                for( int vertIdx = 0; vertIdx < count && insertSegIdx < 0; ++vertIdx )
+                {
+                    const VECTOR2I& pt = outline.CPoint( vertIdx );
+                    const int prevSeg = ( vertIdx + count - 1 ) % count;
+                    int bmin[2] = { pt.x, pt.y };
+                    int bmax[2] = { pt.x, pt.y };
+
+                    auto pinchVisitor =
+                            [&]( const intptr_t& segIdx ) -> bool
+                            {
+                                if( segIdx == prevSeg || segIdx == vertIdx )
+                                    return true;
+
+                                const VECTOR2I& a = outline.CPoint( segIdx );
+                                const VECTOR2I& b = outline.CPoint( ( segIdx + 1 ) % count );
+
+                                // SquaredDistance returns 0 only when pt lies exactly on the
+                                // segment.  Clipper2 rounds corridor-cut vertices to integer
+                                // coordinates; they can land within 1nm of an endpoint but
+                                // are not true pinch points.
+                                if( pt != a && pt != b && SEG( a, b ).SquaredDistance( pt ) == 0 )
+                                {
+                                    insertSegIdx = segIdx;
+                                    insertVertIdx = vertIdx;
+                                    return false;
+                                }
+
+                                return true;
+                            };
+
+                    rtree.Search( bmin, bmax, pinchVisitor );
+                }
+            }
+
+            if( insertSegIdx < 0 )
+                break;
+
+            // Split the polygon at the pinch point into two separate polygons.
+            // Polygon 1: vertices from (insertSegIdx+1) to insertVertIdx
+            // Polygon 2: vertices from insertVertIdx to insertSegIdx
+
+            const int splitStart1 = ( insertSegIdx + 1 ) % count;
+
+            // Calculate sizes for each polygon
+            int size1, size2;
+
+            if( insertVertIdx >= splitStart1 )
+                size1 = insertVertIdx - splitStart1 + 1;
+            else
+                size1 = count - splitStart1 + insertVertIdx + 1;
+
+            if( insertSegIdx >= insertVertIdx )
+                size2 = insertSegIdx - insertVertIdx + 1;
+            else
+                size2 = count - insertVertIdx + insertSegIdx + 1;
+
+            if( size1 < 3 || size2 < 3 )
+                break;
+
+            SHAPE_LINE_CHAIN poly1;
+            SHAPE_LINE_CHAIN poly2;
+            poly1.ReservePoints( size1 );
+            poly2.ReservePoints( size2 );
+
+            int idx = splitStart1;
+
+            for( int i = 0; i < size1; ++i )
+            {
+                poly1.Append( outline.CPoint( idx ) );
+                idx = ( idx + 1 ) % count;
+            }
+
+            poly1.SetClosed( true );
+
+            idx = insertVertIdx;
+
+            for( int i = 0; i < size2; ++i )
+            {
+                poly2.Append( outline.CPoint( idx ) );
+                idx = ( idx + 1 ) % count;
+            }
+
+            poly2.SetClosed( true );
+
+            m_polys[polyIdx][0] = std::move( poly1 );
+
+            POLYGON np;
+            np.push_back( std::move( poly2 ) );
+            m_polys.push_back( std::move( np ) );
+
+            changed = true;
+        }
+    }
+}
+
+
 void SHAPE_POLY_SET::Simplify()
 {
+    splitCollinearOutlines();
+
     SHAPE_POLY_SET empty;
 
     booleanOp( Clipper2Lib::ClipType::Union, empty );
@@ -2138,7 +2463,7 @@ bool SHAPE_POLY_SET::Collide( const SHAPE* aShape, int aClearance, int* aActual,
         return false;
     }
 
-    const_cast<SHAPE_POLY_SET*>( this )->CacheTriangulation( false );
+    const_cast<SHAPE_POLY_SET*>( this )->CacheTriangulation();
 
     int      actual = INT_MAX;
     VECTOR2I location;
@@ -2187,6 +2512,8 @@ bool SHAPE_POLY_SET::Collide( const SHAPE* aShape, int aClearance, int* aActual,
 void SHAPE_POLY_SET::RemoveAllContours()
 {
     m_polys.clear();
+    m_triangulatedPolys.clear();
+    m_triangulationValid = false;
 }
 
 
@@ -2730,7 +3057,7 @@ SHAPE_POLY_SET &SHAPE_POLY_SET::operator=( const SHAPE_POLY_SET& aOther )
         }
 
         m_hash = aOther.m_hash;
-        m_hashValid = aOther.m_hashValid;
+        m_hashValid.store( aOther.m_hashValid.load() );
         m_triangulationValid = aOther.m_triangulationValid.load();
     }
     else
@@ -2739,6 +3066,9 @@ SHAPE_POLY_SET &SHAPE_POLY_SET::operator=( const SHAPE_POLY_SET& aOther )
         m_hashValid = false;
         m_triangulationValid = false;
     }
+
+    m_failedHash = aOther.m_failedHash;
+    m_failedHashValid.store( aOther.m_failedHashValid.load() );
 
     return *this;
 }
@@ -2767,94 +3097,32 @@ bool SHAPE_POLY_SET::IsTriangulationUpToDate() const
 }
 
 
-static SHAPE_POLY_SET partitionPolyIntoRegularCellGrid( const SHAPE_POLY_SET& aPoly, int aSize )
+void SHAPE_POLY_SET::cacheTriangulation( bool aSimplify,
+                                         std::vector<std::unique_ptr<TRIANGULATED_POLYGON>>* aHintData,
+                                         const TASK_SUBMITTER& aSubmitter )
 {
-    BOX2I bb = aPoly.BBox();
+    // if( m_triangulationValid && m_hashValid && m_hash == checksum() )
+    //     return;
+    // if( m_failedHashValid && m_failedHash == checksum() )
+    //     return;
 
-    double w = bb.GetWidth();
-    double h = bb.GetHeight();
-
-    if( w == 0.0 || h == 0.0 )
-        return aPoly;
-
-    int n_cells_x, n_cells_y;
-
-    if( w > h )
-    {
-        n_cells_x = w / aSize;
-        n_cells_y = floor( h / w * n_cells_x ) + 1;
-    }
-    else
-    {
-        n_cells_y = h / aSize;
-        n_cells_x = floor( w / h * n_cells_y ) + 1;
-    }
-
-    SHAPE_POLY_SET ps1( aPoly ), ps2( aPoly ), maskSetOdd, maskSetEven;
-
-    for( int yy = 0; yy < n_cells_y; yy++ )
-    {
-        for( int xx = 0; xx < n_cells_x; xx++ )
-        {
-            VECTOR2I p;
-
-            p.x = bb.GetX() + w * xx / n_cells_x;
-            p.y = bb.GetY() + h * yy / n_cells_y;
-
-            VECTOR2I p2;
-
-            p2.x = bb.GetX() + w * ( xx + 1 ) / n_cells_x;
-            p2.y = bb.GetY() + h * ( yy + 1 ) / n_cells_y;
-
-
-            SHAPE_LINE_CHAIN mask;
-            mask.Append( VECTOR2I( p.x, p.y ) );
-            mask.Append( VECTOR2I( p2.x, p.y ) );
-            mask.Append( VECTOR2I( p2.x, p2.y ) );
-            mask.Append( VECTOR2I( p.x, p2.y ) );
-            mask.SetClosed( true );
-
-            if( ( xx ^ yy ) & 1 )
-                maskSetOdd.AddOutline( mask );
-            else
-                maskSetEven.AddOutline( mask );
-        }
-    }
-
-    ps1.BooleanIntersection( maskSetOdd );
-    ps2.BooleanIntersection( maskSetEven );
-    ps1.Fracture();
-    ps2.Fracture();
-
-    for( int i = 0; i < ps2.OutlineCount(); i++ )
-        ps1.AddOutline( ps2.COutline( i ) );
-
-    if( ps1.OutlineCount() )
-        return ps1;
-    else
-        return aPoly;
-}
-
-
-void SHAPE_POLY_SET::cacheTriangulation( bool aPartition, bool aSimplify,
-                                         std::vector<std::unique_ptr<TRIANGULATED_POLYGON>>* aHintData )
-{
     std::unique_lock<std::mutex> lock( m_triangulationMutex );
 
-    if( m_triangulationValid && m_hashValid )
-    {
-        if( m_hash == checksum() )
-            return;
-    }
+    if( m_triangulationValid && m_hashValid && m_hash == checksum() )
+        return;
+    if( m_failedHashValid && m_failedHash == checksum() )
+        return;
 
     // Invalidate, in case anything goes wrong below
     m_triangulationValid = false;
     m_hashValid = false;
+    m_failedHashValid = false;
 
     auto triangulate =
             []( SHAPE_POLY_SET& polySet, int forOutline,
                 std::vector<std::unique_ptr<TRIANGULATED_POLYGON>>& dest,
-                std::vector<std::unique_ptr<TRIANGULATED_POLYGON>>* hintData )
+                std::vector<std::unique_ptr<TRIANGULATED_POLYGON>>* hintData,
+                const TASK_SUBMITTER& taskSubmitter )
             {
                 bool triangulationValid = false;
                 int pass = 0;
@@ -2867,6 +3135,117 @@ void SHAPE_POLY_SET::cacheTriangulation( bool aPartition, bool aSimplify,
                 {
                     if( !dest.empty() && dest.back()->GetTriangleCount() == 0 )
                         dest.erase( dest.end() - 1 );
+
+                    {
+                        const SHAPE_LINE_CHAIN& outline = polySet.Polygon( 0 ).front();
+                        TRIANGULATED_POLYGON    partitionScratch( forOutline );
+                        POLYGON_TRIANGULATION   partitioner( partitionScratch );
+                        size_t                  partitionLeaves = partitioner.suggestedPartitionLeafCount( outline );
+
+                        if( partitionLeaves > 1 )
+                        {
+                            std::vector<SHAPE_LINE_CHAIN> partitions =
+                                    partitioner.partitionPolygonBalanced( outline, partitionLeaves );
+
+                            if( partitions.size() > 1 )
+                            {
+                                polySet.DeletePolygon( 0 );
+
+                                if( taskSubmitter && partitions.size() > 2 )
+                                {
+                                    size_t leafCount = partitions.size();
+
+                                    struct WorkStealState
+                                    {
+                                        std::unique_ptr<std::atomic<bool>[]> claimed;
+                                        std::unique_ptr<std::atomic<bool>[]> done;
+                                        std::unique_ptr<std::atomic<bool>[]> ok;
+
+                                        explicit WorkStealState( size_t n ) :
+                                                claimed( new std::atomic<bool>[n] ),
+                                                done( new std::atomic<bool>[n] ),
+                                                ok( new std::atomic<bool>[n] )
+                                        {
+                                            for( size_t i = 0; i < n; ++i )
+                                            {
+                                                claimed[i].store( false );
+                                                done[i].store( false );
+                                                ok[i].store( false );
+                                            }
+                                        }
+                                    };
+
+                                    auto state = std::make_shared<WorkStealState>( leafCount );
+
+                                    std::vector<std::unique_ptr<TRIANGULATED_POLYGON>> results( leafCount );
+
+                                    for( size_t i = 0; i < leafCount; ++i )
+                                    {
+                                        results[i] = std::make_unique<TRIANGULATED_POLYGON>( forOutline );
+                                    }
+
+                                    for( size_t i = 0; i < leafCount; ++i )
+                                    {
+                                        auto* triPoly = results[i].get();
+                                        auto* leaf = &partitions[i];
+
+                                        taskSubmitter( [state, i, triPoly, leaf]()
+                                            {
+                                                if( state->claimed[i].exchange( true ) )
+                                                    return;
+
+                                                POLYGON_TRIANGULATION tess( *triPoly );
+                                                state->ok[i].store( tess.TesselatePolygon( *leaf, nullptr ) );
+                                                state->done[i].store( true, std::memory_order_release );
+                                            } );
+                                    }
+
+                                    for( size_t i = 0; i < leafCount; ++i )
+                                    {
+                                        if( state->claimed[i].exchange( true ) )
+                                            continue;
+
+                                        POLYGON_TRIANGULATION tess( *results[i] );
+                                        state->ok[i].store( tess.TesselatePolygon( partitions[i], nullptr ) );
+                                        state->done[i].store( true, std::memory_order_release );
+                                    }
+
+                                    for( size_t i = 0; i < leafCount; ++i )
+                                    {
+                                        while( !state->done[i].load( std::memory_order_acquire ) )
+                                        {
+                                            std::this_thread::yield();
+                                        }
+                                    }
+
+                                    bool allOk = true;
+
+                                    for( size_t i = 0; i < leafCount; ++i )
+                                        allOk = allOk && state->ok[i].load();
+
+                                    if( allOk )
+                                    {
+                                        for( auto& r : results )
+                                        {
+                                            if( r->GetTriangleCount() > 0 )
+                                                dest.push_back( std::move( r ) );
+                                        }
+
+                                        triangulationValid = true;
+                                        hintData = nullptr;
+                                        continue;
+                                    }
+
+                                }
+
+                                for( auto it = partitions.rbegin(); it != partitions.rend(); ++it )
+                                    polySet.AddOutline( *it );
+
+                                hintData = nullptr;
+                                continue;
+                            }
+                        }
+                    }
 
                     dest.push_back( std::make_unique<TRIANGULATED_POLYGON>( forOutline ) );
                     POLYGON_TRIANGULATION tess( *dest.back() );
@@ -2904,60 +3283,185 @@ void SHAPE_POLY_SET::cacheTriangulation( bool aPartition, bool aSimplify,
 
     m_triangulatedPolys.clear();
 
-    if( aPartition )
+    const SHAPE_POLY_SET* srcSet = this;
+    SHAPE_POLY_SET        tmpSet;
+
+    if( ArcCount() > 0 || aSimplify )
     {
-        for( int ii = 0; ii < OutlineCount(); ++ii )
+        tmpSet = SHAPE_POLY_SET( *this );
+        tmpSet.ClearArcs();
+
+        if( aSimplify )
+            tmpSet.Simplify();
+
+        srcSet = &tmpSet;
+    }
+
+    bool directOk = true;
+
+    for( int ii = 0; ii < srcSet->OutlineCount() && directOk; ++ii )
+    {
+        const POLYGON& poly = srcSet->CPolygon( ii );
+        size_t         prevCount = m_triangulatedPolys.size();
+
+        if( poly.size() > 1 )
         {
-            // This partitions into regularly-sized grids (1cm in Pcbnew)
-            SHAPE_POLY_SET flattened( Outline( ii ) );
+            m_triangulatedPolys.push_back( std::make_unique<TRIANGULATED_POLYGON>( ii ) );
+            POLYGON_TRIANGULATION tess( *m_triangulatedPolys.back() );
 
-            for( int jj = 0; jj < HoleCount( ii ); ++jj )
-                flattened.AddHole( Hole( ii, jj ) );
+            if( tess.TesselatePolygon( poly, nullptr ) )
+                continue;
 
-            flattened.ClearArcs();
+            // Hole bridging failed; fracture to merge holes into the outline
+            m_triangulatedPolys.resize( prevCount );
 
-            if( flattened.HasHoles() || flattened.IsSelfIntersecting() )
-                flattened.Fracture();
-            else if( aSimplify )
-                flattened.Simplify();
+            SHAPE_POLY_SET flatSet( poly.front() );
 
-            SHAPE_POLY_SET partitions = partitionPolyIntoRegularCellGrid( flattened, 1e7 );
+            for( size_t jj = 1; jj < poly.size(); ++jj )
+                flatSet.AddHole( poly[jj] );
 
-            // This pushes the triangulation for all polys in partitions
-            // to be referenced to the ii-th polygon
-            if( !triangulate( partitions, ii , m_triangulatedPolys, aHintData ) )
+            flatSet.Fracture();
+            flatSet.splitSelfTouchingOutlines();
+
+            if( triangulate( flatSet, ii, m_triangulatedPolys, nullptr, aSubmitter ) )
+                continue;
+
+            m_triangulatedPolys.resize( prevCount );
+            directOk = false;
+            continue;
+        }
+
+        {
+            TRIANGULATED_POLYGON  partScratch( -1 );
+            POLYGON_TRIANGULATION partChecker( partScratch );
+
+            if( partChecker.suggestedPartitionLeafCount( poly.front() ) > 1 )
             {
-                wxLogTrace( TRIANGULATE_TRACE, "Failed to triangulate partitioned polygon %d", ii );
-            }
-            else
-            {
-                m_hash = checksum();
-                m_hashValid = true;
-                // Set valid flag only after everything has been updated
-                m_triangulationValid = true;
+                SHAPE_POLY_SET partSet;
+                partSet.AddOutline( poly.front() );
+
+                if( triangulate( partSet, ii, m_triangulatedPolys, nullptr, aSubmitter ) )
+                {
+                    continue;
+                }
+
+                m_triangulatedPolys.resize( prevCount );
             }
         }
+
+        m_triangulatedPolys.push_back( std::make_unique<TRIANGULATED_POLYGON>( ii ) );
+        POLYGON_TRIANGULATION tess( *m_triangulatedPolys.back() );
+
+        bool ok = tess.TesselatePolygon( poly.front(), nullptr );
+
+        // Self-touching outlines produce overlapping triangles; detect via area coverage
+        if( ok )
+        {
+            double originalArea = std::abs( poly.front().Area() );
+
+            if( originalArea > 0.0 )
+            {
+                double triArea = 0.0;
+
+                for( const auto& tri : m_triangulatedPolys.back()->Triangles() )
+                    triArea += std::abs( tri.Area() );
+
+                double coverage = triArea / originalArea;
+
+                if( coverage > 1.01 || coverage < 0.99 )
+                    ok = false;
+            }
+        }
+
+        if( !ok )
+        {
+            m_triangulatedPolys.resize( prevCount );
+
+            SHAPE_POLY_SET splitSet;
+            splitSet.AddOutline( poly[0] );
+            splitSet.splitSelfTouchingOutlines();
+
+            bool splitOk = true;
+
+            for( int jj = 0; jj < splitSet.OutlineCount() && splitOk; ++jj )
+            {
+                m_triangulatedPolys.push_back( std::make_unique<TRIANGULATED_POLYGON>( ii ) );
+                POLYGON_TRIANGULATION splitTess( *m_triangulatedPolys.back() );
+                splitOk = splitTess.TesselatePolygon( splitSet.CPolygon( jj ).front(), nullptr );
+            }
+
+            if( !splitOk )
+                directOk = false;
+        }
+    }
+
+    if( !m_triangulatedPolys.empty() && m_triangulatedPolys.back()->GetTriangleCount() == 0 )
+        m_triangulatedPolys.pop_back();
+
+    if( directOk && !m_triangulatedPolys.empty() )
+    {
+        m_hash = checksum();
+        m_hashValid = true;
+        m_triangulationValid = true;
     }
     else
     {
-        SHAPE_POLY_SET tmpSet( *this );
+        // Fracture each outline individually to preserve source outline indices
+        m_triangulatedPolys.clear();
+        bool fallbackOk = true;
 
-        tmpSet.ClearArcs();
-        tmpSet.Fracture();
-
-        if( !triangulate( tmpSet, -1, m_triangulatedPolys, aHintData ) )
+        for( int ii = 0; ii < srcSet->OutlineCount() && fallbackOk; ++ii )
         {
-            wxLogTrace( TRIANGULATE_TRACE, "Failed to triangulate polygon" );
+            const POLYGON& poly = srcSet->CPolygon( ii );
+            SHAPE_POLY_SET flatSet( poly.front() );
+
+            for( size_t jj = 1; jj < poly.size(); ++jj )
+                flatSet.AddHole( poly[jj] );
+
+            flatSet.ClearArcs();
+            flatSet.Fracture();
+            flatSet.splitSelfTouchingOutlines();
+
+            if( !triangulate( flatSet, ii, m_triangulatedPolys, nullptr, aSubmitter ) )
+                fallbackOk = false;
+        }
+
+        if( !fallbackOk )
+        {
+            // Last resort: flatten everything together (loses outline indices)
+            m_triangulatedPolys.clear();
+            SHAPE_POLY_SET fallbackSet( *this );
+            fallbackSet.ClearArcs();
+            fallbackSet.Fracture();
+            fallbackSet.splitSelfTouchingOutlines();
+
+            if( !triangulate( fallbackSet, -1, m_triangulatedPolys, aHintData, aSubmitter ) )
+            {
+                wxLogTrace( TRIANGULATE_TRACE, "Failed to triangulate polygon" );
+            }
+            else
+            {
+                m_triangulationValid = true;
+            }
         }
         else
         {
+            m_triangulationValid = true;
+        }
+
+        if( m_triangulationValid )
+        {
             m_hash = checksum();
             m_hashValid = true;
-            // Set valid flag only after everything has been updated
-            m_triangulationValid = true;
+        }
+        else
+        {
+            m_failedHash = checksum();
+            m_failedHashValid = true;
         }
     }
 }
+
 
 
 HASH_128 SHAPE_POLY_SET::checksum() const
@@ -3104,6 +3608,30 @@ SHAPE_POLY_SET::TRIANGULATED_POLYGON::~TRIANGULATED_POLYGON()
 }
 
 
+void SHAPE_POLY_SET::Scale( double aScaleFactorX, double aScaleFactorY, const VECTOR2I& aCenter )
+{
+    for( POLYGON& poly : m_polys )
+    {
+        for( SHAPE_LINE_CHAIN& path : poly )
+        {
+            for( int i = 0; i < path.PointCount(); i++ )
+            {
+                VECTOR2I pt = path.CPoint( i );
+                VECTOR2D vec;
+                vec.x = ( pt.x - aCenter.x ) * aScaleFactorX;
+                vec.y = ( pt.y - aCenter.y ) * aScaleFactorY;
+                pt.x = KiROUND<double, int>( aCenter.x + vec.x );
+                pt.y = KiROUND<double, int>( aCenter.y + vec.y );
+                path.SetPoint( i, pt );
+            }
+        }
+    }
+
+    if( m_triangulationValid )
+        CacheTriangulation();
+}
+
+
 void
 SHAPE_POLY_SET::BuildPolysetFromOrientedPaths( const std::vector<SHAPE_LINE_CHAIN>& aPaths,
                                                bool                                 aEvenOdd )
@@ -3151,6 +3679,9 @@ const std::vector<SEG> SHAPE_POLY_SET::GenerateHatchLines( const std::vector<dou
                                                            int aSpacing, int aLineLength ) const
 {
     std::vector<SEG> hatchLines;
+
+    if( OutlineCount() == 0 || TotalVertices() == 0 )
+        return hatchLines;
 
     // define range for hatch lines
     int min_x = CVertex( 0 ).x;
@@ -3208,10 +3739,17 @@ const std::vector<SEG> SHAPE_POLY_SET::GenerateHatchLines( const std::vector<dou
             for( auto iterator = CIterateSegmentsWithHoles(); iterator; iterator++ )
             {
                 const SEG seg = *iterator;
-                double    x, y;
+                VECTOR2I  pt;
 
-                if( FindLineSegmentIntersection( a, slope, seg.A.x, seg.A.y, seg.B.x, seg.B.y, x, y ) )
-                    pointbuffer.emplace_back( KiROUND( x ), KiROUND( y ) );
+                if( seg.IntersectsLine( slope, a, pt ) )
+                {
+                    // If the intersection point is outside the polygon, skip it
+                    if( pt.x < min_x || pt.x > max_x || pt.y < min_y || pt.y > max_y )
+                        continue;
+
+                    // Add the intersection point to the buffer
+                    pointbuffer.emplace_back( KiROUND( pt.x ), KiROUND( pt.y ) );
+                }
             }
 
             // sort points in order of descending x (if more than 2) to
@@ -3221,35 +3759,49 @@ const std::vector<SEG> SHAPE_POLY_SET::GenerateHatchLines( const std::vector<dou
                 sort( pointbuffer.begin(), pointbuffer.end(), sortEndsByDescendingX );
 
             // creates lines or short segments inside the complex polygon
-            for( size_t ip = 0; ip + 1 < pointbuffer.size(); ip += 2 )
+            for( size_t ip = 0; ip + 1 < pointbuffer.size(); ip++ )
             {
-                int dx = pointbuffer[ip + 1].x - pointbuffer[ip].x;
+                const VECTOR2I& p1 = pointbuffer[ip];
+                const VECTOR2I& p2 = pointbuffer[ip + 1];
 
-                // Push only one line for diagonal hatch or for small lines < twice the line
-                // length; else push 2 small lines
-                if( aLineLength == -1 || std::abs( dx ) < 2 * aLineLength )
-                {
-                    hatchLines.emplace_back( SEG( pointbuffer[ip], pointbuffer[ ip + 1] ) );
-                }
-                else
-                {
-                    double dy = pointbuffer[ip + 1].y - pointbuffer[ip].y;
-                    slope = dy / dx;
+                // Avoid duplicated intersections or segments
+                if( p1 == p2 )
+                    continue;
 
-                    if( dx > 0 )
-                        dx = aLineLength;
+                SEG candidate( p1, p2 );
+
+                VECTOR2I mid( ( candidate.A.x + candidate.B.x ) / 2, ( candidate.A.y + candidate.B.y ) / 2 );
+
+                // Check if segment is inside the polygon by checking its middle point
+                if( Contains( mid, -1, 1, true ) )
+                {
+                    int dx = p2.x - p1.x;
+
+                    // Push only one line for diagonal hatch or for small lines < twice
+                    // the line length; else push 2 small lines
+                    if( aLineLength == -1 || std::abs( dx ) < 2 * aLineLength )
+                    {
+                        hatchLines.emplace_back( candidate );
+                    }
                     else
-                        dx = -aLineLength;
+                    {
+                        double dy = p2.y - p1.y;
+                        slope = dy / dx;
 
-                    int x1 = KiROUND( pointbuffer[ip].x + dx );
-                    int x2 = KiROUND( pointbuffer[ip + 1].x - dx );
-                    int y1 = KiROUND( pointbuffer[ip].y + dx * slope );
-                    int y2 = KiROUND( pointbuffer[ip + 1].y - dx * slope );
+                        if( dx > 0 )
+                            dx = aLineLength;
+                        else
+                            dx = -aLineLength;
 
-                    hatchLines.emplace_back( SEG( pointbuffer[ip].x, pointbuffer[ip].y, x1, y1 ) );
+                        int x1 = KiROUND( p1.x + dx );
+                        int x2 = KiROUND( p2.x - dx );
+                        int y1 = KiROUND( p1.y + dx * slope );
+                        int y2 = KiROUND( p2.y - dx * slope );
 
-                    hatchLines.emplace_back( SEG( pointbuffer[ip+1].x, pointbuffer[ip+1].y, x2,
-                                                  y2 ) );
+                        hatchLines.emplace_back( SEG( p1.x, p1.y, x1, y1 ) );
+
+                        hatchLines.emplace_back( SEG( p2.x, p2.y, x2, y2 ) );
+                    }
                 }
             }
         }

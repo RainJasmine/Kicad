@@ -109,17 +109,24 @@ private:
     VECTOR2I estimateFootprintInsertionPosition();
 
     FOOTPRINT* addNewFootprint( COMPONENT* aComponent );
+    FOOTPRINT* addNewFootprint( COMPONENT* aComponent, const LIB_ID& aFootprintId );
 
     FOOTPRINT* replaceFootprint( NETLIST& aNetlist, FOOTPRINT* aFootprint,
                                  COMPONENT* aNewComponent );
 
-    bool updateFootprintParameters( FOOTPRINT* aPcbFootprint, COMPONENT* aNetlistComponent );
+    bool updateFootprintParameters( FOOTPRINT* aFootprint, COMPONENT* aNetlistComponent );
 
     bool updateFootprintGroup( FOOTPRINT* aPcbFootprint, COMPONENT* aNetlistComponent );
 
     bool updateComponentPadConnections( FOOTPRINT* aFootprint, COMPONENT* aNewComponent );
 
-    void updateComponentClass( FOOTPRINT* aFootprint, COMPONENT* aNewComponent );
+    bool updateComponentClass( FOOTPRINT* aFootprint, COMPONENT* aNewComponent );
+
+    bool updateComponentUnits( FOOTPRINT* aFootprint, COMPONENT* aNewComponent );
+
+    void applyComponentVariants( COMPONENT* aComponent,
+                                 const std::vector<FOOTPRINT*>& aFootprints,
+                                 const LIB_ID& aBaseFpid );
 
     void cacheCopperZoneConnections();
 
@@ -140,6 +147,7 @@ private:
     std::map<PAD*, wxString>           m_padPinFunctions;
     std::vector<FOOTPRINT*>            m_addedFootprints;
     std::map<wxString, NETINFO_ITEM*>  m_addedNets;
+    std::set<wxString>                 m_schematicNetNames;
 
     bool m_deleteUnusedFootprints;
     bool m_isDryRun;

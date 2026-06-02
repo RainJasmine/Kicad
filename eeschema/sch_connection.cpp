@@ -248,6 +248,8 @@ void SCH_CONNECTION::Clone( const SCH_CONNECTION& aOther )
 
     // Note: m_local_sheet is not cloned
     m_name   = aOther.m_name;
+
+    CONNECTION_TYPE origType = m_type;
     m_type   = aOther.m_type;
 
     // Note: m_local_name is not cloned if not set yet
@@ -274,11 +276,26 @@ void SCH_CONNECTION::Clone( const SCH_CONNECTION& aOther )
     // Handle vector bus members: make sure local names are preserved where possible
     const std::vector<std::shared_ptr<SCH_CONNECTION>>& otherMembers = aOther.Members();
 
-    if( m_type == CONNECTION_TYPE::BUS && aOther.Type() == CONNECTION_TYPE::BUS )
+    auto cloneMember =
+        [&]( const SCH_CONNECTION& aSrc ) -> std::shared_ptr<SCH_CONNECTION>
+        {
+            auto copy = std::make_shared<SCH_CONNECTION>( m_parent, m_sheet );
+            copy->SetGraph( m_graph );
+            copy->Clone( aSrc );
+
+            copy->m_vector_index = aSrc.m_vector_index;
+
+            return copy;
+        };
+
+    if( origType == CONNECTION_TYPE::BUS && aOther.Type() == CONNECTION_TYPE::BUS )
     {
         if( m_members.empty() )
         {
-            m_members = otherMembers;
+            m_members.reserve( otherMembers.size() );
+
+            for( const std::shared_ptr<SCH_CONNECTION>& src : otherMembers )
+                m_members.push_back( cloneMember( *src ) );
         }
         else
         {
@@ -288,11 +305,14 @@ void SCH_CONNECTION::Clone( const SCH_CONNECTION& aOther )
                 m_members[i]->Clone( *otherMembers[i] );
         }
     }
-    else if( m_type == CONNECTION_TYPE::BUS_GROUP && aOther.Type() == CONNECTION_TYPE::BUS_GROUP )
+    else if( origType == CONNECTION_TYPE::BUS_GROUP && aOther.Type() == CONNECTION_TYPE::BUS_GROUP )
     {
         if( m_members.empty() )
         {
-            m_members = otherMembers;
+            m_members.reserve( otherMembers.size() );
+
+            for( const std::shared_ptr<SCH_CONNECTION>& src : otherMembers )
+                m_members.push_back( cloneMember( *src ) );
         }
         else
         {
@@ -309,6 +329,14 @@ void SCH_CONNECTION::Clone( const SCH_CONNECTION& aOther )
                     member->Clone( **it );
             }
         }
+    }
+    else if( aOther.IsBus() )
+    {
+        m_members.clear();
+        m_members.reserve( otherMembers.size() );
+
+        for( const std::shared_ptr<SCH_CONNECTION>& src : otherMembers )
+            m_members.push_back( cloneMember( *src ) );
     }
 
     m_type = aOther.Type();
@@ -416,8 +444,12 @@ void SCH_CONNECTION::recacheName()
         }
     }
 
-    m_cached_name_with_path = prepend_path ? m_sheet.PathHumanReadable() << m_cached_name
-                                           : m_cached_name;
+    // Use aEscapeSheetNames=true so that sheets with '/' in their names have the slash
+    // escaped to "{slash}". This ensures pattern matching for net classes works correctly
+    // since '/' is used as the hierarchy separator.
+    m_cached_name_with_path = prepend_path
+            ? m_sheet.PathHumanReadable( true, false, true ) << m_cached_name
+            : m_cached_name;
 }
 
 
@@ -450,19 +482,22 @@ void SCH_CONNECTION::AppendInfoToMsgPanel( std::vector<MSG_PANEL_ITEM>& aList ) 
 
     aList.emplace_back( _( "Connection Name" ), UnescapeString( Name() ) );
 
-    if( std::shared_ptr<BUS_ALIAS> alias = m_graph->GetBusAlias( m_name ) )
+    if( IsBus() )
     {
-        msg.Printf( _( "Bus Alias %s Members" ), m_name );
-        aList.emplace_back( msg, boost::algorithm::join( alias->Members(), " " ) );
-    }
-    else if( NET_SETTINGS::ParseBusGroup( m_name, &group_name, &group_members ) )
-    {
-        for( const wxString& group_member : group_members )
+        if( std::shared_ptr<BUS_ALIAS> alias = m_graph->GetBusAlias( m_name ) )
         {
-            if( std::shared_ptr<BUS_ALIAS> group_alias = m_graph->GetBusAlias( group_member ) )
+            msg.Printf( _( "Bus Alias %s Members" ), m_name );
+            aList.emplace_back( msg, boost::algorithm::join( alias->Members(), " " ) );
+        }
+        else if( NET_SETTINGS::ParseBusGroup( m_name, &group_name, &group_members ) )
+        {
+            for( const wxString& group_member : group_members )
             {
-                msg.Printf( _( "Bus Alias %s Members" ), group_alias->GetName() );
-                aList.emplace_back( msg, boost::algorithm::join( group_alias->Members(), " " ) );
+                if( std::shared_ptr<BUS_ALIAS> group_alias = m_graph->GetBusAlias( group_member ) )
+                {
+                    msg.Printf( _( "Bus Alias %s Members" ), group_alias->GetName() );
+                    aList.emplace_back( msg, boost::algorithm::join( group_alias->Members(), " " ) );
+                }
             }
         }
     }
@@ -538,11 +573,20 @@ wxString SCH_CONNECTION::PrintBusForUI( const wxString& aGroup )
     {
         if( isSuperSubOverbar( aGroup[i] ) && i + 1 < groupLen && aGroup[i+1] == '{' )
         {
+            ret += aGroup[i];
             i++;
             continue;
         }
         else if( aGroup[i] == '}' )
         {
+            continue;
+        }
+
+        // Handle backslash-escaped spaces (display without the backslash)
+        if( aGroup[i] == '\\' && i + 1 < groupLen && aGroup[i + 1] == ' ' )
+        {
+            ret += ' ';
+            i++;
             continue;
         }
 
@@ -560,11 +604,20 @@ wxString SCH_CONNECTION::PrintBusForUI( const wxString& aGroup )
     {
         if( isSuperSubOverbar( aGroup[i] ) && i + 1 < groupLen && aGroup[i+1] == '{' )
         {
+            ret += aGroup[i];
             i++;
             continue;
         }
         else if( aGroup[i] == '}' )
         {
+            continue;
+        }
+
+        // Handle backslash-escaped spaces (display without the backslash)
+        if( aGroup[i] == '\\' && i + 1 < groupLen && aGroup[i + 1] == ' ' )
+        {
+            ret += ' ';
+            i++;
             continue;
         }
 
@@ -583,13 +636,37 @@ bool SCH_CONNECTION::IsSubsetOf( SCH_CONNECTION* aOther ) const
     if( !aOther->IsBus() )
         return false;
 
-    for( const std::shared_ptr<SCH_CONNECTION>& member : aOther->Members() )
+    if( !IsBus() )
     {
-        if( member->FullLocalName() == FullLocalName() )
-            return true;
+        for( const std::shared_ptr<SCH_CONNECTION>& otherMember : aOther->Members() )
+        {
+            if( FullLocalName() == otherMember->FullLocalName() )
+                return true;
+        }
+
+        return false;
     }
 
-    return false;
+    // If both connections are buses, check if all members of this bus are in the other bus
+    for( const std::shared_ptr<SCH_CONNECTION>& member : m_members )
+    {
+        bool found = false;
+
+        for( const std::shared_ptr<SCH_CONNECTION>& otherMember : aOther->Members() )
+        {
+            if( member->FullLocalName() == otherMember->FullLocalName() )
+            {
+                found = true;
+                break;
+            }
+        }
+
+        // If one of the members is not found in the other connection, this is not a subset
+        if( !found )
+            return false;
+    }
+
+    return true;
 }
 
 

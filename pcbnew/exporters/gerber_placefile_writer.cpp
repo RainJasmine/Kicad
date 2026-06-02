@@ -49,7 +49,8 @@ PLACEFILE_GERBER_WRITER::PLACEFILE_GERBER_WRITER( BOARD* aPcb )
 
 
 int PLACEFILE_GERBER_WRITER::CreatePlaceFile( const wxString& aFullFilename, PCB_LAYER_ID aLayer,
-                                              bool aIncludeBrdEdges, bool aExcludeDNP )
+                                              bool aIncludeBrdEdges, bool aExcludeDNP,
+                                              bool aExcludeBOM )
 {
     m_layer = aLayer;
 
@@ -63,10 +64,13 @@ int PLACEFILE_GERBER_WRITER::CreatePlaceFile( const wxString& aFullFilename, PCB
 
     for( FOOTPRINT* footprint : m_pcb->Footprints() )
     {
-        if( footprint->GetAttributes() & FP_EXCLUDE_FROM_POS_FILES )
+        if( footprint->GetExcludedFromPosFilesForVariant( m_variant ) )
              continue;
 
-        if( aExcludeDNP && ( footprint->GetAttributes() & FP_DNP ) )
+        if( aExcludeDNP && footprint->GetDNPForVariant( m_variant ) )
+            continue;
+
+        if( aExcludeBOM && footprint->GetExcludedFromBOMForVariant( m_variant ) )
             continue;
 
         if( footprint->GetLayer() == aLayer )
@@ -162,8 +166,10 @@ int PLACEFILE_GERBER_WRITER::CreatePlaceFile( const wxString& aFullFilename, PCB
             pnpAttrib.m_MountType = GBR_CMP_PNP_METADATA::MOUNT_TYPE_SMD;
 
         // Add component value info:
-        pnpAttrib.m_Value = ConvertNotAllowedCharsInGerber( footprint->Value().GetShownText( false ),
-                                                            allowUtf8, quoteOption );
+        wxString fpValue = UnescapeString(
+                footprint->GetFieldValueForVariant( m_variant,
+                                                    GetCanonicalFieldName( FIELD_T::VALUE ) ) );
+        pnpAttrib.m_Value = ConvertNotAllowedCharsInGerber( fpValue, allowUtf8, quoteOption );
 
         // Add component footprint info:
         wxString fp_info = From_UTF8( footprint->GetFPID().GetLibItemName().c_str() );

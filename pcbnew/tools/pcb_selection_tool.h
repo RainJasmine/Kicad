@@ -34,6 +34,7 @@
 #include <tool/actions.h>
 #include <math/vector2d.h>
 #include <project/board_project_settings.h>
+#include <preview_items/selection_area.h>
 #include <tool/action_menu.h>
 #include <tool/selection_tool.h>
 #include <tool/tool_menu.h>
@@ -96,11 +97,8 @@ public:
      * If the set is empty, performs the legacy-style hover selection.
      *
      * @param aClientFilter A callback to allow tool- or action-specific filtering.
-     * @param aConfirmLockedItems [optional] Signals that the user shall be asked if they want
-     *                            to drop locked items from the selection or override the locks.
      */
-    PCB_SELECTION& RequestSelection( CLIENT_SELECTION_FILTER aClientFilter,
-                                     bool aConfirmLockedItems = false );
+    PCB_SELECTION& RequestSelection( CLIENT_SELECTION_FILTER aClientFilter );
 
     ///< Select a single item under cursor event handler.
     int CursorSelection( const TOOL_EVENT& aEvent );
@@ -118,6 +116,31 @@ public:
 
     ///< Unselect all items on the board
     int UnselectAll( const TOOL_EVENT& aEvent );
+
+    ///< Change the selection mode
+    int SetSelectRect( const TOOL_EVENT& aEvent );
+    int SetSelectPoly( const TOOL_EVENT& aEvent );
+
+    /**
+     * Handles drawing a selection box that allows multiple items to be selected simultaneously.
+     *
+     * @return true if the operation was canceled (i.e. a CancelEvent was received).
+     */
+    int SelectRectArea( const TOOL_EVENT& aEvent );
+
+    /**
+     * Handles drawing a lasso selection area that allows multiple items to be selected
+     * simultaneously.
+     *
+     * @return true if the operation was canceled (i.e. a CancelEvent was received).
+     */
+    int SelectPolyArea( const TOOL_EVENT& aEvent );
+
+    /**
+     * Selects multiple PCB items within a specified area.
+     */
+    void SelectMultiple( KIGFX::PREVIEW::SELECTION_AREA& aArea, bool aSubtractive = false,
+                         bool aExclusiveOr = false );
 
     /**
      * Take necessary actions to mark an item as found.
@@ -197,6 +220,18 @@ public:
     PCB_LAYER_ID GetActiveLayer() { return m_frame->GetActiveLayer(); }
 
     /**
+     * In the PCB editor strip out any locked items unless the OverrideLocks checkbox is set.
+     */
+    void FilterCollectorForLockedItems( GENERAL_COLLECTOR& aCollector );
+
+    /**
+     * If the most recent FilterCollectorForLockedItems call removed at least one item,
+     * show an InfoBar warning prompting the user to enable Override Locks.  No-op
+     * otherwise.
+     */
+    void ReportFilteredLockedItems();
+
+    /**
      * In general we don't want to select both a parent and any of it's children.  This includes
      * both footprints and their items, and groups and their members.
      */
@@ -222,7 +257,8 @@ public:
     /**
      * Apply the SELECTION_FITLER_OPTIONS to the collector.
      */
-    void FilterCollectedItems( GENERAL_COLLECTOR& aCollector, bool aMultiSelect );
+    void FilterCollectedItems( GENERAL_COLLECTOR& aCollector, bool aMultiSelect,
+                               PCB_SELECTION_FILTER_OPTIONS* aRejected = nullptr );
 
     /**
      * Drop footprints that are not directly selected
@@ -294,13 +330,6 @@ private:
      */
     bool selectCursor( bool aForceSelect = false,
                        CLIENT_SELECTION_FILTER aClientFilter = nullptr );
-
-    /**
-     * Handle drawing a selection box that allows one to select many items at the same time.
-     *
-     * @return true if the function was canceled (i.e. CancelEvent was received).
-     */
-    bool selectMultiple();
 
     bool selectTableCells( PCB_TABLE* aTable );
 
@@ -405,7 +434,8 @@ private:
     int filterSelection( const TOOL_EVENT& aEvent );
 
     ///< Return true if the given item passes the current SELECTION_FILTER_OPTIONS.
-    bool itemPassesFilter( BOARD_ITEM* aItem, bool aMultiSelect );
+    bool itemPassesFilter( BOARD_ITEM* aItem, bool aMultiSelect,
+                           PCB_SELECTION_FILTER_OPTIONS* aRejected = nullptr );
 
     /**
      * Take necessary action mark an item as unselected.
@@ -469,6 +499,10 @@ private:
     PCB_GROUP*               m_enteredGroup;         // If non-null, selections are limited to
                                                      // members of this group
     KIGFX::VIEW_GROUP        m_enteredGroupOverlay;  // Overlay for the entered group's frame.
+
+    SELECTION_MODE           m_selectionMode;        // Current selection mode
+
+    bool                     m_lockedItemsFiltered;
 
     /// Private state (opaque pointer/compilation firewall)
     class PRIV;

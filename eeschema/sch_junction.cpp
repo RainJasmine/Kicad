@@ -29,6 +29,7 @@
 #include <bitmaps.h>
 #include <core/mirror.h>
 #include <geometry/shape_rect.h>
+#include <geometry/geometry_utils.h>
 #include <sch_painter.h>
 #include <sch_junction.h>
 #include <sch_edit_frame.h>
@@ -37,6 +38,10 @@
 #include <settings/color_settings.h>
 #include <connection_graph.h>
 #include <string_utils.h>
+#include <api/api_utils.h>
+#include <api/schematic/schematic_types.pb.h>
+#include <properties/property.h>
+#include <properties/property_mgr.h>
 
 
 SCH_JUNCTION::SCH_JUNCTION( const VECTOR2I& aPosition, int aDiameter, SCH_LAYER_ID aLayer ) :
@@ -55,6 +60,49 @@ SCH_JUNCTION::SCH_JUNCTION( const VECTOR2I& aPosition, int aDiameter, SCH_LAYER_
 EDA_ITEM* SCH_JUNCTION::Clone() const
 {
     return new SCH_JUNCTION( *this );
+}
+
+
+void SCH_JUNCTION::Serialize( google::protobuf::Any& aContainer ) const
+{
+    using namespace kiapi::common;
+
+    kiapi::schematic::types::Junction junction;
+
+    junction.mutable_id()->set_value( m_Uuid.AsStdString() );
+    PackVector2( *junction.mutable_position(), m_pos, schIUScale );
+    PackDistance( *junction.mutable_diameter(), m_diameter, schIUScale );
+
+    if( m_color != COLOR4D::UNSPECIFIED )
+        PackColor( *junction.mutable_color(), m_color );
+
+    junction.set_locked( IsLocked() ? types::LockedState::LS_LOCKED
+                                    : types::LockedState::LS_UNLOCKED );
+
+    aContainer.PackFrom( junction );
+}
+
+
+bool SCH_JUNCTION::Deserialize( const google::protobuf::Any& aContainer )
+{
+    using namespace kiapi::common;
+
+    kiapi::schematic::types::Junction junction;
+
+    if( !aContainer.UnpackTo( &junction ) )
+        return false;
+
+    const_cast<KIID&>( m_Uuid ) = KIID( junction.id().value() );
+    m_pos = UnpackVector2( junction.position(), schIUScale );
+    m_diameter = UnpackDistance( junction.diameter(), schIUScale );
+
+    if( junction.has_color() )
+        m_color = UnpackColor( junction.color() );
+    else
+        m_color = COLOR4D::UNSPECIFIED;
+
+    SetLocked( junction.locked() == types::LockedState::LS_LOCKED );
+    return true;
 }
 
 
@@ -81,7 +129,7 @@ SHAPE_CIRCLE SCH_JUNCTION::getEffectiveShape() const
     if( m_diameter != 0 )
         m_lastResolvedDiameter = m_diameter;
     else if( Schematic() )
-        m_lastResolvedDiameter = Schematic()->Settings().m_JunctionSize;
+        m_lastResolvedDiameter = Schematic()->Settings().GetJunctionSize();
     else
         m_lastResolvedDiameter = schIUScale.MilsToIU( DEFAULT_JUNCTION_DIAM );
 
@@ -213,6 +261,15 @@ bool SCH_JUNCTION::HitTest( const BOX2I& aRect, bool aContained, int aAccuracy )
 }
 
 
+bool SCH_JUNCTION::HitTest( const SHAPE_LINE_CHAIN& aPoly, bool aContained ) const
+{
+    if( m_flags & STRUCT_DELETED || m_flags & SKIP_STRUCT )
+        return false;
+
+    return KIGEOM::ShapeHitTest( aPoly, getEffectiveShape(), aContained );
+}
+
+
 bool SCH_JUNCTION::HasConnectivityChanges( const SCH_ITEM* aItem,
                                            const SCH_SHEET_PATH* aInstance ) const
 {
@@ -246,6 +303,9 @@ void SCH_JUNCTION::Plot( PLOTTER* aPlotter, bool aBackground, const SCH_PLOT_OPT
 
     if( color == COLOR4D::UNSPECIFIED )
         color = settings->GetLayerColor( GetLayer() );
+
+    if( color.m_text && Schematic() )
+        color = COLOR4D( ResolveText( *color.m_text, &Schematic()->CurrentSheet() ) );
 
     aPlotter->SetColor( color );
 

@@ -25,39 +25,31 @@
 #include <string_utils.h>
 #include <wx/crt.h>
 
-#include <locale_io.h>
-
 
 CLI::PCB_EXPORT_GENCAD_COMMAND::PCB_EXPORT_GENCAD_COMMAND() :
-        PCB_EXPORT_BASE_COMMAND( "gencad", false, true )
+        PCB_EXPORT_BASE_COMMAND( "gencad", IO_TYPE::FILE, IO_TYPE::DIRECTORY )
 {
     m_argParser.add_description( UTF8STDSTR( _( "Export the PCB in Gencad format" ) ) );
 
     addDefineArg();
 
     m_argParser.add_argument( "-f", ARG_FLIP_BOTTOM_PADS )
-            .default_value( false )
             .help( UTF8STDSTR( _( "Flip bottom footprint padstacks" ) ) )
             .flag();
 
     m_argParser.add_argument( "", ARG_UNIQUE_PINS )
-            .default_value( false )
             .help( UTF8STDSTR( _( "Generate unique pin names" ) ) )
             .flag();
 
     m_argParser.add_argument( "", ARG_UNIQUE_FOOTPRINTS )
-            .default_value( false )
-            .help( UTF8STDSTR( _(
-                    "Generate a new shape for each footprint instance (do not reuse shapes)" ) ) )
+            .help( UTF8STDSTR( _( "Generate a new shape for each footprint instance (do not reuse shapes)" ) ) )
             .flag();
 
     m_argParser.add_argument( "", ARG_USE_DRILL_ORIGIN )
-            .default_value( false )
             .help( UTF8STDSTR( _( "Use drill/place file origin as origin" ) ) )
             .flag();
 
     m_argParser.add_argument( "", ARG_STORE_ORIGIN_COORD )
-            .default_value( false )
             .help( UTF8STDSTR( _( "Save the origin coordinates in the file" ) ) )
             .flag();
 }
@@ -83,6 +75,5 @@ int CLI::PCB_EXPORT_GENCAD_COMMAND::doPerform( KIWAY& aKiway )
         return EXIT_CODES::ERR_INVALID_INPUT_FILE;
     }
 
-    LOCALE_IO dummy; // Switch to "C" locale
     return aKiway.ProcessJob( KIWAY::FACE_PCB, gencadJob.get() );
 }

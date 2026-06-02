@@ -25,21 +25,49 @@
 #ifndef XNODE_H_
 #define XNODE_H_
 
+#include <variant>
+
 // quiet the deprecated warnings with 3 lines:
 #include <wx/defs.h>
 #undef wxDEPRECATED
 #define wxDEPRECATED(x) x
 
 #include <wx/xml/xml.h>
+#include <kicommon.h>
 
 class OUTPUTFORMATTER;
+class KIID;
+
 
 /**
- * Hold an XML or S-expression element.
- *
- * It is used for exporting a document tree in either XML or S-expression.
+ * An extension of wxXmlAttribute that stores a variant type rather than just a string.
+ * Technically, XML requires that all attribute values be strings, but since XNODE is
+ * primarily used for s-expression formatting rather than XML formatting, and KiCad's
+ * s-expression format permits integer and floating-point numeric values in lists, this
+ * class allows storage of the source value so that it can be properly formatted in the output.
  */
-class XNODE : public wxXmlNode
+class KICOMMON_API XATTR : public wxXmlAttribute
+{
+public:
+    typedef std::variant<wxString, int, double> VALUE_TYPE;
+
+    XATTR()
+    {}
+
+    XATTR( const wxString& aName, const VALUE_TYPE& aValue );
+
+    void SetValue( const VALUE_TYPE& aValue ) { m_originalValue = aValue; }
+
+    VALUE_TYPE GetValue() const { return m_originalValue; }
+
+private:
+    VALUE_TYPE m_originalValue;
+};
+
+/**
+ * An extension of wxXmlNode that can format its contents as KiCad-style s-expressions
+ */
+class KICOMMON_API XNODE : public wxXmlNode
 {
 public:
     XNODE() :
@@ -53,34 +81,47 @@ public:
     }
 
     XNODE( XNODE* aParent, wxXmlNodeType aType, const wxString& aName,
-           const wxString& aContent = wxEmptyString, wxXmlAttribute* aProperties = nullptr ) :
+           const wxString& aContent = wxEmptyString, XATTR* aProperties = nullptr ) :
         wxXmlNode( aParent, aType, aName, aContent, aProperties )
     {
     }
 
+    void AddAttribute( const wxString& aName, const wxString& aValue ) override;
+
+    void AddAttribute( const wxString& aName, int aValue );
+
+    void AddAttribute( const wxString& aName, double aValue );
+
+    void AddAttribute( wxXmlAttribute* aAttr ) override
+    {
+        wxASSERT_MSG( dynamic_cast<XATTR*>( aAttr ), "use XATTR instead of wxXmlAttribute!" );
+        return wxXmlNode::AddAttribute( aAttr );
+    }
+
     XNODE* GetChildren() const
     {
-        return (XNODE* )wxXmlNode::GetChildren();
+        return static_cast<XNODE*>( wxXmlNode::GetChildren() );
     }
 
     XNODE* GetNext() const
     {
-        return (XNODE* )wxXmlNode::GetNext();
+        return static_cast<XNODE*>( wxXmlNode::GetNext() );
     }
 
     XNODE* GetParent() const
     {
-        return (XNODE* )wxXmlNode::GetParent();
+        return static_cast<XNODE*>( wxXmlNode::GetParent() );
     }
+
+    void AddBool( const wxString& aKey, bool aValue );
 
     /**
      * Write this object as #UTF8 out to an #OUTPUTFORMATTER as an S-expression.
      *
      * @param out The formatter to write to.
-     * @param nestLevel A multiple of the number of spaces to precede the output with.
      * @throw IO_ERROR if a system error writing the output, such as a full disk.
      */
-    virtual void Format( OUTPUTFORMATTER* out, int nestLevel );
+    void Format( OUTPUTFORMATTER* out ) const;
 
     /**
      * Write the contents of object as #UTF8 out to an #OUTPUTFORMATTER as an S-expression.
@@ -88,10 +129,15 @@ public:
      * This is the same as Format() except that the outer wrapper is not included.
      *
      * @param out The formatter to write to.
-     * @param nestLevel A multiple of the number of spaces to precede the output with.
      * @throw IO_ERROR if a system error writing the output, such as a full disk.
      */
-    virtual void FormatContents( OUTPUTFORMATTER* out, int nestLevel );
+    void FormatContents( OUTPUTFORMATTER* out ) const;
+
+    /**
+     * 
+     * @return the contents of the object as a UTF-8 string, pretty-printed
+     */
+    wxString Format() const;
 
 };
 

@@ -60,13 +60,13 @@ public:
     int RescueAutosave( const TOOL_EVENT& aEvent );
     int OpenNonKicadBoard( const TOOL_EVENT& aEvent );
     int ExportFootprints( const TOOL_EVENT& aEvent );
-    int ExportFootprintsAs( const TOOL_EVENT& aEvent );
     int PageSettings( const TOOL_EVENT& aEvent );
     int Plot( const TOOL_EVENT& aEvent );
 
     int Search( const TOOL_EVENT& aEvent );
     int Find( const TOOL_EVENT& aEvent );
     int FindNext( const TOOL_EVENT& aEvent );
+    int FindByProperties( const TOOL_EVENT& aEvent );
 
     int BoardSetup( const TOOL_EVENT& aEvent );
     int ImportNetlist( const TOOL_EVENT& aEvent );
@@ -96,7 +96,6 @@ public:
     int ToggleProperties( const TOOL_EVENT& aEvent );
     int ToggleNetInspector( const TOOL_EVENT& aEvent );
     int ToggleSearch( const TOOL_EVENT& aEvent );
-    int TogglePythonConsole( const TOOL_EVENT& aEvent );
     int ToggleLibraryTree( const TOOL_EVENT& aEvent );
 
     // Track & via size control
@@ -111,6 +110,12 @@ public:
 
     ///< Duplicate a zone onto a layer (prompts for new layer)
     int ZoneDuplicate( const TOOL_EVENT& aEvent );
+
+    // Zone priority manipulation
+    int ZonePriorityMoveToTop( const TOOL_EVENT& aEvent );
+    int ZonePriorityRaise( const TOOL_EVENT& aEvent );
+    int ZonePriorityLower( const TOOL_EVENT& aEvent );
+    int ZonePriorityMoveToBottom( const TOOL_EVENT& aEvent );
 
     int EditFpInFpEditor( const TOOL_EVENT& aEvent );
 
@@ -148,6 +153,10 @@ public:
     ///< Low-level access (below undo) to setting the drill origin.
     static void DoSetDrillOrigin( KIGFX::VIEW* aView, PCB_BASE_FRAME* aFrame,
                                   EDA_ITEM* aItem, const VECTOR2D& aPoint );
+
+    // Line-mode handlers
+    int ChangeLineMode( const TOOL_EVENT& aEvent );
+    int OnAngleSnapModeChanged( const TOOL_EVENT& aEvent );
 
 private:
     ///< How to modify a property for selected items.

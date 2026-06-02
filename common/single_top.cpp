@@ -45,9 +45,13 @@
 #include <kiway.h>
 #include <build_version.h>
 #include <pgm_base.h>
+#include <app_monitor.h>
 #include <kiway_player.h>
 #include <macros.h>
 #include <confirm.h>
+#include <design_block_library_adapter.h>
+
+#include <settings/common_settings.h>
 #include <settings/kicad_settings.h>
 #include <settings/settings_manager.h>
 #include <paths.h>
@@ -56,6 +60,12 @@
 #include <kiplatform/environment.h>
 
 #include <git2.h>
+#include <git/git_backend.h>
+#include <git/libgit_backend.h>
+#include <thread_pool.h>
+
+#include <libraries/library_manager.h>
+#include <startwizard/startwizard.h>
 
 #ifdef KICAD_USE_SENTRY
 #include <sentry.h>
@@ -81,6 +91,9 @@ static struct PGM_SINGLE_TOP : public PGM_BASE
 
     void OnPgmExit()
     {
+        // Abort and wait on any background jobs
+        GetKiCadThreadPool().purge();
+        GetKiCadThreadPool().wait();
 
         Kiway.OnKiwayEnd();
 
@@ -97,7 +110,13 @@ static struct PGM_SINGLE_TOP : public PGM_BASE
         // Destroy everything in PGM_BASE, especially wxSingleInstanceCheckerImpl
         // earlier than wxApp and earlier than static destruction would.
         PGM_BASE::Destroy();
-        git_libgit2_shutdown();
+
+        if( GIT_BACKEND* backend = GetGitBackend() )
+        {
+            backend->Shutdown();
+            delete backend;
+            SetGitBackend( nullptr );
+        }
     }
 
     void MacOpenFile( const wxString& aFileName )   override
@@ -218,8 +237,14 @@ struct APP_SINGLE_TOP : public wxApp
 
     int  OnExit() override
     {
+        // Drain wxPendingDelete (frames deferred via Destroy()) before tearing down
+        // PGM_BASE singletons. On macOS the dock-quit path leaves frames in this
+        // queue at OnExit() time, and their canvas destructors call into
+        // Pgm().GetGLContextManager(). Running OnPgmExit() first would null that
+        // pointer out from under them. See https://gitlab.com/kicad/code/kicad/-/issues/23373
+        int ret = wxApp::OnExit();
         program.OnPgmExit();
-        return wxApp::OnExit();
+        return ret;
     }
 
     int OnRun() override
@@ -260,14 +285,18 @@ struct APP_SINGLE_TOP : public wxApp
                     if( dlgs.back() == dialog )
                         dlgs.pop_back();
                     // If an out-of-order, remove all dialogs added after the closed one
-                    else if( auto it = std::find( dlgs.begin(), dlgs.end(), dialog );
-                             it != dlgs.end() )
+                    else if( auto it = std::find( dlgs.begin(), dlgs.end(), dialog ); it != dlgs.end() )
                         dlgs.erase( it, dlgs.end() );
                 }
             }
         }
 
         return Event_Skip;
+    }
+
+    void OnUnhandledException() override
+    {
+        Pgm().HandleException( std::current_exception(), true );
     }
 
 #if defined( DEBUG )
@@ -325,19 +354,23 @@ bool PGM_SINGLE_TOP::OnPgmInit()
     }
 #endif
 
-    // Initialize the git library before trying to initialize individual programs
-    git_libgit2_init();
+    // Initialize the git backend before trying to initialize individual programs
+    SetGitBackend( new LIBGIT_BACKEND() );
+    GetGitBackend()->Init();
 
-    // Not all KiCad applications use the python stuff. skip python init
-    // for these apps.
-    bool skip_python_initialization = false;
+    if( !GetGitBackend()->IsLibraryAvailable() )
+    {
+        const git_error* err = git_error_last();
+        wxString         msg = wxS( "Failed to initialize git library" );
 
-#if defined( BITMAP_2_CMP ) || defined( PL_EDITOR ) || defined( GERBVIEW ) || \
-    defined( PCB_CALCULATOR_BUILD )
-    skip_python_initialization = true;
-#endif
+        if( err && err->message )
+            msg += wxS( ": " ) + wxString::FromUTF8( err->message );
 
-    if( !InitPgm( false, skip_python_initialization ) )
+        wxLogError( msg );
+        return false;
+    }
+
+    if( !InitPgm( false ) )
     {
         // Clean up
         OnPgmExit();
@@ -368,6 +401,15 @@ bool PGM_SINGLE_TOP::OnPgmInit()
 
     GetSettingsManager().RegisterSettings( new KICAD_SETTINGS );
 
+
+    if( const COMMON_SETTINGS* cfg = Pgm().GetCommonSettings() )
+    {
+        if( cfg->m_Appearance.app_theme == APP_THEME::DARK )
+            KIPLATFORM::APP::EnableDarkMode( true );
+        else if( cfg->m_Appearance.app_theme == APP_THEME::AUTO )
+            KIPLATFORM::APP::EnableDarkMode( false );
+    }
+
 #ifdef KICAD_IPC_API
     // Create the API server thread once the app event loop exists
     m_api_server = std::make_unique<KICAD_API_SERVER>();
@@ -386,6 +428,12 @@ bool PGM_SINGLE_TOP::OnPgmInit()
     }
 
     Kiway.SetTop( frame );
+
+    STARTWIZARD startWizard;
+    startWizard.CheckAndRun( frame );
+
+    // Load library tables after startup wizard
+    GetLibraryManager().LoadGlobalTables();
 
     App().SetTopWindow( frame );      // wxApp gets a face.
     App().SetAppDisplayName( frame->GetAboutTitle() );
@@ -450,6 +498,13 @@ bool PGM_SINGLE_TOP::OnPgmInit()
 
         frame->OpenProjectFiles( fileArgs );
     }
+
+    // In single-top mode, OpenProjectFiles() may switch to a different project. Preload
+    // libraries only after that so project-local libraries are loaded for the active project.
+    if( KIFACE* topFrame = Kiway.KiFACE( KIWAY::KifaceType( TOP_FRAME ) ) )
+        topFrame->PreloadLibraries( &Kiway );
+
+    PreloadDesignBlockLibraries( &Kiway );
 
 #ifdef KICAD_IPC_API
     m_api_server->SetReadyToReply();

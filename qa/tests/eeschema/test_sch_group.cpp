@@ -59,13 +59,10 @@ public:
 
         m_manager.LoadProject( "" );
         m_schematic = std::make_unique<SCHEMATIC>( &m_manager.Prj() );
+        m_schematic->Reset();
 
-        m_screen = new SCH_SCREEN( m_schematic.get() );
-
-        m_sheet = new SCH_SHEET( m_schematic.get() );
-        m_sheet->SetScreen( m_screen );
-
-        m_schematic->SetRoot( m_sheet );
+        m_sheet = m_schematic->GetTopLevelSheet( 0 );
+        m_screen = m_sheet->GetScreen();
 
         m_parent_part = new LIB_SYMBOL( "parent_part", nullptr );
 
@@ -88,7 +85,7 @@ public:
         m_screen->Append( m_parent_symbol );
     }
 
-    wxFileName GetSchematicPath( const wxString& aRelativePath ) override
+    wxFileName SchematicQAPath( const wxString& aRelativePath ) override
     {
         wxFileName fn( KI_TEST::GetEeschemaTestDataDir() );
 
@@ -130,8 +127,7 @@ BOOST_AUTO_TEST_CASE( Default )
 {
     CreateTestSchematic();
 
-    //BOOST_CHECK_NOT_EQUAL( m_sheet.GetParent(), nullptr );
-    BOOST_CHECK_EQUAL( m_sheet->IsRootSheet(), true );
+    BOOST_CHECK_EQUAL( m_sheet->IsTopLevelSheet(), true );
     BOOST_CHECK_EQUAL( m_sheet->GetPosition(), VECTOR2I( 0, 0 ) );
     BOOST_CHECK_EQUAL( m_sheet->CountSheets(), 1 );
     BOOST_CHECK_EQUAL( m_sheet->SymbolCount(), 1 );
@@ -157,7 +153,7 @@ BOOST_AUTO_TEST_CASE( CreateGroup )
 
 BOOST_AUTO_TEST_CASE( LoadSchGroups )
 {
-    LoadSchematic( "groups_load_save" );
+    LoadSchematic( SchematicQAPath( "groups_load_save" ) );
 
     EE_RTREE::EE_TYPE groups = m_schematic->RootScreen()->Items().OfType( SCH_GROUP_T );
 

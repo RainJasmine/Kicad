@@ -25,7 +25,7 @@
 #ifndef _GRID_TRICKS_H_
 #define _GRID_TRICKS_H_
 
-
+#include <kicommon.h>
 #include <bitset>
 #include <functional>
 
@@ -57,7 +57,7 @@ enum
 /**
  * Add mouse and command handling (such as cut, copy, and paste) to a #WX_GRID instance.
  */
-class GRID_TRICKS : public wxEvtHandler
+class KICOMMON_API GRID_TRICKS : public wxEvtHandler
 {
 public:
     explicit GRID_TRICKS( WX_GRID* aGrid );
@@ -89,13 +89,16 @@ public:
     }
 
 protected:
+    /// Allow various conspiracies between the two tricks handlers
+    friend class SCINTILLA_TRICKS;
+
     /// Shared initialization for various ctors.
     void init();
 
     /// Puts the selected area into a sensible rectangle of m_sel_{row,col}_{start,count} above.
     void getSelectedArea();
 
-    void onGridCellLeftClick( wxGridEvent& event );
+    virtual void onGridCellLeftClick( wxGridEvent& event );
     void onGridCellLeftDClick( wxGridEvent& event );
     void onGridCellRightClick( wxGridEvent& event );
     void onGridLabelLeftClick( wxGridEvent& event );
@@ -111,6 +114,7 @@ protected:
     virtual void doPopupSelection( wxCommandEvent& event );
 
     bool isTextEntry( int aRow, int aCol );
+    bool isChoiceEditor( int aRow, int aCol );
     bool isCheckbox( int aRow, int aCol );
     bool isReadOnly( int aRow, int aCol );
 

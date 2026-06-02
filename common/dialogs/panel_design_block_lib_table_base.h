@@ -13,22 +13,22 @@
 class STD_BITMAP_BUTTON;
 class WX_GRID;
 
+#include <wx/gdicmn.h>
+#include <wx/aui/auibook.h>
+#include <wx/font.h>
 #include <wx/colour.h>
 #include <wx/settings.h>
 #include <wx/string.h>
-#include <wx/font.h>
-#include <wx/grid.h>
-#include <wx/gdicmn.h>
-#include <wx/sizer.h>
-#include <wx/panel.h>
+#include <wx/bmpbuttn.h>
 #include <wx/bitmap.h>
 #include <wx/image.h>
 #include <wx/icon.h>
-#include <wx/notebook.h>
-#include <wx/bmpbuttn.h>
 #include <wx/button.h>
 #include <widgets/split_button.h>
+#include <wx/sizer.h>
 #include <wx/stattext.h>
+#include <wx/grid.h>
+#include <wx/panel.h>
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -40,11 +40,7 @@ class PANEL_DESIGN_BLOCK_LIB_TABLE_BASE : public wxPanel
 	private:
 
 	protected:
-		wxNotebook* m_notebook;
-		wxPanel* m_global_panel;
-		WX_GRID* m_global_grid;
-		wxPanel* m_project_panel;
-		WX_GRID* m_project_grid;
+		wxAuiNotebook* m_notebook;
 		STD_BITMAP_BUTTON* m_append_button;
 		SPLIT_BUTTON* m_browseButton;
 		STD_BITMAP_BUTTON* m_move_up_button;
@@ -54,7 +50,6 @@ class PANEL_DESIGN_BLOCK_LIB_TABLE_BASE : public wxPanel
 		WX_GRID* m_path_subs_grid;
 
 		// Virtual event handlers, override them in your derived class
-		virtual void OnUpdateUI( wxUpdateUIEvent& event ) { event.Skip(); }
 		virtual void appendRowHandler( wxCommandEvent& event ) { event.Skip(); }
 		virtual void moveUpHandler( wxCommandEvent& event ) { event.Skip(); }
 		virtual void moveDownHandler( wxCommandEvent& event ) { event.Skip(); }

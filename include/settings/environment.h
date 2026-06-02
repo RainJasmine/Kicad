@@ -78,7 +78,7 @@ public:
     {
     }
 
-    ~ENV_VAR_ITEM() throw() {}    // tell SWIG no exception
+    ~ENV_VAR_ITEM() throw() {}
 
     bool GetDefinedExternally() const { return m_isDefinedExternally; }
     void SetDefinedExternally( bool aIsDefinedExternally = true )

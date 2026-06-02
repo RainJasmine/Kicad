@@ -26,11 +26,14 @@
 #include <lset.h>
 #include <pad.h>
 #include <pcb_group.h>
+#include <pcb_barcode.h>
 #include <pcb_reference_image.h>
 #include <pcb_shape.h>
 #include <pcb_track.h>
+#include <pcb_field.h>
 #include <pcb_text.h>
 #include <pcb_textbox.h>
+#include <pcb_dimension.h>
 #include <zone.h>
 
 
@@ -44,6 +47,7 @@ std::unique_ptr<BOARD_ITEM> CreateItemForType( KICAD_T aType, BOARD_ITEM_CONTAIN
     case PCB_TEXT_T:    return std::make_unique<PCB_TEXT>( aContainer );
     case PCB_TEXTBOX_T: return std::make_unique<PCB_TEXTBOX>( aContainer );
     case PCB_SHAPE_T:   return std::make_unique<PCB_SHAPE>( aContainer );
+    case PCB_BARCODE_T: return std::make_unique<PCB_BARCODE>( aContainer );
     case PCB_ZONE_T:    return std::make_unique<ZONE>( aContainer );
     case PCB_GROUP_T:   return std::make_unique<PCB_GROUP>( aContainer );
     case PCB_REFERENCE_IMAGE_T: return std::make_unique<PCB_REFERENCE_IMAGE>( aContainer );
@@ -58,6 +62,16 @@ std::unique_ptr<BOARD_ITEM> CreateItemForType( KICAD_T aType, BOARD_ITEM_CONTAIN
         return std::make_unique<PAD>( footprint );
     }
 
+    case PCB_FIELD_T:
+    {
+        FOOTPRINT* footprint = dynamic_cast<FOOTPRINT*>( aContainer );
+
+        if( !footprint )
+            return nullptr;
+
+        return std::make_unique<PCB_FIELD>( footprint, FIELD_T::USER );
+    }
+
     case PCB_FOOTPRINT_T:
     {
         BOARD* board = dynamic_cast<BOARD*>( aContainer );
@@ -67,6 +81,12 @@ std::unique_ptr<BOARD_ITEM> CreateItemForType( KICAD_T aType, BOARD_ITEM_CONTAIN
 
         return std::make_unique<FOOTPRINT>( board );
     }
+
+    case PCB_DIM_ALIGNED_T: return std::make_unique<PCB_DIM_ALIGNED>( aContainer );
+    case PCB_DIM_ORTHOGONAL_T: return std::make_unique<PCB_DIM_ORTHOGONAL>( aContainer );
+    case PCB_DIM_RADIAL_T: return std::make_unique<PCB_DIM_RADIAL>( aContainer );
+    case PCB_DIM_LEADER_T: return std::make_unique<PCB_DIM_LEADER>( aContainer );
+    case PCB_DIM_CENTER_T: return std::make_unique<PCB_DIM_CENTER>( aContainer );
 
     default:
         return nullptr;
@@ -92,7 +112,9 @@ LSET UnpackLayerSet( const google::protobuf::RepeatedField<int>& aProtoLayerSet 
         wxCHECK2( layer >= F_Cu && layer < PCB_LAYER_ID_COUNT, continue );
         PCB_LAYER_ID boardLayer =
                 FromProtoEnum<PCB_LAYER_ID>( static_cast<types::BoardLayer>( layer ) );
-        set.set( boardLayer );
+
+        if( boardLayer >= 0 && IsValidLayer( boardLayer ) )
+            set.set( boardLayer );
     }
 
     return set;

@@ -20,11 +20,14 @@
  */
 
 #include <fmt/format.h>
+#include <set>
 
 #include <wx/log.h>
+#include <wx/dir.h>
 
 #include <base_units.h>
 #include <build_version.h>
+#include <common.h>
 #include <sch_shape.h>
 #include <lib_symbol.h>
 #include <sch_textbox.h>
@@ -52,30 +55,154 @@ SCH_IO_KICAD_SEXPR_LIB_CACHE::~SCH_IO_KICAD_SEXPR_LIB_CACHE()
 
 void SCH_IO_KICAD_SEXPR_LIB_CACHE::Load()
 {
-    if( !m_libFileName.FileExists() )
+    // Normalize the path: if it's a directory on the filesystem, ensure m_libFileName
+    // is marked as a directory so that IsDir() checks work correctly throughout the code.
+    // wxFileName::IsDir() only checks if the path string ends with a separator, not if
+    // the path is actually a directory on the filesystem.
+    if( !m_libFileName.IsDir() && wxFileName::DirExists( m_libFileName.GetFullPath() ) )
+        m_libFileName.AssignDir( m_libFileName.GetFullPath() );
+
+    if( !isLibraryPathValid() )
     {
-        THROW_IO_ERROR( wxString::Format( _( "Library file '%s' not found." ),
-                                          m_libFileName.GetFullPath() ) );
+        THROW_IO_ERROR( wxString::Format( _( "Library '%s' not found." ), m_libFileName.GetFullPath() ) );
     }
 
     wxCHECK_RET( m_libFileName.IsAbsolute(),
                  wxString::Format( "Cannot use relative file paths in sexpr plugin to "
                                    "open library '%s'.", m_libFileName.GetFullPath() ) );
 
-    wxLogTrace( traceSchLegacyPlugin, "Loading sexpr symbol library file '%s'",
-                m_libFileName.GetFullPath() );
+    if( !m_libFileName.IsDir() )
+    {
+        wxLogTrace( traceSchLegacyPlugin, "Loading sexpr symbol library file '%s'",
+                    m_libFileName.GetFullPath() );
 
-    FILE_LINE_READER reader( m_libFileName.GetFullPath() );
+        FILE_LINE_READER reader( m_libFileName.GetFullPath() );
 
-    SCH_IO_KICAD_SEXPR_PARSER parser( &reader );
+        SCH_IO_KICAD_SEXPR_PARSER parser( &reader );
 
-    parser.ParseLib( m_symbols );
-    IncrementModifyHash();
+        parser.ParseLib( m_symbols );
+
+        SetFileFormatVersionAtLoad( parser.GetParsedRequiredVersion() );
+        updateParentSymbolLinks();
+        IncrementModifyHash();
+
+        // Check if there were any parse warnings (symbols that failed to parse).
+        // If so, mark the library as having parse errors and throw to notify the user.
+        // The library has loaded all valid symbols, but saving would lose the bad ones.
+        const std::vector<wxString>& warnings = parser.GetParseWarnings();
+
+        if( !warnings.empty() )
+        {
+            SetParseError( true );
+
+            wxString errorMsg = wxString::Format(
+                    _( "Library '%s' loaded with errors:\n\n" ), m_libFileName.GetFullPath() );
+
+            for( const wxString& warning : warnings )
+                errorMsg += warning + wxT( "\n\n" );
+
+            errorMsg += _( "The library cannot be saved until these errors are fixed manually." );
+
+            THROW_IO_ERROR( errorMsg );
+        }
+    }
+    else
+    {
+        wxString libFileName;
+
+        wxLogTrace( traceSchLegacyPlugin, "Loading sexpr symbol library folder '%s'", m_libFileName.GetPath() );
+
+        // Clear source file tracking for fresh load
+        m_symbolSourceFiles.clear();
+
+        wxFileName tmp( m_libFileName.GetPath(), wxS( "dummy" ), wxString( FILEEXT::KiCadSymbolLibFileExtension ) );
+        wxDir dir( m_libFileName.GetPath() );
+        wxString fileSpec = wxS( "*." ) + wxString( FILEEXT::KiCadSymbolLibFileExtension );
+
+        if( dir.GetFirst( &libFileName, fileSpec ) )
+        {
+            wxString errorCache;
+
+            do
+            {
+                tmp.SetFullName( libFileName );
+                wxString sourceFilePath = tmp.GetFullPath();
+
+                // Track symbol pointers before parsing so we can detect which were replaced.
+                // When the parser encounters a duplicate name, it overwrites the existing
+                // symbol, so we need to update source tracking for those symbols too.
+                std::map<wxString, LIB_SYMBOL*> existingPtrs;
+
+                for( const auto& [ name, symbol ] : m_symbols )
+                    existingPtrs[ name ] = symbol;
+
+                try
+                {
+                    FILE_LINE_READER reader( sourceFilePath );
+                    SCH_IO_KICAD_SEXPR_PARSER parser( &reader );
+
+                    parser.ParseLib( m_symbols );
+                    SetFileFormatVersionAtLoad( parser.GetParsedRequiredVersion() );
+
+                    // Update source tracking for all symbols that came from this file.
+                    // This includes both new symbols and symbols that were overwritten
+                    // (when a duplicate name existed in a previously loaded file).
+                    for( const auto& [ name, symbol ] : m_symbols )
+                    {
+                        auto it = existingPtrs.find( name );
+
+                        if( it == existingPtrs.end() )
+                        {
+                            // New symbol from this file
+                            m_symbolSourceFiles[ name ] = sourceFilePath;
+                        }
+                        else if( it->second != symbol )
+                        {
+                            // Symbol pointer changed - this file overwrote the previous version.
+                            // Update tracking so we save to this file (the one whose version
+                            // is actually in memory).
+                            m_symbolSourceFiles[ name ] = sourceFilePath;
+                        }
+                    }
+
+                    // Collect any parse warnings from this file
+                    for( const wxString& warning : parser.GetParseWarnings() )
+                    {
+                        SetParseError( true );
+
+                        if( !errorCache.IsEmpty() )
+                            errorCache += wxT( "\n\n" );
+
+                        errorCache += warning;
+                    }
+                }
+                catch( const IO_ERROR& ioe )
+                {
+                    // Mark that we had a parse error - saving would lose symbols
+                    SetParseError( true );
+
+                    if( !errorCache.IsEmpty() )
+                        errorCache += wxT( "\n\n" );
+
+                    errorCache += wxString::Format( _( "Unable to read file '%s'" ) + '\n', sourceFilePath );
+                    errorCache += ioe.What();
+                }
+            } while( dir.GetNext( &libFileName ) );
+
+            if( !errorCache.IsEmpty() )
+            {
+                errorCache += _( "\n\nThe library cannot be saved until these errors are fixed manually." );
+                THROW_IO_ERROR( errorCache );
+            }
+        }
+
+        updateParentSymbolLinks();
+        IncrementModifyHash();
+    }
 
     // Remember the file modification time of library file when the cache snapshot was made,
     // so that in a networked environment we will reload the cache as needed.
     m_fileModTime = GetLibModificationTime();
-    SetFileFormatVersionAtLoad( parser.GetParsedRequiredVersion() );
 }
 
 
@@ -84,45 +211,157 @@ void SCH_IO_KICAD_SEXPR_LIB_CACHE::Save( const std::optional<bool>& aOpt )
     if( !m_isModified )
         return;
 
+    // If the library had a parse error during loading, we cannot safely save it.
+    // Only symbols before the parse error were loaded, so saving would permanently
+    // lose all symbols after the error point. See issue #22241.
+    if( HasParseError() )
+    {
+        THROW_IO_ERROR( wxString::Format(
+                _( "Cannot save library '%s' because it had a parse error during loading.\n\n"
+                   "Saving would permanently lose symbols that could not be loaded.\n"
+                   "Please fix the library file manually before saving." ),
+                m_libFileName.GetFullPath() ) );
+    }
+
     // Write through symlinks, don't replace them.
     wxFileName fn = GetRealFile();
 
-    auto formatter = std::make_unique<PRETTIFIED_FILE_OUTPUTFORMATTER>( fn.GetFullPath() );
+    // Normalize the path: if it's a directory on the filesystem, ensure fn is marked as a
+    // directory so that IsDir() checks work correctly.
+    if( !fn.IsDir() && wxFileName::DirExists( fn.GetFullPath() ) )
+        fn.AssignDir( fn.GetFullPath() );
 
-    formatter->Print( "(kicad_symbol_lib (version %d) (generator \"kicad_symbol_editor\") "
-                      "(generator_version \"%s\")",
-                      SEXPR_SYMBOL_LIB_FILE_VERSION,
-                      GetMajorMinorVersion().c_str().AsChar() );
-
-    std::vector<LIB_SYMBOL*> orderedSymbols;
-
-    for( const auto& [ name, symbol ] : m_symbols )
+    if( !fn.IsDir() )
     {
-        if( symbol )
-            orderedSymbols.push_back( symbol );
+        auto formatter = std::make_unique<PRETTIFIED_FILE_OUTPUTFORMATTER>( fn.GetFullPath() );
+
+        formatLibraryHeader( *formatter.get() );
+
+        std::vector<LIB_SYMBOL*> orderedSymbols;
+
+        for( const auto& [ name, symbol ] : m_symbols )
+        {
+            if( symbol )
+                orderedSymbols.push_back( symbol );
+        }
+
+        // Library must be ordered by inheritance depth.
+        std::sort( orderedSymbols.begin(), orderedSymbols.end(),
+                   []( const LIB_SYMBOL* aLhs, const LIB_SYMBOL* aRhs )
+                   {
+                       unsigned int lhDepth = aLhs->GetInheritanceDepth();
+                       unsigned int rhDepth = aRhs->GetInheritanceDepth();
+
+                       if( lhDepth == rhDepth )
+                           return aLhs->GetName() < aRhs->GetName();
+
+                       return lhDepth < rhDepth;
+                   } );
+
+        for( LIB_SYMBOL* symbol : orderedSymbols )
+            SaveSymbol( symbol, *formatter.get() );
+
+        formatter->Print( ")" );
+        formatter->Finish();
+        formatter.reset();
+    }
+    else
+    {
+        if( !fn.DirExists() )
+        {
+            if( !fn.Mkdir( wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL ) )
+                THROW_IO_ERROR( wxString::Format( _( "Cannot create symbol library path '%s'." ), fn.GetPath() ) );
+        }
+
+        // Detect renamed symbols whose old source file entries are now orphaned.
+        // Schedule the old files for deletion so they don't linger on disk.
+        for( auto it = m_symbolSourceFiles.begin(); it != m_symbolSourceFiles.end(); )
+        {
+            if( m_symbols.find( it->first ) == m_symbols.end() )
+            {
+                m_pendingFileDeletes.insert( it->second );
+                it = m_symbolSourceFiles.erase( it );
+            }
+            else
+            {
+                ++it;
+            }
+        }
+
+        // Group symbols by their source file to preserve multi-symbol files
+        std::map<wxString, std::vector<LIB_SYMBOL*>> symbolsByFile;
+
+        for( const auto& [ name, symbol ] : m_symbols )
+        {
+            auto it = m_symbolSourceFiles.find( name );
+
+            if( it != m_symbolSourceFiles.end() )
+            {
+                // Symbol has a known source file - group it with others from that file
+                symbolsByFile[ it->second ].push_back( symbol );
+            }
+            else
+            {
+                // New symbol without source file - create individual file
+                wxFileName saveFn( fn );
+                saveFn.SetName( EscapeString( name, CTX_FILENAME ) );
+                saveFn.SetExt( FILEEXT::KiCadSymbolLibFileExtension );
+
+                symbolsByFile[ saveFn.GetFullPath() ].push_back( symbol );
+            }
+        }
+
+        // Sort each file's symbols by inheritance depth
+        auto sortByInheritance = []( LIB_SYMBOL* aLhs, LIB_SYMBOL* aRhs )
+        {
+            unsigned int lhDepth = aLhs->GetInheritanceDepth();
+            unsigned int rhDepth = aRhs->GetInheritanceDepth();
+
+            if( lhDepth == rhDepth )
+                return aLhs->GetName() < aRhs->GetName();
+
+            return lhDepth < rhDepth;
+        };
+
+        // Write each file
+        for( auto& [ filePath, symbols ] : symbolsByFile )
+        {
+            wxFileName oldFn = filePath;
+
+            if( oldFn.GetPath() != m_libFileName.GetPath() )
+                oldFn.SetPath( m_libFileName.GetPath() );
+
+            std::sort( symbols.begin(), symbols.end(), sortByInheritance );
+
+            auto formatter = std::make_unique<PRETTIFIED_FILE_OUTPUTFORMATTER>( oldFn.GetFullPath() );
+
+            formatLibraryHeader( *formatter.get() );
+
+            for( LIB_SYMBOL* symbol : symbols )
+                SaveSymbol( symbol, *formatter.get() );
+
+            formatter->Print( ")" );
+            formatter->Finish();
+            formatter.reset();
+
+            // Update source file tracking for new symbols
+            for( LIB_SYMBOL* symbol : symbols )
+                m_symbolSourceFiles[ symbol->GetName() ] = filePath;
+        }
+
+        // Remove files for deleted symbols that are no longer needed
+        for( const wxString& deadFile : m_pendingFileDeletes )
+        {
+            if( symbolsByFile.find( deadFile ) == symbolsByFile.end() && wxFileExists( deadFile ) )
+            {
+                wxRemoveFile( deadFile );
+            }
+        }
+
+        m_pendingFileDeletes.clear();
     }
 
-    // Library must be ordered by inheritance depth.
-    std::sort( orderedSymbols.begin(), orderedSymbols.end(),
-               []( const LIB_SYMBOL* aLhs, const LIB_SYMBOL* aRhs )
-               {
-                   unsigned int lhDepth = aLhs->GetInheritanceDepth();
-                   unsigned int rhDepth = aRhs->GetInheritanceDepth();
-
-                   if( lhDepth == rhDepth )
-                       return aLhs->GetName() < aRhs->GetName();
-
-                   return lhDepth < rhDepth;
-               } );
-
-    for( LIB_SYMBOL* symbol : orderedSymbols )
-        SaveSymbol( symbol, *formatter.get() );
-
-    formatter->Print( ")" );
-
-    formatter.reset();
-
-    m_fileModTime = fn.GetModificationTime();
+    m_fileModTime = GetLibModificationTime();
     m_isModified = false;
 }
 
@@ -168,6 +407,23 @@ void SCH_IO_KICAD_SEXPR_LIB_CACHE::SaveSymbol( LIB_SYMBOL* aSymbol, OUTPUTFORMAT
 
         // TODO: add anchor position token here.
 
+        if( aSymbol->IsMultiBodyStyle() )
+        {
+            aFormatter.Print( "(body_styles " );
+
+            if( aSymbol->HasDeMorganBodyStyles() )
+            {
+                aFormatter.Print( "demorgan" );
+            }
+            else
+            {
+                for( const wxString& bodyStyle : aSymbol->GetBodyStyleNames() )
+                    aFormatter.Print( "%s ", aFormatter.Quotew( bodyStyle ).c_str() );
+            }
+
+            aFormatter.Print( ")" );
+        }
+
         if( !aSymbol->GetShowPinNumbers() )
             aFormatter.Print( "(pin_numbers (hide yes))" );
 
@@ -192,6 +448,7 @@ void SCH_IO_KICAD_SEXPR_LIB_CACHE::SaveSymbol( LIB_SYMBOL* aSymbol, OUTPUTFORMAT
         KICAD_FORMAT::FormatBool( &aFormatter, "exclude_from_sim",  aSymbol->GetExcludedFromSim() );
         KICAD_FORMAT::FormatBool( &aFormatter, "in_bom", !aSymbol->GetExcludedFromBOM() );
         KICAD_FORMAT::FormatBool( &aFormatter, "on_board", !aSymbol->GetExcludedFromBoard() );
+        KICAD_FORMAT::FormatBool( &aFormatter, "in_pos_files", !aSymbol->GetExcludedFromPosFiles() );
 
         KICAD_FORMAT::FormatBool( &aFormatter, "duplicate_pin_numbers_are_jumpers",
                                   aSymbol->GetDuplicatePinNumbersAreJumpers() );
@@ -258,9 +515,9 @@ void SCH_IO_KICAD_SEXPR_LIB_CACHE::SaveSymbol( LIB_SYMBOL* aSymbol, OUTPUTFORMAT
                               unit.m_bodyStyle );
 
             // if the unit has a display name, write that
-            if( aSymbol->HasUnitDisplayName( unit.m_unit ) )
+            if( aSymbol->GetUnitDisplayNames().contains( unit.m_unit ) )
             {
-                name = aSymbol->GetUnitDisplayName( unit.m_unit );
+                name = aSymbol->GetUnitDisplayNames().at( unit.m_unit );
                 aFormatter.Print( "(unit_name %s)", aFormatter.Quotes( name ).c_str() );
             }
 
@@ -303,6 +560,11 @@ void SCH_IO_KICAD_SEXPR_LIB_CACHE::SaveSymbol( LIB_SYMBOL* aSymbol, OUTPUTFORMAT
             saveField( field, aFormatter );
 
         saveDcmInfoAsFields( aSymbol, aFormatter );
+
+        KICAD_FORMAT::FormatBool( &aFormatter, "embedded_fonts", aSymbol->GetAreFontsEmbedded() );
+
+        if( !aSymbol->EmbeddedFileMap().empty() )
+            aSymbol->WriteEmbeddedFiles( aFormatter, aIncludeData );
     }
 
     aFormatter.Print( ")" );
@@ -427,11 +689,9 @@ void SCH_IO_KICAD_SEXPR_LIB_CACHE::saveField( SCH_FIELD* aField, OUTPUTFORMATTER
                                                            -aField->GetPosition().y ).c_str(),
                       fmt::format( "{:g}", aField->GetTextAngle().AsDegrees() ).c_str() );
 
-    if( aField->IsNameShown() )
-        aFormatter.Print( "(show_name)" );
+    KICAD_FORMAT::FormatBool( &aFormatter, "show_name", aField->IsNameShown() );
 
-    if( !aField->CanAutoplace() )
-        aFormatter.Print( "(do_not_autoplace)" );
+    KICAD_FORMAT::FormatBool( &aFormatter, "do_not_autoplace", !aField->CanAutoplace() );
 
     if( !aField->IsVisible() )
         KICAD_FORMAT::FormatBool( &aFormatter, "hide", true );
@@ -552,9 +812,22 @@ void SCH_IO_KICAD_SEXPR_LIB_CACHE::DeleteSymbol( const wxString& aSymbolName )
 
     LIB_SYMBOL* symbol = it->second;
 
+    auto recordSourceFileForDeletion = [this]( const wxString& aName )
+    {
+        auto srcIt = m_symbolSourceFiles.find( aName );
+
+        if( srcIt != m_symbolSourceFiles.end() )
+        {
+            m_pendingFileDeletes.insert( srcIt->second );
+            m_symbolSourceFiles.erase( srcIt );
+        }
+    };
+
     if( symbol->IsRoot() )
     {
         LIB_SYMBOL* rootSymbol = symbol;
+
+        recordSourceFileForDeletion( aSymbolName );
 
         // Remove the root symbol and all its children.
         m_symbols.erase( it );
@@ -566,6 +839,7 @@ void SCH_IO_KICAD_SEXPR_LIB_CACHE::DeleteSymbol( const wxString& aSymbolName )
             if( it1->second->IsDerived()
               && it1->second->GetParent().lock() == rootSymbol->SharedPtr() )
             {
+                recordSourceFileForDeletion( it1->first );
                 delete it1->second;
                 it1 = m_symbols.erase( it1 );
             }
@@ -579,6 +853,7 @@ void SCH_IO_KICAD_SEXPR_LIB_CACHE::DeleteSymbol( const wxString& aSymbolName )
     }
     else
     {
+        recordSourceFileForDeletion( aSymbolName );
         // Just remove the alias.
         m_symbols.erase( it );
         delete symbol;
@@ -586,4 +861,45 @@ void SCH_IO_KICAD_SEXPR_LIB_CACHE::DeleteSymbol( const wxString& aSymbolName )
 
     IncrementModifyHash();
     m_isModified = true;
+}
+
+
+void SCH_IO_KICAD_SEXPR_LIB_CACHE::updateParentSymbolLinks()
+{
+    for( auto& [name, symbol] : m_symbols )
+    {
+        if( symbol->GetParentName().IsEmpty() )
+            continue;
+
+        auto it = m_symbols.find( symbol->GetParentName() );
+
+        if( it == m_symbols.end() )
+        {
+            wxString error;
+
+            error.Printf( _( "No parent for extended symbol %s found in library '%s'" ),
+                          name.c_str(), m_libFileName.GetFullPath() );
+            THROW_IO_ERROR( error );
+        }
+
+        symbol->SetParent( it->second );
+    }
+}
+
+
+void SCH_IO_KICAD_SEXPR_LIB_CACHE::formatLibraryHeader( OUTPUTFORMATTER& aFormatter )
+{
+    aFormatter.Print( "(kicad_symbol_lib (version %d) (generator \"kicad_symbol_editor\") "
+                      "(generator_version \"%s\")",
+                      SEXPR_SYMBOL_LIB_FILE_VERSION,
+                      GetMajorMinorVersion().c_str().AsChar() );
+}
+
+
+bool SCH_IO_KICAD_SEXPR_LIB_CACHE::isLibraryPathValid() const
+{
+    if( !m_libFileName.IsDir() )
+        return m_libFileName.FileExists();
+    else
+        return m_libFileName.DirExists();
 }

@@ -22,13 +22,7 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-/*
- * @file footprint_info.h
- */
-
-#ifndef FOOTPRINT_INFO_H_
-#define FOOTPRINT_INFO_H_
-
+#pragma once
 
 #include <boost/ptr_container/ptr_vector.hpp>
 #include <import_export.h>
@@ -40,7 +34,7 @@
 #include <memory>
 
 
-class FP_LIB_TABLE;
+class FOOTPRINT_LIBRARY_ADAPTER;
 class FOOTPRINT_LIST;
 class FOOTPRINT_LIST_IMPL;
 class PROGRESS_REPORTER;
@@ -59,9 +53,7 @@ class wxTextFile;
 class APIEXPORT FOOTPRINT_INFO : public LIB_TREE_ITEM
 {
 public:
-    virtual ~FOOTPRINT_INFO()
-    {
-    }
+    virtual ~FOOTPRINT_INFO() = default;
 
     // These two accessors do not have to call ensure_loaded(), because constructor
     // fills in these fields:
@@ -72,7 +64,7 @@ public:
 
     wxString GetName() const override { return m_fpname; }
 
-    int GetPinCount() override { return GetUniquePadCount(); }
+    int GetPinCount() override { return GetNumberedPadCount(); }
 
     LIB_ID GetLIB_ID() const override
     {
@@ -91,7 +83,7 @@ public:
         return m_keywords;
     }
 
-    std::vector<SEARCH_TERM> GetSearchTerms() override;
+    std::vector<SEARCH_TERM>& GetSearchTerms() override;
 
     unsigned GetPadCount()
     {
@@ -103,6 +95,12 @@ public:
     {
         ensure_loaded();
         return m_unique_pad_count;
+    }
+
+    unsigned GetNumberedPadCount()
+    {
+        ensure_loaded();
+        return m_numbered_pad_count;
     }
 
     int GetOrderNum()
@@ -145,8 +143,11 @@ protected:
     int             m_num;              ///< Order number in the display list.
     unsigned        m_pad_count;        ///< Number of pads
     unsigned        m_unique_pad_count; ///< Number of unique pads
+    unsigned        m_numbered_pad_count; ///< Number of unique electrical pads (numeric or BGA-style numbers)
     wxString        m_doc;              ///< Footprint description.
     wxString        m_keywords;         ///< Footprint keywords.
+
+    std::vector<SEARCH_TERM> m_searchTerms;
 };
 
 
@@ -161,30 +162,15 @@ class APIEXPORT FOOTPRINT_LIST
 {
 public:
     FOOTPRINT_LIST() :
-            m_lib_table( nullptr )
+            m_adapter( nullptr )
     {
     }
 
-    virtual ~FOOTPRINT_LIST()
-    {
-    }
+    virtual ~FOOTPRINT_LIST() = default;
 
-    virtual void WriteCacheToFile( const wxString& aFilePath ) {};
-    virtual void ReadCacheFromFile( const wxString& aFilePath ){};
+    unsigned GetCount() const { return m_list.size(); }
 
-    /**
-     * @return the number of items stored in list
-     */
-    unsigned GetCount() const
-    {
-        return m_list.size();
-    }
-
-    /// Was forced to add this by modview_frame.cpp
-    const std::vector<std::unique_ptr<FOOTPRINT_INFO>>& GetList() const
-    {
-        return m_list;
-    }
+    const std::vector<std::unique_ptr<FOOTPRINT_INFO>>& GetList() const { return m_list; }
 
     /**
      * @return Clears the footprint info cache
@@ -199,8 +185,7 @@ public:
     /**
      * Get info for a footprint by libNickname/footprintName
      */
-    FOOTPRINT_INFO* GetFootprintInfo( const wxString& aLibNickname,
-                                      const wxString& aFootprintName );
+    FOOTPRINT_INFO* GetFootprintInfo( const wxString& aLibNickname, const wxString& aFootprintName );
 
     /**
      * Get info for a footprint by index.
@@ -226,10 +211,15 @@ public:
         return error;
     }
 
+    void PushError( std::unique_ptr<IO_ERROR> aError )
+    {
+        m_errors.move_push( std::move( aError ) );
+    }
+
     /**
      * Read all the footprints provided by the combination of aTable and aNickname.
      *
-     * @param aTable defines all the libraries.
+     * @param aAdapter is used to access the libraries.
      * @param aNickname is the library to read from, or if NULL means read all footprints
      *                  from all known libraries in aTable.
      * @param aProgressReporter is an optional progress reporter.  ReadFootprintFiles() will
@@ -238,32 +228,21 @@ public:
      *         errors.  If true, it does not mean there were no errors, check GetErrorCount()
      *         for that, should be zero to indicate success.
      */
-    virtual bool ReadFootprintFiles( FP_LIB_TABLE* aTable, const wxString* aNickname = nullptr,
+    virtual bool ReadFootprintFiles( FOOTPRINT_LIBRARY_ADAPTER* aAdapter, const wxString* aNickname = nullptr,
                                      PROGRESS_REPORTER* aProgressReporter = nullptr ) = 0;
 
-    void DisplayErrors( wxTopLevelWindow* aCaller = nullptr );
-
-    FP_LIB_TABLE* GetTable() const
-    {
-        return m_lib_table;
-    }
-
     /**
-     * Factory function to return a #FOOTPRINT_LIST via Kiway.
-     *
-     * This is not guaranteed to succeed and will return null if the kiface is not available.
-     *
-     * @param aKiway active kiway instance.
+     * Returns all accumulated errors as a newline-separated string for display in the
+     * status bar. This consumes the errors (pops them from the queue).
      */
-    static FOOTPRINT_LIST* GetInstance( KIWAY& aKiway );
+    wxString GetErrorMessages();
+
+    FOOTPRINT_LIBRARY_ADAPTER* GetAdapter() const { return m_adapter; }
 
 protected:
-    FP_LIB_TABLE*                                m_lib_table; ///< no ownership
+    FOOTPRINT_LIBRARY_ADAPTER*                   m_adapter; ///< no ownership
 
     std::vector<std::unique_ptr<FOOTPRINT_INFO>> m_list;
     SYNC_QUEUE<std::unique_ptr<IO_ERROR>>        m_errors; ///< some can be PARSE_ERRORs also
 };
 
-
-
-#endif // FOOTPRINT_INFO_H_

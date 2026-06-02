@@ -27,6 +27,7 @@
 #include <kicommon.h>
 #include <cstdint>
 #include <vector>
+#include <optional>
 
 #include <wx/string.h>
 
@@ -50,9 +51,20 @@ KICOMMON_API bool fileStartsWithPrefix( const wxString& aFilePath, const wxStrin
  *
  * @param aFilePath path to the file where we want to check the prefix.
  * @param aHeader vector of bytes which need to match with the start of the file.
+ * @param aOffset offset in the file where the header should be checked.
  */
-KICOMMON_API bool fileStartsWithBinaryHeader( const wxString&             aFilePath,
-                                              const std::vector<uint8_t>& aHeader );
+KICOMMON_API bool fileHasBinaryHeader( const wxString&             aFilePath,
+                                       const std::vector<uint8_t>& aHeader,
+                                       size_t                      aOffset = 0 );
+
+/**
+ * Calculates an MMH3 hash of a given file. This is not a secure hash, use it
+ * as a checksum, not as a secure digest!
+ *
+ * @param aFilePath path to the file where we want to calculate the hash for.
+ * @return hash value as a hex string or none in case of an error.
+ */
+KICOMMON_API std::optional<wxString> fileHashMMH3( const wxString& aFilePath );
 
 }
 

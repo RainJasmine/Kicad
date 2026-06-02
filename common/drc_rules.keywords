@@ -2,6 +2,8 @@ annular_width
 assertion
 assign_component_class
 board_edge
+bridged_mask
+blind_via
 buried_via
 clearance
 condition
@@ -46,6 +48,7 @@ skew
 solder_mask_expansion
 solder_paste_abs_margin
 solder_paste_rel_margin
+solder_mask_sliver
 solid
 text
 text_height
@@ -53,6 +56,7 @@ text_thickness
 thermal_reliefs
 thermal_relief_gap
 thermal_spoke_width
+through_via
 track
 track_angle
 track_width
@@ -60,6 +64,7 @@ track_segment_length
 version
 via
 via_count
+via_dangling
 via_diameter
 warning
 within_diff_pairs

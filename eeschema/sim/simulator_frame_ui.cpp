@@ -24,6 +24,7 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include <algorithm>
 #include <memory>
 #include <type_traits>
 
@@ -34,6 +35,7 @@
 #include <wx/debug.h>
 #include <wx/clipbrd.h>
 #include <wx/log.h>
+#include <wx/tokenzr.h>
 
 #include <project/project_file.h>
 #include <sch_edit_frame.h>
@@ -53,7 +55,9 @@
 #include <dialogs/dialog_text_entry.h>
 #include <dialogs/dialog_sim_format_value.h>
 #include <eeschema_settings.h>
+#include <advanced_config.h>
 #include <magic_enum.hpp>
+#include <widgets/wx_infobar.h>
 
 
 SIM_TRACE_TYPE operator|( SIM_TRACE_TYPE aFirst, SIM_TRACE_TYPE aSecond )
@@ -541,8 +545,7 @@ private:
 #define REFRESH_INTERVAL 50   // 20 frames/second.
 
 
-SIMULATOR_FRAME_UI::SIMULATOR_FRAME_UI( SIMULATOR_FRAME* aSimulatorFrame,
-                                        SCH_EDIT_FRAME* aSchematicFrame ) :
+SIMULATOR_FRAME_UI::SIMULATOR_FRAME_UI( SIMULATOR_FRAME* aSimulatorFrame, SCH_EDIT_FRAME* aSchematicFrame ) :
         SIMULATOR_FRAME_UI_BASE( aSimulatorFrame ),
         m_SuppressGridEvents( 0 ),
         m_simulatorFrame( aSimulatorFrame ),
@@ -634,9 +637,7 @@ void SIMULATOR_FRAME_UI::CustomCursorsInit()
     for( size_t index = 0; index < std::size( m_cursorFormats ); index++ )
     {
         for( size_t index2 = 0; index2 < std::size( m_cursorFormats[0] ); index2++ )
-        {
             m_cursorFormatsDyn[index].push_back( m_cursorFormats[index][index2] );
-        }
     }
 
     // Dump string helper, tries to get the current higher cursor name to form the next one.
@@ -795,15 +796,36 @@ void SIMULATOR_FRAME_UI::ApplyPreferences( const SIM_PREFERENCES& aPrefs )
 
 void SIMULATOR_FRAME_UI::InitWorkbook()
 {
-    if( !simulator()->Settings()->GetWorkbookFilename().IsEmpty() )
+    wxString workbookFilename = simulator()->Settings()->GetWorkbookFilename();
+    bool     loadFromSchematic = false;
+
+    if( !workbookFilename.IsEmpty() )
     {
-        wxFileName filename = simulator()->Settings()->GetWorkbookFilename();
+        wxFileName filename = workbookFilename;
         filename.SetPath( m_schematicFrame->Prj().GetProjectPath() );
 
-        if( !LoadWorkbook( filename.GetFullPath() ) )
-            simulator()->Settings()->SetWorkbookFilename( "" );
+        if( !filename.FileExists() )
+        {
+            m_simulatorFrame->GetInfoBar()->ShowMessageFor(
+                    wxString::Format( _( "Workbook file '%s' not found. "
+                                         "Loading simulation settings from schematic." ),
+                                      filename.GetFullPath() ),
+                    8000, wxICON_WARNING );
+
+            simulator()->Settings()->SetWorkbookFilename( wxEmptyString );
+            loadFromSchematic = true;
+        }
+        else if( !LoadWorkbook( filename.GetFullPath() ) )
+        {
+            simulator()->Settings()->SetWorkbookFilename( wxEmptyString );
+        }
     }
-    else if( m_simulatorFrame->LoadSimulator( wxEmptyString, 0 ) )
+    else
+    {
+        loadFromSchematic = true;
+    }
+
+    if( loadFromSchematic && m_simulatorFrame->LoadSimulator( wxEmptyString, 0 ) )
     {
         wxString schTextSimCommand = circuitModel()->GetSchTextSimCommand();
 
@@ -870,7 +892,7 @@ void SIMULATOR_FRAME_UI::rebuildSignalsGrid( wxString aFilter )
 
     if( plotPanel->GetSimType() == ST_FFT )
     {
-        wxStringTokenizer tokenizer( plotPanel->GetSimCommand(), wxT( " \t\r\n" ), wxTOKEN_STRTOK );
+        wxStringTokenizer tokenizer( plotPanel->GetSimCommand(), " \t\r\n", wxTOKEN_STRTOK );
 
         while( tokenizer.HasMoreTokens() && tokenizer.GetNextToken().Lower() != wxT( "fft" ) )
         {};
@@ -990,8 +1012,7 @@ void SIMULATOR_FRAME_UI::rebuildSignalsGrid( wxString aFilter )
                         attr->SetReadOnly(); // not really; we delegate interactivity to GRID_TRICKS
                         attr->SetAlignment( wxALIGN_CENTER, wxALIGN_CENTER );
                         m_signalsGrid->SetAttr( row, COL_CURSOR_2 + i, attr );
-                        m_signalsGrid->SetCellValue( row, COL_CURSOR_2 + i,
-                                                     trace->GetCursor( i ) ? "1" : "0" );
+                        m_signalsGrid->SetCellValue( row, COL_CURSOR_2 + i, trace->GetCursor( i ) ? "1" : "0" );
                     }
                 }
             }
@@ -1104,16 +1125,14 @@ void SIMULATOR_FRAME_UI::rebuildSignalsList()
         for( const std::string& portnum1 : portnums )
         {
             for( const std::string& portnum2 : portnums )
-            {
                 addSignal( wxString::Format( wxS( "S_%s_%s" ), portnum1, portnum2 ) );
-            }
         }
     }
 
     // Add .SAVE and .PROBE directives
     for( const wxString& directive : circuitModel()->GetDirectives() )
     {
-        wxStringTokenizer directivesTokenizer( directive, wxT( "\r\n" ), wxTOKEN_STRTOK );
+        wxStringTokenizer directivesTokenizer( directive, "\r\n", wxTOKEN_STRTOK );
 
         while( directivesTokenizer.HasMoreTokens() )
         {
@@ -1123,7 +1142,7 @@ void SIMULATOR_FRAME_UI::rebuildSignalsList()
             if( line.StartsWith( wxS( ".SAVE" ), &directiveParams )
                     || line.StartsWith( wxS( ".PROBE" ), &directiveParams ) )
             {
-                wxStringTokenizer paramsTokenizer( directiveParams, wxT( " \t" ), wxTOKEN_STRTOK );
+                wxStringTokenizer paramsTokenizer( directiveParams, " \t", wxTOKEN_STRTOK );
 
                 while( paramsTokenizer.HasMoreTokens() )
                     addSignal( paramsTokenizer.GetNextToken() );
@@ -1166,6 +1185,7 @@ void SIMULATOR_FRAME_UI::OnFilterText( wxCommandEvent& aEvent )
 
 void SIMULATOR_FRAME_UI::OnFilterMouseMoved( wxMouseEvent& aEvent )
 {
+#if defined( __WXOSX__ ) // Doesn't work properly on other ports
     wxPoint pos = aEvent.GetPosition();
     wxRect  ctrlRect = m_filter->GetScreenRect();
     int     buttonWidth = ctrlRect.GetHeight();         // Presume buttons are square
@@ -1176,6 +1196,7 @@ void SIMULATOR_FRAME_UI::OnFilterMouseMoved( wxMouseEvent& aEvent )
         SetCursor( wxCURSOR_ARROW );
     else
         SetCursor( wxCURSOR_IBEAM );
+#endif
 }
 
 
@@ -1189,10 +1210,28 @@ wxString vectorNameFromSignalId( int aUserDefinedSignalId )
  * For user-defined signals we display the user-oriented signal name such as "V(out)-V(in)",
  * but the simulator vector we actually have to plot will be "user0" or some-such.
  */
-wxString SIMULATOR_FRAME_UI::vectorNameFromSignalName( SIM_PLOT_TAB* aPlotTab,
-                                                       const wxString& aSignalName,
+wxString SIMULATOR_FRAME_UI::vectorNameFromSignalName( SIM_PLOT_TAB* aPlotTab, const wxString& aSignalName,
                                                        int* aTraceType )
 {
+    auto looksLikePower = []( const wxString& aExpression ) -> bool
+    {
+        wxString exprUpper = aExpression.Upper();
+
+        if( exprUpper.Contains( wxS( ":POWER" ) ) )
+            return true;
+
+        if( exprUpper.Find( '*' ) == wxNOT_FOUND )
+            return false;
+
+        if( !exprUpper.Contains( wxS( "V(" ) ) )
+            return false;
+
+        if( !exprUpper.Contains( wxS( "I(" ) ) )
+            return false;
+
+        return true;
+    };
+
     std::map<wxString, int> suffixes;
     suffixes[ _( " (amplitude)" ) ] = SPT_SP_AMP;
     suffixes[ _( " (gain)" ) ] = SPT_AC_GAIN;
@@ -1238,7 +1277,15 @@ wxString SIMULATOR_FRAME_UI::vectorNameFromSignalName( SIM_PLOT_TAB* aPlotTab,
     for( const auto& [ id, signal ] : m_userDefinedSignals )
     {
         if( name == signal )
+        {
+            if( aTraceType && looksLikePower( signal ) )
+            {
+                int suffixBits = *aTraceType & ( SPT_AC_GAIN | SPT_AC_PHASE | SPT_SP_AMP );
+                *aTraceType = suffixBits | SPT_POWER;
+            }
+
             return vectorNameFromSignalId( id );
+        }
     }
 
     return name;
@@ -1290,8 +1337,7 @@ void SIMULATOR_FRAME_UI::onSignalsGridCellChanged( wxGridEvent& aEvent )
         }
     }
     else if( col == COL_CURSOR_1 || col == COL_CURSOR_2
-             || ( ( std::size( m_cursorFormatsDyn ) > std::size( m_cursorFormats ) )
-                  && col > COL_CURSOR_2 ) )
+             || ( std::size( m_cursorFormatsDyn ) > std::size( m_cursorFormats ) && col > COL_CURSOR_2 ) )
     {
         int    id = col == COL_CURSOR_1 ? 1 : 2;
 
@@ -1649,6 +1695,8 @@ void SIMULATOR_FRAME_UI::AddTuner( const SCH_SHEET_PATH& aSheetPath, SCH_SYMBOL*
 void SIMULATOR_FRAME_UI::UpdateTunerValue( const SCH_SHEET_PATH& aSheetPath, const KIID& aSymbol,
                                            const wxString& aRef, const wxString& aValue )
 {
+    SCHEMATIC&  schematic = m_schematicFrame->Schematic();
+    wxString    variant = schematic.GetCurrentVariant();
     SCH_ITEM*   item = aSheetPath.ResolveItem( aSymbol );
     SCH_SYMBOL* symbol = dynamic_cast<SCH_SYMBOL*>( item );
 
@@ -1664,11 +1712,16 @@ void SIMULATOR_FRAME_UI::UpdateTunerValue( const SCH_SHEET_PATH& aSheetPath, con
 
     std::vector<EMBEDDED_FILES*> embeddedFilesStack;
     embeddedFilesStack.push_back( m_schematicFrame->Schematic().GetEmbeddedFiles() );
-    embeddedFilesStack.push_back( symbol->GetEmbeddedFiles() );
+
+    if( EMBEDDED_FILES* symbolEmbeddedFiles = symbol->GetEmbeddedFiles() )
+    {
+        embeddedFilesStack.push_back( symbolEmbeddedFiles );
+        symbol->GetLibSymbolRef()->AppendParentEmbeddedFiles( embeddedFilesStack );
+    }
 
     mgr.SetFilesStack( std::move( embeddedFilesStack ) );
 
-    SIM_MODEL& model = mgr.CreateModel( &aSheetPath, *symbol, true, 0, devnull ).model;
+    SIM_MODEL& model = mgr.CreateModel( &aSheetPath, *symbol, true, 0, variant, devnull ).model;
 
     const SIM_MODEL::PARAM* tunerParam = model.GetTunerParam();
 
@@ -1680,7 +1733,7 @@ void SIMULATOR_FRAME_UI::UpdateTunerValue( const SCH_SHEET_PATH& aSheetPath, con
     }
 
     model.SetParamValue( tunerParam->info.name, std::string( aValue.ToUTF8() ) );
-    model.WriteFields( symbol->GetFields() );
+    model.WriteFields( symbol->GetFields(), &aSheetPath, variant );
 
     m_schematicFrame->UpdateItem( symbol, false, true );
     m_schematicFrame->OnModify();
@@ -1690,6 +1743,15 @@ void SIMULATOR_FRAME_UI::UpdateTunerValue( const SCH_SHEET_PATH& aSheetPath, con
 void SIMULATOR_FRAME_UI::RemoveTuner( TUNER_SLIDER* aTuner )
 {
     m_tuners.remove( aTuner );
+
+    if( std::find( m_multiRunState.tuners.begin(), m_multiRunState.tuners.end(), aTuner )
+            != m_multiRunState.tuners.end() )
+    {
+        clearMultiRunState( true );
+    }
+
+    m_tunerOverrides.erase( aTuner );
+
     aTuner->Destroy();
     m_panelTuners->Layout();
     OnModify();
@@ -1874,9 +1936,8 @@ void SIMULATOR_FRAME_UI::SetUserDefinedSignals( const std::map<int, wxString>& a
 }
 
 
-void SIMULATOR_FRAME_UI::updateTrace( const wxString& aVectorName, int aTraceType,
-                                      SIM_PLOT_TAB* aPlotTab, std::vector<double>* aDataX,
-                                      bool aClearData )
+void SIMULATOR_FRAME_UI::updateTrace( const wxString& aVectorName, int aTraceType, SIM_PLOT_TAB* aPlotTab,
+                                      std::vector<double>* aDataX, bool aClearData )
 {
     if( !m_simulatorFrame->SimFinished() && !simulator()->IsRunning())
     {
@@ -1970,6 +2031,84 @@ void SIMULATOR_FRAME_UI::updateTrace( const wxString& aVectorName, int aTraceTyp
         sweepSize = aDataX->size() / sweepCount;
     }
 
+    if( m_multiRunState.storePending )
+        recordMultiRunData( aVectorName, aTraceType, *aDataX, data_y );
+
+    if( hasMultiRunTrace( aVectorName, aTraceType ) )
+    {
+        const std::string key = multiRunTraceKey( aVectorName, aTraceType );
+        const auto        traceIt = m_multiRunState.traces.find( key );
+
+        if( traceIt != m_multiRunState.traces.end() )
+        {
+            const MULTI_RUN_TRACE& traceData = traceIt->second;
+
+            if( !traceData.xValues.empty() && !traceData.yValues.empty() )
+            {
+                size_t sweepSizeMulti = traceData.xValues.size();
+                size_t runCount = traceData.yValues.size();
+
+                if( sweepSizeMulti > 0 && runCount > 0 )
+                {
+                    std::vector<double> combinedX;
+                    std::vector<double> combinedY;
+
+                    combinedX.reserve( sweepSizeMulti * runCount );
+                    combinedY.reserve( sweepSizeMulti * runCount );
+
+                    for( const std::vector<double>& runY : traceData.yValues )
+                    {
+                        if( runY.size() != sweepSizeMulti )
+                            continue;
+
+                        combinedX.insert( combinedX.end(), traceData.xValues.begin(), traceData.xValues.end() );
+                        combinedY.insert( combinedY.end(), runY.begin(), runY.end() );
+                    }
+
+                    if( TRACE* trace = aPlotTab->GetOrAddTrace( aVectorName, aTraceType ) )
+                    {
+                        if( combinedY.size() >= combinedX.size() && sweepSizeMulti > 0 )
+                        {
+                            int sweepCountCombined = combinedX.empty() ? 0 : static_cast<int>( combinedY.size() / sweepSizeMulti );
+
+                            if( sweepCountCombined > 0 )
+                            {
+                                // Generate labels for each run based on tuner values
+                                std::vector<wxString> labels;
+                                labels.reserve( sweepCountCombined );
+                                
+                                for( int i = 0; i < sweepCountCombined && i < (int)m_multiRunState.steps.size(); ++i )
+                                {
+                                    const MULTI_RUN_STEP& step = m_multiRunState.steps[i];
+                                    wxString label;
+                                    
+                                    for( auto it = step.overrides.begin(); it != step.overrides.end(); ++it )
+                                    {
+                                        if( it != step.overrides.begin() )
+                                            label += wxS( ", " );
+                                        
+                                        const TUNER_SLIDER* tuner = it->first;
+                                        double value = it->second;
+                                        
+                                        SPICE_VALUE spiceVal( value );
+                                        label += tuner->GetSymbolRef() + wxS( "=" ) + spiceVal.ToSpiceString();
+                                    }
+                                    
+                                    labels.push_back( label );
+                                }
+                                
+                                aPlotTab->SetTraceData( trace, combinedX, combinedY, sweepCountCombined, 
+                                                       sweepSizeMulti, true, labels );
+                            }
+                        }
+                    }
+
+                    return;
+                }
+            }
+        }
+    }
+
     if( TRACE* trace = aPlotTab->GetOrAddTrace( aVectorName, aTraceType ) )
     {
         if( data_y.size() >= size )
@@ -1987,10 +2126,9 @@ template <typename T, typename U, typename R>
 void SIMULATOR_FRAME_UI::signalsGridCursorUpdate( T t, U u, R r ) // t=cursor type/signals' grid col, u=cursor number/cursor "id", r=table's row
 {
     SIM_PLOT_TAB* plotTab = dynamic_cast<SIM_PLOT_TAB*>( GetCurrentSimTab() );
-
-    wxString          signalName = m_signalsGrid->GetCellValue( r, COL_SIGNAL_NAME );
-    int               traceType = SPT_UNKNOWN;
-    wxString          vectorName = vectorNameFromSignalName( plotTab, signalName, &traceType );
+    wxString      signalName = m_signalsGrid->GetCellValue( r, COL_SIGNAL_NAME );
+    int           traceType = SPT_UNKNOWN;
+    wxString      vectorName = vectorNameFromSignalName( plotTab, signalName, &traceType );
 
     wxGridCellAttrPtr attr = m_signalsGrid->GetOrCreateCellAttrPtr( r, static_cast<int>( t ) );
 
@@ -2074,10 +2212,7 @@ void SIMULATOR_FRAME_UI::updateSignalsGrid()
             for( int i = 3; i < m_customCursorsCnt; i++ )
             {
                 int tm = i + 2;
-                signalsGridCursorUpdate(
-                        static_cast<SIGNALS_GRID_COLUMNS>( tm ),
-                        i,
-                        row );
+                signalsGridCursorUpdate( static_cast<SIGNALS_GRID_COLUMNS>( tm ), i, row );
             }
         }
     }
@@ -2087,50 +2222,104 @@ void SIMULATOR_FRAME_UI::updateSignalsGrid()
 
 void SIMULATOR_FRAME_UI::applyUserDefinedSignals()
 {
-    auto quoteNetNames = [&]( wxString aExpression ) -> wxString
-    {
-        std::vector<bool> mask( aExpression.length(), false );
-
-        for( const auto& netname : m_netnames )
-        {
-            size_t pos = aExpression.find( netname );
-
-            while( pos != wxString::npos )
+    auto quoteNetNames =
+            [&]( wxString aExpression ) -> wxString
             {
-                for( size_t i = 0; i < netname.length(); ++i )
+                std::vector<bool> mask( aExpression.length(), false );
+
+                auto isNetnameChar =
+                        []( wxUniChar aChar ) -> bool
+                        {
+                            wxUint32 value = aChar.GetValue();
+
+                            if( ( value >= '0' && value <= '9' ) || ( value >= 'A' && value <= 'Z' )
+                                || ( value >= 'a' && value <= 'z' ) )
+                            {
+                                return true;
+                            }
+
+                            switch( value )
+                            {
+                            case '_':
+                            case '/':
+                            case '+':
+                            case '-':
+                            case '~':
+                            case '.':
+                                return true;
+                            default:
+                                break;
+                            }
+
+                            return false;
+                        };
+
+                for( const wxString& netname : m_netnames )
                 {
-                    mask[pos + i] = true; // Mark the positions of the netname
+                    size_t pos = aExpression.find( netname );
+
+                    while( pos != wxString::npos )
+                    {
+                        for( size_t i = 0; i < netname.length(); ++i )
+                            mask[pos + i] = true; // Mark the positions of the netname
+
+                        pos = aExpression.find( netname, pos + 1 ); // Find the next occurrence
+                    }
                 }
-                pos = aExpression.find( netname, pos + 1 ); // Find the next occurrence
-            }
-        }
 
-        wxString quotedNetnames = "";
-        bool     startQuote = true;
+                for( size_t i = 0; i < aExpression.length(); ++i )
+                {
+                    if( !mask[i] || ( i > 0 && mask[i - 1] ) )
+                        continue;
 
-        // put quotes around all the positions that were found above
-        for( size_t i = 0; i < aExpression.length(); i++ )
-        {
-            if( mask[i] && startQuote )
-            {
-                quotedNetnames = quotedNetnames + "\"";
-                startQuote = false;
-            }
-            else if( !mask[i] && !startQuote )
-            {
-                quotedNetnames = quotedNetnames + "\"";
-                startQuote = true;
-            }
-            wxString ch = aExpression[i];
-            quotedNetnames = quotedNetnames + ch;
-        }
+                    size_t j = i + 1;
 
-        if( !startQuote )
-        {
-            quotedNetnames = quotedNetnames + "\"";
-        }
-        return quotedNetnames;
-    };
+                    while( j < aExpression.length() )
+                    {
+                        if( mask[j] )
+                        {
+                            ++j;
+                            continue;
+                        }
+
+                        if( isNetnameChar( aExpression[j] ) )
+                        {
+                            mask[j] = true;
+                            ++j;
+                        }
+                        else
+                        {
+                            break;
+                        }
+                    }
+                }
+
+                wxString quotedNetnames = "";
+                bool     startQuote = true;
+
+                // put quotes around all the positions that were found above
+                for( size_t i = 0; i < aExpression.length(); i++ )
+                {
+                    if( mask[i] && startQuote )
+                    {
+                        quotedNetnames = quotedNetnames + "\"";
+                        startQuote = false;
+                    }
+                    else if( !mask[i] && !startQuote )
+                    {
+                        quotedNetnames = quotedNetnames + "\"";
+                        startQuote = true;
+                    }
+
+                    wxString ch = aExpression[i];
+                    quotedNetnames = quotedNetnames + ch;
+                }
+
+                if( !startQuote )
+                    quotedNetnames = quotedNetnames + "\"";
+
+                return quotedNetnames;
+            };
 
     for( const auto& [ id, signal ] : m_userDefinedSignals )
     {
@@ -2168,14 +2357,20 @@ void SIMULATOR_FRAME_UI::applyTuners()
             continue;
         }
 
-        double floatVal = tuner->GetValue().ToDouble();
+        double floatVal;
+
+        auto overrideIt = m_tunerOverrides.find( tuner );
+
+        if( overrideIt != m_tunerOverrides.end() )
+            floatVal = overrideIt->second;
+        else
+            floatVal = tuner->GetValue().ToDouble();
 
         simulator()->Command( item->model->SpiceGenerator().TunerCommand( *item, floatVal ) );
     }
 
     if( reporter.HasMessage() )
-        DisplayErrorMessage( this, _( "Could not apply tuned value(s):" ) + wxS( "\n" )
-                                           + reporter.GetMessages() );
+        DisplayErrorMessage( this, _( "Could not apply tuned value(s):" ) + wxS( "\n" ) + reporter.GetMessages() );
 }
 
 bool SIMULATOR_FRAME_UI::LoadWorkbook( const wxString& aPath )
@@ -2371,10 +2566,8 @@ bool SIMULATOR_FRAME_UI::loadJsonWorkbook( const wxString& aPath )
                     {
                         if( aCursorId < 3 )
                         {
-                            m_cursorFormatsDyn[aCursorId - 1][0].FromString(
-                                    aCursor_js["x_format"] );
-                            m_cursorFormatsDyn[aCursorId - 1][1].FromString(
-                                    aCursor_js["y_format"] );
+                            m_cursorFormatsDyn[aCursorId - 1][0].FromString( aCursor_js["x_format"] );
+                            m_cursorFormatsDyn[aCursorId - 1][1].FromString( aCursor_js["y_format"] );
                         }
                         else
                         {
@@ -2774,6 +2967,9 @@ void SIMULATOR_FRAME_UI::onPlotClosed( wxAuiNotebookEvent& event )
                    rebuildSignalsGrid( m_filter->GetValue() );
                    updatePlotCursors();
 
+                   //To avoid a current side effect in dynamic cursors while closing one out of many sim tabs
+                   updateSignalsGrid();
+
                    SIM_TAB* panel = GetCurrentSimTab();
 
                    if( !panel || panel->GetSimType() != ST_OP )
@@ -2834,6 +3030,9 @@ void SIMULATOR_FRAME_UI::onPlotChanged( wxAuiNotebookEvent& event )
         simulator()->Command( "setplot " + simTab->GetSpicePlotName().ToStdString() );
 
     OnPlotSettingsChanged();
+
+    //To avoid a current side effect in dynamic cursors while switching sim tabs
+    updateSignalsGrid();
 
     event.Skip();
 }
@@ -3060,11 +3259,9 @@ void SIMULATOR_FRAME_UI::updatePlotCursors()
 
                     valColName = _( "Value" );
 
-                    if( !cursName.IsEmpty()
-                        && ( m_cursorsGrid->GetColLabelValue( COL_CURSOR_Y ) == cursName ) )
-                    {
+                    if( !cursName.IsEmpty() && m_cursorsGrid->GetColLabelValue( COL_CURSOR_Y ) == cursName )
                         valColName = cursName;
-                    }
+
                     m_cursorsGrid->SetColLabelValue( COL_CURSOR_Y, valColName );
                     break;
                 }
@@ -3087,6 +3284,8 @@ void SIMULATOR_FRAME_UI::OnSimUpdate()
         plotTab->ResetScales( true );
 
     m_simConsole->Clear();
+
+    prepareMultiRunState();
 
     // Do not export netlist, it is already stored in the simulator
     applyTuners();
@@ -3138,6 +3337,21 @@ void SIMULATOR_FRAME_UI::OnSimRefresh( bool aFinal )
 
     if( !simTab )
         return;
+
+    bool storeMultiRun = false;
+
+    if( aFinal && m_multiRunState.active )
+    {
+        if( m_multiRunState.currentStep < m_multiRunState.steps.size() )
+        {
+            storeMultiRun = true;
+            m_multiRunState.storePending = true;
+        }
+    }
+    else
+    {
+        m_multiRunState.storePending = false;
+    }
 
     SIM_TYPE simType = simTab->GetSimType();
     wxString msg;
@@ -3318,6 +3532,235 @@ void SIMULATOR_FRAME_UI::OnSimRefresh( bool aFinal )
         m_simConsole->SetInsertionPointEnd();
         simulator()->Command( "print all" );
     }
+
+    if( storeMultiRun )
+    {
+        m_multiRunState.storePending = false;
+        m_multiRunState.storedSteps = m_multiRunState.currentStep + 1;
+    }
+
+    if( aFinal && m_multiRunState.active )
+    {
+        if( m_multiRunState.currentStep + 1 < m_multiRunState.steps.size() )
+        {
+            m_multiRunState.currentStep++;
+
+            wxQueueEvent( m_simulatorFrame, new wxCommandEvent( EVT_SIM_UPDATE ) );
+        }
+        else
+        {
+            m_multiRunState.active = false;
+            m_multiRunState.steps.clear();
+            m_multiRunState.currentStep = 0;
+            m_multiRunState.storePending = false;
+            m_tunerOverrides.clear();
+
+            if( !m_multiRunState.traces.empty() )
+            {
+                auto iter = m_multiRunState.traces.begin();
+
+                if( iter != m_multiRunState.traces.end() )
+                    m_multiRunState.storedSteps = iter->second.yValues.size();
+            }
+        }
+    }
+}
+
+
+void SIMULATOR_FRAME_UI::clearMultiRunState( bool aClearTraces )
+{
+    m_multiRunState.active = false;
+    m_multiRunState.tuners.clear();
+    m_multiRunState.steps.clear();
+    m_multiRunState.currentStep = 0;
+    m_multiRunState.storePending = false;
+
+    if( aClearTraces )
+    {
+        m_multiRunState.traces.clear();
+        m_multiRunState.storedSteps = 0;
+    }
+
+    m_tunerOverrides.clear();
+}
+
+
+void SIMULATOR_FRAME_UI::prepareMultiRunState()
+{
+    m_tunerOverrides.clear();
+
+    std::vector<TUNER_SLIDER*> multiTuners;
+
+    for( TUNER_SLIDER* tuner : m_tuners )
+    {
+        if( tuner->GetRunMode() == TUNER_SLIDER::RUN_MODE::MULTI )
+            multiTuners.push_back( tuner );
+    }
+
+    if( multiTuners.empty() )
+    {
+        clearMultiRunState( true );
+        return;
+    }
+
+    bool tunersChanged = multiTuners != m_multiRunState.tuners;
+
+    if( m_multiRunState.active && tunersChanged )
+        clearMultiRunState( true );
+
+    if( !m_multiRunState.active )
+    {
+        if( tunersChanged || m_multiRunState.storedSteps > 0 || !m_multiRunState.traces.empty() )
+            clearMultiRunState( true );
+
+        m_multiRunState.tuners = multiTuners;
+        m_multiRunState.steps = calculateMultiRunSteps( multiTuners );
+        m_multiRunState.currentStep = 0;
+        m_multiRunState.storePending = false;
+
+        if( m_multiRunState.steps.size() >= 2 )
+        {
+            m_multiRunState.active = true;
+            m_multiRunState.storedSteps = 0;
+        }
+        else
+        {
+            m_multiRunState.steps.clear();
+            return;
+        }
+    }
+    else if( tunersChanged )
+    {
+        m_multiRunState.tuners = multiTuners;
+    }
+
+    if( m_multiRunState.active && m_multiRunState.currentStep < m_multiRunState.steps.size() )
+    {
+        const MULTI_RUN_STEP& step = m_multiRunState.steps[m_multiRunState.currentStep];
+
+        for( const auto& entry : step.overrides )
+            m_tunerOverrides[entry.first] = entry.second;
+    }
+}
+
+
+std::vector<SIMULATOR_FRAME_UI::MULTI_RUN_STEP> SIMULATOR_FRAME_UI::calculateMultiRunSteps(
+        const std::vector<TUNER_SLIDER*>& aTuners ) const
+{
+    std::vector<MULTI_RUN_STEP> steps;
+
+    if( aTuners.empty() )
+        return steps;
+
+    std::vector<std::vector<double>> tunerValues;
+    tunerValues.reserve( aTuners.size() );
+
+    for( TUNER_SLIDER* tuner : aTuners )
+    {
+        if( !tuner )
+            return steps;
+
+        double startValue = tuner->GetMin().ToDouble();
+        double endValue = tuner->GetMax().ToDouble();
+        int    stepCount = std::max( 2, tuner->GetStepCount() );
+
+        if( stepCount < 2 )
+            stepCount = 2;
+
+        double increment = ( endValue - startValue ) / static_cast<double>( stepCount - 1 );
+
+        std::vector<double> values;
+        values.reserve( stepCount );
+
+        for( int ii = 0; ii < stepCount; ++ii )
+            values.push_back( startValue + increment * ii );
+
+        tunerValues.push_back( std::move( values ) );
+    }
+
+    int limit = ADVANCED_CFG::GetCfg().m_SimulatorMultiRunCombinationLimit;
+
+    if( limit < 1 )
+        limit = 1;
+
+    std::vector<double> currentValues( aTuners.size(), 0.0 );
+
+    auto generate = [&]( auto&& self, size_t depth ) -> void
+    {
+        if( steps.size() >= static_cast<size_t>( limit ) )
+            return;
+
+        if( depth == aTuners.size() )
+        {
+            MULTI_RUN_STEP step;
+
+            for( size_t ii = 0; ii < aTuners.size(); ++ii )
+                step.overrides.emplace( aTuners[ii], currentValues[ii] );
+
+            steps.push_back( std::move( step ) );
+            return;
+        }
+
+        for( double value : tunerValues[depth] )
+        {
+            currentValues[depth] = value;
+            self( self, depth + 1 );
+
+            if( steps.size() >= static_cast<size_t>( limit ) )
+                return;
+        }
+    };
+
+    generate( generate, 0 );
+
+    return steps;
+}
+
+
+std::string SIMULATOR_FRAME_UI::multiRunTraceKey( const wxString& aVectorName, int aTraceType ) const
+{
+    return fmt::format( "{}|{}", aVectorName.ToStdString(), aTraceType );
+}
+
+
+void SIMULATOR_FRAME_UI::recordMultiRunData( const wxString& aVectorName, int aTraceType,
+                                             const std::vector<double>& aX,
+                                             const std::vector<double>& aY )
+{
+    if( aX.empty() || aY.empty() )
+        return;
+
+    std::string key = multiRunTraceKey( aVectorName, aTraceType );
+    MULTI_RUN_TRACE& trace = m_multiRunState.traces[key];
+
+    trace.traceType = aTraceType;
+
+    if( trace.xValues.empty() )
+        trace.xValues = aX;
+
+    if( trace.xValues.size() != aX.size() )
+        return;
+
+    size_t index = m_multiRunState.currentStep;
+
+    if( trace.yValues.size() <= index )
+        trace.yValues.resize( index + 1 );
+
+    trace.yValues[index] = aY;
+}
+
+
+bool SIMULATOR_FRAME_UI::hasMultiRunTrace( const wxString& aVectorName, int aTraceType ) const
+{
+    std::string key = multiRunTraceKey( aVectorName, aTraceType );
+    auto        it = m_multiRunState.traces.find( key );
+
+    if( it == m_multiRunState.traces.end() )
+        return false;
+
+    const MULTI_RUN_TRACE& trace = it->second;
+
+    return !trace.xValues.empty() && !trace.yValues.empty();
 }
 
 

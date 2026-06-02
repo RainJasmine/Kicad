@@ -142,7 +142,7 @@ DIALOG_FIND_BASE::DIALOG_FIND_BASE( wxWindow* parent, wxWindowID id, const wxStr
 
 	sizerStatus->Add( 0, 0, 1, wxEXPAND, 5 );
 
-	m_searchPanelLink = new wxHyperlinkCtrl( this, wxID_ANY, _("Show search panel"), wxT("http://www.wxformbuilder.org"), wxDefaultPosition, wxDefaultSize, wxHL_DEFAULT_STYLE );
+	m_searchPanelLink = new wxHyperlinkCtrl( this, wxID_ANY, _("Show search panel"), wxEmptyString, wxDefaultPosition, wxDefaultSize, wxHL_DEFAULT_STYLE );
 	sizerStatus->Add( m_searchPanelLink, 0, wxBOTTOM|wxRIGHT|wxLEFT, 5 );
 
 
@@ -156,9 +156,16 @@ DIALOG_FIND_BASE::DIALOG_FIND_BASE( wxWindow* parent, wxWindowID id, const wxStr
 	this->Centre( wxBOTH );
 
 	// Connect Events
-	this->Connect( wxEVT_CLOSE_WINDOW, wxCloseEventHandler( DIALOG_FIND_BASE::OnClose ) );
 	m_searchCombo->Connect( wxEVT_COMMAND_TEXT_ENTER, wxCommandEventHandler( DIALOG_FIND_BASE::onTextEnter ), NULL, this );
-	m_checkAllFields->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_FIND_BASE::OnOptions ), NULL, this );
+	m_matchCase->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_FIND_BASE::onOptionChanged ), NULL, this );
+	m_matchWords->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_FIND_BASE::onOptionChanged ), NULL, this );
+	m_wildcards->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_FIND_BASE::onOptionChanged ), NULL, this );
+	m_includeReferences->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_FIND_BASE::onOptionChanged ), NULL, this );
+	m_includeMarkers->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_FIND_BASE::onOptionChanged ), NULL, this );
+	m_includeValues->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_FIND_BASE::onOptionChanged ), NULL, this );
+	m_includeNets->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_FIND_BASE::onOptionChanged ), NULL, this );
+	m_checkAllFields->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_FIND_BASE::onOptionChanged ), NULL, this );
+	m_includeTexts->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_FIND_BASE::onOptionChanged ), NULL, this );
 	m_findNext->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_FIND_BASE::onFindNextClick ), NULL, this );
 	m_findPrevious->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_FIND_BASE::onFindPreviousClick ), NULL, this );
 	m_searchAgain->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_FIND_BASE::onSearchAgainClick ), NULL, this );
@@ -169,9 +176,16 @@ DIALOG_FIND_BASE::DIALOG_FIND_BASE( wxWindow* parent, wxWindowID id, const wxStr
 DIALOG_FIND_BASE::~DIALOG_FIND_BASE()
 {
 	// Disconnect Events
-	this->Disconnect( wxEVT_CLOSE_WINDOW, wxCloseEventHandler( DIALOG_FIND_BASE::OnClose ) );
 	m_searchCombo->Disconnect( wxEVT_COMMAND_TEXT_ENTER, wxCommandEventHandler( DIALOG_FIND_BASE::onTextEnter ), NULL, this );
-	m_checkAllFields->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_FIND_BASE::OnOptions ), NULL, this );
+	m_matchCase->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_FIND_BASE::onOptionChanged ), NULL, this );
+	m_matchWords->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_FIND_BASE::onOptionChanged ), NULL, this );
+	m_wildcards->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_FIND_BASE::onOptionChanged ), NULL, this );
+	m_includeReferences->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_FIND_BASE::onOptionChanged ), NULL, this );
+	m_includeMarkers->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_FIND_BASE::onOptionChanged ), NULL, this );
+	m_includeValues->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_FIND_BASE::onOptionChanged ), NULL, this );
+	m_includeNets->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_FIND_BASE::onOptionChanged ), NULL, this );
+	m_checkAllFields->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_FIND_BASE::onOptionChanged ), NULL, this );
+	m_includeTexts->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_FIND_BASE::onOptionChanged ), NULL, this );
 	m_findNext->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_FIND_BASE::onFindNextClick ), NULL, this );
 	m_findPrevious->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_FIND_BASE::onFindPreviousClick ), NULL, this );
 	m_searchAgain->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_FIND_BASE::onSearchAgainClick ), NULL, this );

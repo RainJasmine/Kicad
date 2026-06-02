@@ -22,6 +22,8 @@
  */
 
 
+#include <algorithm>
+
 #include <string_utils.h>
 #include <scintilla_tricks.h>
 #include <widgets/wx_grid.h>
@@ -33,6 +35,7 @@
 #include <wx/log.h>
 #include <wx/settings.h>
 #include <confirm.h>
+#include <grid_tricks.h>
 
 SCINTILLA_TRICKS::SCINTILLA_TRICKS( wxStyledTextCtrl* aScintilla, const wxString& aBraces,
                                     bool aSingleLine,
@@ -173,6 +176,29 @@ bool isCtrlSlash( wxKeyEvent& aEvent )
 }
 
 
+bool SCINTILLA_TRICKS::isIMECompositionActive() const
+{
+    // Check if any of the IME indicators (32-35) are active at or near the current position.
+    // Scintilla uses these indicators to mark text during IME composition in inline mode.
+    // We check a range around the caret position because the caret may be at the edge of
+    // the composition region.
+    int pos = m_te->GetCurrentPos();
+    int checkStart = std::max( 0, pos - 10 );
+    int checkEnd = std::min( m_te->GetTextLength(), pos + 10 );
+
+    for( int indicator = wxSTC_INDIC_IME; indicator <= wxSTC_INDIC_IME_MAX; ++indicator )
+    {
+        for( int checkPos = checkStart; checkPos <= checkEnd; ++checkPos )
+        {
+            if( m_te->IndicatorValueAt( indicator, checkPos ) != 0 )
+                return true;
+        }
+    }
+
+    return false;
+}
+
+
 void SCINTILLA_TRICKS::onChar( wxStyledTextEvent& aEvent )
 {
     m_onCharAddedFn( aEvent );
@@ -206,16 +232,48 @@ void SCINTILLA_TRICKS::onModified( wxStyledTextEvent& aEvent )
     {
         // If the font is larger than the height of a single-line text box we can get issues
         // with the text disappearing every other character due to dodgy scrolling behaviour.
-        CallAfter( [this]()
-                   {
-                       m_te->ScrollToStart();
-                   } );
+        CallAfter(
+                [this]()
+                {
+                    if( !m_te->AutoCompActive() )
+                        m_te->ScrollToStart();
+                } );
     }
 }
 
 
 void SCINTILLA_TRICKS::onCharHook( wxKeyEvent& aEvent )
 {
+    // During IME composition, let keys like Enter, Space, and Tab pass through to the IME
+    // so it can use them for candidate selection and confirmation.
+    if( isIMECompositionActive() )
+    {
+        aEvent.Skip();
+        return;
+    }
+
+    auto findGridTricks =
+            [&]() -> GRID_TRICKS*
+            {
+                wxWindow* parent = m_te->GetParent();
+
+                while( parent && !dynamic_cast<WX_GRID*>( parent ) )
+                    parent = parent->GetParent();
+
+                if( WX_GRID* grid = dynamic_cast<WX_GRID*>( parent ) )
+                {
+                    wxEvtHandler* handler = grid->GetEventHandler();
+
+                    while( handler && !dynamic_cast<GRID_TRICKS*>( handler ) )
+                        handler = handler->GetNextHandler();
+
+                    if( GRID_TRICKS* gridTricks = dynamic_cast<GRID_TRICKS*>( handler ) )
+                        return gridTricks;
+                }
+
+                return nullptr;
+            };
+
     wxString c = aEvent.GetUnicodeKey();
 
     if( m_te->AutoCompActive() )
@@ -373,7 +431,8 @@ void SCINTILLA_TRICKS::onCharHook( wxKeyEvent& aEvent )
         if( m_te->GetSelectionEnd() > m_te->GetSelectionStart() )
             m_te->DeleteBack();
 
-        wxLogNull doNotLog; // disable logging of failed clipboard actions
+        GRID_TRICKS* gridTricks = nullptr;
+        wxLogNull    doNotLog; // disable logging of failed clipboard actions
 
         if( wxTheClipboard->Open() )
         {
@@ -386,21 +445,30 @@ void SCINTILLA_TRICKS::onCharHook( wxKeyEvent& aEvent )
                 wxTheClipboard->GetData( data );
                 str = data.GetText();
 
-                ConvertSmartQuotesAndDashes( &str );
+                if( str.Contains( '\t' ) )
+                    gridTricks = findGridTricks();
 
-                if( m_singleLine )
+                if( !gridTricks )
                 {
-                    str.Replace( wxS( "\n" ), wxEmptyString );
-                    str.Replace( wxS( "\r" ), wxEmptyString );
-                }
+                    ConvertSmartQuotesAndDashes( &str );
 
-                m_te->BeginUndoAction();
-                m_te->AddText( str );
-                m_te->EndUndoAction();
+                    if( m_singleLine )
+                    {
+                        str.Replace( wxS( "\n" ), wxEmptyString );
+                        str.Replace( wxS( "\r" ), wxEmptyString );
+                    }
+
+                    m_te->BeginUndoAction();
+                    m_te->AddText( str );
+                    m_te->EndUndoAction();
+                }
             }
 
             wxTheClipboard->Close();
         }
+
+        if( gridTricks )
+            gridTricks->onKeyDown( aEvent );
     }
     else if( aEvent.GetKeyCode() == WXK_BACK )
     {
@@ -524,10 +592,11 @@ int SCINTILLA_TRICKS::firstNonWhitespace( int aLine, int* aWhitespaceCharCount )
 
 void SCINTILLA_TRICKS::onScintillaUpdateUI( wxStyledTextEvent& aEvent )
 {
-    auto isBrace = [this]( int c ) -> bool
-                   {
-                       return m_braces.Find( (wxChar) c ) >= 0;
-                   };
+    auto isBrace =
+            [this]( int c ) -> bool
+            {
+                return m_braces.Find( (wxChar) c ) >= 0;
+            };
 
     // Has the caret changed position?
     int caretPos = m_te->GetCurrentPos();

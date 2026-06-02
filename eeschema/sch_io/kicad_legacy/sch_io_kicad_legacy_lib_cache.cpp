@@ -19,7 +19,10 @@
 
 #include <magic_enum.hpp>
 #include <wx/log.h>
+#include <wx/tokenzr.h>
 
+#include <common.h>
+#include <kiplatform/io.h>
 #include <lib_symbol.h>
 #include <sch_shape.h>
 #include <sch_pin.h>
@@ -194,10 +197,7 @@ void SCH_IO_KICAD_LEGACY_LIB_CACHE::loadDocs()
         THROW_IO_ERROR( _( "symbol document library file is empty" ) );
 
     if( !strCompare( DOCFILE_IDENT, line, &line ) )
-    {
-        SCH_PARSE_ERROR( "invalid document library file version formatting in header",
-                         reader, line );
-    }
+        SCH_PARSE_ERROR( "invalid document library file version formatting in header", reader, line );
 
     while( reader.ReadLine() )
     {
@@ -313,7 +313,7 @@ LIB_SYMBOL* SCH_IO_KICAD_LEGACY_LIB_CACHE::LoadPart( LINE_READER& aReader, int a
     long num;
     size_t pos = 4;                               // "DEF" plus the first space.
     wxString utf8Line = wxString::FromUTF8( line );
-    wxStringTokenizer tokens( utf8Line, " \r\n\t" );
+    wxStringTokenizer tokens( utf8Line, " \t\r\n" );
 
     if( tokens.CountTokens() < 8 )
         SCH_PARSE_ERROR( "invalid symbol definition", aReader, line );
@@ -352,8 +352,10 @@ LIB_SYMBOL* SCH_IO_KICAD_LEGACY_LIB_CACHE::LoadPart( LINE_READER& aReader, int a
     tmp = tokens.GetNextToken();                  // Show pin numbers.
 
     if( !( tmp == "Y" || tmp == "N") )
+    {
         THROW_PARSE_ERROR( "expected Y or N", aReader.GetSource(), aReader.Line(),
                            aReader.LineNumber(), pos );
+    }
 
     pos += tmp.size() + 1;
     symbol->SetShowPinNumbers( ( tmp == "N" ) ? false : true );
@@ -372,17 +374,14 @@ LIB_SYMBOL* SCH_IO_KICAD_LEGACY_LIB_CACHE::LoadPart( LINE_READER& aReader, int a
     tmp = tokens.GetNextToken();                  // Number of units.
 
     if( !tmp.ToLong( &num ) )
-    {
-        THROW_PARSE_ERROR( "invalid unit count", aReader.GetSource(), aReader.Line(),
-                           aReader.LineNumber(), pos );
-    }
+        THROW_PARSE_ERROR( "invalid unit count", aReader.GetSource(), aReader.Line(), aReader.LineNumber(), pos );
 
     pos += tmp.size() + 1;
-    symbol->SetUnitCount( (int)num );
+    symbol->SetUnitCount( (int)num, true );
 
     // Ensure m_unitCount is >= 1.  Could be read as 0 in old libraries.
     if( symbol->GetUnitCount() < 1 )
-        symbol->SetUnitCount( 1 );
+        symbol->SetUnitCount( 1, true );
 
     // Copy symbol name and prefix.
 
@@ -474,6 +473,7 @@ LIB_SYMBOL* SCH_IO_KICAD_LEGACY_LIB_CACHE::LoadPart( LINE_READER& aReader, int a
             loadFootprintFilters( symbol, aReader );
         else if( strCompare( "ENDDEF", line, &line ) )      // End of symbol description
         {
+            symbol->SetHasDeMorganBodyStyles( symbol->HasLegacyAlternateBodyStyle() );
             return symbol.release();
         }
 
@@ -494,7 +494,7 @@ void SCH_IO_KICAD_LEGACY_LIB_CACHE::loadAliases( std::unique_ptr<LIB_SYMBOL>& aS
     wxCHECK_RET( strCompare( "ALIAS", line, &line ), "Invalid ALIAS section" );
 
     wxString utf8Line = wxString::FromUTF8( line );
-    wxStringTokenizer tokens( utf8Line, " \r\n\t" );
+    wxStringTokenizer tokens( utf8Line, " \t\r\n" );
 
     // Parse the ALIAS list.
     while( tokens.HasMoreTokens() )
@@ -520,6 +520,7 @@ void SCH_IO_KICAD_LEGACY_LIB_CACHE::loadAliases( std::unique_ptr<LIB_SYMBOL>& aS
             }
 
             newSymbol->SetParent( aSymbol.get() );
+            newSymbol->SetHasDeMorganBodyStyles( newSymbol->HasLegacyAlternateBodyStyle() );
 
             // This will prevent duplicate aliases.
             (*aMap)[ newSymbol->GetName() ] = newSymbol;
@@ -1116,7 +1117,7 @@ SCH_PIN* SCH_IO_KICAD_LEGACY_LIB_CACHE::loadPin( std::unique_ptr<LIB_SYMBOL>& aS
     size_t pos = 2;                               // "X" plus ' ' space character.
     wxString tmp;
     wxString utf8Line = wxString::FromUTF8( line );
-    wxStringTokenizer tokens( utf8Line, " \r\n\t" );
+    wxStringTokenizer tokens( utf8Line, " \t\r\n" );
 
     if( tokens.CountTokens() < 11 )
         SCH_PARSE_ERROR( "invalid pin definition", aReader, line );
@@ -1224,12 +1225,12 @@ SCH_PIN* SCH_IO_KICAD_LEGACY_LIB_CACHE::loadPin( std::unique_ptr<LIB_SYMBOL>& aS
 
     if( !tmp.ToLong( &num ) )
     {
-        THROW_PARSE_ERROR( "invalid pin alternate body type", aReader.GetSource(), aReader.Line(),
+        THROW_PARSE_ERROR( "invalid pin body style", aReader.GetSource(), aReader.Line(),
                            aReader.LineNumber(), pos );
     }
 
     pos += tmp.size() + 1;
-    int convert = (int) num;
+    int bodyStyle = (int) num;
 
     tmp = tokens.GetNextToken();
 
@@ -1269,7 +1270,7 @@ SCH_PIN* SCH_IO_KICAD_LEGACY_LIB_CACHE::loadPin( std::unique_ptr<LIB_SYMBOL>& aS
                                 length,
                                 nameTextSize,
                                 numberTextSize,
-                                convert,
+                                bodyStyle,
                                 position,
                                 unit );
 
@@ -1320,8 +1321,7 @@ SCH_PIN* SCH_IO_KICAD_LEGACY_LIB_CACHE::loadPin( std::unique_ptr<LIB_SYMBOL>& aS
         case LOWLEVEL_OUT:        pin->SetShape( GRAPHIC_PINSHAPE::OUTPUT_LOW );         break;
         case FALLING_EDGE:        pin->SetShape( GRAPHIC_PINSHAPE::FALLING_EDGE_CLOCK ); break;
         case NONLOGIC:            pin->SetShape( GRAPHIC_PINSHAPE::NONLOGIC );           break;
-        default:
-            SCH_PARSE_ERROR( "pin attributes do not define a valid pin shape", aReader, line );
+        default: SCH_PARSE_ERROR( "pin attributes do not define a valid pin shape", aReader, line );
         }
     }
 
@@ -1341,8 +1341,7 @@ SCH_SHAPE* SCH_IO_KICAD_LEGACY_LIB_CACHE::loadPolyLine( LINE_READER& aReader )
     polyLine->SetUnit( parseInt( aReader, line, &line ) );
     polyLine->SetBodyStyle( parseInt( aReader, line, &line ) );
 
-    STROKE_PARAMS stroke( schIUScale.MilsToIU( parseInt( aReader, line, &line ) ),
-                          LINE_STYLE::SOLID );
+    STROKE_PARAMS stroke( schIUScale.MilsToIU( parseInt( aReader, line, &line ) ), LINE_STYLE::SOLID );
 
     polyLine->SetStroke( stroke );
 
@@ -1377,8 +1376,7 @@ SCH_SHAPE* SCH_IO_KICAD_LEGACY_LIB_CACHE::loadBezier( LINE_READER& aReader )
     bezier->SetUnit( parseInt( aReader, line, &line ) );
     bezier->SetBodyStyle( parseInt( aReader, line, &line ) );
 
-    STROKE_PARAMS stroke ( schIUScale.MilsToIU( parseInt( aReader, line, &line ) ),
-                          LINE_STYLE::SOLID );
+    STROKE_PARAMS stroke ( schIUScale.MilsToIU( parseInt( aReader, line, &line ) ), LINE_STYLE::SOLID );
 
     bezier->SetStroke( stroke );
 
@@ -1464,9 +1462,10 @@ void SCH_IO_KICAD_LEGACY_LIB_CACHE::Save( const std::optional<bool>& aOpt )
     }
 
     formatter->Print( 0, "#\n#End Library\n" );
+    formatter->Finish();
     formatter.reset();
 
-    m_fileModTime = fn.GetModificationTime();
+    m_fileModTime = KIPLATFORM::IO::TimestampDir( fn.GetPath(), fn.GetFullName() );
     m_isModified = false;
 
     if( doSaveDocFile )
@@ -1925,6 +1924,7 @@ void SCH_IO_KICAD_LEGACY_LIB_CACHE::saveDocFile()
     }
 
     formatter.Print( 0, "#\n#End Doc Library\n" );
+    formatter.Finish();
 }
 
 

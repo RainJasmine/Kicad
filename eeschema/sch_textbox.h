@@ -43,6 +43,9 @@ public:
 
     ~SCH_TEXTBOX() { }
 
+    void Serialize( google::protobuf::Any& aContainer ) const override;
+    bool Deserialize( const google::protobuf::Any& aContainer ) override;
+
     static bool ClassOf( const EDA_ITEM* aItem )
     {
         return aItem && SCH_TEXTBOX_T == aItem->Type();
@@ -54,6 +57,13 @@ public:
     }
 
     int GetLegacyTextMargin() const;
+
+    /**
+     * Return the minimum height needed to contain the textbox's wrapped text content
+     * plus margins. Width is unconstrained (returns 0) so text freely rewraps.
+     * The constrained axis depends on orientation: y-axis for horizontal, x-axis for vertical.
+     */
+    VECTOR2I GetMinSize() const;
 
     void SetMarginLeft( int aLeft )     { m_marginLeft = aLeft; }
     void SetMarginTop( int aTop )       { m_marginTop = aTop; }
@@ -70,8 +80,10 @@ public:
 
     VECTOR2I GetDrawPos() const override;
 
-    virtual wxString GetShownText( const SCH_SHEET_PATH* aPath, bool aAllowExtraText,
-                                   int aDepth = 0 ) const;
+    KIFONT::FONT* GetDrawFont( const RENDER_SETTINGS* aSettings ) const override;
+
+    virtual wxString GetShownText( const RENDER_SETTINGS* aSettings, const SCH_SHEET_PATH* aPath,
+                                   bool aAllowExtraText, int aDepth = 0 ) const;
 
     wxString GetShownText( bool aAllowExtraText, int aDepth = 0 ) const override
     {
@@ -80,14 +92,24 @@ public:
         if( SCHEMATIC* schematic = Schematic() )
             sheetPath = &schematic->CurrentSheet();
 
-        return GetShownText( sheetPath, aAllowExtraText, aDepth );
+        return GetShownText( nullptr, sheetPath, aAllowExtraText, aDepth );
     }
 
-    bool IsHypertext() const override;
-    void DoHypertextAction( EDA_DRAW_FRAME* aFrame ) const override;
+    bool HasHypertext() const override;
+    bool HasHoveredHypertext() const override;
+    void DoHypertextAction( EDA_DRAW_FRAME* aFrame, const VECTOR2I& aMousePos ) const override;
 
-    void SetExcludedFromSim( bool aExclude ) override { m_excludedFromSim = aExclude; }
-    bool GetExcludedFromSim() const override { return m_excludedFromSim; }
+    void SetExcludedFromSim( bool aExclude, const SCH_SHEET_PATH* aInstance = nullptr,
+                             const wxString& aVariantName = wxEmptyString ) override
+    {
+        m_excludedFromSim = aExclude;
+    }
+
+    bool GetExcludedFromSim( const SCH_SHEET_PATH* aInstance = nullptr,
+                             const wxString& aVariantName = wxEmptyString ) const override
+    {
+        return m_excludedFromSim;
+    }
 
     bool operator<( const SCH_ITEM& aItem ) const override;
 
@@ -106,6 +128,7 @@ public:
     bool HitTest( const VECTOR2I& aPosition, int aAccuracy = 0 ) const override;
 
     bool HitTest( const BOX2I& aRect, bool aContained, int aAccuracy = 0 ) const override;
+    bool HitTest( const SHAPE_LINE_CHAIN& aPoly, bool aContained ) const override;
 
     bool Matches( const EDA_SEARCH_DATA& aSearchData, void* aAuxData ) const override
     {
@@ -139,8 +162,6 @@ public:
 
 protected:
     void swapData( SCH_ITEM* aItem ) override;
-
-    KIFONT::FONT* getDrawFont() const override;
 
     const KIFONT::METRICS& getFontMetrics() const override { return GetFontMetrics(); }
 

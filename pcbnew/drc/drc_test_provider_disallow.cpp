@@ -81,14 +81,16 @@ bool DRC_TEST_PROVIDER_DISALLOW::Run()
             {
                 ZONE* zone = static_cast<ZONE*>( item );
 
-                if( zone->GetIsRuleArea() && zone->GetDoNotAllowZoneFills() )
+                if( zone->GetIsRuleArea() )
                 {
-                    antiCopperKeepouts.push_back( zone );
-                }
-                else if( zone->GetIsRuleArea() && zone->GetDoNotAllowTracks() )
-                {
-                    for( PCB_LAYER_ID layer : zone->GetLayerSet() )
-                        antiTrackKeepouts->Insert( zone, layer );
+                    if( zone->GetDoNotAllowZoneFills() )
+                        antiCopperKeepouts.push_back( zone );
+
+                    if( zone->GetDoNotAllowTracks() )
+                    {
+                        for( PCB_LAYER_ID layer : zone->GetLayerSet() )
+                            antiTrackKeepouts->Insert( zone, layer );
+                    }
                 }
                 else if( zone->IsOnCopperLayer() )
                 {
@@ -100,6 +102,8 @@ bool DRC_TEST_PROVIDER_DISALLOW::Run()
                 return true;
             } );
 
+    antiTrackKeepouts->Build();
+
     for( ZONE* ruleArea : antiCopperKeepouts )
     {
         for( ZONE* copperZone : copperZones )
@@ -110,11 +114,11 @@ bool DRC_TEST_PROVIDER_DISALLOW::Run()
     }
 
     auto query_areas =
-            [&]( std::pair<ZONE* /* rule area */, ZONE* /* copper zone */> areaZonePair ) -> size_t
+            [&]( const int idx ) -> size_t
             {
                 if( m_drcEngine->IsCancelled() )
                     return 0;
-
+                const auto& areaZonePair = toCache[idx];
                 ZONE* ruleArea = areaZonePair.first;
                 ZONE* copperZone = areaZonePair.second;
                 BOX2I areaBBox = ruleArea->GetBoundingBox();
@@ -169,14 +173,9 @@ bool DRC_TEST_PROVIDER_DISALLOW::Run()
             };
 
     thread_pool& tp = GetKiCadThreadPool();
-    std::vector<std::future<size_t>> returns;
+    auto futures = tp.submit_loop( 0, toCache.size(), query_areas, toCache.size() );
 
-    returns.reserve( toCache.size() );
-
-    for( const std::pair<ZONE*, ZONE*>& areaZonePair : toCache )
-        returns.emplace_back( tp.submit( query_areas, areaZonePair ) );
-
-    for( const std::future<size_t>& ret : returns )
+    for( auto& ret : futures )
     {
         std::future_status status = ret.wait_for( std::chrono::milliseconds( 250 ) );
 
@@ -193,84 +192,74 @@ bool DRC_TEST_PROVIDER_DISALLOW::Run()
     // Now go through all the board objects calling the DRC_ENGINE to run the actual disallow
     // tests.  These should be reasonably quick using the caches generated above.
     //
-    const int progressDelta = 250;
-    int       ii = static_cast<int>( toCache.size() );
+    // Collect items first, then process in parallel.
+    std::vector<BOARD_ITEM*> allItems;
+
+    forEachGeometryItem( {}, LSET::AllLayersMask(),
+            [&]( BOARD_ITEM* item ) -> bool
+            {
+                allItems.push_back( item );
+                return true;
+            } );
+
+    std::atomic<size_t> itemsDone( 0 );
+    size_t              itemCount = allItems.size();
 
     auto checkTextOnEdgeCuts =
-            [&]( BOARD_ITEM* item )
+            []( BOARD_ITEM* item ) -> bool
             {
                 if( item->Type() == PCB_FIELD_T
                         || item->Type() == PCB_TEXT_T
                         || item->Type() == PCB_TEXTBOX_T
                         || BaseType( item->Type() ) == PCB_DIMENSION_T )
                 {
-                    if( item->GetLayer() == Edge_Cuts )
+                    return item->GetLayer() == Edge_Cuts;
+                }
+
+                return false;
+            };
+
+    auto processItem =
+            [&]( const int idx ) -> size_t
+            {
+                if( m_drcEngine->IsCancelled() )
+                {
+                    itemsDone.fetch_add( 1 );
+                    return 0;
+                }
+
+                bool testTextOnEdge = !m_drcEngine->IsErrorLimitExceeded( DRCE_TEXT_ON_EDGECUTS );
+                bool testDisallow = !m_drcEngine->IsErrorLimitExceeded( DRCE_ALLOWED_ITEMS );
+
+                if( !testTextOnEdge && !testDisallow )
+                {
+                    itemsDone.fetch_add( 1 );
+                    return 0;
+                }
+
+                BOARD_ITEM* item = allItems[idx];
+
+                if( testTextOnEdge && checkTextOnEdgeCuts( item ) )
+                {
+                    std::shared_ptr<DRC_ITEM> drc = DRC_ITEM::Create( DRCE_TEXT_ON_EDGECUTS );
+                    drc->SetItems( item );
+                    reportViolation( drc, item->GetPosition(), Edge_Cuts );
+                }
+
+                if( testDisallow )
+                {
+                    if( item->Type() == PCB_ZONE_T )
                     {
-                        std::shared_ptr<DRC_ITEM> drc = DRC_ITEM::Create( DRCE_TEXT_ON_EDGECUTS );
-                        drc->SetItems( item );
-                        reportViolation( drc, item->GetPosition(), Edge_Cuts );
-                    }
-                }
-            };
+                        ZONE* zone = static_cast<ZONE*>( item );
 
-    auto checkAntiTrackKeepout =
-            [&]( PCB_TRACK* track, ZONE* keepout )
-            {
-                std::shared_ptr<SHAPE> shape = track->GetEffectiveShape();
-                int                    dummyActual;
-                VECTOR2I               pos;
-
-                if( keepout->Outline()->Collide( shape.get(), board->m_DRCMaxClearance,
-                                                 &dummyActual, &pos ) )
-                {
-                    std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_ALLOWED_ITEMS );
-
-                    drcItem->SetItems( track );
-                    reportViolation( drcItem, pos, track->GetLayerSet().ExtractLayer() );
-                }
-            };
-
-    auto checkDisallow =
-            [&]( BOARD_ITEM* item )
-            {
-                DRC_CONSTRAINT constraint = m_drcEngine->EvalRules( DISALLOW_CONSTRAINT, item,
-                                                                    nullptr, UNDEFINED_LAYER );
-
-                if( constraint.m_DisallowFlags && constraint.GetSeverity() != RPT_SEVERITY_IGNORE )
-                {
-                    std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_ALLOWED_ITEMS );
-                    PCB_LAYER_ID              layer = item->GetLayerSet().ExtractLayer();
-                    wxString                  msg;
-
-                    // Implicit rules reported in checkAntiTrackKeepout
-                    if( constraint.GetParentRule()->m_Implicit )
-                        return;
-
-                    msg.Printf( drcItem->GetErrorText() + wxS( " (%s)" ), constraint.GetName() );
-
-                    drcItem->SetErrorMessage( msg );
-                    drcItem->SetItems( item );
-                    drcItem->SetViolatingRule( constraint.GetParentRule() );
-
-                    reportViolation( drcItem, item->GetPosition(), layer );
-                }
-            };
-
-    forEachGeometryItem( {}, LSET::AllLayersMask(),
-            [&]( BOARD_ITEM* item ) -> bool
-            {
-                if( !m_drcEngine->IsErrorLimitExceeded( DRCE_TEXT_ON_EDGECUTS ) )
-                    checkTextOnEdgeCuts( item );
-
-                if( !m_drcEngine->IsErrorLimitExceeded( DRCE_ALLOWED_ITEMS ) )
-                {
-                    if( ZONE* zone = dynamic_cast<ZONE*>( item ) )
-                    {
                         if( zone->GetIsRuleArea() && zone->HasKeepoutParametersSet() )
-                            return true;
+                        {
+                            itemsDone.fetch_add( 1 );
+                            return 1;
+                        }
                     }
 
-                    item->ClearFlags( HOLE_PROXY );     // Just in case
+                    item->ClearFlags( HOLE_PROXY );
 
                     if( item->Type() == PCB_TRACE_T || item->Type() == PCB_ARC_T )
                     {
@@ -278,35 +267,130 @@ bool DRC_TEST_PROVIDER_DISALLOW::Run()
                         PCB_LAYER_ID layer = track->GetLayer();
 
                         antiTrackKeepouts->QueryColliding( track, layer, layer,
-                                // Filter:
                                 [&]( BOARD_ITEM* other ) -> bool
                                 {
                                     return true;
                                 },
-                                // Visitor:
                                 [&]( BOARD_ITEM* other ) -> bool
                                 {
-                                    checkAntiTrackKeepout( track, static_cast<ZONE*>( other ) );
+                                    std::shared_ptr<SHAPE> shape = track->GetEffectiveShape();
+                                    int                    dummyActual;
+                                    VECTOR2I               pos;
+
+                                    if( static_cast<ZONE*>( other )->Outline()->Collide( shape.get(), 0, &dummyActual,
+                                                                                         &pos ) )
+                                    {
+                                        std::shared_ptr<DRC_ITEM> drcItem =
+                                                DRC_ITEM::Create( DRCE_ALLOWED_ITEMS );
+                                        drcItem->SetItems( track );
+                                        reportViolation( drcItem, pos,
+                                                         track->GetLayerSet().ExtractLayer() );
+                                    }
+
                                     return !m_drcEngine->IsCancelled();
                                 },
                                 board->m_DRCMaxPhysicalClearance );
                     }
 
-                    checkDisallow( item );
+                    // Tracks and arcs against keepout areas that disallow tracks are already
+                    // reported above via antiTrackKeepouts (which collides every crossing, not
+                    // just one per rule match).  Skip the track/arc case for implicit keepout
+                    // rules here to avoid duplicate markers, but still let EvalRules produce
+                    // markers for all other item types against implicit keepout rules.
+                    bool isTrackOrArc = ( item->Type() == PCB_TRACE_T || item->Type() == PCB_ARC_T );
 
+                    auto reportDisallow =
+                            [&]( const DRC_CONSTRAINT& aConstraint )
+                            {
+                                DRC_RULE* rule = aConstraint.GetParentRule();
+
+                                if( !rule )
+                                    return;
+
+                                if( isTrackOrArc && rule->IsImplicit() )
+                                    return;
+
+                                std::shared_ptr<DRC_ITEM> drcItem =
+                                        DRC_ITEM::Create( DRCE_ALLOWED_ITEMS );
+                                PCB_LAYER_ID layer = item->GetLayerSet().ExtractLayer();
+                                VECTOR2I     pos = item->GetPosition();
+
+                                // Provide a better location for keepout area collisions by
+                                // snapping to where the item actually crosses the keepout outline.
+                                // Use the cached BOARD_ITEM* rather than a UUID lookup, since
+                                // ResolveItem mutates an unsynchronized cache and this lambda
+                                // runs inside the parallel DRC worker pool.
+                                if( rule->IsImplicit() )
+                                {
+                                    if( ZONE* keepout = dynamic_cast<ZONE*>( rule->m_ImplicitItem ) )
+                                    {
+                                        std::shared_ptr<SHAPE> shape =
+                                                item->GetEffectiveShape( layer );
+                                        int dummyActual;
+
+                                        keepout->Outline()->Collide( shape.get(), 0, &dummyActual, &pos );
+                                    }
+                                }
+
+                                drcItem->SetErrorDetail(
+                                        wxString::Format( wxS( "(%s)" ), aConstraint.GetName() ) );
+                                drcItem->SetItems( item );
+                                drcItem->SetViolatingRule( rule );
+                                reportViolation( drcItem, pos, layer );
+                            };
+
+                    DRC_CONSTRAINT constraint = m_drcEngine->EvalRules( DISALLOW_CONSTRAINT,
+                                                                        item, nullptr,
+                                                                        UNDEFINED_LAYER );
+
+                    if( constraint.m_DisallowFlags
+                        && constraint.GetSeverity() != RPT_SEVERITY_IGNORE )
+                    {
+                        reportDisallow( constraint );
+                    }
+
+                    // N.B. HOLE_PROXY is set/cleared on the item's flags for
+                    // EvalRules to distinguish hole-specific disallow constraints.
+                    // This is a non-atomic read-modify-write on m_flags, so this
+                    // provider must run with each item processed by only one thread
+                    // at a time (guaranteed by submit_loop's work partitioning).
                     if( item->HasHole() )
                     {
                         item->SetFlags( HOLE_PROXY );
-                        checkDisallow( item );
+
+                        constraint = m_drcEngine->EvalRules( DISALLOW_CONSTRAINT, item,
+                                                             nullptr, UNDEFINED_LAYER );
+
+                        if( constraint.m_DisallowFlags
+                            && constraint.GetSeverity() != RPT_SEVERITY_IGNORE )
+                        {
+                            reportDisallow( constraint );
+                        }
+
                         item->ClearFlags( HOLE_PROXY );
                     }
                 }
 
-                if( !reportProgress( ii++, totalCount, progressDelta ) )
-                    return false;
+                itemsDone.fetch_add( 1 );
+                return 1;
+            };
 
-                return true;
-            } );
+    auto itemFutures = tp.submit_loop( 0, itemCount, processItem, itemCount );
+
+    while( itemsDone < itemCount )
+    {
+        reportProgress( itemsDone, itemCount );
+
+        if( m_drcEngine->IsCancelled() )
+        {
+            for( auto& f : itemFutures )
+                f.wait();
+
+            break;
+        }
+
+        itemFutures.wait_for( std::chrono::milliseconds( 250 ) );
+    }
 
     return !m_drcEngine->IsCancelled();
 }

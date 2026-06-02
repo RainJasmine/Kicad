@@ -24,18 +24,13 @@
 
 #include <memory>
 #include <vector>
-#include <wx/string.h>
-
-
-class SCH_SCREEN;
+#include <wx/arrstr.h>
 
 
 class BUS_ALIAS
 {
 public:
-    BUS_ALIAS( SCH_SCREEN* aParent = nullptr ) :
-        m_parent( aParent )
-    { }
+    BUS_ALIAS() = default;
 
     ~BUS_ALIAS()
     { }
@@ -45,24 +40,38 @@ public:
         return std::make_shared<BUS_ALIAS>( *this );
     }
 
-    wxString GetName() { return m_name; }
-    void SetName( const wxString& aName ) { m_name = aName; }
+    wxString GetName() const { return m_name; }
+
+    void SetName( const wxString& aName ) { m_name = aName.Strip( wxString::both ); }
 
     const std::vector<wxString>& Members() const { return m_members; }
-    std::vector<wxString>& Members() { return m_members; }
 
-    SCH_SCREEN* GetParent() { return m_parent; }
-    void SetParent( SCH_SCREEN* aParent ) { m_parent = aParent; }
+    void SetMembers( const std::vector<wxString>& aMembers )
+    {
+        m_members.clear();
+
+        for( const wxString& member : aMembers )
+        {
+            wxString trimmed = member.Strip( wxString::both );
+
+            if( !trimmed.IsEmpty() )
+                m_members.push_back( trimmed );
+        }
+    }
+
+    void AddMember( const wxString& aMember )
+    {
+        wxString trimmed = aMember.Strip( wxString::both );
+
+        if( !trimmed.IsEmpty() )
+            m_members.push_back( trimmed );
+    }
+
+    void ClearMembers() { m_members.clear(); }
 
 protected:
     wxString              m_name;
     std::vector<wxString> m_members;
-
-    /**
-     * Schematic Setup can edit aliases from all sheets, so we have to store a reference back
-     * to our parent so that the dialog can update the parent if aliases are changed or removed.
-     */
-    SCH_SCREEN* m_parent;
 };
 
 #endif

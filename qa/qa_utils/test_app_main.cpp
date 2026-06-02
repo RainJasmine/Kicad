@@ -148,7 +148,6 @@ struct APP_TEST : public wxApp
 
     bool OnInit() override
     {
-
         try
         {
             if( !program.OnPgmInit() )
@@ -172,24 +171,22 @@ struct APP_TEST : public wxApp
             wxLogError( wxT( "Unhandled exception class: %s  what: %s" ),
                         From_UTF8( typeid(e).name() ), From_UTF8( e.what() ) );
         }
-        catch( const IO_ERROR& ioe )
-        {
-            wxLogError( ioe.What() );
-        }
         catch(...)
         {
             wxLogError( wxT( "Unhandled exception of unknown type" ) );
         }
-
-        program.OnPgmExit();
 
         return false;
     }
 
     int  OnExit() override
     {
+        // Drain wxPendingDelete (frames deferred via Destroy()) before tearing down
+        // PGM_BASE singletons. Kept consistent with the GUI apps; see
+        // https://gitlab.com/kicad/code/kicad/-/issues/23373
+        int ret = wxApp::OnExit();
         program.OnPgmExit();
-        return wxApp::OnExit();
+        return ret;
     }
 
     int OnRun() override
@@ -203,12 +200,8 @@ struct APP_TEST : public wxApp
         catch( const std::exception& e )
         {
             wxLogError( wxT( "Unhandled exception class: %s  what: %s" ),
-                From_UTF8( typeid(e).name() ),
-                From_UTF8( e.what() ) );
-        }
-        catch( const IO_ERROR& ioe )
-        {
-            wxLogError( ioe.What() );
+                        From_UTF8( typeid(e).name() ),
+                        From_UTF8( e.what() ) );
         }
         catch(...)
         {
@@ -244,9 +237,9 @@ int main( int argc, char** argv )
     wxInitialize( argc, argv );
 
 #ifdef TEST_APP_GUI
-    Pgm().InitPgm( false, true );
+    Pgm().InitPgm( false );
 #else
-    Pgm().InitPgm( true, true );
+    Pgm().InitPgm( true );
 #endif
 
     auto ret = wxEntry( argc, argv );

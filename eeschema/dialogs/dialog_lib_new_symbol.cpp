@@ -23,6 +23,7 @@
  */
 
 #include "dialog_lib_new_symbol.h"
+#include <widgets/wx_infobar.h>
 
 #include <default_values.h>
 #include <eda_draw_frame.h>
@@ -39,11 +40,12 @@ static wxString getDerivativeName( const wxString& aParentName )
 DIALOG_LIB_NEW_SYMBOL::DIALOG_LIB_NEW_SYMBOL( EDA_DRAW_FRAME*      aParent,
                                               const wxArrayString& aSymbolNames,
                                               const wxString&      aInheritFromSymbolName,
-                                              std::function<bool( wxString newName )> aValidator ) :
+                                              std::function<bool( const wxString& newName )> aValidator ) :
         DIALOG_LIB_NEW_SYMBOL_BASE( dynamic_cast<wxWindow*>( aParent ) ),
         m_pinTextPosition( aParent, m_staticPinTextPositionLabel, m_textPinTextPosition,
                            m_staticPinTextPositionUnits, true ),
         m_validator( std::move( aValidator ) ),
+        m_inheritFromSymbolName( aInheritFromSymbolName ),
         m_nameIsDefaulted( true )
 {
     if( aSymbolNames.GetCount() )
@@ -54,19 +56,10 @@ DIALOG_LIB_NEW_SYMBOL::DIALOG_LIB_NEW_SYMBOL( EDA_DRAW_FRAME*      aParent,
             unescapedNames.Add( UnescapeString( name ) );
 
         m_comboInheritanceSelect->SetStringList( unescapedNames );
-
-        if( !aInheritFromSymbolName.IsEmpty() )
-            m_comboInheritanceSelect->SetSelectedString( UnescapeString( aInheritFromSymbolName ) );
     }
 
     m_textName->SetValidator( FIELD_VALIDATOR( FIELD_T::VALUE ) );
     m_textReference->SetValidator( FIELD_VALIDATOR( FIELD_T::REFERENCE ) );
-
-    if( !aInheritFromSymbolName.IsEmpty() )
-    {
-        m_textName->ChangeValue( UnescapeString( getDerivativeName( aInheritFromSymbolName ) ) );
-        m_nameIsDefaulted = true;
-    }
 
     m_pinTextPosition.SetValue( schIUScale.MilsToIU( DEFAULT_PIN_NAME_OFFSET ) );
 
@@ -83,14 +76,6 @@ DIALOG_LIB_NEW_SYMBOL::DIALOG_LIB_NEW_SYMBOL( EDA_DRAW_FRAME*      aParent,
     m_checkTransferUserFields->Connect( wxEVT_CHECKBOX,
                                         wxCommandEventHandler( DIALOG_LIB_NEW_SYMBOL::onCheckTransferUserFields ),
                                         nullptr, this );
-
-    // Trigger the event handler to show/hide the info bar message.
-    wxCommandEvent dummyEvent;
-    onParentSymbolSelect( dummyEvent );
-
-    // Trigger the event handler to handle other check boxes
-    onPowerCheckBox( dummyEvent );
-    onCheckTransferUserFields( dummyEvent );
 
     // initial focus should be on first editable field.
     m_textName->SetFocus();
@@ -111,6 +96,35 @@ DIALOG_LIB_NEW_SYMBOL::~DIALOG_LIB_NEW_SYMBOL()
                                            wxCommandEventHandler( DIALOG_LIB_NEW_SYMBOL::onCheckTransferUserFields ),
                                            nullptr, this );
 }
+
+
+bool DIALOG_LIB_NEW_SYMBOL::TransferDataToWindow()
+{
+    if( !m_inheritFromSymbolName.IsEmpty() )
+    {
+        m_comboInheritanceSelect->SetSelectedString( UnescapeString( m_inheritFromSymbolName ) );
+        m_textName->ChangeValue( UnescapeString( getDerivativeName( m_inheritFromSymbolName ) ) );
+    }
+
+    CallAfter(
+            [&]()
+            {
+                /* The combo box `m_comboInheritanceSelect` must first process an update event before the string can be read again.
+                 * The CallAfter() method ensures that the string is available when onParentSymbolSelect() reads it again.
+                 */
+                wxCommandEvent dummyEvent;
+
+                // Trigger the event handler to show/hide the info bar message.
+                onParentSymbolSelect( dummyEvent );
+                onCheckTransferUserFields( dummyEvent );
+
+                // Trigger the event handler to handle power boxes
+                onPowerCheckBox( dummyEvent );
+            } );
+
+    return true;
+}
+
 
 bool DIALOG_LIB_NEW_SYMBOL::TransferDataFromWindow()
 {
@@ -141,6 +155,9 @@ void DIALOG_LIB_NEW_SYMBOL::onParentSymbolSelect( wxCommandEvent& aEvent )
     }
 
     syncControls( !parent.IsEmpty() );
+
+    /* The banner changes the size of the dialog box, so it needs to be adjusted. */
+    Fit();
 }
 
 

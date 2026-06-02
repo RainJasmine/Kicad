@@ -300,9 +300,9 @@ public:
 
 enum class ASCH_PIN_ELECTRICAL
 {
-    UNKNOWN = -1,
+    UNKNOWN        = -1,
 
-    INPUT          = 0,
+    PIN_INPUT      = 0,
     BIDI           = 1,
     OUTPUT         = 2,
     OPEN_COLLECTOR = 3,
@@ -619,7 +619,7 @@ enum class ASCH_PORT_IOTYPE
 {
     UNSPECIFIED = 0,
     OUTPUT      = 1,
-    INPUT       = 2,
+    IO_INPUT    = 2,
     BIDI        = 3,
 };
 
@@ -646,6 +646,7 @@ struct ASCH_SHEET_ENTRY : ASCH_OWNER_INTERFACE
     ASCH_PORT_STYLE       style;
 
     wxString name;
+    wxString harnessType;
 
     explicit ASCH_SHEET_ENTRY( const std::map<wxString, wxString>& aProps );
 };

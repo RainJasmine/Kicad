@@ -20,10 +20,38 @@
  */
 
 #include "pns_logger.h"
-#include "pns_item.h"
-#include "pns_via.h"
+
+#include <json_common.h>
 
 #include <wx/log.h>
+#include <wx/tokenzr.h>
+#include <locale_io.h>
+
+#include <board_item.h>
+
+#include "pns_item.h"
+#include "pns_via.h"
+#include "pns_segment.h"
+#include "pns_line.h"
+#include "pns_router.h"
+
+
+void to_json( nlohmann::json& aJson, const VECTOR2I& aPoint )
+{
+    aJson = nlohmann::json
+            {
+                { "x", aPoint.x },
+                { "y", aPoint.y }
+            };
+}
+
+
+void from_json( const nlohmann::json& aJson, VECTOR2I& aPoint )
+{
+    aPoint.x = aJson.at( "x" ).get<int>();
+    aPoint.y = aJson.at( "y" ).get<int>();
+}
+
 
 namespace PNS {
 
@@ -75,53 +103,164 @@ void LOGGER::Log( LOGGER::EVENT_TYPE evt, const VECTOR2I& pos, const ITEM* item,
     LogM( evt, pos, items, sizes, aLayer );
 }
 
-
-wxString LOGGER::FormatLogFileAsString( int aMode,
-                                        const std::vector<ITEM*>& aAddedItems,
-                                        const std::set<KIID>&     aRemovedItems,
-                                        const std::vector<ITEM*>& aHeads,
-                                        const std::vector<LOGGER::EVENT_ENTRY>& aEvents )
+wxString LOGGER::FormatLogFileAsJSON( const LOG_DATA& aLogData )
 {
-    wxString result = wxString::Format( "mode %d\n", aMode );
+    nlohmann::json json;
 
-    for( const EVENT_ENTRY& evt : aEvents )
-        result += PNS::LOGGER::FormatEvent( evt );
+    
+    json["mode"] = aLogData.m_Mode;
+    
+    if( aLogData.m_TestCaseType.has_value() )
+    {
+        json["test_case_type"] = static_cast<int>( aLogData.m_TestCaseType.value() );
+    }
 
-    for( const KIID& uuid : aRemovedItems )
-        result += wxString::Format( "removed %s\n", uuid.AsString().c_str() );
+    if( aLogData.m_BoardHash.has_value() )
+    {
+        json["board_hash"] = aLogData.m_BoardHash.value();
+    }
 
-    for( ITEM* item : aAddedItems )
-        result += wxString::Format( "added %s\n", item->Format().c_str() );
+    nlohmann::json events = nlohmann::json::array();
+    for( const EVENT_ENTRY& evt : aLogData.m_Events )
+        events.push_back ( LOGGER::FormatEventAsJSON( evt ) );   
+    json["events"] = events;
 
-    for( ITEM* item : aHeads )
-        result += wxString::Format( "head %s\n", item->Format().c_str() );
+    nlohmann::json removed = nlohmann::json::array();
+    for( const KIID& uuid : aLogData.m_RemovedItems )
+        removed.push_back( uuid );
+    json["removedItems"] = removed;
 
-    return result;
+    nlohmann::json added = nlohmann::json::array();
+    for( ITEM* item : aLogData.m_AddedItems )
+        added.push_back( formatRouterItemAsJSON( item ) );
+    json["addedItems"] = added;
+
+    nlohmann::json headItems = nlohmann::json::array();
+    for( ITEM* item : aLogData.m_Heads )
+        headItems.push_back( formatRouterItemAsJSON( item ) );
+    json["headItems"] = headItems;
+
+    LOCALE_IO dummy;
+
+    std::stringstream buffer;
+    buffer << std::setw( 2 ) << json << std::endl;
+
+    return buffer.str();
 }
 
 
-wxString LOGGER::FormatEvent( const LOGGER::EVENT_ENTRY& aEvent )
+nlohmann::json LOGGER::FormatEventAsJSON( const LOGGER::EVENT_ENTRY& aEvent )
 {
-    wxString str = wxString::Format( "event %d %d %d %d %d ", aEvent.p.x, aEvent.p.y, aEvent.type, aEvent.layer, (int)aEvent.uuids.size() );
+    nlohmann::json ret;
 
-    for( int i = 0; i < aEvent.uuids.size(); i++ )
+    ret["position"] = aEvent.p;
+    ret["type"] = aEvent.type;
+    ret["layer"] = aEvent.layer;
+    
+    nlohmann::json uuids = nlohmann::json::array();
+
+    for( int i = 0; i < (int) aEvent.uuids.size(); i++ )
+        uuids.push_back( aEvent.uuids[i].AsString() );
+
+    ret["uuids"] = uuids;
+    ret["sizes"] = LOGGER::formatSizesAsJSON( aEvent.sizes );
+    
+    return ret;
+}
+
+
+nlohmann::json LOGGER::formatRouterItemAsJSON( const PNS::ITEM* aItem )
     {
-        str.Append( aEvent.uuids[i].AsString() );
-        str.Append( wxT(" ") );
+    ROUTER*       router = ROUTER::GetInstance();
+    ROUTER_IFACE* iface = router ? router->GetInterface() : nullptr;
+
+    nlohmann::json ret;
+
+    ret ["kind"] = aItem->KindStr();
+
+    if( iface )
+    {
+        ret ["net"] = iface->GetNetName( aItem->Net() );
     }
 
-    str.Append( wxString::Format( "%d %d %d %d %d %d %d",
-            aEvent.sizes.TrackWidth(),
-            aEvent.sizes.ViaDiameter(),
-            aEvent.sizes.ViaDrill(),
-            aEvent.sizes.TrackWidthIsExplicit() ? 1 : 0,
-            aEvent.sizes.GetLayerBottom(),
-            aEvent.sizes.GetLayerTop(),
-            static_cast<int>( aEvent.sizes.ViaType() ) ) );
+    ret ["layers"] = nlohmann::json{ aItem->Layers().Start(), aItem->Layers().End() };
 
-    str.Append( wxT("\n") );
+    switch( aItem->Kind() )
+    {
+        case ITEM::SEGMENT_T:
+        case ITEM::ARC_T:
+            ret["shape"] = formatShapeAsJSON( aItem->Shape( aItem->Layer() ) );
+            break;
 
-    return str;
+        case ITEM::VIA_T:
+        {
+            auto via = static_cast<const VIA*>( aItem );
+            ret["shape"] = formatShapeAsJSON( aItem->Shape( aItem->Layers().Start() ) ); // JE: pad stacks
+            ret["drill"] = via->Drill();
+            break;
+        }
+        default:
+            break; // currently we don't need to log anything else
+    }
+
+    return ret;
+}
+
+
+nlohmann::json LOGGER::formatSizesAsJSON( const SIZES_SETTINGS& aSizes )
+{
+    return nlohmann::json( {
+
+            { "trackWidth", aSizes.TrackWidth() },
+            { "viaDiameter", aSizes.ViaDiameter() },
+            { "viaDrill", aSizes.ViaDrill() },
+            { "trackWidthIsExplicit", aSizes.TrackWidthIsExplicit() },
+            { "layerBottom", aSizes.GetLayerBottom() },
+            { "layerTop", aSizes.GetLayerTop() },
+            { "viaType", aSizes.ViaType() } } );
+}
+
+
+nlohmann::json LOGGER::formatShapeAsJSON( const SHAPE* aShape )
+{
+    switch( aShape->Type() )
+    {
+        case SH_SEGMENT:
+        {
+            auto seg = static_cast<const SHAPE_SEGMENT*>( aShape );
+            return nlohmann::json( {
+                { "type", "segment" },
+                { "width", seg->GetWidth() },
+                { "start", seg->GetStart() },
+                { "end", seg->GetEnd() }
+            } );
+        }
+        case SH_ARC:
+        {
+            auto arc = static_cast<const SHAPE_ARC*>( aShape );
+            return nlohmann::json( {
+                { "type", "arc" },
+                { "width", arc->GetWidth() },
+                { "start", arc->GetStart() },
+                { "end", arc->GetEnd() },
+                { "mid", arc->GetArcMid() }
+            } );
+        }
+        case SH_CIRCLE:
+        {
+            auto circle = static_cast<const SHAPE_CIRCLE*>( aShape );
+            return nlohmann::json( {
+                { "type", "circle" },
+                { "radius", circle->GetRadius() },
+                { "center", circle->GetCenter() },
+            } );
+        }
+
+        default:
+            break;
+    }
+
+    return nlohmann::json();
 }
 
 
@@ -147,4 +286,21 @@ LOGGER::EVENT_ENTRY LOGGER::ParseEvent( const wxString& aLine )
     return evt;
 }
 
+
+LOGGER::EVENT_ENTRY LOGGER::ParseEventFromJSON( const nlohmann::json& aJSON )
+{
+    EVENT_ENTRY evt;
+
+    evt.p = aJSON.at("position").get<VECTOR2I>();
+    evt.type = static_cast<EVENT_TYPE>( aJSON.at("type").get<int>() );
+    evt.layer = aJSON.at("layer").get<int>();
+    
+    for( auto &uuid : aJSON.at("uuids") )
+        evt.uuids.push_back( uuid.get<KIID>() );
+
+    return evt;
 }
+
+
+}
+

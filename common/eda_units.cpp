@@ -102,7 +102,7 @@ bool EDA_UNIT_UTILS::FetchUnitsFromString( const wxString& aTextValue, EDA_UNITS
     }
 
     // Check the unit designator (2 ch significant)
-    wxString unit( buf.Mid( brk_point ).Strip( wxString::leading ).Left( 2 ).Lower() );
+    wxString unit( buf.Mid( brk_point ).Trim( false ).Left( 2 ).Lower() );
 
     //check for um, μm (µ is MICRO SIGN) and µm (µ is GREEK SMALL LETTER MU) for micrometre
     if( unit == wxT( "um" ) || unit == wxT( "\u00B5m" ) || unit == wxT( "\u03BCm" ) )
@@ -121,7 +121,7 @@ bool EDA_UNIT_UTILS::FetchUnitsFromString( const wxString& aTextValue, EDA_UNITS
         aUnits = EDA_UNITS::FS;
     else if( unit == wxT( "ps" ) )
     {
-        wxString timeUnit( buf.Mid( brk_point ).Strip( wxString::leading ).Left( 5 ).Lower() );
+        wxString timeUnit( buf.Mid( brk_point ).Trim( false ).Left( 5 ).Lower() );
 
         if( timeUnit == wxT( "ps" ) )
             aUnits = EDA_UNITS::PS;
@@ -191,12 +191,13 @@ std::string EDA_UNIT_UTILS::FormatAngle( const EDA_ANGLE& aAngle )
 }
 
 
-std::string EDA_UNIT_UTILS::FormatInternalUnits( const EDA_IU_SCALE& aIuScale, int aValue )
+std::string EDA_UNIT_UTILS::FormatInternalUnits( const EDA_IU_SCALE& aIuScale, const int aValue,
+                                                 const EDA_DATA_TYPE aDataType )
 {
     std::string buf;
     double engUnits = aValue;
 
-    engUnits /= aIuScale.IU_PER_MM;
+    engUnits /= GetScaleForInternalUnitType( aIuScale, aDataType );
 
     if( engUnits != 0.0 && fabs( engUnits ) <= 0.0001 )
     {
@@ -229,6 +230,18 @@ std::string EDA_UNIT_UTILS::FormatInternalUnits( const EDA_IU_SCALE& aIuScale,
 {
     return FormatInternalUnits( aIuScale, aPoint.x ) + " "
            + FormatInternalUnits( aIuScale, aPoint.y );
+}
+
+
+double EDA_UNIT_UTILS::GetScaleForInternalUnitType( const EDA_IU_SCALE& aIuScale, const EDA_DATA_TYPE aDataType )
+{
+    switch( aDataType )
+    {
+    case EDA_DATA_TYPE::TIME: return aIuScale.IU_PER_PS;
+    case EDA_DATA_TYPE::LENGTH_DELAY: return aIuScale.IU_PER_PS_PER_MM;
+    case EDA_DATA_TYPE::UNITLESS: return 1.0;
+    default: return aIuScale.IU_PER_MM;
+    }
 }
 
 
@@ -443,7 +456,7 @@ wxString EDA_UNIT_UTILS::UI::MessageTextFromValue( const EDA_IU_SCALE& aIuScale,
     {
     default:
     case EDA_UNITS::UM:          format = short_form ? wxT( "%.0f" ) : wxT( "%.1f" ); break;
-    case EDA_UNITS::MM:          format = short_form ? wxT( "%.2f" ) : wxT( "%.4f" ); break;
+    case EDA_UNITS::MM:          format = short_form ? wxT( "%.3f" ) : wxT( "%.4f" ); break;
     case EDA_UNITS::CM:          format = short_form ? wxT( "%.3f" ) : wxT( "%.5f" ); break;
     case EDA_UNITS::MILS:        format = short_form ? wxT( "%.0f" ) : wxT( "%.2f" ); break;
     case EDA_UNITS::INCH:        format = short_form ? wxT( "%.3f" ) : wxT( "%.4f" ); break;
@@ -457,6 +470,38 @@ wxString EDA_UNIT_UTILS::UI::MessageTextFromValue( const EDA_IU_SCALE& aIuScale,
     }
 
     text.Printf( format, value );
+
+    // Check if the formatted value shows only zeros but the actual value is non-zero
+    // If so, use scientific notation instead
+    if( value != 0.0 )
+    {
+        bool showsOnlyZeros = true;
+
+        // Check if the text contains only zeros (allowing for decimal point, minus sign, etc.)
+        for( auto ch : text )
+        {
+            if( ch >= '1' && ch <= '9' )
+            {
+                showsOnlyZeros = false;
+                break;
+            }
+        }
+
+        if( showsOnlyZeros )
+        {
+            text.Printf( wxT( "%.3e" ), value );
+        }
+    }
+
+    // Trim to 2-1/2 digits after the decimal place for short-form mm
+    if( short_form && aUnits == EDA_UNITS::MM )
+    {
+        struct lconv* lc = localeconv();
+        int           length = (int) text.Length();
+
+        if( length > 4 && text[length - 4] == *lc->decimal_point && text[length - 1] == '0' )
+            text = text.Left( length - 1 );
+    }
 
     if( aAddUnitsText )
         text += EDA_UNIT_UTILS::GetText( aUnits, aType );
@@ -588,7 +633,7 @@ double EDA_UNIT_UTILS::UI::DoubleValueFromString( const EDA_IU_SCALE& aIuScale, 
     buf.Left( brk_point ).ToDouble( &dtmp );
 
     // Check the optional unit designator (2 ch significant)
-    wxString unit( buf.Mid( brk_point ).Strip( wxString::leading ).Left( 2 ).Lower() );
+    wxString unit( buf.Mid( brk_point ).Trim( false ).Left( 2 ).Lower() );
 
     if( aUnits == EDA_UNITS::UM
             || aUnits == EDA_UNITS::MM
@@ -632,7 +677,7 @@ double EDA_UNIT_UTILS::UI::DoubleValueFromString( const EDA_IU_SCALE& aIuScale, 
              || aUnits == EDA_UNITS::PS_PER_CM || aUnits == EDA_UNITS::PS_PER_MM )
 
     {
-        wxString timeUnit( buf.Mid( brk_point ).Strip( wxString::leading ).Left( 5 ).Lower() );
+        wxString timeUnit( buf.Mid( brk_point ).Trim( false ).Left( 5 ).Lower() );
 
         if( timeUnit == wxT( "fs" ) )
             aUnits = EDA_UNITS::FS;
@@ -673,6 +718,104 @@ double EDA_UNIT_UTILS::UI::DoubleValueFromString( const EDA_IU_SCALE& aIuScale, 
     }
 
     return dtmp;
+}
+
+
+bool EDA_UNIT_UTILS::UI::DoubleValueFromString( const EDA_IU_SCALE& aIuScale, const wxString& aTextValue,
+                                                double& aDoubleValue )
+{
+    double dtmp = 0;
+
+    // Acquire the 'right' decimal point separator
+    const struct lconv* lc = localeconv();
+
+    wxChar      decimal_point = lc->decimal_point[0];
+    wxString    buf( aTextValue.Strip( wxString::both ) );
+
+    // Convert any entered decimal point separators to the 'right' one
+    buf.Replace( wxT( "." ), wxString( decimal_point, 1 ) );
+    buf.Replace( wxT( "," ), wxString( decimal_point, 1 ) );
+
+    // Find the end of the numeric part
+    unsigned brk_point = 0;
+
+    while( brk_point < buf.Len() )
+    {
+        wxChar ch = buf[brk_point];
+
+        if( !( (ch >= '0' && ch <= '9') || (ch == decimal_point) || (ch == '-') || (ch == '+') ) )
+            break;
+
+        ++brk_point;
+    }
+
+    if( brk_point == 0 )
+        return false;
+
+    // Extract the numeric part
+    buf.Left( brk_point ).ToDouble( &dtmp );
+
+    // Check the unit designator
+    wxString  unit( buf.Mid( brk_point ).Strip( wxString::both ).Lower() );
+    EDA_UNITS units = EDA_UNITS::MM;    // Make gcc quiet
+
+    //check for um, μm (µ is MICRO SIGN) and µm (µ is GREEK SMALL LETTER MU) for micrometre
+    if( unit == wxT( "um" ) || unit == wxT( "\u00B5m" ) || unit == wxT( "\u03BCm" ) )
+    {
+        units = EDA_UNITS::UM;
+    }
+    else if( unit == wxT( "mm" ) )
+    {
+        units = EDA_UNITS::MM;
+    }
+    else if( unit == wxT( "cm" ) )
+    {
+        units = EDA_UNITS::CM;
+    }
+    else if( unit == wxT( "mil" ) || unit == wxT( "mils" ) || unit == wxT( "thou" ) )
+    {
+        units = EDA_UNITS::MILS;
+    }
+    else if( unit == wxT( "in" ) || unit == wxT( "\"" ) )
+    {
+        units = EDA_UNITS::INCH;
+    }
+    else if( unit == wxT( "oz" ) ) // 1 oz = 1.37 mils
+    {
+        units = EDA_UNITS::MILS;
+        dtmp *= 1.37;
+    }
+    else if( unit == wxT( "ra" ) ) // Radians
+    {
+        dtmp *= 180.0f / M_PI;
+    }
+    else if( unit == wxT( "fs" ) )
+    {
+        units = EDA_UNITS::FS;
+    }
+    else if( unit == wxT( "ps" ) )
+    {
+        units = EDA_UNITS::PS;
+    }
+    else if( unit == wxT( "ps/in" ) )
+    {
+        units = EDA_UNITS::PS_PER_INCH;
+    }
+    else if( unit == wxT( "ps/cm" ) )
+    {
+        units = EDA_UNITS::PS_PER_CM;
+    }
+    else if( unit == wxT( "ps/mm" ) )
+    {
+        units = EDA_UNITS::PS_PER_MM;
+    }
+    else
+    {
+        return false;
+    }
+
+    aDoubleValue = FromUserUnit( aIuScale, units, dtmp );
+    return true;
 }
 
 

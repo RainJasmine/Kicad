@@ -33,6 +33,7 @@
 #include <app_monitor.h>
 
 #include <wx/event.h>
+#include <wx/evtloop.h>
 #include <wx/clipbrd.h>
 #include <wx/app.h>
 
@@ -79,8 +80,7 @@ struct TOOL_MANAGER::TOOL_STATE
 
     ~TOOL_STATE()
     {
-        if( !stateStack.empty() )
-            wxFAIL;
+        wxASSERT_MSG( stateStack.empty(), wxT( "StateStack not empty!" ) );
     }
 
     /// The tool itself
@@ -181,27 +181,31 @@ struct TOOL_MANAGER::TOOL_STATE
             stateStack.pop();
             return true;
         }
-        else
-        {
-            cofunc = nullptr;
-            return false;
-        }
+
+        resetRuntimeState();
+        return false;
     }
 
 private:
     /// Stack preserving previous states of a TOOL.
     std::stack<std::unique_ptr<TOOL_STATE>> stateStack;
 
-    /// Restores the initial state.
-    void clear()
+    /// Resets runtime-only state that must not leak across tool activations.
+    void resetRuntimeState()
     {
-        idle               = true;
+        cofunc             = nullptr;
         shutdown           = false;
         pendingWait        = false;
         pendingContextMenu = false;
-        cofunc             = nullptr;
         contextMenu        = nullptr;
         contextMenuTrigger = CMENU_OFF;
+    }
+
+    /// Restores the initial state.
+    void clear()
+    {
+        idle = true;
+        resetRuntimeState();
         vcSettings.Reset();
         transitions.clear();
     }
@@ -910,6 +914,15 @@ bool TOOL_MANAGER::dispatchActivation( const TOOL_EVENT& aEvent )
 
 void TOOL_MANAGER::DispatchContextMenu( const TOOL_EVENT& aEvent )
 {
+    // Don't open context menus if we're inside a yielding event loop such as a progress dialog.
+    // Opening a popup menu during YieldFor creates a nested modal situation that can leave the
+    // menu stuck and unresponsive, potentially locking up the entire UI on some platforms.
+    if( wxEventLoopBase* loop = wxEventLoopBase::GetActive() )
+    {
+        if( loop->IsYielding() )
+            return;
+    }
+
     for( TOOL_ID toolId : m_activeTools )
     {
         TOOL_STATE* st = m_toolIdIndex[toolId];

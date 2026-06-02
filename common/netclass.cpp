@@ -59,7 +59,7 @@ NETCLASS::NETCLASS( const wxString& aName, bool aInitWithDefaults ) : m_isDefaul
 
     SetName( aName );
     SetPriority( -1 );
-    SetDelayProfile( wxEmptyString );
+    SetTuningProfile( wxEmptyString );
 
     // Colors are a special optional case - always set, but UNSPECIFIED used in place of optional
     SetPcbColor( COLOR4D::UNSPECIFIED );
@@ -102,7 +102,7 @@ void NETCLASS::ResetParents()
     SetBusWidthParent( this );
     SetSchematicColorParent( this );
     SetLineStyleParent( this );
-    SetDelayProfileParent( this );
+    SetTuningProfileParent( this );
 }
 
 
@@ -180,13 +180,16 @@ void NETCLASS::Serialize( google::protobuf::Any &aContainer ) const
     if( m_pcbColor != COLOR4D::UNSPECIFIED )
         PackColor( *board->mutable_color(), m_pcbColor );
 
+    if( m_tuningProfile != wxEmptyString )
+        board->set_tuning_profile( m_tuningProfile.ToUTF8() );
+
     project::NetClassSchematicSettings* schematic = nc.mutable_schematic();
 
     if( m_wireWidth )
-        schematic->mutable_wire_width()->set_value_nm( *m_wireWidth );
+        PackDistance( *schematic->mutable_wire_width(), *m_wireWidth, schIUScale );
 
     if( m_busWidth )
-        schematic->mutable_bus_width()->set_value_nm( *m_busWidth );
+        PackDistance( *schematic->mutable_bus_width(), *m_busWidth, schIUScale );
 
     if( m_schematicColor != COLOR4D::UNSPECIFIED )
         PackColor( *schematic->mutable_color(), m_schematicColor );
@@ -246,11 +249,14 @@ bool NETCLASS::Deserialize( const google::protobuf::Any &aContainer )
     if( nc.board().has_color() )
         m_pcbColor = UnpackColor( nc.board().color() );
 
+    if( nc.board().has_tuning_profile() )
+        m_tuningProfile = wxString::FromUTF8( nc.board().tuning_profile() );
+
     if( nc.schematic().has_wire_width() )
-        m_wireWidth = nc.schematic().wire_width().value_nm();
+        m_wireWidth = UnpackDistance( nc.schematic().wire_width(), schIUScale );
 
     if( nc.schematic().has_bus_width() )
-        m_busWidth = nc.schematic().bus_width().value_nm();
+        m_busWidth = UnpackDistance( nc.schematic().bus_width(), schIUScale );
 
     if( nc.schematic().has_color() )
         m_schematicColor = UnpackColor( nc.schematic().color() );
@@ -280,7 +286,7 @@ bool NETCLASS::ContainsNetclassWithName( const wxString& netclass ) const
     return std::any_of( m_constituents.begin(), m_constituents.end(),
                         [&netclass]( const NETCLASS* nc )
                         {
-                            return nc && nc->GetName() == netclass;
+                            return nc && nc->GetName().Matches( netclass );
                         } );
 }
 
@@ -326,11 +332,19 @@ const wxString NETCLASS::GetName() const
 
     wxASSERT( m_constituents.size() >= 2 );
 
-    wxString name = m_constituents[0]->m_Name;
+    size_t strLen = m_constituents.size() - 1; // Count commas
+
+    for( std::size_t i = 0; i < m_constituents.size(); ++i )
+        strLen += m_constituents[i]->m_Name.length();
+
+    wxString name;
+    name.reserve( strLen );
+
+    name += m_constituents[0]->m_Name;
 
     for( std::size_t i = 1; i < m_constituents.size(); ++i )
     {
-        name += ",";
+        name += wxS( ',' );
         name += m_constituents[i]->m_Name;
     }
 

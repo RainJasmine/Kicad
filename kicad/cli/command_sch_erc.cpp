@@ -39,7 +39,7 @@
 
 CLI::SCH_ERC_COMMAND::SCH_ERC_COMMAND() : COMMAND( "erc" )
 {
-    addCommonArgs( true, true, false, false );
+    addCommonArgs( true, true, IO_TYPE::FILE, IO_TYPE::FILE );
     addDefineArg();
 
     m_argParser.add_description( UTF8STDSTR( _( "Runs the Electrical Rules Check (ERC) on the "
@@ -67,8 +67,7 @@ CLI::SCH_ERC_COMMAND::SCH_ERC_COMMAND() : COMMAND( "erc" )
     m_argParser.add_argument( ARG_SEVERITY_WARNING )
             .help( UTF8STDSTR( _( "Report all ERC warning level violations, this can be combined "
                                   "with the other severity arguments" ) ) )
-            .implicit_value( true )
-            .default_value( false );
+            .flag();
 
     m_argParser.add_argument( ARG_SEVERITY_EXCLUSIONS )
             .help( UTF8STDSTR( _( "Report all excluded ERC violations, this can be combined "

@@ -54,7 +54,11 @@
 //#define SEXPR_SYMBOL_LIB_FILE_VERSION  20240819  // Embedded Files - Update hash algorithm to Murmur3
 //#define SEXPR_SYMBOL_LIB_FILE_VERSION  20241209  // Private flags for SCH_FIELDs
 //#define SEXPR_SYMBOL_LIB_FILE_VERSION  20250318  // ~ no longer means empty text
-#define   SEXPR_SYMBOL_LIB_FILE_VERSION  20250324  // Jumper pin groups
+//#define SEXPR_SYMBOL_LIB_FILE_VERSION  20250324  // Jumper pin groups
+//#define SEXPR_SYMBOL_LIB_FILE_VERSION  20250829  // Rounded Rectangles
+//#define SEXPR_SYMBOL_LIB_FILE_VERSION  20250901  // Stacked Pin notation
+//#define SEXPR_SYMBOL_LIB_FILE_VERSION  20250925  // Bus alias in Project File
+#define SEXPR_SYMBOL_LIB_FILE_VERSION 20251024 // Updated properties formatting (do_not_autoplace, show_name)
 
 /**
  * Schematic file version.
@@ -123,4 +127,13 @@
 //#define SEXPR_SCHEMATIC_FILE_VERSION 20250318  // ~ no longer means empty text
 //#define SEXPR_SCHEMATIC_FILE_VERSION 20250425  // uuids for tables
 //#define SEXPR_SCHEMATIC_FILE_VERSION 20250513  // Groups can have design block lib_id
-#define   SEXPR_SCHEMATIC_FILE_VERSION 20250610  // DNP, etc. flags for rule areas
+//#define SEXPR_SCHEMATIC_FILE_VERSION 20250610  // DNP, etc. flags for rule areas
+//#define SEXPR_SCHEMATIC_FILE_VERSION 20250827  // Custom body styles
+//#define SEXPR_SCHEMATIC_FILE_VERSION 20250829  // Rounded Rectangles
+//#define SEXPR_SCHEMATIC_FILE_VERSION 20250901  // Stacked Pin notation
+//#define SEXPR_SCHEMATIC_FILE_VERSION 20250922  // Schematic variants.
+//#define SEXPR_SCHEMATIC_FILE_VERSION 20251012  // Flat schematic hierarchy support
+//#define SEXPR_SCHEMATIC_FILE_VERSION 20251028  // Updated properties formatting (do_not_autoplace, show_name)
+//#define SEXPR_SCHEMATIC_FILE_VERSION 20260101  // PCB variants
+//#define SEXPR_SCHEMATIC_FILE_VERSION 20260306  // Variant in_bom semantics corrected
+#define SEXPR_SCHEMATIC_FILE_VERSION 20260326  // Locking properties

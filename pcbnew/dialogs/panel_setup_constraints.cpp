@@ -22,6 +22,7 @@
  */
 
 #include <algorithm>
+#include <map>
 
 #include <board_design_settings.h>
 #include <board.h>
@@ -125,43 +126,11 @@ bool PANEL_SETUP_CONSTRAINTS::TransferDataToWindow()
 
 bool PANEL_SETUP_CONSTRAINTS::TransferDataFromWindow()
 {
-    if( !m_minClearance.Validate( 0, 10, EDA_UNITS::INCH ) )
-        return false;
-
-    if( !m_minConn.Validate( 0, 10, EDA_UNITS::INCH ) )
-        return false;
-
-    if( !m_trackMinWidth.Validate( 0, 10, EDA_UNITS::INCH ) )
-        return false;
-
-    if( !m_viaMinAnnulus.Validate( 0, 10, EDA_UNITS::INCH ) )
-        return false;
-
-    if( !m_viaMinSize.Validate( 0, 10, EDA_UNITS::INCH ) )
-        return false;
-
-    if( !m_holeClearance.Validate( 0, 10, EDA_UNITS::INCH ) )
-        return false;
-
-    if( !m_edgeClearance.Validate( 0, 10, EDA_UNITS::INCH ) )
-        return false;
-
-    if( !m_minGrooveWidth.Validate( 0, 10, EDA_UNITS::INCH ) )
-        return false;
-
-    if( !m_throughHoleMin.Validate( 2, 1000, EDA_UNITS::MILS ) )   // #107 to 1 inch
-        return false;
-
-    if( !m_holeToHoleMin.Validate( 0, 10, EDA_UNITS::INCH ) )
-        return false;
-
     // These are all stored in project file, not board, so no need for OnModify()
 
     m_BrdSettings->m_UseHeightForLengthCalcs = m_useHeightForLengthCalcs->GetValue();
 
-    m_BrdSettings->m_MaxError = KiROUND( std::clamp( static_cast<double>( m_maxError.GetValue() ),
-                                            pcbIUScale.IU_PER_MM * MINIMUM_ERROR_SIZE_MM,
-                                            pcbIUScale.IU_PER_MM * MAXIMUM_ERROR_SIZE_MM ) );
+    m_BrdSettings->m_MaxError = m_maxError.GetValue();
 
     m_BrdSettings->m_ZoneKeepExternalFillets = m_allowExternalFilletsOpt->GetValue();
     m_BrdSettings->m_MinResolvedSpokes = m_minResolvedSpokeCountCtrl->GetValue();
@@ -184,6 +153,42 @@ bool PANEL_SETUP_CONSTRAINTS::TransferDataFromWindow()
     m_BrdSettings->m_SilkClearance = m_silkClearance.GetValue();
     m_BrdSettings->m_MinSilkTextHeight = m_minTextHeight.GetValue();
     m_BrdSettings->m_MinSilkTextThickness = m_minTextThickness.GetValue();
+
+    std::vector<BOARD_DESIGN_SETTINGS::VALIDATION_ERROR> errors =
+            m_BrdSettings->ValidateDesignRules( m_Frame->GetUserUnits() );
+
+    if( !errors.empty() )
+    {
+        const BOARD_DESIGN_SETTINGS::VALIDATION_ERROR& error = errors.front();
+
+        const std::map<wxString, wxWindow*> fieldToControl = {
+            { wxS( "min_clearance" ), m_clearanceCtrl },
+            { wxS( "min_connection" ), m_MinConnCtrl },
+            { wxS( "min_track_width" ), m_TrackMinWidthCtrl },
+            { wxS( "min_via_annular_width" ), m_ViaMinAnnulusCtrl },
+            { wxS( "min_via_diameter" ), m_SetViasMinSizeCtrl },
+            { wxS( "min_through_hole_diameter" ), m_MinDrillCtrl },
+            { wxS( "min_microvia_diameter" ), m_uviaMinSizeCtrl },
+            { wxS( "min_microvia_drill" ), m_uviaMinDrillCtrl },
+            { wxS( "min_hole_to_hole" ), m_SetHoleToHoleCtrl },
+            { wxS( "min_hole_clearance" ), m_HoleClearanceCtrl },
+            { wxS( "min_silk_clearance" ), m_silkClearanceCtrl },
+            { wxS( "min_groove_width" ), m_minGrooveWidthCtrl },
+            { wxS( "min_text_height" ), m_textHeightCtrl },
+            { wxS( "min_text_thickness" ), m_textThicknessCtrl },
+            { wxS( "min_copper_edge_clearance" ), m_EdgeClearanceCtrl },
+            { wxS( "max_error" ), m_maxErrorCtrl },
+            { wxS( "min_resolved_spokes" ), m_minResolvedSpokeCountCtrl }
+        };
+
+        wxWindow* control = nullptr;
+
+        if( auto it = fieldToControl.find( error.setting_name ); it != fieldToControl.end() )
+            control = it->second;
+
+        PAGED_DIALOG::GetDialog( this )->SetError( error.error_message, this, control ? control : this );
+        return false;
+    }
 
     return true;
 }

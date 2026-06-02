@@ -31,6 +31,8 @@
 #include <router/router_tool.h>
 
 #include <dialog_generators.h>
+#include <properties/property.h>
+#include <properties/property_mgr.h>
 
 
 GENERATOR_TOOL::GENERATOR_TOOL() :
@@ -62,7 +64,7 @@ GENERATOR_TOOL::GENERATOR_TOOL() :
     PROPERTY_MANAGER::Instance().RegisterListener( TYPE_HASH( PCB_GENERATOR ),
             [&]( INSPECTABLE* aItem, PROPERTY_BASE* aProperty, COMMIT* aCommit )
             {
-                // Special case: regenerator generators when their properties change
+                // Special case: regenerate generators when their properties change
 
                 if( PCB_GENERATOR* generator = dynamic_cast<PCB_GENERATOR*>( aItem ) )
                 {
@@ -70,7 +72,7 @@ GENERATOR_TOOL::GENERATOR_TOOL() :
 
                     generator->EditStart( this, board(), commit );
                     generator->Update( this, board(), commit );
-                    generator->EditPush( this, board(), commit );
+                    generator->EditFinish( this, board(), commit );
                 }
             } );
 }
@@ -181,8 +183,9 @@ int GENERATOR_TOOL::RegenerateAllOfType( const TOOL_EVENT& aEvent )
 
             generator->EditStart( this, board(), &commit );
             generator->Update( this, board(), &commit );
-            generator->EditPush( this, board(), &commit, commitMsg, commitFlags );
+            generator->EditFinish( this, board(), &commit );
 
+            commit.Push( commitMsg, commitFlags );
             commitFlags |= APPEND_UNDO;
         }
     }
@@ -232,8 +235,9 @@ int GENERATOR_TOOL::RegenerateSelected( const TOOL_EVENT& aEvent )
     {
         gen->EditStart( this, board(), &commit );
         gen->Update( this, board(), &commit );
-        gen->EditPush( this, board(), &commit, _( "Regenerate Selected" ), commitFlags );
+        gen->EditFinish( this, board(), &commit );
 
+        commit.Push( _( "Regenerate Selected" ), commitFlags );
         commitFlags |= APPEND_UNDO;
     }
 
@@ -245,13 +249,14 @@ int GENERATOR_TOOL::RegenerateSelected( const TOOL_EVENT& aEvent )
 int GENERATOR_TOOL::RegenerateItem( const TOOL_EVENT& aEvent )
 {
     BOARD_COMMIT commit( this );
-    int          commitFlags = 0;
 
     PCB_GENERATOR* gen = aEvent.Parameter<PCB_GENERATOR*>();
 
     gen->EditStart( this, board(), &commit );
     gen->Update( this, board(), &commit );
-    gen->EditPush( this, board(), &commit, _( "Regenerate Item" ), commitFlags );
+    gen->EditFinish( this, board(), &commit );
+
+    commit.Push( gen->GetCommitMessage() );
 
     frame()->RefreshCanvas();
     return 0;
@@ -274,17 +279,13 @@ int GENERATOR_TOOL::GenEditAction( const TOOL_EVENT& aEvent )
     {
         gen->Update( this, board(), commit );
     }
-    else if( aEvent.IsAction( &PCB_ACTIONS::genPushEdit ) )
+    else if( aEvent.IsAction( &PCB_ACTIONS::genFinishEdit ) )
     {
-        gen->EditPush( this, board(), commit, wxEmptyString );
-
-        wxASSERT( commit->Empty() );
+        gen->EditFinish( this, board(), commit );
     }
-    else if( aEvent.IsAction( &PCB_ACTIONS::genRevertEdit ) )
+    else if( aEvent.IsAction( &PCB_ACTIONS::genCancelEdit ) )
     {
-        gen->EditRevert( this, board(), commit );
-
-        wxASSERT( commit->Empty() );
+        gen->EditCancel( this, board(), commit );
     }
     else if( aEvent.IsAction( &PCB_ACTIONS::genRemove ) )
     {
@@ -306,7 +307,7 @@ void GENERATOR_TOOL::setTransitions()
 
     Go( &GENERATOR_TOOL::GenEditAction,         PCB_ACTIONS::genStartEdit.MakeEvent() );
     Go( &GENERATOR_TOOL::GenEditAction,         PCB_ACTIONS::genUpdateEdit.MakeEvent() );
-    Go( &GENERATOR_TOOL::GenEditAction,         PCB_ACTIONS::genPushEdit.MakeEvent() );
-    Go( &GENERATOR_TOOL::GenEditAction,         PCB_ACTIONS::genRevertEdit.MakeEvent() );
+    Go( &GENERATOR_TOOL::GenEditAction,         PCB_ACTIONS::genFinishEdit.MakeEvent() );
+    Go( &GENERATOR_TOOL::GenEditAction,         PCB_ACTIONS::genCancelEdit.MakeEvent() );
     Go( &GENERATOR_TOOL::GenEditAction,         PCB_ACTIONS::genRemove.MakeEvent() );
 }

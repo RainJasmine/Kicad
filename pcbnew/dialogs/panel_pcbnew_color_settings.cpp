@@ -21,6 +21,7 @@
 #include <regex>
 
 #include <pgm_base.h>
+#include <settings/color_settings.h>
 #include <board.h>
 #include <layer_ids.h>
 #include <layer_range.h>
@@ -655,7 +656,8 @@ std::set<int> g_excludedLayers =
         {
             LAYER_VIAS,
             LAYER_VIA_THROUGH,
-            LAYER_VIA_BBLIND,
+            LAYER_VIA_BLIND,
+            LAYER_VIA_BURIED,
             LAYER_VIA_MICROVIA,
             LAYER_FOOTPRINTS_FR,
             LAYER_FOOTPRINTS_BK,
@@ -716,6 +718,7 @@ PANEL_PCBNEW_COLOR_SETTINGS::PANEL_PCBNEW_COLOR_SETTINGS( wxWindow* aParent, BOA
     m_validLayers.push_back( LAYER_PAGE_LIMITS );
     m_validLayers.push_back( LAYER_DRC_WARNING );
     m_validLayers.push_back( LAYER_DRC_EXCLUSION );
+    m_validLayers.push_back( LAYER_DRC_HIGHLIGHTED );
     m_validLayers.push_back( NETNAMES_LAYER_ID_START );
     m_validLayers.push_back( LAYER_PAD_NETNAMES );
 
@@ -796,7 +799,7 @@ void PANEL_PCBNEW_COLOR_SETTINGS::onNewThemeSelected()
 
 void PANEL_PCBNEW_COLOR_SETTINGS::createPreviewItems()
 {
-    m_page       = new PAGE_INFO( PAGE_INFO::Custom );
+    m_page       = new PAGE_INFO( PAGE_SIZE_TYPE::User );
     m_titleBlock = new TITLE_BLOCK;
     m_titleBlock->SetTitle( _( "Color Preview" ) );
     m_titleBlock->SetDate( wxDateTime::Now().FormatDate() );

@@ -54,6 +54,9 @@ DIALOG_IMPORT_SETTINGS_BASE::DIALOG_IMPORT_SETTINGS_BASE( wxWindow* parent, wxWi
 	m_MaskAndPasteOpt = new wxCheckBox( this, wxID_ANY, _("Solder mask/paste defaults"), wxDefaultPosition, wxDefaultSize, 0 );
 	bLeftCol->Add( m_MaskAndPasteOpt, 0, wxBOTTOM|wxRIGHT|wxLEFT, 5 );
 
+	m_ZoneHatchingOffsetsOpt = new wxCheckBox( this, wxID_ANY, _("Zone hatched fill offsets"), wxDefaultPosition, wxDefaultSize, 0 );
+	bLeftCol->Add( m_ZoneHatchingOffsetsOpt, 0, wxBOTTOM|wxRIGHT|wxLEFT, 5 );
+
 	m_TextAndGraphicsOpt = new wxCheckBox( this, wxID_ANY, _("Text && graphics default properties"), wxDefaultPosition, wxDefaultSize, 0 );
 	bLeftCol->Add( m_TextAndGraphicsOpt, 0, wxBOTTOM|wxRIGHT|wxLEFT, 5 );
 
@@ -78,8 +81,8 @@ DIALOG_IMPORT_SETTINGS_BASE::DIALOG_IMPORT_SETTINGS_BASE( wxWindow* parent, wxWi
 	m_ComponentClassesOpt = new wxCheckBox( this, wxID_ANY, _("Component classes"), wxDefaultPosition, wxDefaultSize, 0 );
 	bLeftCol->Add( m_ComponentClassesOpt, 0, wxBOTTOM|wxLEFT|wxRIGHT, 5 );
 
-	m_TimeDomainParametersOpt = new wxCheckBox( this, wxID_ANY, _("Time domain parameters"), wxDefaultPosition, wxDefaultSize, 0 );
-	bLeftCol->Add( m_TimeDomainParametersOpt, 0, wxBOTTOM|wxLEFT|wxRIGHT, 5 );
+	m_TuningProfilesOpt = new wxCheckBox( this, wxID_ANY, _("Tuning Profiles"), wxDefaultPosition, wxDefaultSize, 0 );
+	bLeftCol->Add( m_TuningProfilesOpt, 0, wxBOTTOM|wxLEFT|wxRIGHT, 5 );
 
 	m_CustomRulesOpt = new wxCheckBox( this, wxID_ANY, _("Custom rules"), wxDefaultPosition, wxDefaultSize, 0 );
 	bLeftCol->Add( m_CustomRulesOpt, 0, wxBOTTOM|wxRIGHT|wxLEFT, 5 );
@@ -124,10 +127,11 @@ DIALOG_IMPORT_SETTINGS_BASE::DIALOG_IMPORT_SETTINGS_BASE( wxWindow* parent, wxWi
 	m_TextAndGraphicsOpt->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_IMPORT_SETTINGS_BASE::OnCheckboxClicked ), NULL, this );
 	m_ConstraintsOpt->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_IMPORT_SETTINGS_BASE::OnCheckboxClicked ), NULL, this );
 	m_TracksAndViasOpt->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_IMPORT_SETTINGS_BASE::OnCheckboxClicked ), NULL, this );
+	m_TeardropsOpt->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_IMPORT_SETTINGS_BASE::OnCheckboxClicked ), NULL, this );
 	m_TuningPatternsOpt->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_IMPORT_SETTINGS_BASE::OnCheckboxClicked ), NULL, this );
 	m_NetclassesOpt->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_IMPORT_SETTINGS_BASE::OnCheckboxClicked ), NULL, this );
 	m_ComponentClassesOpt->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_IMPORT_SETTINGS_BASE::OnCheckboxClicked ), NULL, this );
-	m_TimeDomainParametersOpt->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_IMPORT_SETTINGS_BASE::OnCheckboxClicked ), NULL, this );
+	m_TuningProfilesOpt->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_IMPORT_SETTINGS_BASE::OnCheckboxClicked ), NULL, this );
 	m_CustomRulesOpt->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_IMPORT_SETTINGS_BASE::OnCheckboxClicked ), NULL, this );
 	m_SeveritiesOpt->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_IMPORT_SETTINGS_BASE::OnCheckboxClicked ), NULL, this );
 	m_selectAllButton->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_IMPORT_SETTINGS_BASE::OnSelectAll ), NULL, this );
@@ -142,10 +146,11 @@ DIALOG_IMPORT_SETTINGS_BASE::~DIALOG_IMPORT_SETTINGS_BASE()
 	m_TextAndGraphicsOpt->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_IMPORT_SETTINGS_BASE::OnCheckboxClicked ), NULL, this );
 	m_ConstraintsOpt->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_IMPORT_SETTINGS_BASE::OnCheckboxClicked ), NULL, this );
 	m_TracksAndViasOpt->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_IMPORT_SETTINGS_BASE::OnCheckboxClicked ), NULL, this );
+	m_TeardropsOpt->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_IMPORT_SETTINGS_BASE::OnCheckboxClicked ), NULL, this );
 	m_TuningPatternsOpt->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_IMPORT_SETTINGS_BASE::OnCheckboxClicked ), NULL, this );
 	m_NetclassesOpt->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_IMPORT_SETTINGS_BASE::OnCheckboxClicked ), NULL, this );
 	m_ComponentClassesOpt->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_IMPORT_SETTINGS_BASE::OnCheckboxClicked ), NULL, this );
-	m_TimeDomainParametersOpt->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_IMPORT_SETTINGS_BASE::OnCheckboxClicked ), NULL, this );
+	m_TuningProfilesOpt->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_IMPORT_SETTINGS_BASE::OnCheckboxClicked ), NULL, this );
 	m_CustomRulesOpt->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_IMPORT_SETTINGS_BASE::OnCheckboxClicked ), NULL, this );
 	m_SeveritiesOpt->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_IMPORT_SETTINGS_BASE::OnCheckboxClicked ), NULL, this );
 	m_selectAllButton->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_IMPORT_SETTINGS_BASE::OnSelectAll ), NULL, this );

@@ -24,14 +24,15 @@
 #include <widgets/grid_text_helpers.h>
 #include <widgets/wx_grid.h>
 #include <scintilla_tricks.h>
+#include <widgets/indicator_icon.h>
+#include <kiplatform/ui.h>
 
 
 //-------- GRID_CELL_TEXT_EDITOR ------------------------------------------------------
 //
 
 GRID_CELL_TEXT_EDITOR::GRID_CELL_TEXT_EDITOR() : wxGridCellTextEditor()
-{
-}
+{}
 
 
 void GRID_CELL_TEXT_EDITOR::SetValidator( const wxValidator& validator )
@@ -75,17 +76,99 @@ void GRID_CELL_TEXT_EDITOR::SetSize( const wxRect& aRect )
 }
 
 
+//-------- GRID_CELL_TEXT_RENDERER ------------------------------------------------------
+//
+
+GRID_CELL_TEXT_RENDERER::GRID_CELL_TEXT_RENDERER() :
+        wxGridCellStringRenderer()
+{}
+
+
+void GRID_CELL_TEXT_RENDERER::Draw( wxGrid& aGrid, wxGridCellAttr& aAttr, wxDC& aDC, const wxRect& aRect,
+                                    int aRow, int aCol, bool isSelected )
+{
+    WX_GRID_TABLE_BASE* table = dynamic_cast<WX_GRID_TABLE_BASE*>( aGrid.GetTable() );
+
+    if( !table || !table->IsExpanderColumn( aCol ) )
+        return wxGridCellStringRenderer::Draw( aGrid, aAttr, aDC, aRect, aRow, aCol, isSelected );
+
+    wxString value = aGrid.GetCellValue( aRow, aCol );
+
+    wxRect rect = aRect;
+    rect.Inflate( -1 );
+
+    // erase background
+    wxGridCellRenderer::Draw( aGrid, aAttr, aDC, aRect, aRow, aCol, isSelected );
+
+    // draw the icon
+    int leftCut = aDC.FromDIP( 4 );
+
+    INDICATOR_ICON::ICON_ID state = ROW_ICON_PROVIDER::STATE::OFF;
+
+    if( table->GetGroupType( aRow ) == GROUP_COLLAPSED )
+        state = ROW_ICON_PROVIDER::STATE::CLOSED;
+    else if( table->GetGroupType( aRow ) == GROUP_EXPANDED )
+        state = ROW_ICON_PROVIDER::STATE::OPEN;
+
+    wxBitmap bitmap = static_cast<WX_GRID&>( aGrid ).GetRowIconProvider()->GetIndicatorIcon( state );
+    bitmap.SetScaleFactor( KIPLATFORM::UI::GetPixelScaleFactor( &aGrid ) );
+
+    aDC.DrawBitmap( bitmap,
+                    rect.GetLeft() + leftCut,
+                    rect.GetTop() + ( rect.GetHeight() - bitmap.GetLogicalHeight() ) / 2,
+                    true );
+
+    leftCut += bitmap.GetLogicalWidth();
+
+    leftCut += aDC.FromDIP( 4 );
+
+    if( table->GetGroupType( aRow ) == CHILD_ITEM )
+        leftCut += aDC.FromDIP( 12 );
+
+    rect.x += leftCut;
+    rect.width -= leftCut;
+
+    // draw the text
+    SetTextColoursAndFont( aGrid, aAttr, aDC, isSelected );
+    aGrid.DrawTextRectangle( aDC, value, rect, wxALIGN_LEFT, wxALIGN_CENTRE );
+}
+
+
+wxSize GRID_CELL_TEXT_RENDERER::GetBestSize( wxGrid& grid, wxGridCellAttr& attr, wxDC& dc, int row, int col )
+{
+    WX_GRID_TABLE_BASE* table = dynamic_cast<WX_GRID_TABLE_BASE*>( grid.GetTable() );
+
+    if( !table || !table->IsExpanderColumn( col ) )
+        return wxGridCellStringRenderer::GetBestSize( grid, attr, dc, row, col );
+
+    INDICATOR_ICON::ICON_ID state = ROW_ICON_PROVIDER::STATE::OFF;
+    wxBitmap                bitmap = static_cast<WX_GRID&>( grid ).GetRowIconProvider()->GetIndicatorIcon( state );
+
+    bitmap.SetScaleFactor( KIPLATFORM::UI::GetPixelScaleFactor( &grid ) );
+
+    wxString text = grid.GetCellValue( row, col );
+    wxSize   size = wxGridCellStringRenderer::DoGetBestSize( attr, dc, text );
+
+    size.x += bitmap.GetLogicalWidth() + dc.FromDIP( 8 );
+
+    if( table->GetGroupType( row ) == CHILD_ITEM )
+        size.x += dc.FromDIP( 12 );
+
+    size.y = std::max( size.y, dc.FromDIP( 2 ) );
+
+    return size;
+}
+
+
 //-------- GRID_CELL_ESCAPED_TEXT_RENDERER ------------------------------------------------------
 //
 
 GRID_CELL_ESCAPED_TEXT_RENDERER::GRID_CELL_ESCAPED_TEXT_RENDERER() :
         wxGridCellStringRenderer()
-{
-}
+{}
 
-void GRID_CELL_ESCAPED_TEXT_RENDERER::Draw( wxGrid& aGrid, wxGridCellAttr& aAttr, wxDC& aDC,
-                                            const wxRect& aRect, int aRow, int aCol,
-                                            bool isSelected )
+void GRID_CELL_ESCAPED_TEXT_RENDERER::Draw( wxGrid& aGrid, wxGridCellAttr& aAttr, wxDC& aDC, const wxRect& aRect,
+                                            int aRow, int aCol, bool isSelected )
 {
     wxString unescaped = UnescapeString( aGrid.GetCellValue( aRow, aCol ) );
 
@@ -100,8 +183,8 @@ void GRID_CELL_ESCAPED_TEXT_RENDERER::Draw( wxGrid& aGrid, wxGridCellAttr& aAttr
 }
 
 
-wxSize GRID_CELL_ESCAPED_TEXT_RENDERER::GetBestSize( wxGrid & aGrid, wxGridCellAttr & aAttr,
-                                                     wxDC & aDC, int aRow, int aCol )
+wxSize GRID_CELL_ESCAPED_TEXT_RENDERER::GetBestSize( wxGrid& aGrid, wxGridCellAttr& aAttr, wxDC& aDC,
+                                                     int aRow, int aCol )
 {
     wxString unescaped = UnescapeString( aGrid.GetCellValue( aRow, aCol ) );
     return wxGridCellStringRenderer::DoGetBestSize( aAttr, aDC, unescaped );
@@ -117,7 +200,7 @@ GRID_CELL_STC_EDITOR::GRID_CELL_STC_EDITOR( bool aIgnoreCase, bool aSingleLine,
         m_ignoreCase( aIgnoreCase ),
         m_singleLine( aSingleLine ),
         m_onCharFn( std::move( onCharFn ) )
-{ }
+{}
 
 
 void GRID_CELL_STC_EDITOR::SetSize( const wxRect& aRect )
@@ -137,6 +220,7 @@ void GRID_CELL_STC_EDITOR::SetSize( const wxRect& aRect )
     rect.Offset( -1, 3 );
 #else
     rect.Offset( 1, 3 );
+    rect.SetWidth( rect.GetWidth() - 1 );
     rect.SetHeight( rect.GetHeight() - 4 );
 #endif
     wxGridCellEditor::SetSize( rect );
@@ -289,3 +373,154 @@ void GRID_CELL_STC_EDITOR::onFocusLoss( wxFocusEvent& aEvent )
 
     aEvent.Skip();
 }
+
+
+//-------- Editor Base Class for GRID_TEXT_BUTTON_HELPERS ------------
+//
+// Note: this implementation is an adaptation of wxGridCellChoiceEditor
+//
+// Note: this class is here instead of in grid_text_button_helpers.h/cpp to
+// keep from dragging a ton of stuff into kicommon.
+
+
+wxString GRID_CELL_TEXT_BUTTON::GetValue() const
+{
+    return Combo()->GetValue();
+}
+
+
+void GRID_CELL_TEXT_BUTTON::SetSize( const wxRect& aRect )
+{
+    wxRect rect( aRect );
+    WX_GRID::CellEditorTransformSizeRect( rect );
+
+    wxGridCellEditor::SetSize( rect );
+}
+
+
+void GRID_CELL_TEXT_BUTTON::StartingKey( wxKeyEvent& event )
+{
+    // Note: this is a copy of wxGridCellTextEditor's StartingKey()
+
+    // Since this is now happening in the EVT_CHAR event EmulateKeyPress is no
+    // longer an appropriate way to get the character into the text control.
+    // Do it ourselves instead.  We know that if we get this far that we have
+    // a valid character, so not a whole lot of testing needs to be done.
+
+    // wxComboCtrl inherits from wxTextEntry, so can statically cast
+    wxTextEntry* textEntry = static_cast<wxTextEntry*>( Combo() );
+    int ch;
+
+    bool isPrintable;
+
+#if wxUSE_UNICODE
+    ch = event.GetUnicodeKey();
+
+    if( ch != WXK_NONE )
+        isPrintable = true;
+    else
+#endif // wxUSE_UNICODE
+    {
+        ch = event.GetKeyCode();
+        isPrintable = ch >= WXK_SPACE && ch < WXK_START;
+    }
+
+    switch( ch )
+    {
+    case WXK_DELETE:
+        // Delete the initial character when starting to edit with DELETE.
+        textEntry->Remove( 0, 1 );
+        break;
+
+    case WXK_BACK:
+        // Delete the last character when starting to edit with BACKSPACE.
+    {
+        const long pos = textEntry->GetLastPosition();
+        textEntry->Remove( pos - 1, pos );
+    }
+        break;
+
+    default:
+        if( isPrintable )
+            textEntry->WriteText( static_cast<wxChar>( ch ) );
+
+        break;
+    }
+}
+
+
+void GRID_CELL_TEXT_BUTTON::BeginEdit( int aRow, int aCol, wxGrid* aGrid )
+{
+    m_grid = aGrid;
+    m_row = aRow;
+    m_col = aCol;
+
+    auto evtHandler = static_cast< wxGridCellEditorEvtHandler* >( m_control->GetEventHandler() );
+
+    // Don't immediately end if we get a kill focus event within BeginEdit
+    evtHandler->SetInSetFocus( true );
+
+    m_value = aGrid->GetTable()->GetValue( aRow, aCol );
+
+    Combo()->SetValue( m_value );
+    Combo()->SetFocus();
+
+    // Bind event to handle text changes
+    Combo()->Bind( wxEVT_TEXT, &GRID_CELL_TEXT_BUTTON::OnTextChange, this );
+}
+
+
+void GRID_CELL_TEXT_BUTTON::OnTextChange( wxCommandEvent& event )
+{
+    if( m_grid && m_row >= 0 && m_row < m_grid->GetNumberRows() && m_col >= 0 && m_col < m_grid->GetNumberCols() )
+    {
+        wxGridEvent evt( m_grid->GetId(), wxEVT_GRID_CELL_CHANGING, m_grid, m_row, m_col );
+        evt.SetString( Combo()->GetValue() );
+        m_grid->GetEventHandler()->ProcessEvent( evt );
+    }
+
+    event.Skip(); // Ensure that other handlers can process this event too
+}
+
+
+bool GRID_CELL_TEXT_BUTTON::EndEdit( int, int, const wxGrid*, const wxString&, wxString *aNewVal )
+{
+    Combo()->Unbind( wxEVT_TEXT, &GRID_CELL_TEXT_BUTTON::OnTextChange, this );
+    m_grid = nullptr;
+    m_row = -1;
+    m_col = -1;
+
+    const wxString value = Combo()->GetValue();
+
+    if( value == m_value )
+        return false;
+
+    m_value = value;
+
+    if( aNewVal )
+        *aNewVal = value;
+
+    return true;
+}
+
+
+void GRID_CELL_TEXT_BUTTON::ApplyEdit( int aRow, int aCol, wxGrid* aGrid )
+{
+    aGrid->GetTable()->SetValue( aRow, aCol, m_value );
+}
+
+
+void GRID_CELL_TEXT_BUTTON::Reset()
+{
+    Combo()->SetValue( m_value );
+}
+
+
+#if wxUSE_VALIDATORS
+void GRID_CELL_TEXT_BUTTON::SetValidator( const wxValidator& validator )
+{
+    m_validator.reset( static_cast< wxValidator* >( validator.Clone() ) );
+}
+#endif
+
+

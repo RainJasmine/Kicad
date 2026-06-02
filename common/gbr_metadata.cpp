@@ -63,8 +63,7 @@ wxString GbrMakeCreationDateAttributeString( GBR_NC_STRING_FORMAT aFormat )
         break;
 
     case GBR_NC_STRING_FORMAT_X1:
-        msg.Printf( wxS( "G04 #@! TF.CreationDate,%s%s*" ), date.FormatISOCombined(),
-                    timezone_offset );
+        msg.Printf( wxS( "G04 #@! TF.CreationDate,%s%s*" ), date.FormatISOCombined(), timezone_offset );
         break;
 
     case GBR_NC_STRING_FORMAT_GBRJOB:
@@ -72,8 +71,7 @@ wxString GbrMakeCreationDateAttributeString( GBR_NC_STRING_FORMAT aFormat )
         break;
 
     case GBR_NC_STRING_FORMAT_NCDRILL:
-        msg.Printf( wxS( "; #@! TF.CreationDate,%s%s" ), date.FormatISOCombined(),
-                    timezone_offset );
+        msg.Printf( wxS( "; #@! TF.CreationDate,%s%s" ), date.FormatISOCombined(), timezone_offset );
         break;
     }
 
@@ -264,9 +262,18 @@ std::string GBR_APERTURE_METADATA::FormatAttribute( GBR_APERTURE_ATTRIB aAttribu
         attribute_string = "TA.AperFunction,ViaDrill";
         break;
 
+    case GBR_APERTURE_ATTRIB_BACKDRILL:
+        attribute_string = "TA.AperFunction,BackDrill";
+        break;
+
     case GBR_APERTURE_ATTRIB_CMP_DRILL:     // print info associated to a component
                                             // round pad hole in drill files
         attribute_string = "TA.AperFunction,ComponentDrill";
+        break;
+
+    case GBR_APERTURE_ATTRIB_PRESSFITDRILL:
+        // print info associated to a flashed component pad with pressfit option in drill files
+        attribute_string = "TA.AperFunction,ComponentDrill,PressFit";
         break;
 
     // print info associated to a component oblong pad hole in drill files

@@ -22,6 +22,7 @@
 
 #include <wx/string.h>
 
+#include <json_common.h>
 #include <kicommon.h>
 #include <map>
 #include <settings/json_settings.h>
@@ -186,6 +187,11 @@ public:
 
     virtual ~JOB();
 
+    // We own at least one list of raw pointers.  Don't let the compiler fill in copy c'tors that
+    // will only land us in trouble.
+    JOB( const JOB& ) = delete;
+    JOB& operator=( const JOB& ) = delete;
+
     const std::string& GetType() const { return m_type; };
 
     const std::map<wxString, wxString>& GetVarOverrides() const { return m_varOverrides; }
@@ -217,7 +223,9 @@ public:
     void SetTempOutputDirectory( const wxString& aBase );
 
     /**
-     * Sets the configured output path for the job, this path is always saved to file
+     * Sets the configured output path for the job, this path is always saved to file.
+     * Any transient working output path is cleared so the new configured path takes precedence
+     * on the next call to GetFullOutputPath().
      */
     void SetConfiguredOutputPath( const wxString& aPath );
 
@@ -245,6 +253,8 @@ public:
      */
     wxString GetFullOutputPath( PROJECT* aProject ) const;
 
+    wxString ResolveOutputPath( const wxString& aPath, bool aPathIsDirectory, PROJECT* aProject ) const;
+
     bool GetOutputPathIsDirectory() const { return m_outputPathIsDirectory; }
 
 protected:
@@ -257,6 +267,11 @@ protected:
     wxString m_outputPath;
     bool     m_outputPathIsDirectory;
     wxString m_description;
+
+    /**
+     * The working output path is a transient path that takes priority over the configured
+     * output path when determining where to write output files.
+     */
     wxString m_workingOutputPath;
 
     std::vector<JOB_PARAM_BASE*> m_params;

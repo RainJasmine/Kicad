@@ -40,8 +40,7 @@
 
 struct PRETTIFIER_TEST_FIXTURE
 {
-    PRETTIFIER_TEST_FIXTURE() :
-            m_settingsManager( true /* headless */ )
+    PRETTIFIER_TEST_FIXTURE()
     { }
 
     SETTINGS_MANAGER       m_settingsManager;
@@ -90,7 +89,7 @@ BOOST_FIXTURE_TEST_CASE( BoardAndFootprintPrettifier, PRETTIFIER_TEST_FIXTURE )
                 BOOST_REQUIRE( original.get() );
             }
 
-            KICAD_FORMAT::Prettify( inData, false );
+            KICAD_FORMAT::Prettify( inData );
 
             // For diagnosis of test failures
             std::string tempPath = fmt::format( "{}/{}", tempLibPath, testCaseName );

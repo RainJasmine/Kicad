@@ -23,22 +23,27 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#include <gal/3d/camera.h>
 #include "board_adapter.h"
+
+#include <wx/log.h>
+
+#include <gal/3d/camera.h>
 #include <board_design_settings.h>
 #include <board_stackup_manager/board_stackup.h>
 #include <board_stackup_manager/stackup_predefined_prms.h>
 #include <3d_rendering/raytracing/shapes2D/polygon_2d.h>
 #include <board.h>
 #include <dialogs/dialog_color_picker.h>
+#include <footprint.h>
 #include <layer_range.h>
 #include <3d_math.h>
 #include "3d_fastmath.h"
 #include <geometry/geometry_utils.h>
 #include <lset.h>
 #include <pgm_base.h>
+#include <settings/color_settings.h>
 #include <settings/settings_manager.h>
-#include <wx/log.h>
+#include <pcb_track.h>
 #include <pcbnew_settings.h>
 #include <advanced_config.h>
 
@@ -272,27 +277,35 @@ bool BOARD_ADAPTER::Is3dLayerEnabled( PCB_LAYER_ID aLayer,
 }
 
 
-bool BOARD_ADAPTER::IsFootprintShown( FOOTPRINT_ATTR_T aFPAttributes ) const
+bool BOARD_ADAPTER::IsFootprintShown( const FOOTPRINT* aFootprint ) const
 {
     if( m_IsPreviewer )     // In panel Preview, footprints are always shown, of course
         return true;
 
-    if( aFPAttributes & FP_EXCLUDE_FROM_POS_FILES )
+    if( !aFootprint )
+        return false;
+
+    const wxString variantName = m_board ? m_board->GetCurrentVariant() : wxString();
+    const bool     excludedFromPos = aFootprint->GetExcludedFromPosFilesForVariant( variantName );
+    const bool     dnp = aFootprint->GetDNPForVariant( variantName );
+    const auto     attributes = static_cast<FOOTPRINT_ATTR_T>( aFootprint->GetAttributes() );
+
+    if( excludedFromPos )
     {
         if( !m_Cfg->m_Render.show_footprints_not_in_posfile )
             return false;
     }
 
-    if( aFPAttributes & FP_DNP )
+    if( dnp )
     {
         if( !m_Cfg->m_Render.show_footprints_dnp )
             return false;
     }
 
-    if( aFPAttributes & FP_SMD )
+    if( attributes & FP_SMD )
         return m_Cfg->m_Render.show_footprints_insert;
 
-    if( aFPAttributes & FP_THROUGH_HOLE )
+    if( attributes & FP_THROUGH_HOLE )
         return m_Cfg->m_Render.show_footprints_normal;
 
     return m_Cfg->m_Render.show_footprints_virtual;
@@ -344,7 +357,7 @@ void BOARD_ADAPTER::InitSettings( REPORTER* aStatusReporter, REPORTER* aWarningR
     BOX2I bbbox;
 
     if( m_board )
-        bbbox = m_board->ComputeBoundingBox( !m_board->IsFootprintHolder() && haveOutline );
+        bbbox = m_board->ComputeBoundingBox( !m_board->IsFootprintHolder() && haveOutline, true );
 
     // Gives a non null size to avoid issues in zoom / scale calculations
     if( ( bbbox.GetWidth() == 0 ) && ( bbbox.GetHeight() == 0 ) )
@@ -485,26 +498,18 @@ void BOARD_ADAPTER::InitSettings( REPORTER* aStatusReporter, REPORTER* aWarningR
     const float zpos_copperTop_front = m_layerZcoordTop[F_Cu];
 
     // Fill not copper layers zpos
-    for( int layer_id = 0; layer_id < PCB_LAYER_ID_COUNT; layer_id++ )
+    for( int layer = 0; layer < PCB_LAYER_ID_COUNT; layer++ )
     {
-        if( IsCopperLayer( (PCB_LAYER_ID)layer_id ) )
+        PCB_LAYER_ID layer_id = ToLAYER_ID( layer );
+
+        if( IsCopperLayer( layer_id ) )
             continue;
 
-        float zposBottom = zpos_copperTop_front + 2.0f * zpos_offset;
-        float zposTop = zposBottom + m_frontCopperThickness3DU;
+        float zposBottom;
+        float zposTop;
 
         switch( layer_id )
         {
-        case B_Adhes:
-            zposBottom = zpos_copperTop_back - 2.0f * zpos_offset;
-            zposTop    = zposBottom - m_nonCopperLayerThickness3DU;
-            break;
-
-        case F_Adhes:
-            zposBottom = zpos_copperTop_front + 2.0f * zpos_offset;
-            zposTop    = zposBottom + m_nonCopperLayerThickness3DU;
-            break;
-
         case B_Mask:
             zposBottom = zpos_copperTop_back;
             zposTop    = zpos_copperTop_back - m_backMaskThickness3DU;
@@ -536,11 +541,21 @@ void BOARD_ADAPTER::InitSettings( REPORTER* aStatusReporter, REPORTER* aWarningR
             break;
 
         default:
+            if( m_board->IsBackLayer( layer_id ) )
+            {
+                zposBottom = zpos_copperTop_back - 2.0f * zpos_offset;
+                zposTop    = zposBottom - m_nonCopperLayerThickness3DU;
+            }
+            else
+            {
+                zposBottom = zpos_copperTop_front + 2.0f * zpos_offset;
+                zposTop    = zposBottom + m_nonCopperLayerThickness3DU;
+            }
             break;
         }
 
-        m_layerZcoordTop[(PCB_LAYER_ID)layer_id] = zposTop;
-        m_layerZcoordBottom[(PCB_LAYER_ID)layer_id] = zposBottom;
+        m_layerZcoordTop[layer_id] = zposTop;
+        m_layerZcoordBottom[layer_id] = zposBottom;
     }
 
     m_boardCenter = SFVEC3F( m_boardPos.x * m_biuTo3Dunits, m_boardPos.y * m_biuTo3Dunits, 0.0f );
@@ -757,6 +772,7 @@ void BOARD_ADAPTER::SetLayerColors( const std::map<int, COLOR4D>& aColors )
 void BOARD_ADAPTER::SetVisibleLayers( const std::bitset<LAYER_3D_END>& aLayers )
 {
     m_Cfg->m_Render.show_board_body                = aLayers.test( LAYER_3D_BOARD );
+    m_Cfg->m_Render.show_plated_barrels            = aLayers.test( LAYER_3D_PLATED_BARRELS );
     m_Cfg->m_Render.show_copper_top                = aLayers.test( LAYER_3D_COPPER_TOP );
     m_Cfg->m_Render.show_copper_bottom             = aLayers.test( LAYER_3D_COPPER_BOTTOM );
     m_Cfg->m_Render.show_silkscreen_top            = aLayers.test( LAYER_3D_SILKSCREEN_TOP );
@@ -804,6 +820,7 @@ std::bitset<LAYER_3D_END> BOARD_ADAPTER::GetVisibleLayers() const
             ret.set( LAYER_3D_ADHESIVE,          m_Cfg->m_Render.show_adhesive );
         }
 
+        ret.set( LAYER_3D_PLATED_BARRELS,    true );
         ret.set( LAYER_3D_COPPER_TOP,        true );
         ret.set( LAYER_3D_COPPER_BOTTOM,     true );
         ret.set( LAYER_3D_SILKSCREEN_TOP,    true );
@@ -834,6 +851,7 @@ std::bitset<LAYER_3D_END> BOARD_ADAPTER::GetVisibleLayers() const
     }
 
     ret.set( LAYER_3D_BOARD,             m_Cfg->m_Render.show_board_body );
+    ret.set( LAYER_3D_PLATED_BARRELS,    m_Cfg->m_Render.show_plated_barrels );
     ret.set( LAYER_3D_COPPER_TOP,        m_Cfg->m_Render.show_copper_top );
     ret.set( LAYER_3D_COPPER_BOTTOM,     m_Cfg->m_Render.show_copper_bottom );
     ret.set( LAYER_3D_SILKSCREEN_TOP,    m_Cfg->m_Render.show_silkscreen_top );
@@ -932,6 +950,7 @@ std::bitset<LAYER_3D_END> BOARD_ADAPTER::GetDefaultVisibleLayers() const
     std::bitset<LAYER_3D_END> ret;
 
     ret.set( LAYER_3D_BOARD,             true );
+    ret.set( LAYER_3D_PLATED_BARRELS,    true );
     ret.set( LAYER_3D_COPPER_TOP,        true );
     ret.set( LAYER_3D_COPPER_BOTTOM,     true );
     ret.set( LAYER_3D_SILKSCREEN_TOP,    true );
@@ -1007,7 +1026,7 @@ bool BOARD_ADAPTER::createBoardPolygon( wxString* aErrorMsg )
     }
     else
     {
-        success = m_board->GetBoardPolygonOutlines( m_board_poly, nullptr, false, true );
+        success = m_board->GetBoardPolygonOutlines( m_board_poly, true, nullptr, false, true );
 
         if( !success && aErrorMsg )
             *aErrorMsg = _( "Board outline is missing or malformed. Run DRC for a full analysis." );

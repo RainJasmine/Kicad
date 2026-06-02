@@ -31,7 +31,8 @@
 #ifndef SCH_IO_KICAD_SEXPR_PARSER_H_
 #define SCH_IO_KICAD_SEXPR_PARSER_H_
 
-#include <symbol_library.h>
+#include <symbol_library_common.h>
+#include <progress_reporter.h>
 #include <schematic_lexer.h>
 #include <sch_file_versions.h>
 #include <default_values.h>    // For some default values
@@ -112,6 +113,12 @@ public:
 
     int GetParsedRequiredVersion() const { return m_requiredVersion; }
 
+    /**
+     * Return any non-fatal parse warnings that occurred during parsing.
+     * These are errors that were handled gracefully but should be reported to the user.
+     */
+    const std::vector<wxString>& GetParseWarnings() const { return m_parseWarnings; }
+
 private:
     // Group membership info refers to other Uuids in the file.
     // We don't want to rely on group declarations being last in the file, so
@@ -125,6 +132,7 @@ private:
         KIID              uuid;
         LIB_ID            libId;
         std::vector<KIID> memberUuids;
+        bool              locked = false;
     };
 
     void checkpoint();
@@ -203,8 +211,8 @@ private:
         aBottom = parseInternalUnits( "bottom margin" );
     }
 
-    void parseEDA_TEXT( EDA_TEXT* aText, bool aConvertOverbarSyntax,
-                        bool aEnforceMinTextSize = true );
+    void parseEDA_TEXT( EDA_TEXT* aText, bool aConvertOverbarSyntax, bool aEnforceMinTextSize = true );
+    void parseBodyStyles( std::unique_ptr<LIB_SYMBOL>& aSymbol );
     void parsePinNames( std::unique_ptr<LIB_SYMBOL>& aSymbol );
     void parsePinNumbers( std::unique_ptr<LIB_SYMBOL>& aSymbol );
 
@@ -251,6 +259,17 @@ private:
 
     void resolveGroups( SCH_SCREEN* aParent );
 
+    /**
+     * Skip tokens until we reach the end of the current S-expression block.
+     *
+     * This is used for error recovery when parsing fails mid-symbol.
+     * The parser will consume tokens until the matching closing parenthesis
+     * is found, allowing parsing to continue with the next symbol.
+     *
+     * @param aDepth The initial nesting depth (1 = inside one open paren)
+     */
+    void skipToBlockEnd( int aDepth = 1 );
+
 private:
     int      m_requiredVersion;   ///< Set to the symbol library file version required.
     wxString m_generatorVersion;
@@ -275,6 +294,8 @@ private:
     int                m_maxError;
 
     std::vector<GROUP_INFO> m_groupInfos;
+
+    std::vector<wxString>   m_parseWarnings;    ///< Non-fatal warnings collected during parsing
 };
 
 #endif    // SCH_IO_KICAD_SEXPR_PARSER_H_

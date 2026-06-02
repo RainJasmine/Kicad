@@ -170,6 +170,14 @@ public:
     virtual void ClearTemporaryCaches() {}
 
     virtual int ClearanceEpsilon() const { return 0; }
+
+    virtual const SHAPE_LINE_CHAIN& HullCache( const ITEM* aItem, int aClearance,
+                                               int aWalkaroundThickness, int aLayer )
+    {
+        static SHAPE_LINE_CHAIN empty;
+        empty = aItem->Hull( aClearance, aWalkaroundThickness, aLayer );
+        return empty;
+    }
 };
 
 
@@ -254,6 +262,17 @@ public:
     {
         return m_maxClearance;
     }
+
+    /**
+     * Defer spatial index insertion during bulk population. Call
+     * FinalizeBulkAdd() when done adding items to build the index.
+     */
+    void BeginBulkAdd();
+
+    /**
+     * Build the spatial index from all items added since BeginBulkAdd().
+     */
+    void FinalizeBulkAdd();
 
     ///< Set the worst-case clearance between any pair of items.
     void SetMaxClearance( int aClearance )

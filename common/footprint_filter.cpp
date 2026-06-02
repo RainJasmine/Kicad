@@ -90,9 +90,7 @@ void FOOTPRINT_FILTER_IT::increment()
 
             for( std::unique_ptr<EDA_COMBINED_MATCHER>& matcher : m_filter->m_pattern_filters )
             {
-                std::vector<SEARCH_TERM> searchTerms = candidate.GetSearchTerms();
-
-                if( !matcher->ScoreTerms( searchTerms ) )
+                if( !matcher->ScoreTerms( candidate.GetSearchTerms() ) )
                 {
                     exclude = true;
                     break;
@@ -217,7 +215,7 @@ void FOOTPRINT_FILTER::FilterByTextPattern( wxString const& aPattern )
 {
     m_filter_pattern = aPattern;
 
-    wxStringTokenizer tokenizer( aPattern.Lower() );
+    wxStringTokenizer tokenizer( aPattern.Lower(), " \t\r\n", wxTOKEN_STRTOK );
 
     while( tokenizer.HasMoreTokens() )
     {

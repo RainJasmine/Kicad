@@ -64,8 +64,13 @@
 #include <wx/treebook.h>
 #include <wx/msgdlg.h>
 #include <wx/log.h>
+#include <kiplatform/ui.h>
 
+#if defined(__linux__) || defined(__FreeBSD__)
+#include <spacenav/spnav_2d_plugin.h>
+#else
 #include <navlib/nl_pl_editor_plugin.h>
+#endif
 
 
 BEGIN_EVENT_TABLE( PL_EDITOR_FRAME, EDA_DRAW_FRAME )
@@ -235,7 +240,15 @@ PL_EDITOR_FRAME::PL_EDITOR_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     try
     {
         if( !m_spaceMouse )
+        {
+#if defined(__linux__) || defined(__FreeBSD__)
+            m_spaceMouse = std::make_unique<SPNAV_2D_PLUGIN>( GetCanvas() );
+            m_spaceMouse->SetScale( drawSheetIUScale.IU_PER_MILS / pcbIUScale.IU_PER_MILS );
+#else
             m_spaceMouse = std::make_unique<NL_PL_EDITOR_PLUGIN>();
+#endif
+        }
+
         m_spaceMouse->SetCanvas( GetCanvas() );
     }
     catch( const std::system_error& e )
@@ -301,10 +314,6 @@ void PL_EDITOR_FRAME::setupUIConditions()
     mgr->SetConditions( ACTIONS::redo,              ENABLE( cond.RedoAvailable() ) );
 
     mgr->SetConditions( ACTIONS::toggleGrid,        CHECK( cond.GridVisible() ) );
-    mgr->SetConditions( ACTIONS::toggleCursorStyle, CHECK( cond.FullscreenCursor() ) );
-    mgr->SetConditions( ACTIONS::millimetersUnits,  CHECK( cond.Units( EDA_UNITS::MM ) ) );
-    mgr->SetConditions( ACTIONS::inchesUnits,       CHECK( cond.Units( EDA_UNITS::INCH ) ) );
-    mgr->SetConditions( ACTIONS::milsUnits,         CHECK( cond.Units( EDA_UNITS::MILS ) ) );
 
     mgr->SetConditions( ACTIONS::cut,               ENABLE( SELECTION_CONDITIONS::NotEmpty ) );
     mgr->SetConditions( ACTIONS::copy,              ENABLE( SELECTION_CONDITIONS::NotEmpty ) );
@@ -545,7 +554,7 @@ void PL_EDITOR_FRAME::SaveSettings( APP_SETTINGS_BASE* aCfg )
     cfg->m_PropertiesFrameWidth = m_propertiesFrameWidth;
     cfg->m_CornerOrigin         = m_originSelectChoice;
     cfg->m_BlackBackground      = GetDrawBgColor() == BLACK;
-    cfg->m_LastPaperSize        = GetPageSettings().GetType();
+    cfg->m_LastPaperSize        = GetPageSettings().GetTypeAsString();
     cfg->m_LastWasPortrait      = GetPageSettings().IsPortrait();
     cfg->m_LastCustomWidth      = PAGE_INFO::GetCustomWidthMils();
     cfg->m_LastCustomHeight     = PAGE_INFO::GetCustomHeightMils();
@@ -739,10 +748,8 @@ void PL_EDITOR_FRAME::UpdateStatusBar()
     // Display absolute coordinates:
     VECTOR2D cursorPos = GetCanvas()->GetViewControls()->GetCursorPosition();
     VECTOR2D coord = cursorPos - originCoord;
-    double   dXpos =
-            EDA_UNIT_UTILS::UI::ToUserUnit( drawSheetIUScale, GetUserUnits(), coord.x * Xsign );
-    double dYpos =
-            EDA_UNIT_UTILS::UI::ToUserUnit( drawSheetIUScale, GetUserUnits(), coord.y * Ysign );
+    double   dXpos = EDA_UNIT_UTILS::UI::ToUserUnit( drawSheetIUScale, GetUserUnits(), coord.x * Xsign );
+    double   dYpos = EDA_UNIT_UTILS::UI::ToUserUnit( drawSheetIUScale, GetUserUnits(), coord.y * Ysign );
 
     wxString absformatter = wxT( "X %.4g  Y %.4g" );
     wxString locformatter = wxT( "dx %.4g  dy %.4g" );
@@ -837,8 +844,9 @@ DS_DATA_ITEM* PL_EDITOR_FRAME::AddDrawingSheetItem( int aType )
     case DS_DATA_ITEM::DS_BITMAP:
     {
         wxFileDialog fileDlg( this, _( "Choose Image" ), m_mruImagePath, wxEmptyString,
-                              _( "Image Files" ) + wxS( " " ) + wxImage::GetImageExtWildcard(),
-                              wxFD_OPEN );
+                              FILEEXT::ImageFileWildcard(), wxFD_OPEN );
+
+        KIPLATFORM::UI::AllowNetworkFileSystems( &fileDlg );
 
         if( fileDlg.ShowModal() != wxID_OK )
             return nullptr;
@@ -864,8 +872,8 @@ DS_DATA_ITEM* PL_EDITOR_FRAME::AddDrawingSheetItem( int aType )
         // Set the scale factor for pl_editor (it is set for Eeschema by default)
         image->SetPixelSizeIu( drawSheetIUScale.IU_PER_MILS * 1000.0 / image->GetPPI() );
         item = new DS_DATA_ITEM_BITMAP( image );
+        break;
     }
-    break;
     }
 
     if( item == nullptr )

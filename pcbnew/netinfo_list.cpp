@@ -21,6 +21,10 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include "netinfo.h"
+
+#include <wx/log.h>
+
 #include <board.h>
 #include <board_commit.h>
 #include <footprint.h>
@@ -28,9 +32,8 @@
 #include <pad.h>
 #include <pcb_shape.h>
 #include <pcb_track.h>
+#include <string_utils.h>
 #include <zone.h>
-#include <netinfo.h>
-#include <wx/log.h>
 
 
 // Constructor and destructor
@@ -56,6 +59,12 @@ void NETINFO_LIST::clear()
     for( it = m_netNames.begin(), itEnd = m_netNames.end(); it != itEnd; ++it )
         delete it->second;
 
+    detachAll();
+}
+
+
+void NETINFO_LIST::detachAll()
+{
     m_netNames.clear();
     m_netCodes.clear();
     m_newNetCode = 0;
@@ -272,76 +281,5 @@ int NETINFO_LIST::getFreeNetCode()
 }
 
 
-int NETINFO_MAPPING::Translate( int aNetCode ) const
-{
-    std::map<int, int>::const_iterator value = m_netMapping.find( aNetCode );
-
-    if( value != m_netMapping.end() )
-        return value->second;
-
-    // There was no entry for the given net code
-    return aNetCode;
-}
-
-
-void NETINFO_MAPPING::Update()
-{
-    // Collect all the used nets
-    std::set<int> nets;
-
-    // Be sure that the unconnected gets 0 and is mapped as 0
-    nets.insert( 0 );
-
-    // Zones
-    for( ZONE* zone : m_board->Zones() )
-        nets.insert( zone->GetNetCode() );
-
-    // Tracks
-    for( PCB_TRACK* track : m_board->Tracks() )
-        nets.insert( track->GetNetCode() );
-
-    for( BOARD_ITEM* item : m_board->Drawings() )
-    {
-        if( item->Type() != PCB_SHAPE_T )
-            continue;
-
-        PCB_SHAPE* shape = static_cast<PCB_SHAPE*>( item );
-
-        if( shape->GetNetCode() > 0 )
-            nets.insert( shape->GetNetCode() );
-    }
-
-    // footprints/pads
-    for( FOOTPRINT* footprint : m_board->Footprints() )
-    {
-        for( PAD* pad : footprint->Pads() )
-            nets.insert( pad->GetNetCode() );
-    }
-
-    // Prepare the new mapping
-    m_netMapping.clear();
-
-    // Now the nets variable stores all the used net codes (not only for pads) and we are ready to
-    // assign new consecutive net numbers
-    int newNetCode = 0;
-
-    for( auto net : nets )
-        m_netMapping[net] = newNetCode++;
-}
-
-
-NETINFO_ITEM* NETINFO_MAPPING::iterator::operator*() const
-{
-    return m_mapping->m_board->FindNet( m_iterator->first );
-}
-
-
-NETINFO_ITEM* NETINFO_MAPPING::iterator::operator->() const
-{
-    return m_mapping->m_board->FindNet( m_iterator->first );
-}
-
-
 const int NETINFO_LIST::UNCONNECTED = 0;
 const int NETINFO_LIST::ORPHANED = -1;
-

@@ -22,14 +22,16 @@
 #include <project.h>
 #include <project/component_class_settings.h>
 #include <project/net_settings.h>
-#include <project/time_domain_parameters.h>
+#include <project/tuning_profiles.h>
 #include <settings/json_settings_internals.h>
 #include <project/project_file.h>
+#include <project/board_project_settings_params.h>
 #include <settings/common_settings.h>
 #include <settings/parameters.h>
 #include <wildcards_and_files_ext.h>
 #include <project/project_file.h>
 #include <wx/config.h>
+#include <wx/filename.h>
 #include <wx/log.h>
 
 
@@ -43,6 +45,7 @@ PROJECT_FILE::PROJECT_FILE( const wxString& aFullPath ) :
         m_SchematicSettings( nullptr ),
         m_BoardSettings(),
         m_sheets(),
+        m_topLevelSheets(),
         m_boards(),
         m_project( nullptr ),
         m_wasMigrated( false )
@@ -51,6 +54,9 @@ PROJECT_FILE::PROJECT_FILE( const wxString& aFullPath ) :
     m_deleteLegacyAfterMigration = false;
 
     m_params.emplace_back( new PARAM_LIST<FILE_INFO_PAIR>( "sheets", &m_sheets, {} ) );
+
+    m_params.emplace_back( new PARAM_LIST<TOP_LEVEL_SHEET_INFO>( "schematic.top_level_sheets",
+            &m_topLevelSheets, {} ) );
 
     m_params.emplace_back( new PARAM_LIST<FILE_INFO_PAIR>( "boards", &m_boards, {} ) );
 
@@ -63,6 +69,9 @@ PROJECT_FILE::PROJECT_FILE( const wxString& aFullPath ) :
     m_params.emplace_back( new PARAM_LIST<wxString>( "libraries.pinned_footprint_libs",
             &m_PinnedFootprintLibs, {} ) );
 
+    m_params.emplace_back(
+            new PARAM_LIST<wxString>( "pcbnew.find_by_properties.recent_queries", &m_FindByPropertiesQueries, {} ) );
+
     m_params.emplace_back( new PARAM_PATH_LIST( "cvpcb.equivalence_files",
             &m_EquivalenceFiles, {} ) );
 
@@ -72,9 +81,6 @@ PROJECT_FILE::PROJECT_FILE( const wxString& aFullPath ) :
     m_params.emplace_back( new PARAM_PATH( "pcbnew.last_paths.netlist",
             &m_PcbLastPath[LAST_PATH_NETLIST], "" ) );
 
-    m_params.emplace_back( new PARAM_PATH( "pcbnew.last_paths.step",
-            &m_PcbLastPath[LAST_PATH_STEP], "" ) );
-
     m_params.emplace_back( new PARAM_PATH( "pcbnew.last_paths.idf",
             &m_PcbLastPath[LAST_PATH_IDF], "" ) );
 
@@ -83,15 +89,6 @@ PROJECT_FILE::PROJECT_FILE( const wxString& aFullPath ) :
 
     m_params.emplace_back( new PARAM_PATH( "pcbnew.last_paths.specctra_dsn",
             &m_PcbLastPath[LAST_PATH_SPECCTRADSN], "" ) );
-
-    m_params.emplace_back( new PARAM_PATH( "pcbnew.last_paths.gencad",
-            &m_PcbLastPath[LAST_PATH_GENCAD], "" ) );
-
-    m_params.emplace_back( new PARAM_PATH( "pcbnew.last_paths.pos_files",
-            &m_PcbLastPath[LAST_PATH_POS_FILES], "" ) );
-
-    m_params.emplace_back( new PARAM_PATH( "pcbnew.last_paths.svg",
-            &m_PcbLastPath[LAST_PATH_SVG], "" ) );
 
     m_params.emplace_back( new PARAM_PATH( "pcbnew.last_paths.plot",
             &m_PcbLastPath[LAST_PATH_PLOT], "" ) );
@@ -120,13 +117,63 @@ PROJECT_FILE::PROJECT_FILE( const wxString& aFullPath ) :
                     m_LegacyLibNames.push_back( entry.get<wxString>() );
             }, {} ) );
 
+    m_params.emplace_back( new PARAM_LAMBDA<nlohmann::json>( "schematic.bus_aliases",
+            [&]() -> nlohmann::json
+            {
+                nlohmann::json ret = nlohmann::json::object();
+
+                for( const auto& alias : m_BusAliases )
+                {
+                    nlohmann::json members = nlohmann::json::array();
+
+                    for( const wxString& member : alias.second )
+                        members.push_back( member );
+
+                    ret[ alias.first.ToStdString() ] = members;
+                }
+
+                return ret;
+            },
+            [&]( const nlohmann::json& aJson )
+            {
+                if( aJson.empty() || !aJson.is_object() )
+                    return;
+
+                m_BusAliases.clear();
+
+                for( auto it = aJson.begin(); it != aJson.end(); ++it )
+                {
+                    const nlohmann::json& membersJson = it.value();
+
+                    if( !membersJson.is_array() )
+                        continue;
+
+                    std::vector<wxString> members;
+
+                    for( const nlohmann::json& entry : membersJson )
+                    {
+                        if( entry.is_string() )
+                        {
+                            wxString member = entry.get<wxString>().Strip( wxString::both );
+
+                            if( !member.IsEmpty() )
+                                members.push_back( member );
+                        }
+                    }
+
+                    wxString name = wxString::FromUTF8( it.key().c_str() ).Strip( wxString::both );
+
+                    if( !name.IsEmpty() )
+                        m_BusAliases.emplace( name, std::move( members ) );
+                }
+            }, {} ) );
+
     m_NetSettings = std::make_shared<NET_SETTINGS>( this, "net_settings" );
 
     m_ComponentClassSettings =
             std::make_shared<COMPONENT_CLASS_SETTINGS>( this, "component_class_settings" );
 
-    m_timeDomainParameters =
-            std::make_shared<TIME_DOMAIN_PARAMETERS>( this, "time_domain_parameters" );
+    m_tuningProfileParameters = std::make_shared<TUNING_PROFILES>( this, "tuning_profiles" );
 
     m_params.emplace_back( new PARAM_LAYER_PRESET( "board.layer_presets", &m_LayerPresets ) );
 
@@ -150,6 +197,13 @@ PROJECT_FILE::PROJECT_FILE( const wxString& aFullPath ) :
 
     m_params.emplace_back( new PARAM<wxString>( "board.ipc2581.dist",
             &m_IP2581Bom.dist, wxEmptyString ) );
+
+    m_params.emplace_back( new PARAM<wxString>( "board.ipc2581.bom_rev",
+            &m_IP2581Bom.bomRev, wxEmptyString ) );
+
+    m_params.emplace_back( new PARAM<wxString>( "board.ipc2581.sch_revision",
+            &m_IP2581Bom.schRevision, wxEmptyString ) );
+
 
     registerMigration( 1, 2, std::bind( &PROJECT_FILE::migrateSchema1To2, this ) );
     registerMigration( 2, 3, std::bind( &PROJECT_FILE::migrateSchema2To3, this ) );
@@ -561,7 +615,6 @@ bool PROJECT_FILE::MigrateFromLegacy( wxConfigBase* aCfg )
 
                 aCfg->SetPath( "/" );
 
-                // TODO: any reason we want to fail on this?
                 return true;
             };
 
@@ -634,6 +687,72 @@ bool PROJECT_FILE::MigrateFromLegacy( wxConfigBase* aCfg )
 }
 
 
+bool PROJECT_FILE::LoadFromFile( const wxString& aDirectory )
+{
+    bool success = JSON_SETTINGS::LoadFromFile( aDirectory );
+
+    if( success )
+    {
+        // Migrate from old single-root format to top_level_sheets format
+        if( m_topLevelSheets.empty() && m_project )
+        {
+            // Create a default top-level sheet entry based on the project name
+            wxString projectName = m_project->GetProjectName();
+
+            TOP_LEVEL_SHEET_INFO defaultSheet;
+            defaultSheet.uuid = niluuid;  // Use niluuid for the first/default sheet
+            defaultSheet.name = projectName;
+            defaultSheet.filename = projectName + ".kicad_sch";
+
+            m_topLevelSheets.push_back( std::move( defaultSheet ) );
+
+            // Mark as migrated so it will be saved with the new format
+            m_wasMigrated = true;
+
+            wxLogTrace( traceSettings, wxT( "PROJECT_FILE: Migrated old single-root format to top_level_sheets" ) );
+        }
+
+        // When a project is created from a template, the top_level_sheets entries may
+        // still reference the template's schematic filenames rather than the new project's.
+        // The template copy renames files on disk but doesn't update the .kicad_pro content.
+        // Detect this and fix the references so the schematic can be found.
+        if( !m_topLevelSheets.empty() && m_project )
+        {
+            wxString projectPath = m_project->GetProjectPath();
+            wxString projectName = m_project->GetProjectName();
+
+            for( TOP_LEVEL_SHEET_INFO& sheetInfo : m_topLevelSheets )
+            {
+                wxFileName referencedFile( projectPath, sheetInfo.filename );
+
+                if( referencedFile.FileExists() )
+                    continue;
+
+                // Try the project-name-based filename
+                wxString expectedFile =
+                        projectName + wxS( "." ) + FILEEXT::KiCadSchematicFileExtension;
+
+                wxFileName candidateFile( projectPath, expectedFile );
+
+                if( candidateFile.FileExists() )
+                {
+                    wxLogTrace( traceSettings,
+                                wxT( "PROJECT_FILE: Fixing stale top_level_sheets reference "
+                                     "'%s' -> '%s'" ),
+                                sheetInfo.filename, expectedFile );
+
+                    sheetInfo.filename = expectedFile;
+                    sheetInfo.name = projectName;
+                    m_wasMigrated = true;
+                }
+            }
+        }
+    }
+
+    return success;
+}
+
+
 bool PROJECT_FILE::SaveToFile( const wxString& aDirectory, bool aForce )
 {
     wxASSERT( m_project );
@@ -689,6 +808,15 @@ bool PROJECT_FILE::SaveAs( const wxString& aDirectory, const wxString& aFile )
     updatePathByPtr( "schematic.ngspice.workbook_filename" );
     updatePathByPtr( "pcbnew.page_layout_descr_file" );
 
+    for( auto& sheetInfo : m_topLevelSheets )
+    {
+        updatePath( sheetInfo.filename );
+
+        // Also update the display name if it matches the old project name
+        if( sheetInfo.name == oldProjectName )
+            sheetInfo.name = aFile;
+    }
+
     // If we're actually going ahead and doing the save, the flag that keeps code from doing the save
     // should be cleared at this point
     m_wasMigrated = false;
@@ -723,4 +851,28 @@ void from_json( const nlohmann::json& aJson, FILE_INFO_PAIR& aPair )
     wxCHECK( aJson.is_array() && aJson.size() == 2, /* void */ );
     aPair.first  = KIID( wxString( aJson[0].get<std::string>().c_str(), wxConvUTF8 ) );
     aPair.second = wxString( aJson[1].get<std::string>().c_str(), wxConvUTF8 );
+}
+
+
+void to_json( nlohmann::json& aJson, const TOP_LEVEL_SHEET_INFO& aInfo )
+{
+    aJson = nlohmann::json::object();
+    aJson["uuid"] = aInfo.uuid.AsString().ToUTF8();
+    aJson["name"] = aInfo.name.ToUTF8();
+    aJson["filename"] = aInfo.filename.ToUTF8();
+}
+
+
+void from_json( const nlohmann::json& aJson, TOP_LEVEL_SHEET_INFO& aInfo )
+{
+    wxCHECK( aJson.is_object(), /* void */ );
+
+    if( aJson.contains( "uuid" ) )
+        aInfo.uuid = KIID( wxString( aJson["uuid"].get<std::string>().c_str(), wxConvUTF8 ) );
+
+    if( aJson.contains( "name" ) )
+        aInfo.name = wxString( aJson["name"].get<std::string>().c_str(), wxConvUTF8 );
+
+    if( aJson.contains( "filename" ) )
+        aInfo.filename = wxString( aJson["filename"].get<std::string>().c_str(), wxConvUTF8 );
 }

@@ -27,16 +27,7 @@
 #include <string_utils.h>
 
 
-bool g_removeExtraLibFields      = false;
-bool g_resetEmptyLibFields       = false;
-bool g_resetLibFieldText         = true;
-bool g_resetLibFieldVisibilities = true;
-bool g_resetLibFieldEffects      = true;
-bool g_resetLibFieldPositions    = true;
-
-
-DIALOG_UPDATE_SYMBOL_FIELDS::DIALOG_UPDATE_SYMBOL_FIELDS( SYMBOL_EDIT_FRAME* aParent,
-                                                          LIB_SYMBOL* aSymbol ) :
+DIALOG_UPDATE_SYMBOL_FIELDS::DIALOG_UPDATE_SYMBOL_FIELDS( SYMBOL_EDIT_FRAME* aParent, LIB_SYMBOL* aSymbol ) :
         DIALOG_UPDATE_SYMBOL_FIELDS_BASE( aParent ),
         m_editFrame( aParent ),
         m_symbol( aSymbol)
@@ -44,7 +35,8 @@ DIALOG_UPDATE_SYMBOL_FIELDS::DIALOG_UPDATE_SYMBOL_FIELDS( SYMBOL_EDIT_FRAME* aPa
     wxASSERT( aParent );
     wxASSERT( aSymbol );
 
-    m_parentSymbolReadOnly->SetValue( UnescapeString( m_symbol->GetParent().lock()->GetName() ) );
+    if( std::shared_ptr<LIB_SYMBOL> parent = m_symbol->GetParent().lock() )
+        m_parentSymbolReadOnly->SetValue( UnescapeString( parent->GetName() ) );
 
     for( FIELD_T fieldId : MANDATORY_FIELDS )
     {
@@ -55,28 +47,10 @@ DIALOG_UPDATE_SYMBOL_FIELDS::DIALOG_UPDATE_SYMBOL_FIELDS( SYMBOL_EDIT_FRAME* aPa
 
     updateFieldsList();
 
-    m_removeExtraBox->SetValue( g_removeExtraLibFields );
-    m_resetEmptyFields->SetValue( g_resetEmptyLibFields );
-    m_resetFieldText->SetValue( g_resetLibFieldText );
-    m_resetFieldVisibilities->SetValue( g_resetLibFieldVisibilities );
-    m_resetFieldEffects->SetValue( g_resetLibFieldEffects );
-    m_resetFieldPositions->SetValue( g_resetLibFieldPositions );
-
     SetupStandardButtons();
 
     // Now all widgets have the size fixed, call FinishDialogSettings
     finishDialogSettings();
-}
-
-
-DIALOG_UPDATE_SYMBOL_FIELDS::~DIALOG_UPDATE_SYMBOL_FIELDS()
-{
-    g_removeExtraLibFields = m_removeExtraBox->GetValue();
-    g_resetEmptyLibFields = m_resetEmptyFields->GetValue();
-    g_resetLibFieldText = m_resetFieldText->GetValue();
-    g_resetLibFieldVisibilities = m_resetFieldVisibilities->GetValue();
-    g_resetLibFieldEffects = m_resetFieldEffects->GetValue();
-    g_resetLibFieldPositions = m_resetFieldPositions->GetValue();
 }
 
 
@@ -150,7 +124,7 @@ void DIALOG_UPDATE_SYMBOL_FIELDS::onOkButtonClicked( wxCommandEvent& aEvent )
     wxBusyCursor dummy;
     SCH_COMMIT   commit( m_editFrame );
 
-    commit.Modify( m_symbol );
+    commit.Modify( m_symbol, m_editFrame->GetScreen() );
 
     // Create the set of fields to be updated
     m_updateFields.clear();

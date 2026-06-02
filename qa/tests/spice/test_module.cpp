@@ -53,10 +53,11 @@ bool init_unit_test()
 
     wxSetAssertHandler( &KI_TEST::wxAssertThrower );
 
-    Pgm().InitPgm( true, true, true );
+    Pgm().InitPgm( true, true );
     Pgm().GetSettingsManager().RegisterSettings( new EESCHEMA_SETTINGS, false );
     Pgm().GetSettingsManager().RegisterSettings( new SYMBOL_EDITOR_SETTINGS, false );
     Pgm().GetSettingsManager().Load();
+    Pgm().GetSettingsManager().LoadProject( "" );
 
     return ok;
 }

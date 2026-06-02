@@ -26,24 +26,26 @@
  *  2 - create a footprint report (pos and footprint descr) (ascii file)
  */
 
-#include <dialog_gen_footprint_position.h>
+#include "dialog_gen_footprint_position.h"
+
+#include <wx/dirdlg.h>
+#include <wx/msgdlg.h>
+
+#include <board.h>
 #include <confirm.h>
 #include <pcb_edit_frame.h>
-#include <pcbnew_settings.h>
 #include <project/project_file.h>
 #include <bitmaps.h>
 #include <reporter.h>
 #include <tools/board_editor_control.h>
 #include <wildcards_and_files_ext.h>
 #include <kiface_base.h>
+#include <string_utils.h>
 #include <widgets/wx_html_report_panel.h>
 #include <widgets/std_bitmap_button.h>
 #include <exporters/place_file_exporter.h>
 #include "gerber_placefile_writer.h"
 #include <jobs/job_export_pcb_pos.h>
-
-#include <wx/dirdlg.h>
-#include <wx/msgdlg.h>
 
 
 DIALOG_GEN_FOOTPRINT_POSITION::DIALOG_GEN_FOOTPRINT_POSITION( PCB_EDIT_FRAME* aEditFrame ) :
@@ -52,16 +54,38 @@ DIALOG_GEN_FOOTPRINT_POSITION::DIALOG_GEN_FOOTPRINT_POSITION( PCB_EDIT_FRAME* aE
         m_job( nullptr )
 {
     m_messagesPanel->SetFileName( Prj().GetProjectPath() + wxT( "report.txt" ) );
-    m_reporter = &m_messagesPanel->Reporter();
-    initDialog();
+    m_messagesPanel->MsgPanelSetMinSize( wxSize( -1, 160 ) );
+
+    m_browseButton->SetBitmap( KiBitmapBundle( BITMAPS::small_folder ) );
+
+    m_variantChoiceCtrl->Append( m_editFrame->GetBoard()->GetVariantNamesForUI() );
+
+    wxString currentVariant = m_editFrame->GetBoard()->GetCurrentVariant();
+
+    if( !currentVariant.IsEmpty() )
+    {
+        int selection = m_variantChoiceCtrl->FindString( currentVariant );
+
+        if( selection != wxNOT_FOUND )
+            m_variantChoiceCtrl->SetSelection( selection );
+        else
+            m_variantChoiceCtrl->SetSelection( 0 );
+    }
+    else
+    {
+        m_variantChoiceCtrl->SetSelection( 0 );
+    }
 
     SetupStandardButtons( { { wxID_OK, _( "Generate Position File" ) },
                             { wxID_CANCEL, _( "Close" ) } } );
 
+    // DIALOG_SHIM needs a unique hash_key because classname will be the same for both job and
+    // non-job versions.
+    m_hash_key = TO_UTF8( GetTitle() );
+
     GetSizer()->SetSizeHints( this );
     Centre();
 }
-
 
 
 DIALOG_GEN_FOOTPRINT_POSITION::DIALOG_GEN_FOOTPRINT_POSITION( JOB_EXPORT_PCB_POS* aJob,
@@ -71,72 +95,61 @@ DIALOG_GEN_FOOTPRINT_POSITION::DIALOG_GEN_FOOTPRINT_POSITION( JOB_EXPORT_PCB_POS
         m_editFrame( aEditFrame ),
         m_job( aJob )
 {
+    SetTitle( m_job->GetSettingsDialogTitle() );
+
+    m_browseButton->Hide();
+    m_units = m_job->m_units == JOB_EXPORT_PCB_POS::UNITS::INCH ? EDA_UNITS::INCH : EDA_UNITS::MM;
+    m_staticTextDir->SetLabel( _( "Output file:" ) );
+
+    if( m_editFrame && m_editFrame->GetBoard() )
+        m_variantChoiceCtrl->Append( m_editFrame->GetBoard()->GetVariantNamesForUI() );
+
     m_messagesPanel->Hide();
-    initDialog();
 
     SetupStandardButtons();
+
+    // DIALOG_SHIM needs a unique hash_key because classname will be the same for both job and
+    // non-job versions.
+    m_hash_key = TO_UTF8( GetTitle() );
 
     GetSizer()->SetSizeHints( this );
     Centre();
 }
 
 
-void DIALOG_GEN_FOOTPRINT_POSITION::initDialog()
+bool DIALOG_GEN_FOOTPRINT_POSITION::TransferDataToWindow()
 {
-    if( !m_job )
+    if( m_job )
     {
-        m_browseButton->SetBitmap( KiBitmapBundle( BITMAPS::small_folder ) );
-
-        PROJECT_FILE& projectFile = m_editFrame->Prj().GetProjectFile();
-
-        if( PCBNEW_SETTINGS* cfg = m_editFrame->GetPcbNewSettings() )
-        {
-            m_units = cfg->m_PlaceFile.units == 0 ? EDA_UNITS::INCH : EDA_UNITS::MM;
-
-            // Output directory
-            m_outputDirectoryName->SetValue( projectFile.m_PcbLastPath[LAST_PATH_POS_FILES] );
-
-            // Update Options
-            m_unitsCtrl->SetSelection( cfg->m_PlaceFile.units );
-            m_singleFile->SetValue( cfg->m_PlaceFile.file_options == 1 );
-            m_formatCtrl->SetSelection( cfg->m_PlaceFile.file_format );
-            m_cbIncludeBoardEdge->SetValue( cfg->m_PlaceFile.include_board_edge );
-            m_useDrillPlaceOrigin->SetValue( cfg->m_PlaceFile.use_aux_origin );
-            m_onlySMD->SetValue( cfg->m_PlaceFile.only_SMD );
-            m_negateXcb->SetValue( cfg->m_PlaceFile.negate_xcoord );
-            m_excludeTH->SetValue( cfg->m_PlaceFile.exclude_TH );
-        }
-
-        // Update sizes and sizers:
-        m_messagesPanel->MsgPanelSetMinSize( wxSize( -1, 160 ) );
-    }
-    else
-    {
-        SetTitle( m_job->GetSettingsDialogTitle() );
-
-        m_browseButton->Hide();
-        m_units = m_job->m_units == JOB_EXPORT_PCB_POS::UNITS::INCH ? EDA_UNITS::INCH : EDA_UNITS::MM;
-        m_staticTextDir->SetLabel( _( "Output file:" ) );
         m_outputDirectoryName->SetValue( m_job->GetConfiguredOutputPath() );
 
         m_unitsCtrl->SetSelection( static_cast<int>( m_job->m_units ) );
         m_singleFile->SetValue( m_job->m_singleFile );
         m_formatCtrl->SetSelection( static_cast<int>( m_job->m_format ) );
         m_cbIncludeBoardEdge->SetValue( m_job->m_gerberBoardEdge );
-		m_useDrillPlaceOrigin->SetValue( m_job->m_useDrillPlaceFileOrigin );
+        m_useDrillPlaceOrigin->SetValue( m_job->m_useDrillPlaceFileOrigin );
         m_onlySMD->SetValue( m_job->m_smdOnly );
         m_negateXcb->SetValue( m_job->m_negateBottomX );
         m_excludeTH->SetValue( m_job->m_excludeFootprintsWithTh );
         m_excludeDNP->SetValue( m_job->m_excludeDNP );
+        m_excludeBOM->SetValue( m_job->m_excludeBOM );
 
-        m_messagesPanel->Hide();
+        if( !m_job->m_variant.IsEmpty() )
+        {
+            int selection = m_variantChoiceCtrl->FindString( m_job->m_variant );
+
+            if( selection != wxNOT_FOUND )
+                m_variantChoiceCtrl->SetSelection( selection );
+            else
+                m_variantChoiceCtrl->SetSelection( 0 );
+        }
+        else
+        {
+            m_variantChoiceCtrl->SetSelection( 0 );
+        }
     }
 
-    // DIALOG_SHIM needs a unique hash_key because classname will be the same for both job and
-    // non-job versions (which have different sizes).
-    m_hash_key = TO_UTF8( GetTitle() );
-
-    GetSizer()->SetSizeHints( this );
+    return true;
 }
 
 
@@ -184,43 +197,19 @@ void DIALOG_GEN_FOOTPRINT_POSITION::onUpdateUIExcludeTH( wxUpdateUIEvent& event 
 {
     if( m_formatCtrl->GetSelection() == 2 )
     {
-        m_excludeTH->SetValue( false );
-        m_excludeTH->Enable( false );
+        if( event.GetEventObject() == m_excludeTH )
+            m_excludeTH->SetValue( false );
+        else if( event.GetEventObject() == m_excludeDNP )
+            m_excludeDNP->SetValue( false );
+        else if( event.GetEventObject() == m_excludeBOM )
+            m_excludeBOM->SetValue( false );
+
+        event.Enable( false );
     }
     else
     {
-        m_excludeTH->Enable( true );
+        event.Enable( true );
     }
-}
-
-
-bool DIALOG_GEN_FOOTPRINT_POSITION::UnitsMM()
-{
-    return m_unitsCtrl->GetSelection() == 1;
-}
-
-
-bool DIALOG_GEN_FOOTPRINT_POSITION::OneFileOnly()
-{
-    return m_singleFile->GetValue();
-}
-
-
-bool DIALOG_GEN_FOOTPRINT_POSITION::OnlySMD()
-{
-    return m_onlySMD->GetValue();
-}
-
-
-bool DIALOG_GEN_FOOTPRINT_POSITION::ExcludeAllTH()
-{
-    return m_excludeTH->GetValue();
-}
-
-
-bool DIALOG_GEN_FOOTPRINT_POSITION::ExcludeDNP()
-{
-    return m_excludeDNP->GetValue();
 }
 
 
@@ -243,18 +232,14 @@ void DIALOG_GEN_FOOTPRINT_POSITION::onOutputDirectoryBrowseClicked( wxCommandEve
 
     wxFileName dirName = wxFileName::DirName( dirDialog.GetPath() );
 
-    wxMessageDialog dialog( this, _( "Use a relative path?"), _( "Plot Output Directory" ),
-                            wxYES_NO | wxICON_QUESTION | wxYES_DEFAULT );
-
-    if( dialog.ShowModal() == wxID_YES )
+    if( IsOK( this, _( "Use a relative path?" ) ) )
     {
         wxString boardFilePath = ( (wxFileName) m_editFrame->GetBoard()->GetFileName() ).GetPath();
 
         if( !dirName.MakeRelativeTo( boardFilePath ) )
         {
-            wxMessageBox( _( "Cannot make path relative (target volume different from board "
-                             "file volume)!" ),
-                          _( "Plot Output Directory" ), wxOK | wxICON_ERROR );
+            DisplayErrorMessage( this, _( "Cannot make path relative (target volume different from board "
+                                          "file volume)!" ) );
         }
     }
 
@@ -268,24 +253,9 @@ void DIALOG_GEN_FOOTPRINT_POSITION::onGenerate( wxCommandEvent& event )
     {
         m_units  = m_unitsCtrl->GetSelection() == 0 ? EDA_UNITS::INCH : EDA_UNITS::MM;
 
-        wxString dirStr = m_outputDirectoryName->GetValue();
+        m_outputDirectory = m_outputDirectoryName->GetValue();
         // Keep unix directory format convention in cfg files
-        dirStr.Replace( wxT( "\\" ), wxT( "/" ) );
-
-        m_editFrame->Prj().GetProjectFile().m_PcbLastPath[LAST_PATH_POS_FILES] = dirStr;
-
-        if( PCBNEW_SETTINGS* cfg = m_editFrame->GetPcbNewSettings() )
-        {
-            cfg->m_PlaceFile.output_directory   = dirStr;
-            cfg->m_PlaceFile.units              = m_units == EDA_UNITS::INCH ? 0 : 1;
-            cfg->m_PlaceFile.file_options       = m_singleFile->GetValue() ? 1 : 0;
-            cfg->m_PlaceFile.file_format        = m_formatCtrl->GetSelection();
-            cfg->m_PlaceFile.include_board_edge = m_cbIncludeBoardEdge->GetValue();
-            cfg->m_PlaceFile.exclude_TH         = m_excludeTH->GetValue();
-            cfg->m_PlaceFile.only_SMD           = m_onlySMD->GetValue();
-            cfg->m_PlaceFile.use_aux_origin     = m_useDrillPlaceOrigin->GetValue();
-            cfg->m_PlaceFile.negate_xcoord      = m_negateXcb->GetValue();
-        }
+        m_outputDirectory.Replace( wxT( "\\" ), wxT( "/" ) );
 
         if( m_formatCtrl->GetSelection() == 2 )
             CreateGerberFiles();
@@ -306,6 +276,8 @@ void DIALOG_GEN_FOOTPRINT_POSITION::onGenerate( wxCommandEvent& event )
         m_job->m_useDrillPlaceFileOrigin = m_useDrillPlaceOrigin->GetValue();
         m_job->m_negateBottomX = m_negateXcb->GetValue();
         m_job->m_excludeDNP = m_excludeDNP->GetValue();
+        m_job->m_excludeBOM = m_excludeBOM->GetValue();
+        m_job->m_variant = getSelectedVariant();
 
         event.Skip();   // Allow normal close action
     }
@@ -328,16 +300,15 @@ bool DIALOG_GEN_FOOTPRINT_POSITION::CreateGerberFiles()
                 return m_editFrame->GetBoard()->ResolveTextVar( token, 0 );
             };
 
-    wxString path = m_editFrame->GetPcbNewSettings()->m_PlaceFile.output_directory;
+    wxString path = m_outputDirectory;
     path = ExpandTextVars( path, &textResolver );
-    path = ExpandEnvVarSubstitutions( path, nullptr );
+    path = ExpandEnvVarSubstitutions( path, &Prj() );
 
-    wxFileName  outputDir = wxFileName::DirName( path );
+    wxFileName outputDir = wxFileName::DirName( path );
     wxString   boardFilename = m_editFrame->GetBoard()->GetFileName();
+    REPORTER*  reporter = &m_messagesPanel->Reporter();
 
-    m_reporter = &m_messagesPanel->Reporter();
-
-    if( !EnsureFileDirectoryExists( &outputDir, boardFilename, m_reporter ) )
+    if( !EnsureFileDirectoryExists( &outputDir, boardFilename, reporter ) )
     {
         msg.Printf( _( "Could not write plot files to folder '%s'." ), outputDir.GetPath() );
         DisplayError( this, msg );
@@ -350,24 +321,28 @@ bool DIALOG_GEN_FOOTPRINT_POSITION::CreateGerberFiles()
     // Create the Front and Top side placement files. Gerber P&P files are always separated.
     // Not also they include all footprints
     PLACEFILE_GERBER_WRITER exporter( brd );
+
+    // Set the selected variant for variant-aware DNP/BOM/position file filtering
+    exporter.SetVariant( getSelectedVariant() );
+
     wxString                filename = exporter.GetPlaceFileName( fn.GetFullPath(), F_Cu );
 
     int fpcount = exporter.CreatePlaceFile( filename, F_Cu, m_cbIncludeBoardEdge->GetValue(),
-                                            m_excludeDNP->GetValue() );
+                                            m_excludeDNP->GetValue(), ExcludeBOM() );
 
     if( fpcount < 0 )
     {
         msg.Printf( _( "Failed to create file '%s'." ), fn.GetFullPath() );
         wxMessageBox( msg );
-        m_reporter->Report( msg, RPT_SEVERITY_ERROR );
+        reporter->Report( msg, RPT_SEVERITY_ERROR );
         return false;
     }
 
     msg.Printf( _( "Front (top side) placement file: '%s'." ), filename );
-    m_reporter->Report( msg, RPT_SEVERITY_ACTION );
+    reporter->Report( msg, RPT_SEVERITY_ACTION );
 
     msg.Printf( _( "Component count: %d." ), fpcount );
-    m_reporter->Report( msg, RPT_SEVERITY_INFO );
+    reporter->Report( msg, RPT_SEVERITY_INFO );
 
     // Create the Back or Bottom side placement file
     fullcount = fpcount;
@@ -375,28 +350,28 @@ bool DIALOG_GEN_FOOTPRINT_POSITION::CreateGerberFiles()
     filename = exporter.GetPlaceFileName( fn.GetFullPath(), B_Cu );
 
     fpcount = exporter.CreatePlaceFile( filename, B_Cu, m_cbIncludeBoardEdge->GetValue(),
-                                        m_excludeDNP->GetValue() );
+                                        m_excludeDNP->GetValue(), ExcludeBOM() );
 
     if( fpcount < 0 )
     {
         msg.Printf( _( "Failed to create file '%s'." ), filename );
-        m_reporter->Report( msg, RPT_SEVERITY_ERROR );
+        reporter->Report( msg, RPT_SEVERITY_ERROR );
         wxMessageBox( msg );
         return false;
     }
 
     // Display results
     msg.Printf( _( "Back (bottom side) placement file: '%s'." ), filename );
-    m_reporter->Report( msg, RPT_SEVERITY_ACTION );
+    reporter->Report( msg, RPT_SEVERITY_ACTION );
 
     msg.Printf( _( "Component count: %d." ), fpcount );
-    m_reporter->Report( msg, RPT_SEVERITY_INFO );
+    reporter->Report( msg, RPT_SEVERITY_INFO );
 
     fullcount += fpcount;
     msg.Printf( _( "Full component count: %d." ), fullcount );
-    m_reporter->Report( msg, RPT_SEVERITY_INFO );
+    reporter->Report( msg, RPT_SEVERITY_INFO );
 
-    m_reporter->Report( _( "Done." ), RPT_SEVERITY_INFO );
+    reporter->Report( _( "Done." ), RPT_SEVERITY_INFO );
 
     return true;
 }
@@ -417,7 +392,12 @@ bool DIALOG_GEN_FOOTPRINT_POSITION::CreateAsciiFiles()
     // Test for any footprint candidate in list.
     {
         PLACE_FILE_EXPORTER exporter( brd, UnitsMM(), OnlySMD(), ExcludeAllTH(), ExcludeDNP(),
-                                      topSide, bottomSide, useCSVfmt, useAuxOrigin, negateBottomX );
+                                      ExcludeBOM(), topSide, bottomSide, useCSVfmt, useAuxOrigin,
+                                      negateBottomX );
+
+        // Set the selected variant for variant-aware DNP/BOM/position file filtering
+        exporter.SetVariant( getSelectedVariant() );
+
         exporter.GenPositionData();
 
         if( exporter.GetFootprintCount() == 0 )
@@ -437,16 +417,15 @@ bool DIALOG_GEN_FOOTPRINT_POSITION::CreateAsciiFiles()
                 return m_editFrame->GetBoard()->ResolveTextVar( token, 0 );
             };
 
-    wxString path = m_editFrame->GetPcbNewSettings()->m_PlaceFile.output_directory;
+    wxString path = m_outputDirectory;
     path = ExpandTextVars( path, &textResolver );
-    path = ExpandEnvVarSubstitutions( path, nullptr );
+    path = ExpandEnvVarSubstitutions( path, &Prj() );
 
     wxFileName outputDir = wxFileName::DirName( path );
     wxString   boardFilename = m_editFrame->GetBoard()->GetFileName();
+    REPORTER*  reporter = &m_messagesPanel->Reporter();
 
-    m_reporter = &m_messagesPanel->Reporter();
-
-    if( !EnsureFileDirectoryExists( &outputDir, boardFilename, m_reporter ) )
+    if( !EnsureFileDirectoryExists( &outputDir, boardFilename, reporter ) )
     {
         msg.Printf( _( "Could not write plot files to folder '%s'." ), outputDir.GetPath() );
         DisplayError( this, msg );
@@ -470,13 +449,13 @@ bool DIALOG_GEN_FOOTPRINT_POSITION::CreateAsciiFiles()
     }
 
     int fpcount = m_editFrame->DoGenFootprintsPositionFile( fn.GetFullPath(), UnitsMM(), OnlySMD(),
-                                                            ExcludeAllTH(), ExcludeDNP(), topSide, bottomSide,
-                                                            useCSVfmt, useAuxOrigin, negateBottomX );
+                                                            ExcludeAllTH(), ExcludeDNP(), ExcludeBOM(), topSide,
+                                                            bottomSide, useCSVfmt, useAuxOrigin, negateBottomX );
     if( fpcount < 0 )
     {
         msg.Printf( _( "Failed to create file '%s'." ), fn.GetFullPath() );
         wxMessageBox( msg );
-        m_reporter->Report( msg, RPT_SEVERITY_ERROR );
+        reporter->Report( msg, RPT_SEVERITY_ERROR );
         return false;
     }
 
@@ -485,14 +464,14 @@ bool DIALOG_GEN_FOOTPRINT_POSITION::CreateAsciiFiles()
     else
         msg.Printf( _( "Front (top side) placement file: '%s'." ), fn.GetFullPath() );
 
-    m_reporter->Report( msg, RPT_SEVERITY_ACTION );
+    reporter->Report( msg, RPT_SEVERITY_ACTION );
 
     msg.Printf( _( "Component count: %d." ), fpcount );
-    m_reporter->Report( msg, RPT_SEVERITY_INFO );
+    reporter->Report( msg, RPT_SEVERITY_INFO );
 
     if( singleFile  )
     {
-        m_reporter->Report( _( "Done." ), RPT_SEVERITY_INFO );
+        reporter->Report( _( "Done." ), RPT_SEVERITY_INFO );
         return true;
     }
 
@@ -512,13 +491,13 @@ bool DIALOG_GEN_FOOTPRINT_POSITION::CreateAsciiFiles()
     }
 
     fpcount = m_editFrame->DoGenFootprintsPositionFile( fn.GetFullPath(), UnitsMM(), OnlySMD(),
-                                                        ExcludeAllTH(), ExcludeDNP(), topSide, bottomSide,
-                                                        useCSVfmt, useAuxOrigin, negateBottomX );
+                                                        ExcludeAllTH(), ExcludeDNP(), ExcludeBOM(), topSide,
+                                                        bottomSide, useCSVfmt, useAuxOrigin, negateBottomX );
 
     if( fpcount < 0 )
     {
         msg.Printf( _( "Failed to create file '%s'." ), fn.GetFullPath() );
-        m_reporter->Report( msg, RPT_SEVERITY_ERROR );
+        reporter->Report( msg, RPT_SEVERITY_ERROR );
         wxMessageBox( msg );
         return false;
     }
@@ -527,21 +506,34 @@ bool DIALOG_GEN_FOOTPRINT_POSITION::CreateAsciiFiles()
     if( !singleFile )
     {
         msg.Printf( _( "Back (bottom side) placement file: '%s'." ), fn.GetFullPath() );
-        m_reporter->Report( msg, RPT_SEVERITY_ACTION );
+        reporter->Report( msg, RPT_SEVERITY_ACTION );
 
         msg.Printf( _( "Component count: %d." ), fpcount );
-        m_reporter->Report( msg, RPT_SEVERITY_INFO );
+        reporter->Report( msg, RPT_SEVERITY_INFO );
     }
 
     if( !singleFile )
     {
         fullcount += fpcount;
         msg.Printf( _( "Full component count: %d." ), fullcount );
-        m_reporter->Report( msg, RPT_SEVERITY_INFO );
+        reporter->Report( msg, RPT_SEVERITY_INFO );
     }
 
-    m_reporter->Report( _( "Done." ), RPT_SEVERITY_INFO );
+    reporter->Report( _( "Done." ), RPT_SEVERITY_INFO );
     return true;
+}
+
+
+wxString DIALOG_GEN_FOOTPRINT_POSITION::getSelectedVariant() const
+{
+    wxString variant;
+    int      selection = m_variantChoiceCtrl->GetSelection();
+
+    // Selection 0 is the default variant (empty string)
+    if( ( selection != 0 ) && ( selection != wxNOT_FOUND ) )
+        variant = m_variantChoiceCtrl->GetString( selection );
+
+    return variant;
 }
 
 
@@ -555,8 +547,8 @@ int BOARD_EDITOR_CONTROL::GeneratePosFile( const TOOL_EVENT& aEvent )
 
 int PCB_EDIT_FRAME::DoGenFootprintsPositionFile( const wxString& aFullFileName, bool aUnitsMM,
                                                  bool aOnlySMD, bool aNoTHItems, bool aExcludeDNP,
-                                                 bool aTopSide, bool aBottomSide, bool aFormatCSV,
-                                                 bool aUseAuxOrigin, bool aNegateBottomX )
+                                                 bool aExcludeBOM, bool aTopSide, bool aBottomSide,
+                                                 bool aFormatCSV, bool aUseAuxOrigin, bool aNegateBottomX )
 {
     FILE * file = nullptr;
 
@@ -569,8 +561,13 @@ int PCB_EDIT_FRAME::DoGenFootprintsPositionFile( const wxString& aFullFileName, 
     }
 
     std::string data;
-    PLACE_FILE_EXPORTER exporter( GetBoard(), aUnitsMM, aOnlySMD, aNoTHItems, aExcludeDNP, aTopSide,
-                                  aBottomSide, aFormatCSV, aUseAuxOrigin, aNegateBottomX );
+    PLACE_FILE_EXPORTER exporter( GetBoard(), aUnitsMM, aOnlySMD, aNoTHItems, aExcludeDNP,
+                                  aExcludeBOM, aTopSide, aBottomSide, aFormatCSV, aUseAuxOrigin,
+                                  aNegateBottomX );
+
+    // Set the current variant for variant-aware DNP/BOM/position file filtering
+    exporter.SetVariant( GetBoard()->GetCurrentVariant() );
+
     data = exporter.GenPositionData();
 
     // if aFullFileName is empty, the file is not created, only the
@@ -619,10 +616,15 @@ int BOARD_EDITOR_CONTROL::GenFootprintsReport( const TOOL_EVENT& aEvent )
                                   false,        // aOnlySMD
                                   false,        // aNoTHItems
                                   false,        // aExcludeDNP
+                                  false,        // aExcludeBOM
                                   true, true,   // aTopSide, aBottomSide
                                   false,        // aFormatCSV
                                   true,         // aUseAuxOrigin
                                   false );      // aNegateBottomX
+
+    // Set the current variant for variant-aware filtering
+    exporter.SetVariant( board->GetCurrentVariant() );
+
     data = exporter.GenReportData();
 
     fputs( data.c_str(), rptfile );
@@ -633,5 +635,3 @@ int BOARD_EDITOR_CONTROL::GenFootprintsReport( const TOOL_EVENT& aEvent )
 
     return 0;
 }
-
-

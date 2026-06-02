@@ -24,6 +24,9 @@
 #ifndef RC_ITEM_H
 #define RC_ITEM_H
 
+#include <memory>
+#include <vector>
+
 #include <wx/dataview.h>
 #include <units_provider.h>
 #include <kiid.h>
@@ -52,6 +55,8 @@ class RC_ITEMS_PROVIDER
 {
 public:
     virtual void SetSeverities( int aSeverities ) = 0;
+
+    virtual int GetSeverities() const = 0;
 
     virtual int GetCount( int aSeverity = -1 ) const = 0;
 
@@ -99,6 +104,8 @@ public:
     virtual ~RC_ITEM() { }
 
     void SetErrorMessage( const wxString& aMessage ) { m_errorMessage = aMessage; }
+
+    void SetErrorDetail( const wxString& aMsg ) { SetErrorMessage( GetErrorText( true ) + wxS( " " ) + aMsg ); }
 
     void SetItems( const KIIDS& aIds ) { m_ids = aIds; }
 
@@ -158,15 +165,18 @@ public:
      * @return the error message describing the specific details of a RC_ITEM.  For instance,
      * "Clearance violation (netclass '100ohm' clearance 0.4000mm; actual 0.3200mm)"
      */
-    virtual wxString GetErrorMessage() const;
+    virtual wxString GetErrorMessage( bool aTranslate ) const;
 
     /**
      * @return the error text for the class of error of this RC_ITEM represents.  For instance,
      * "Clearance violation".
      */
-    wxString GetErrorText() const
+    wxString GetErrorText( bool aTranslate ) const
     {
-        return wxGetTranslation( m_errorTitle );
+        if( aTranslate )
+            return wxGetTranslation( m_errorTitle );
+        else
+            return m_errorTitle;
     }
 
     wxString GetSettingsKey() const
@@ -174,7 +184,7 @@ public:
         return m_settingsKey;
     }
 
-    virtual wxString GetViolatingRuleDesc() const
+    virtual wxString GetViolatingRuleDesc( bool aTranslate ) const
     {
         return wxEmptyString;
     }
@@ -219,9 +229,20 @@ public:
             delete child;
     }
 
+    // We own at least one list of raw pointers.  Don't let the compiler fill in copy c'tors that
+    // will only land us in trouble.
+    RC_TREE_NODE( const RC_TREE_NODE& ) = delete;
+    RC_TREE_NODE& operator=( const RC_TREE_NODE& ) = delete;
+
     NODE_TYPE                  m_Type;
     std::shared_ptr<RC_ITEM>   m_RcItem;
 
+    struct HANDLE
+    {
+        RC_TREE_NODE* m_Node = nullptr;
+    };
+
+    HANDLE*                    m_Handle = nullptr;
     RC_TREE_NODE*              m_Parent;
     std::vector<RC_TREE_NODE*> m_Children;
 };
@@ -232,12 +253,13 @@ class RC_TREE_MODEL : public wxDataViewModel, public wxEvtHandler
 public:
     static wxDataViewItem ToItem( RC_TREE_NODE const* aNode )
     {
-        return wxDataViewItem( const_cast<void*>( static_cast<void const*>( aNode ) ) );
+        return aNode && aNode->m_Handle ? wxDataViewItem( aNode->m_Handle ) : wxDataViewItem();
     }
 
     static RC_TREE_NODE* ToNode( wxDataViewItem aItem )
     {
-        return static_cast<RC_TREE_NODE*>( aItem.GetID() );
+        auto* handle = static_cast<RC_TREE_NODE::HANDLE*>( aItem.GetID() );
+        return handle ? handle->m_Node : nullptr;
     }
 
     const wxDataViewCtrl* GetView() const { return m_view; }
@@ -247,6 +269,11 @@ public:
     RC_TREE_MODEL( EDA_DRAW_FRAME* aParentFrame, wxDataViewCtrl* aView );
 
     ~RC_TREE_MODEL();
+
+    // We own at least one list of raw pointers.  Don't let the compiler fill in copy c'tors that
+    // will only land us in trouble.
+    RC_TREE_MODEL( const RC_TREE_MODEL& ) = delete;
+    RC_TREE_MODEL& operator=( const RC_TREE_MODEL& ) = delete;
 
     void Update( std::shared_ptr<RC_ITEMS_PROVIDER> aProvider, int aSeverities );
 
@@ -312,6 +339,10 @@ public:
     void DeleteItems( bool aCurrentOnly, bool aIncludeExclusions, bool aDeep );
 
 protected:
+    RC_TREE_NODE* createNode( RC_TREE_NODE* aParent, const std::shared_ptr<RC_ITEM>& aRcItem,
+                              RC_TREE_NODE::NODE_TYPE aType );
+    void          retireNodeTree( RC_TREE_NODE* aNode );
+    void          deleteNodeTree( RC_TREE_NODE* aNode );
     void     rebuildModel( std::shared_ptr<RC_ITEMS_PROVIDER> aProvider, int aSeverities );
 
     EDA_DRAW_FRAME*                    m_editFrame;
@@ -319,6 +350,7 @@ protected:
     int                                m_severities;
     std::shared_ptr<RC_ITEMS_PROVIDER> m_rcItemsProvider;
 
+    std::vector<std::unique_ptr<RC_TREE_NODE::HANDLE>> m_handles;   // Stable wx item IDs
     std::vector<RC_TREE_NODE*>         m_tree;              // I own this
 };
 

@@ -38,6 +38,7 @@
 
 #include <trigo.h>
 #include <plotters/plotter.h>
+#include <text_eval/text_eval_wrapper.h>
 #include <geometry/shape_line_chain.h>
 #include <bezier_curves.h>
 #include <callback_gal.h>
@@ -61,6 +62,7 @@ PLOTTER::PLOTTER( const PROJECT* aProject ) :
     m_IUsPerDecimil = 1;        // will be set later to the actual value
     m_iuPerDeviceUnit = 1;        // will be set later to the actual value
     m_renderSettings = nullptr;
+    m_layer = PCB_LAYER_ID::UNDEFINED_LAYER;
 }
 
 
@@ -267,7 +269,7 @@ void PLOTTER::PlotImage( const wxImage& aImage, const VECTOR2I& aPos, double aSc
     end.x += size.x;
     end.y += size.y;
 
-    Rect( start, end, FILL_T::NO_FILL, USE_DEFAULT_LINE_WIDTH );
+    Rect( start, end, FILL_T::NO_FILL, USE_DEFAULT_LINE_WIDTH, 0 );
 }
 
 
@@ -539,7 +541,27 @@ void PLOTTER::ThickSegment( const VECTOR2I& start, const VECTOR2I& end, int widt
 {
     if( start == end )
     {
-        Circle( start, width, FILL_T::FILLED_SHAPE, 0 );
+        // The width parameter doubles as a sentinel. DO_NOT_SET_LINE_WIDTH means the
+        // caller already configured the pen so we use the live pen width as the diameter.
+        // USE_DEFAULT_LINE_WIDTH must be resolved through SetCurrentLineWidth so the pen
+        // is also set to the default value, otherwise we would emit whatever the prior
+        // pen width happened to be.
+        int diameter = width;
+
+        if( width == USE_DEFAULT_LINE_WIDTH )
+        {
+            SetCurrentLineWidth( width, aData );
+            diameter = GetCurrentLineWidth();
+        }
+        else if( width == DO_NOT_SET_LINE_WIDTH )
+        {
+            diameter = GetCurrentLineWidth();
+        }
+
+        wxCHECK2_MSG( diameter >= 0, return,
+                      wxT( "Plotter called with unresolved line width sentinel" ) );
+
+        Circle( start, diameter, FILL_T::FILLED_SHAPE, 0 );
     }
     else
     {
@@ -584,7 +606,7 @@ void PLOTTER::ThickArc( const EDA_SHAPE& aArcShape, void* aData, int aWidth )
 
 void PLOTTER::ThickRect( const VECTOR2I& p1, const VECTOR2I& p2, int width, void* aData )
 {
-    Rect( p1, p2, FILL_T::NO_FILL, width );
+    Rect( p1, p2, FILL_T::NO_FILL, width, 0 );
 }
 
 
@@ -606,22 +628,22 @@ void PLOTTER::ThickPoly( const SHAPE_POLY_SET& aPoly, int aWidth, void* aData )
 }
 
 
-void PLOTTER::PlotPoly( const SHAPE_LINE_CHAIN& aCornerList, FILL_T aFill, int aWidth, void* aData )
+void PLOTTER::PlotPoly( const SHAPE_LINE_CHAIN& aLineChain, FILL_T aFill, int aWidth, void* aData )
 {
     std::vector<VECTOR2I> cornerList;
-    cornerList.reserve( aCornerList.PointCount() );
+    cornerList.reserve( aLineChain.PointCount() );
 
-    for( int ii = 0; ii < aCornerList.PointCount(); ii++ )
-        cornerList.emplace_back( aCornerList.CPoint( ii ) );
+    for( int ii = 0; ii < aLineChain.PointCount(); ii++ )
+        cornerList.emplace_back( aLineChain.CPoint( ii ) );
 
-    if( aCornerList.IsClosed() && cornerList.front() != cornerList.back() )
-        cornerList.emplace_back( aCornerList.CPoint( 0 ) );
+    if( aLineChain.IsClosed() && cornerList.front() != cornerList.back() )
+        cornerList.emplace_back( aLineChain.CPoint( 0 ) );
 
     PlotPoly( cornerList, aFill, aWidth, aData );
 }
 
 
-void PLOTTER::Text( const VECTOR2I&       aPos,
+void PLOTTER::Text( const VECTOR2I&        aPos,
                     const COLOR4D&         aColor,
                     const wxString&        aText,
                     const EDA_ANGLE&       aOrient,
@@ -637,6 +659,13 @@ void PLOTTER::Text( const VECTOR2I&       aPos,
                     void*                  aData )
 {
     KIGFX::GAL_DISPLAY_OPTIONS empty_opts;
+    wxString                   text( aText );
+
+    if( text.Contains( wxS( "@{" ) ) )
+    {
+        EXPRESSION_EVALUATOR evaluator;
+        text = evaluator.Evaluate( text );
+    }
 
     SetColor( aColor );
 
@@ -678,9 +707,9 @@ void PLOTTER::Text( const VECTOR2I&       aPos,
     }
 
     if( !aFont )
-        aFont = KIFONT::FONT::GetFont();
+        aFont = KIFONT::FONT::GetFont( m_renderSettings->GetDefaultFont() );
 
-    aFont->Draw( &callback_gal, aText, aPos, attributes, aFontMetrics );
+    aFont->Draw( &callback_gal, text, aPos, attributes, aFontMetrics );
 }
 
 
@@ -693,6 +722,13 @@ void PLOTTER::PlotText( const VECTOR2I&        aPos,
                         void*                  aData )
 {
     KIGFX::GAL_DISPLAY_OPTIONS empty_opts;
+    wxString                   text( aText );
+
+    if( text.Contains( wxS( "@{" ) ) )
+    {
+        EXPRESSION_EVALUATOR evaluator;
+        text = evaluator.Evaluate( text );
+    }
 
     TEXT_ATTRIBUTES attributes = aAttributes;
     int penWidth = attributes.m_StrokeWidth;
@@ -723,7 +759,7 @@ void PLOTTER::PlotText( const VECTOR2I&        aPos,
             } );
 
     if( !aFont )
-        aFont = KIFONT::FONT::GetFont();
+        aFont = KIFONT::FONT::GetFont( m_renderSettings->GetDefaultFont() );
 
-    aFont->Draw( &callback_gal, aText, aPos, attributes, aFontMetrics );
+    aFont->Draw( &callback_gal, text, aPos, attributes, aFontMetrics );
 }

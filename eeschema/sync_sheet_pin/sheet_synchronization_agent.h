@@ -27,6 +27,7 @@
 #define SHEET_SYNCHRONIZATION_AGENT_H
 
 #include <functional>
+#include <set>
 #include <sch_sheet_path.h>
 
 class EDA_ITEM;

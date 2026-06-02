@@ -64,10 +64,12 @@ static constexpr double COPPER_THICKNESS_DEFAULT_MM = 0.035;
 // Max error to approximate an arc by segments (in mm)
 static constexpr double ARC_TO_SEGMENT_MAX_ERROR_MM = 0.005;
 
+class FOOTPRINT;
 class PAD;
 
 class TDocStd_Document;
 class XCAFApp_Application;
+class XCAFDoc_ColorTool;
 class XCAFDoc_ShapeTool;
 
 typedef std::pair< std::string, TDF_Label > MODEL_DATUM;
@@ -84,7 +86,9 @@ enum class OUTPUT_FORMAT
     FMT_OUT_XAO,
     FMT_OUT_GLTF,
     FMT_OUT_PLY,
-    FMT_OUT_STL
+    FMT_OUT_STL,
+    FMT_OUT_U3D,
+    FMT_OUT_PDF
 };
 
 class STEP_PCB_MODEL
@@ -111,13 +115,80 @@ public:
     bool AddBarrel( const SHAPE_SEGMENT& aShape, PCB_LAYER_ID aLayerTop, PCB_LAYER_ID aLayerBot,
                     bool aVia, const VECTOR2D& aOrigin, const wxString& aNetname );
 
+    /**
+     * Add a backdrill hole shape to remove board material and copper plating.
+     *
+     * A backdrill removes board material between the specified layers (inclusive), removes
+     * annular rings on copper layers within that span, and removes the copper barrel plating
+     * through those layers.
+     *
+     * @param aShape The hole shape (position and diameter of the backdrill)
+     * @param aLayerStart The starting copper layer (e.g., F_Cu for top backdrill)
+     * @param aLayerEnd The ending copper layer (inclusive, the layer where backdrill stops)
+     * @param aOrigin The origin offset for coordinate transformation
+     * @return true if successfully added
+     */
+    bool AddBackdrill( const SHAPE_SEGMENT& aShape, PCB_LAYER_ID aLayerStart,
+                       PCB_LAYER_ID aLayerEnd, const VECTOR2D& aOrigin );
+
+    /**
+     * Add a counterbore shape to remove board material from the top or bottom of a hole.
+     *
+     * A counterbore creates a cylindrical recess from the specified side of the board,
+     * removing board material and copper down to the specified depth.
+     *
+     * @param aPosition The center position of the counterbore
+     * @param aDiameter The diameter of the counterbore (in IU)
+     * @param aDepth The depth of the counterbore from the board surface (in IU)
+     * @param aFrontSide True if counterbore is on the front (top) side, false for back (bottom)
+     * @param aOrigin The origin offset for coordinate transformation
+     * @return true if successfully added
+     */
+    bool AddCounterbore( const VECTOR2I& aPosition, int aDiameter, int aDepth,
+                         bool aFrontSide, const VECTOR2D& aOrigin );
+
+    /**
+     * Add a countersink shape to remove board material from the top or bottom of a hole.
+     *
+     * A countersink creates an inverted cone recess from the specified side of the board.
+     * The angle parameter specifies the total cone angle (the angle between opposite sides
+     * of the cone), so the angle between the board surface and the cone slope is half this value.
+     *
+     * @param aPosition The center position of the countersink
+     * @param aDiameter The diameter of the countersink at the board surface (in IU)
+     * @param aDepth The depth of the countersink from the board surface (in IU)
+     * @param aAngle The total cone angle in decidegrees (e.g., 900 = 90�, 820 = 82�)
+     * @param aFrontSide True if countersink is on the front (top) side, false for back (bottom)
+     * @param aOrigin The origin offset for coordinate transformation
+     * @return true if successfully added
+     */
+    bool AddCountersink( const VECTOR2I& aPosition, int aDiameter, int aDepth, int aAngle,
+                         bool aFrontSide, const VECTOR2D& aOrigin );
+
+    /**
+     * Get the knockout diameters for copper layers that a counterbore or countersink crosses.
+     *
+     * For a counterbore, the diameter is constant for all layers within the depth.
+     * For a countersink, the diameter varies based on the cone angle and the Z position
+     * of each layer.
+     *
+     * @param aDiameter The diameter at the board surface (in IU)
+     * @param aDepth The depth of the feature from the board surface (in IU)
+     * @param aAngle The cone angle in decidegrees (0 for counterbore, >0 for countersink)
+     * @param aFrontSide True if feature is on the front (top) side, false for back (bottom)
+     * @return A map of PCB_LAYER_ID to knockout diameter (in IU) for each affected copper layer
+     */
+    std::map<PCB_LAYER_ID, int> GetCopperLayerKnockouts( int aDiameter, int aDepth,
+                                                         int aAngle, bool aFrontSide );
+
     // add a set of polygons (must be in final position)
     bool AddPolygonShapes( const SHAPE_POLY_SET* aPolyShapes, PCB_LAYER_ID aLayer,
                            const VECTOR2D& aOrigin, const wxString& aNetname );
 
     // add a component at the given position and orientation
-    bool AddComponent( const std::string& aFileName, const std::string& aRefDes, bool aBottom,
-                       VECTOR2D aPosition, double aRotation, VECTOR3D aOffset,
+    bool AddComponent( const wxString& aBaseName, const wxString& aFileName,
+                       const std::vector<wxString>& aAltFilenames, const wxString& aRefDes,
+                       bool aBottom, VECTOR2D aPosition, double aRotation, VECTOR3D aOffset,
                        VECTOR3D aOrientation, VECTOR3D aScale, bool aSubstituteModels = true );
 
     void SetCopperColor( double r, double g, double b );
@@ -128,13 +199,14 @@ public:
     void SetSimplifyShapes( bool aValue );
     void SetStackup( const BOARD_STACKUP& aStackup );
     void SetNetFilter( const wxString& aFilter );
+    void SetExtraPadThickness( bool aValue );
 
     // Set the max distance (in mm) to consider 2 points have the same coordinates
     // and can be merged
     void OCCSetMergeMaxDistance( double aDistance = OCC_MAX_DISTANCE_TO_MERGE_POINTS );
 
     // create the PCB model using the current outlines and drill holes
-    bool CreatePCB( SHAPE_POLY_SET& aOutline, VECTOR2D aOrigin, bool aPushBoardBody );
+    bool CreatePCB( SHAPE_POLY_SET& aOutline, const VECTOR2D& aOrigin, bool aPushBoardBody );
 
     /**
      * Convert a SHAPE_POLY_SET to TopoDS_Shape's (polygonal vertical prisms, or flat faces)
@@ -146,8 +218,34 @@ public:
      * @return true if success
      */
     bool MakeShapes( std::vector<TopoDS_Shape>& aShapes, const SHAPE_POLY_SET& aPolySet,
-                     bool aConvertToArcs, double aThickness, double aZposition,
-                     const VECTOR2D& aOrigin );
+                     bool aConvertToArcs, double aThickness, double aZposition, const VECTOR2D& aOrigin );
+
+    /**
+     * Add an extruded 3D body from a 2D outline polygon.
+     * @param aOutline is the 2D outline polygon in board coordinates.
+     * @param aBottom true if the footprint is on the bottom side.
+     * @param aStandoff is the standoff height in mm (gap between board surface and body bottom).
+     * @param aHeight is the body height in mm.
+     * @param aOrigin is the coordinate origin.
+     * @param aColor is the body color (RGBA packed as uint32_t).
+     * @param aMaterial is the surface material type.
+     * @param aRefDes is the footprint reference used for the STEP label.
+     * @return true if the body was successfully created.
+     */
+    bool AddExtrudedBody( const SHAPE_POLY_SET& aOutline, bool aBottom, double aStandoff, double aHeight,
+                          const VECTOR2D& aOrigin, uint32_t aColor, EXTRUSION_MATERIAL aMaterial,
+                          const wxString& aRefDes );
+
+    /**
+     * Add metallic pin extrusions for through-hole pads.
+     * Pins run from the opposite board surface (with 1mm protrusion) to the standoff height.
+     * @param aFootprint the footprint whose THT pads to extrude.
+     * @param aBottom true if the footprint is on the bottom side.
+     * @param aStandoff is the standoff height in mm.
+     * @param aOrigin is the coordinate origin.
+     * @return true if any pins were created.
+     */
+    bool AddExtrudedPins( const FOOTPRINT* aFootprint, bool aBottom, double aStandoff, const VECTOR2D& aOrigin );
 
     /**
      * Make a segment shape based on start and end point. If they're too close, make a cylinder.
@@ -160,10 +258,9 @@ public:
      * @param aOrigin is the origin of the coordinates
      * @return true if success
      */
-    bool MakeShapeAsThickSegment( TopoDS_Shape& aShape,
-                                  VECTOR2D aStartPoint, VECTOR2D aEndPoint,
-                                  double aWidth, double aThickness, double aZposition,
-                                  const VECTOR2D& aOrigin );
+    bool MakeShapeAsThickSegment( TopoDS_Shape& aShape, const VECTOR2D& aStartPoint,
+                                  const VECTOR2D& aEndPoint, double aWidth, double aThickness,
+                                  double aZposition, const VECTOR2D& aOrigin );
 
     /**
      * Make a polygonal shape to create a vertical wall.
@@ -175,9 +272,7 @@ public:
      * @param aOrigin is the origin of the coordinates
      * @return true if success
      */
-    bool MakePolygonAsWall( TopoDS_Shape& aShape,
-                            SHAPE_POLY_SET& aPolySet,
-                            double aHeight,
+    bool MakePolygonAsWall( TopoDS_Shape& aShape, SHAPE_POLY_SET& aPolySet, double aHeight,
                             double aZposition, const VECTOR2D& aOrigin );
 
 #ifdef SUPPORTS_IGES
@@ -216,35 +311,44 @@ public:
     // write the assembly in STL format (mesh)
     bool WriteSTL( const wxString& aFileName );
 
+    // write the assembly in U3D format (mesh)
+    bool WriteU3D( const wxString& aFileName );
+
+    // write the assembly in U3D format (mesh)
+    bool WritePDF( const wxString& aFileName );
 private:
     /**
      * @return true if the board(s) outline is valid. False otherwise
      */
     bool isBoardOutlineValid();
 
-    void getLayerZPlacement( const PCB_LAYER_ID aLayer, double& aZPos, double& aThickness );
+    void getLayerZPlacement( PCB_LAYER_ID aLayer, double& aZPos, double& aThickness );
 
-    void getCopperLayerZPlacement( const PCB_LAYER_ID aLayer, double& aZPos, double& aThickness );
+    void getCopperLayerZPlacement( PCB_LAYER_ID aLayer, double& aZPos, double& aThickness );
 
     void getBoardBodyZPlacement( double& aZPos, double& aThickness );
 
     /**
      * Load a 3D model data.
      *
-     * @param aFileNameUTF8 is the filename encoded UTF8 (different formats allowed)
+     * @param aBaseName is the model name to set.
+     * @param aFileName is the filename (different formats allowed)
      * but for WRML files a model data can be loaded instead of the vrml data,
      * not suitable in a step file.
+     * @param aAltFilenames provides additional filenames for WRL substitution.
      * @param aScale is the X,Y,Z scaling factors.
      * @param aLabel is the TDF_Label to store the data.
      * @param aSubstituteModels = true to allows data substitution, false to disallow.
      * @param aErrorMessage (can be nullptr) is an error message to be displayed on error.
      * @return true if successfully loaded, false on error.
      */
-    bool getModelLabel( const std::string& aFileNameUTF8, VECTOR3D aScale, TDF_Label& aLabel,
-                        bool aSubstituteModels, wxString* aErrorMessage = nullptr );
+    bool getModelLabel( const wxString& aBaseName, const wxString& aFileName,
+                        const std::vector<wxString>& aAltFilenames, VECTOR3D aScale,
+                        TDF_Label& aLabel, bool aSubstituteModels,
+                        wxString* aErrorMessage = nullptr );
 
-    bool getModelLocation( bool aBottom, VECTOR2D aPosition, double aRotation, VECTOR3D aOffset,
-                           VECTOR3D aOrientation, TopLoc_Location& aLocation );
+    bool getModelLocation( bool aBottom, const VECTOR2D& aPosition, double aRotation, const VECTOR3D& aOffset,
+                           const VECTOR3D& aOrientation, TopLoc_Location& aLocation );
 
     bool readIGES( Handle( TDocStd_Document ) & aDoc, const char* aFname );
     bool readSTEP( Handle( TDocStd_Document ) & aDoc, const char* aFname );
@@ -253,7 +357,7 @@ private:
     bool performMeshing( Handle( XCAFDoc_ShapeTool ) & aShapeTool );
 
     TDF_Label transferModel( Handle( TDocStd_Document )& source, Handle( TDocStd_Document ) & dest,
-                             VECTOR3D aScale );
+                             const VECTOR3D& aScale );
 
     bool CompressSTEP( wxString& inputFile, wxString& outputFile );
 
@@ -264,6 +368,7 @@ private:
     bool                            m_hasPCB;           // set true if CreatePCB() has been invoked
     bool                            m_simplifyShapes;   // convert parts of outlines to arcs where possible
     bool                            m_fuseShapes;       // fuse geometry together
+    bool                            m_extraPadThickness; // add extra thickness to pads
     std::vector<TDF_Label>          m_pcb_labels;       // labels for the PCB model (one by main outline)
     MODEL_MAP                       m_models;           // map of file names to model labels
     int                             m_components;       // number of successfully loaded components;
@@ -293,8 +398,22 @@ private:
     std::map<wxString, std::vector<TopoDS_Shape>> m_board_copper_fused;
 
     // Graphical items
-    std::vector<TopoDS_Shape> m_board_silkscreen;
-    std::vector<TopoDS_Shape> m_board_soldermask;
+    std::vector<TopoDS_Shape> m_board_front_silk;
+    std::vector<TopoDS_Shape> m_board_back_silk;
+    std::vector<TopoDS_Shape> m_board_front_mask;
+    std::vector<TopoDS_Shape> m_board_back_mask;
+
+    // Extruded 3D bodies from footprint outlines
+    struct EXTRUDED_BODY_ENTRY
+    {
+        std::vector<TopoDS_Shape> bodyShapes;
+        std::vector<TopoDS_Shape> pinShapes;
+        wxString                  refDes;
+        uint32_t                  colorKey;
+        EXTRUSION_MATERIAL        material;
+    };
+
+    std::vector<EXTRUDED_BODY_ENTRY> m_extruded_bodies;
 
     // Data for pads. Key example: Pad_F_U2_1_GND
     std::map<wxString, std::vector<std::pair<gp_Pnt, TopoDS_Shape>>> m_pad_points;

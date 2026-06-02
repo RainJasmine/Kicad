@@ -32,6 +32,7 @@
 #include <dialog_shim.h>
 #include <dialogs/hotkey_cycle_popup.h>
 #include <eda_draw_frame.h>
+#include <eda_search_data.h>
 #include <file_history.h>
 #include <gal/graphics_abstraction_layer.h>
 #include <id.h>
@@ -43,6 +44,7 @@
 #include <page_info.h>
 #include <paths.h>
 #include <pgm_base.h>
+#include <reporter.h>
 #include <render_settings.h>
 #include <settings/app_settings.h>
 #include <settings/color_settings.h>
@@ -63,9 +65,11 @@
 #include <view/view.h>
 #include <drawing_sheet/ds_draw_item.h>
 #include <view/view_controls.h>
+#include <widgets/kistatusbar.h>
 #include <widgets/msgpanel.h>
 #include <widgets/properties_panel.h>
 #include <widgets/net_inspector_panel.h>
+#include <widgets/filedlg_hook_new_library.h>
 #include <wx/event.h>
 #include <wx/snglinst.h>
 #include <widgets/ui_common.h>
@@ -77,6 +81,7 @@
 
 #include <wx/snglinst.h>
 #include <wx/fdrepdlg.h>
+#include <tool/editor_conditions.h>
 
 #define FR_HISTORY_LIST_CNT     10   ///< Maximum size of the find/replace history stacks.
 
@@ -94,15 +99,14 @@ bool EDA_DRAW_FRAME::m_openGLFailureOccured = false;
 
 EDA_DRAW_FRAME::EDA_DRAW_FRAME( KIWAY* aKiway, wxWindow* aParent, FRAME_T aFrameType,
                                 const wxString& aTitle, const wxPoint& aPos, const wxSize& aSize,
-                                long aStyle, const wxString& aFrameName,
-                                const EDA_IU_SCALE& aIuScale ) :
-        KIWAY_PLAYER( aKiway, aParent, aFrameType, aTitle, aPos, aSize, aStyle, aFrameName,
-                      aIuScale ),
+                                long aStyle, const wxString& aFrameName, const EDA_IU_SCALE& aIuScale ) :
+        KIWAY_PLAYER( aKiway, aParent, aFrameType, aTitle, aPos, aSize, aStyle, aFrameName, aIuScale ),
         m_socketServer( nullptr ),
         m_lastToolbarIconSize( 0 )
 {
     m_gridSelectBox       = nullptr;
     m_zoomSelectBox       = nullptr;
+    m_overrideLocksCb     = nullptr;
     m_searchPane          = nullptr;
     m_undoRedoCountMax    = DEFAULT_MAX_UNDO_ITEMS;
 
@@ -148,7 +152,7 @@ EDA_DRAW_FRAME::EDA_DRAW_FRAME( KIWAY* aKiway, wxWindow* aParent, FRAME_T aFrame
     m_messagePanel->SetSize( m_frameSize.x, m_msgFrameHeight );
 
     Bind( wxEVT_DPI_CHANGED,
-          [&]( wxDPIChangedEvent& )
+          [&]( wxDPIChangedEvent& aEvent )
           {
               if( ( GetWindowStyle() & wxFRAME_NO_TASKBAR ) == 0 )
                   updateStatusBarWidths();
@@ -166,7 +170,7 @@ EDA_DRAW_FRAME::EDA_DRAW_FRAME( KIWAY* aKiway, wxWindow* aParent, FRAME_T aFrame
               m_messagePanel->SetPosition( wxPoint( 0, m_frameSize.y ) );
               m_messagePanel->SetSize( m_frameSize.x, m_msgFrameHeight );
 
-              // Don't skip, otherwise the frame gets too big
+              aEvent.Skip();
           } );
 }
 
@@ -190,112 +194,94 @@ EDA_DRAW_FRAME::~EDA_DRAW_FRAME()
 }
 
 
+EDA_SEARCH_DATA& EDA_DRAW_FRAME::GetFindReplaceData()
+{
+    return *m_findReplaceData;
+}
+
+
 void EDA_DRAW_FRAME::configureToolbars()
 {
     EDA_BASE_FRAME::configureToolbars();
 
     // Grid selection
     auto gridSelectorFactory =
-        [this]( ACTION_TOOLBAR* aToolbar )
-        {
-            if( !m_gridSelectBox )
+            [this]( ACTION_TOOLBAR* aToolbar )
             {
-                m_gridSelectBox = new wxChoice( aToolbar, ID_ON_GRID_SELECT, wxDefaultPosition,
-                                                wxDefaultSize, 0, nullptr );
-            }
+                if( !m_gridSelectBox )
+                    m_gridSelectBox = new wxChoice( aToolbar, ID_ON_GRID_SELECT );
 
-            UpdateGridSelectBox();
+                UpdateGridSelectBox();
 
-            aToolbar->Add( m_gridSelectBox );
-        };
+                aToolbar->Add( m_gridSelectBox );
+            };
 
     RegisterCustomToolbarControlFactory( ACTION_TOOLBAR_CONTROLS::gridSelect, gridSelectorFactory );
 
     // Zoom selection
     auto zoomSelectorFactory =
-        [this]( ACTION_TOOLBAR* aToolbar )
-        {
-            if( !m_zoomSelectBox )
+            [this]( ACTION_TOOLBAR* aToolbar )
             {
-                m_zoomSelectBox = new wxChoice( aToolbar, ID_ON_ZOOM_SELECT, wxDefaultPosition,
-                                                wxDefaultSize, 0, nullptr );
-            }
+                if( !m_zoomSelectBox )
+                    m_zoomSelectBox = new wxChoice( aToolbar, ID_ON_ZOOM_SELECT );
 
-            UpdateZoomSelectBox();
-            aToolbar->Add( m_zoomSelectBox );
-        };
+                UpdateZoomSelectBox();
+                aToolbar->Add( m_zoomSelectBox );
+            };
 
     RegisterCustomToolbarControlFactory( ACTION_TOOLBAR_CONTROLS::zoomSelect, zoomSelectorFactory );
+
+    auto overrideLocksFactory =
+            [this]( ACTION_TOOLBAR* aToolbar )
+            {
+                if( !m_overrideLocksCb )
+                    m_overrideLocksCb = new wxCheckBox( aToolbar, ID_ON_OVERRIDE_LOCKS, _( "Override locks" ) );
+
+                aToolbar->Add( m_overrideLocksCb );
+            };
+
+    RegisterCustomToolbarControlFactory( ACTION_TOOLBAR_CONTROLS::overrideLocks, overrideLocksFactory );
+}
+
+
+void EDA_DRAW_FRAME::ClearToolbarControl( int aId )
+{
+    switch( aId )
+    {
+    case ID_ON_GRID_SELECT:    m_gridSelectBox = nullptr;   break;
+    case ID_ON_ZOOM_SELECT:    m_zoomSelectBox = nullptr;   break;
+    case ID_ON_OVERRIDE_LOCKS: m_overrideLocksCb = nullptr; break;
+    }
 }
 
 
 void EDA_DRAW_FRAME::ReleaseFile()
 {
-    if( m_file_checker.get() != nullptr )
+    if( m_file_checker )
         m_file_checker->UnlockFile();
 }
 
 
 bool EDA_DRAW_FRAME::LockFile( const wxString& aFileName )
 {
-    // We need to explicitly reset here to get the deletion before
-    // we create a new unique_ptr that may be for the same file
+    // We need to explicitly reset here to get the deletion before we create a new unique_ptr that
+    // may be for the same file.
     m_file_checker.reset();
 
     m_file_checker = std::make_unique<LOCKFILE>( aFileName );
 
     if( !m_file_checker->Valid() && m_file_checker->IsLockedByMe() )
     {
-        // If we cannot acquire the lock but we appear to be the one who
-        // locked it, check to see if there is another KiCad instance running.
-        // If there is not, then we can override the lock.  This could happen if
-        // KiCad crashed or was interrupted
+        // If we cannot acquire the lock but we appear to be the one who locked it, check to see if
+        // there is another KiCad instance running.  If there is not, then we can override the lock.
+        // This could happen if KiCad crashed or was interrupted.
         if( !Pgm().SingleInstance()->IsAnotherRunning() )
             m_file_checker->OverrideLock();
     }
-    // If the file is valid, return true.  This could mean that the file is
-    // locked or it could mean that the file is read-only
+
+    // If the file is valid, return true.  This could mean that the file is locked or it could mean
+    // that the file is read-only.
     return m_file_checker->Valid();
-}
-
-
-void EDA_DRAW_FRAME::ScriptingConsoleEnableDisable()
-{
-    KIWAY_PLAYER* frame = Kiway().Player( FRAME_PYTHON, false );
-
-    wxRect  rect = GetScreenRect();
-    wxPoint center = rect.GetPosition() + rect.GetSize() / 2;
-
-    if( !frame )
-    {
-        frame = Kiway().Player( FRAME_PYTHON, true, Kiway().GetTop() );
-
-        // If we received an error in the CTOR due to Python-ness, don't crash
-        if( !frame )
-            return;
-
-        if( !frame->IsVisible() )
-            frame->Show( true );
-
-        // On Windows, Raise() does not bring the window on screen, when iconized
-        if( frame->IsIconized() )
-            frame->Iconize( false );
-
-        frame->Raise();
-        frame->SetPosition( center - frame->GetSize() / 2 );
-
-        return;
-    }
-
-    frame->Show( !frame->IsVisible() );
-    frame->SetPosition( center - frame->GetSize() / 2 );
-}
-
-
-bool EDA_DRAW_FRAME::IsScriptingConsoleVisible()
-{
-    KIWAY_PLAYER* frame = Kiway().Player( FRAME_PYTHON, false );
-    return frame && frame->IsVisible();
 }
 
 
@@ -308,6 +294,14 @@ void EDA_DRAW_FRAME::unitsChangeRefresh()
     UpdateStatusBar();
     UpdateMsgPanel();
     UpdateProperties();
+
+    switch( GetUserUnits() )
+    {
+    default:
+    case EDA_UNITS::MM:   SelectToolbarAction( ACTIONS::millimetersUnits ); break;
+    case EDA_UNITS::INCH: SelectToolbarAction( ACTIONS::inchesUnits );      break;
+    case EDA_UNITS::MILS: SelectToolbarAction( ACTIONS::milsUnits );        break;
+    }
 }
 
 
@@ -353,7 +347,7 @@ void EDA_DRAW_FRAME::CommonSettingsChanged( int aFlags )
 
     m_galDisplayOptions.ReadCommonConfig( *settings, this );
 
-    GetToolManager()->RunAction( ACTIONS::gridPreset, config()->m_Window.grid.last_size_idx );
+    GetToolManager()->RunAction( ACTIONS::gridPreset, GetWindowSettings( config() )->grid.last_size_idx );
     UpdateGridSelectBox();
 
     if( m_lastToolbarIconSize == 0
@@ -408,7 +402,7 @@ void EDA_DRAW_FRAME::UpdateGridSelectBox()
 
     wxCHECK( config(), /* void */ );
 
-    GRID_MENU::BuildChoiceList( &gridsList, config(), this );
+    GRID_MENU::BuildChoiceList( &gridsList, GetWindowSettings( config() ), this );
 
     for( const wxString& grid : gridsList )
         m_gridSelectBox->Append( grid );
@@ -416,7 +410,7 @@ void EDA_DRAW_FRAME::UpdateGridSelectBox()
     m_gridSelectBox->Append( wxT( "---" ) );
     m_gridSelectBox->Append( _( "Edit Grids..." ) );
 
-    m_gridSelectBox->SetSelection( config()->m_Window.grid.last_size_idx );
+    m_gridSelectBox->SetSelection( GetWindowSettings( config() )->grid.last_size_idx );
 }
 
 
@@ -429,7 +423,7 @@ void EDA_DRAW_FRAME::OnUpdateSelectGrid( wxUpdateUIEvent& aEvent )
 
     wxCHECK( config(), /* void */ );
 
-    int idx = config()->m_Window.grid.last_size_idx;
+    int idx = GetWindowSettings( config() )->grid.last_size_idx;
     idx = std::clamp( idx, 0, (int) m_gridSelectBox->GetCount() - 1 );
 
     if( idx != m_gridSelectBox->GetSelection() )
@@ -449,10 +443,10 @@ void EDA_DRAW_FRAME::OnUpdateSelectZoom( wxUpdateUIEvent& aEvent )
 
     wxCHECK( config(), /* void */ );
 
-    const std::vector<double>& zoomList = config()->m_Window.zoom_factors;
-    int curr_selection = m_zoomSelectBox->GetSelection();
-    int new_selection = 0;      // select zoom auto
-    double last_approx = 1e9;   // large value to start calculation
+    const std::vector<double>& zoomList = GetWindowSettings( config() )->zoom_factors;
+    int                        curr_selection = m_zoomSelectBox->GetSelection();
+    int                        new_selection = 0;      // select zoom auto
+    double                     last_approx = 1e9;      // large value to start calculation
 
     // Search for the nearest available value to the current zoom setting, and select it
     for( size_t jj = 0; jj < zoomList.size(); ++jj )
@@ -464,7 +458,7 @@ void EDA_DRAW_FRAME::OnUpdateSelectZoom( wxUpdateUIEvent& aEvent )
             last_approx = rel_error;
 
             // zoom IDs in m_zoomSelectBox start with 1 (leaving 0 for auto-zoom choice)
-            new_selection = jj + 1;
+            new_selection = (int) jj + 1;
         }
     }
 
@@ -513,11 +507,20 @@ void EDA_DRAW_FRAME::OnSelectGrid( wxCommandEvent& event )
 }
 
 
-bool EDA_DRAW_FRAME::IsGridVisible() const
+bool EDA_DRAW_FRAME::GetOverrideLocks() const
+{
+    if( m_overrideLocksCb )
+        return m_overrideLocksCb->GetValue();
+
+    return false;
+}
+
+
+bool EDA_DRAW_FRAME::IsGridVisible()
 {
     wxCHECK( config(), true );
 
-    return config()->m_Window.grid.show;
+    return GetWindowSettings( config() )->grid.show;
 }
 
 
@@ -525,7 +528,7 @@ void EDA_DRAW_FRAME::SetGridVisibility( bool aVisible )
 {
     wxCHECK( config(), /* void */ );
 
-    config()->m_Window.grid.show = aVisible;
+    GetWindowSettings( config() )->grid.show = aVisible;
 
     // Update the display with the new grid
     if( GetCanvas() )
@@ -543,11 +546,11 @@ void EDA_DRAW_FRAME::SetGridVisibility( bool aVisible )
 }
 
 
-bool EDA_DRAW_FRAME::IsGridOverridden() const
+bool EDA_DRAW_FRAME::IsGridOverridden()
 {
     wxCHECK( config(), false );
 
-    return config()->m_Window.grid.overrides_enabled;
+    return GetWindowSettings( config() )->grid.overrides_enabled;
 }
 
 
@@ -555,7 +558,7 @@ void EDA_DRAW_FRAME::SetGridOverrides( bool aOverride )
 {
     wxCHECK( config(), /* void */ );
 
-    config()->m_Window.grid.overrides_enabled = aOverride;
+    GetWindowSettings( config() )->grid.overrides_enabled = aOverride;
 }
 
 
@@ -578,14 +581,14 @@ void EDA_DRAW_FRAME::UpdateZoomSelectBox()
 
     wxCHECK( config(), /* void */ );
 
-    for( unsigned i = 0;  i < config()->m_Window.zoom_factors.size();  ++i )
+    for( unsigned ii = 0;  ii < GetWindowSettings( config() )->zoom_factors.size();  ++ii )
     {
-        double current = config()->m_Window.zoom_factors[i];
+        double current = GetWindowSettings( config() )->zoom_factors[ii];
 
         m_zoomSelectBox->Append( wxString::Format( _( "Zoom %.2f" ), current ) );
 
         if( zoom == current )
-            m_zoomSelectBox->SetSelection( i + 1 );
+            m_zoomSelectBox->SetSelection( (int) ii + 1 );
     }
 }
 
@@ -603,8 +606,7 @@ void EDA_DRAW_FRAME::OnSelectZoom( wxCommandEvent& event )
     UpdateStatusBar();
     m_canvas->Refresh();
 
-    // Needed on Windows because clicking on m_zoomSelectBox remove the focus from m_canvas
-    // (Windows specific
+    // Needed on Windows (only) because clicking on m_zoomSelectBox removes the focus from m_canvas
     m_canvas->SetFocus();
 }
 
@@ -674,8 +676,7 @@ void EDA_DRAW_FRAME::DisplayGridMsg()
     GRID_SETTINGS& gridSettings = m_toolManager->GetSettings()->m_Window.grid;
     int            currentIdx = m_toolManager->GetSettings()->m_Window.grid.last_size_idx;
 
-    msg.Printf( _( "grid %s" ),
-                gridSettings.grids[currentIdx].UserUnitsMessageText( this, false ) );
+    msg.Printf( _( "grid %s" ), gridSettings.grids[currentIdx].UserUnitsMessageText( this, false ) );
 
     SetStatusText( msg, 4 );
 }
@@ -712,12 +713,17 @@ void EDA_DRAW_FRAME::OnSize( wxSizeEvent& SizeEv )
 
 void EDA_DRAW_FRAME::updateStatusBarWidths()
 {
-    wxWindow* stsbar = GetStatusBar();
-    int       spacer = KIUI::GetTextSize( wxT( "M" ), stsbar ).x * 2;
+    constexpr int numLocalFields = 8;
 
-    int dims[] = {
+    wxStatusBar* stsbar = GetStatusBar();
+    int spacer = KIUI::GetTextSize( wxT( "M" ), stsbar ).x;
+
+    // Note this is a KISTATUSBAR and there are fields to the right of the ones we know about
+    int totalFields = stsbar->GetFieldsCount();
+
+    std::vector<int> dims = {
         // remainder of status bar on far left is set to a default or whatever is left over.
-        -1,
+        -3,
 
         // When using GetTextSize() remember the width of character '1' is not the same
         // as the width of '0' unless the font is fixed width, and it usually won't be.
@@ -732,22 +738,34 @@ void EDA_DRAW_FRAME::updateStatusBarWidths()
         KIUI::GetTextSize( wxT( "dx 1234.1234  dy 1234.1234  dist 1234.1234" ), stsbar ).x,
 
         // grid size
-        KIUI::GetTextSize( wxT( "grid X 1234.1234  Y 1234.1234" ), stsbar ).x,
+        KIUI::GetTextSize( wxT( "grid 1234.1234 x 1234.1234" ), stsbar ).x,
 
         // units display, Inches is bigger than mm
         KIUI::GetTextSize( _( "Inches" ), stsbar ).x,
 
-        // Size for the "Current Tool" panel; longest string from SetTool()
-        KIUI::GetTextSize( wxT( "Add layer alignment target" ), stsbar ).x,
+        // Size for the "Current Tool" panel
+        -2,
 
         // constraint mode
-        KIUI::GetTextSize( _( "Constrain to H, V, 45" ), stsbar ).x
+        -2
     };
 
-    for( size_t ii = 1; ii < arrayDim( dims ); ii++ )
-        dims[ii] += spacer;
+    for( int& dim : dims )
+    {
+        if( dim >= 0 )
+            dim += spacer;
+    }
 
-    SetStatusWidths( arrayDim( dims ), dims );
+    for( int idx = numLocalFields; idx < totalFields; ++idx )
+        dims.emplace_back( stsbar->GetStatusWidth( idx ) );
+
+    SetStatusWidths( dims.size(), dims.data() );
+}
+
+
+wxStatusBar* EDA_DRAW_FRAME::OnCreateStatusBar( int number, long style, wxWindowID id, const wxString& name )
+{
+    return new KISTATUSBAR( number, this, id, KISTATUSBAR::STYLE_FLAGS::WARNING_ICON );
 }
 
 
@@ -791,8 +809,7 @@ void EDA_DRAW_FRAME::LoadSettings( APP_SETTINGS_BASE* aCfg )
 
     m_findReplaceData->findString = aCfg->m_FindReplace.find_string;
     m_findReplaceData->replaceString = aCfg->m_FindReplace.replace_string;
-    m_findReplaceData->matchMode =
-            static_cast<EDA_SEARCH_MATCH_MODE>( aCfg->m_FindReplace.match_mode );
+    m_findReplaceData->matchMode = static_cast<EDA_SEARCH_MATCH_MODE>( aCfg->m_FindReplace.match_mode );
     m_findReplaceData->matchCase = aCfg->m_FindReplace.match_case;
     m_findReplaceData->searchAndReplace = aCfg->m_FindReplace.search_and_replace;
 
@@ -826,31 +843,24 @@ void EDA_DRAW_FRAME::SaveSettings( APP_SETTINGS_BASE* aCfg )
     aCfg->m_FindReplace.replace_history.clear();
 
     for( size_t i = 0; i < m_findStringHistoryList.GetCount() && i < FR_HISTORY_LIST_CNT; i++ )
-    {
         aCfg->m_FindReplace.find_history.push_back( m_findStringHistoryList[ i ].ToStdString() );
-    }
 
     for( size_t i = 0; i < m_replaceStringHistoryList.GetCount() && i < FR_HISTORY_LIST_CNT; i++ )
-    {
-        aCfg->m_FindReplace.replace_history.push_back(
-                m_replaceStringHistoryList[ i ].ToStdString() );
-    }
+        aCfg->m_FindReplace.replace_history.push_back( m_replaceStringHistoryList[ i ].ToStdString() );
 
     // Save the units used in this frame
     if( m_toolManager )
     {
         if( COMMON_TOOLS* cmnTool = m_toolManager->GetTool<COMMON_TOOLS>() )
         {
-            aCfg->m_System.last_imperial_units =
-                    static_cast<int>( cmnTool->GetLastImperialUnits() );
+            aCfg->m_System.last_imperial_units = static_cast<int>( cmnTool->GetLastImperialUnits() );
             aCfg->m_System.last_metric_units = static_cast<int>( cmnTool->GetLastMetricUnits() );
         }
     }
 }
 
 
-void EDA_DRAW_FRAME::AppendMsgPanel( const wxString& aTextUpper, const wxString& aTextLower,
-                                     int aPadding )
+void EDA_DRAW_FRAME::AppendMsgPanel( const wxString& aTextUpper, const wxString& aTextLower, int aPadding )
 {
     if( m_messagePanel && !m_isClosing )
         m_messagePanel->AppendMessage( aTextUpper, aTextLower, aPadding );
@@ -876,8 +886,7 @@ void EDA_DRAW_FRAME::SetMsgPanel( const std::vector<MSG_PANEL_ITEM>& aList )
 }
 
 
-void EDA_DRAW_FRAME::SetMsgPanel( const wxString& aTextUpper, const wxString& aTextLower,
-                                  int aPadding )
+void EDA_DRAW_FRAME::SetMsgPanel( const wxString& aTextUpper, const wxString& aTextLower, int aPadding )
 {
     if( m_messagePanel && !m_isClosing )
     {
@@ -918,7 +927,7 @@ void EDA_DRAW_FRAME::SwitchCanvas( EDA_DRAW_PANEL_GAL::GAL_TYPE aCanvasType )
 }
 
 
-EDA_DRAW_PANEL_GAL::GAL_TYPE EDA_DRAW_FRAME::loadCanvasTypeSetting(  APP_SETTINGS_BASE* aCfg )
+EDA_DRAW_PANEL_GAL::GAL_TYPE EDA_DRAW_FRAME::loadCanvasTypeSetting()
 {
 #ifdef __WXMAC__
     // Cairo renderer doesn't handle Retina displays so there's really only one game
@@ -927,7 +936,7 @@ EDA_DRAW_PANEL_GAL::GAL_TYPE EDA_DRAW_FRAME::loadCanvasTypeSetting(  APP_SETTING
 #endif
 
     EDA_DRAW_PANEL_GAL::GAL_TYPE canvasType = EDA_DRAW_PANEL_GAL::GAL_TYPE_NONE;
-    APP_SETTINGS_BASE* cfg = aCfg ? aCfg : Kiface().KifaceSettings();
+    COMMON_SETTINGS* cfg = Pgm().GetCommonSettings();
 
     if( cfg )
         canvasType = static_cast<EDA_DRAW_PANEL_GAL::GAL_TYPE>( cfg->m_Graphics.canvas_type );
@@ -943,6 +952,19 @@ EDA_DRAW_PANEL_GAL::GAL_TYPE EDA_DRAW_FRAME::loadCanvasTypeSetting(  APP_SETTING
     if( canvasType == EDA_DRAW_PANEL_GAL::GAL_TYPE_NONE )
         canvasType = EDA_DRAW_PANEL_GAL::GAL_TYPE_OPENGL;
 
+    wxString envCanvasType;
+
+    if( wxGetEnv( "KICAD_SOFTWARE_RENDERING", &envCanvasType ) )
+    {
+        if( envCanvasType.CmpNoCase( "1" ) == 0
+            || envCanvasType.CmpNoCase( "true" ) == 0
+            || envCanvasType.CmpNoCase( "yes" ) == 0 )
+        {
+            // Force software rendering if the environment variable is set
+            canvasType = EDA_DRAW_PANEL_GAL::GAL_TYPE_CAIRO;
+        }
+    }
+
     return canvasType;
 }
 
@@ -952,25 +974,29 @@ bool EDA_DRAW_FRAME::saveCanvasTypeSetting( EDA_DRAW_PANEL_GAL::GAL_TYPE aCanvas
     // Not all classes derived from EDA_DRAW_FRAME can save the canvas type, because some
     // have a fixed type, or do not have a option to set the canvas type (they inherit from
     // a parent frame)
-    static std::vector<FRAME_T> s_allowedFrames =
-            {
-                FRAME_SCH, FRAME_SCH_SYMBOL_EDITOR,
-                FRAME_PCB_EDITOR, FRAME_FOOTPRINT_EDITOR,
-                FRAME_GERBER,
-                FRAME_PL_EDITOR
-            };
+    static std::vector<FRAME_T> s_allowedFrames = { FRAME_SCH,
+                                                    FRAME_SCH_SYMBOL_EDITOR,
+                                                    FRAME_PCB_EDITOR,
+                                                    FRAME_FOOTPRINT_EDITOR,
+                                                    FRAME_GERBER,
+                                                    FRAME_PL_EDITOR };
 
     if( !alg::contains( s_allowedFrames, m_ident ) )
         return false;
 
-    if( aCanvasType < EDA_DRAW_PANEL_GAL::GAL_TYPE_NONE
-            || aCanvasType >= EDA_DRAW_PANEL_GAL::GAL_TYPE_LAST )
+    if( wxGetEnv( "KICAD_SOFTWARE_RENDERING", nullptr ) )
+    {
+        // If the environment variable is set, don't save the canvas type.
+        return false;
+    }
+
+    if( aCanvasType < EDA_DRAW_PANEL_GAL::GAL_TYPE_NONE || aCanvasType >= EDA_DRAW_PANEL_GAL::GAL_TYPE_LAST )
     {
         wxASSERT( false );
         return false;
     }
 
-    if( APP_SETTINGS_BASE* cfg = Kiface().KifaceSettings() )
+    if( COMMON_SETTINGS* cfg = Pgm().GetCommonSettings() )
         cfg->m_Graphics.canvas_type = static_cast<int>( aCanvasType );
 
     return false;
@@ -987,7 +1013,7 @@ VECTOR2I EDA_DRAW_FRAME::GetNearestGridPosition( const VECTOR2I& aPosition ) con
     double yOffset = fmod( gridOrigin.y, gridSize.y );
     int    y = KiROUND( (aPosition.y - yOffset) / gridSize.y );
 
-    return VECTOR2I( KiROUND( x * gridSize.x + xOffset ), KiROUND( y * gridSize.y + yOffset ) );
+    return KiROUND( x * gridSize.x + xOffset, y * gridSize.y + yOffset );
 }
 
 
@@ -1001,7 +1027,7 @@ VECTOR2I EDA_DRAW_FRAME::GetNearestHalfGridPosition( const VECTOR2I& aPosition )
     double yOffset = fmod( gridOrigin.y, gridSize.y );
     int    y = KiROUND( (aPosition.y - yOffset) / gridSize.y );
 
-    return VECTOR2I( KiROUND( x * gridSize.x + xOffset ), KiROUND( y * gridSize.y + yOffset ) );
+    return KiROUND( x * gridSize.x + xOffset, y * gridSize.y + yOffset );
 }
 
 
@@ -1037,33 +1063,35 @@ std::vector<wxWindow*> EDA_DRAW_FRAME::findDialogs()
 }
 
 
-void EDA_DRAW_FRAME::FocusOnLocation( const VECTOR2I& aPos )
+void EDA_DRAW_FRAME::FocusOnLocation( const VECTOR2I& aPos, bool aAllowScroll )
 {
-    bool  centerView = false;
-    BOX2D r = GetCanvas()->GetView()->GetViewport();
-
-    // Center if we're off the current view, or within 10% of its edge
-    r.Inflate( - (int) r.GetWidth() / 10 );
-
-    if( !r.Contains( aPos ) )
-        centerView = true;
-
+    bool               centerView = false;
     std::vector<BOX2D> dialogScreenRects;
 
-    for( wxWindow* dialog : findDialogs() )
+    if( aAllowScroll )
     {
-        dialogScreenRects.emplace_back(
-                ToVECTOR2D( GetCanvas()->ScreenToClient( dialog->GetScreenPosition() ) ),
-                ToVECTOR2D( dialog->GetSize() ) );
-    }
+        BOX2D r = GetCanvas()->GetView()->GetViewport();
 
-    // Center if we're behind an obscuring dialog, or within 10% of its edge
-    for( BOX2D rect : dialogScreenRects )
-    {
-        rect.Inflate( rect.GetWidth() / 10 );
+        // Center if we're off the current view, or within 10% of its edge
+        r.Inflate( - r.GetWidth() / 10.0 );
 
-        if( rect.Contains( GetCanvas()->GetView()->ToScreen( aPos ) ) )
+        if( !r.Contains( aPos ) )
             centerView = true;
+
+        for( wxWindow* dialog : findDialogs() )
+        {
+            dialogScreenRects.emplace_back( ToVECTOR2D( GetCanvas()->ScreenToClient( dialog->GetScreenPosition() ) ),
+                                            ToVECTOR2D( dialog->GetSize() ) );
+        }
+
+        // Center if we're behind an obscuring dialog, or within 10% of its edge
+        for( BOX2D rect : dialogScreenRects )
+        {
+            rect.Inflate( rect.GetWidth() / 10 );
+
+            if( rect.Contains( GetCanvas()->GetView()->ToScreen( aPos ) ) )
+                centerView = true;
+        }
     }
 
     if( centerView )
@@ -1074,16 +1102,12 @@ void EDA_DRAW_FRAME::FocusOnLocation( const VECTOR2I& aPos )
         }
         catch( const Clipper2Lib::Clipper2Exception& e )
         {
-            wxFAIL_MSG( wxString::Format( wxT( "Clipper2 exception occurred centering object: %s" ),
-                                          e.what() ) );
+            wxFAIL_MSG( wxString::Format( wxT( "Clipper2 exception occurred centering object: %s" ), e.what() ) );
         }
     }
 
     GetCanvas()->GetViewControls()->SetCrossHairCursorPosition( aPos );
 }
-
-
-static const wxString productName = wxT( "KiCad E.D.A.  " );
 
 
 void PrintDrawingSheet( const RENDER_SETTINGS* aSettings, const PAGE_INFO& aPageInfo,
@@ -1158,35 +1182,20 @@ wxString EDA_DRAW_FRAME::GetFullScreenDesc() const
 }
 
 
-bool EDA_DRAW_FRAME::LibraryFileBrowser( bool doOpen, wxFileName& aFilename,
+bool EDA_DRAW_FRAME::LibraryFileBrowser( const wxString& aTitle, bool doOpen, wxFileName& aFilename,
                                          const wxString& wildcard, const wxString& ext,
-                                         bool isDirectory, bool aIsGlobal,
-                                         const wxString& aGlobalPath )
+                                         bool isDirectory, FILEDLG_HOOK_NEW_LIBRARY* aFileDlgHook )
 {
-    wxString prompt = doOpen ? _( "Select Library" ) : _( "New Library" );
     aFilename.SetExt( ext );
 
-    wxString projectDir = Prj().IsNullProject() ? aFilename.GetPath() : Prj().GetProjectPath();
-    wxString defaultDir;
+    wxString defaultDir = aFilename.GetPath();
 
-    if( aIsGlobal )
-    {
-        if( !GetMruPath().IsEmpty() && !GetMruPath().StartsWith( projectDir ) )
-            defaultDir = GetMruPath();
-        else
-            defaultDir = aGlobalPath;
-    }
-    else
-    {
-        if( !GetMruPath().IsEmpty() && GetMruPath().StartsWith( projectDir ) )
-            defaultDir = GetMruPath();
-        else
-            defaultDir = projectDir;
-    }
+    if( defaultDir.IsEmpty() )
+        defaultDir = GetMruPath();
 
     if( isDirectory && doOpen )
     {
-        wxDirDialog dlg( this, prompt, defaultDir, wxDD_DEFAULT_STYLE | wxDD_DIR_MUST_EXIST );
+        wxDirDialog dlg( this, aTitle, defaultDir, wxDD_DEFAULT_STYLE | wxDD_DIR_MUST_EXIST );
 
         if( dlg.ShowModal() == wxID_CANCEL )
             return false;
@@ -1200,9 +1209,14 @@ bool EDA_DRAW_FRAME::LibraryFileBrowser( bool doOpen, wxFileName& aFilename,
         if( aFilename.GetName().empty() )
             aFilename.SetName( wxS( "Library" ) );
 
-        wxFileDialog dlg( this, prompt, defaultDir, aFilename.GetFullName(),
-                          wildcard, doOpen ? wxFD_OPEN | wxFD_FILE_MUST_EXIST
-                                           : wxFD_SAVE | wxFD_CHANGE_DIR | wxFD_OVERWRITE_PROMPT );
+        wxFileDialog dlg( this, aTitle, defaultDir, aFilename.GetFullName(), wildcard,
+                          doOpen ? wxFD_OPEN | wxFD_FILE_MUST_EXIST
+                                 : wxFD_SAVE | wxFD_CHANGE_DIR | wxFD_OVERWRITE_PROMPT );
+
+        if( aFileDlgHook )
+            dlg.SetCustomizeHook( *aFileDlgHook );
+
+        KIPLATFORM::UI::AllowNetworkFileSystems( &dlg );
 
         if( dlg.ShowModal() == wxID_CANCEL )
             return false;
@@ -1265,6 +1279,21 @@ COLOR_SETTINGS* EDA_DRAW_FRAME::GetColorSettings( bool aForceRefresh ) const
     }
 
     return m_colorSettings;
+}
+
+
+void EDA_DRAW_FRAME::setupUIConditions()
+{
+    EDA_BASE_FRAME::setupUIConditions();
+
+    ACTION_MANAGER*   mgr = m_toolManager->GetActionManager();
+    EDITOR_CONDITIONS cond( this );
+
+    wxASSERT( mgr );
+
+    mgr->SetConditions( ACTIONS::millimetersUnits, ACTION_CONDITIONS().Check( cond.Units( EDA_UNITS::MM ) ) );
+    mgr->SetConditions( ACTIONS::inchesUnits,      ACTION_CONDITIONS().Check( cond.Units( EDA_UNITS::INCH ) ) );
+    mgr->SetConditions( ACTIONS::milsUnits,        ACTION_CONDITIONS().Check( cond.Units( EDA_UNITS::MILS ) ) );
 }
 
 
@@ -1343,8 +1372,7 @@ void EDA_DRAW_FRAME::onActivate( wxActivateEvent& aEvent )
 }
 
 
-bool EDA_DRAW_FRAME::SaveCanvasImageToFile( const wxString& aFileName,
-                                            BITMAP_TYPE aBitmapType )
+bool EDA_DRAW_FRAME::SaveCanvasImageToFile( const wxString& aFileName, BITMAP_TYPE aBitmapType )
 {
     bool retv = true;
 
@@ -1364,8 +1392,8 @@ bool EDA_DRAW_FRAME::SaveCanvasImageToFile( const wxString& aFileName,
     wxBitmapType type = wxBITMAP_TYPE_PNG;
     switch( aBitmapType )
     {
-    case BITMAP_TYPE::PNG: type = wxBITMAP_TYPE_PNG; break;
-    case BITMAP_TYPE::BMP: type = wxBITMAP_TYPE_BMP; break;
+    case BITMAP_TYPE::PNG: type = wxBITMAP_TYPE_PNG;  break;
+    case BITMAP_TYPE::BMP: type = wxBITMAP_TYPE_BMP;  break;
     case BITMAP_TYPE::JPG: type = wxBITMAP_TYPE_JPEG; break;
     }
 
@@ -1377,8 +1405,7 @@ bool EDA_DRAW_FRAME::SaveCanvasImageToFile( const wxString& aFileName,
 }
 
 
-bool EDA_DRAW_FRAME::IsPluginActionButtonVisible( const PLUGIN_ACTION& aAction,
-                                                  APP_SETTINGS_BASE* aCfg )
+bool EDA_DRAW_FRAME::IsPluginActionButtonVisible( const PLUGIN_ACTION& aAction, APP_SETTINGS_BASE* aCfg )
 {
     wxCHECK( aCfg, aAction.show_button );
 
@@ -1392,8 +1419,8 @@ bool EDA_DRAW_FRAME::IsPluginActionButtonVisible( const PLUGIN_ACTION& aAction,
 }
 
 
-std::vector<const PLUGIN_ACTION*> EDA_DRAW_FRAME::GetOrderedPluginActions(
-    PLUGIN_ACTION_SCOPE aScope, APP_SETTINGS_BASE* aCfg )
+std::vector<const PLUGIN_ACTION*> EDA_DRAW_FRAME::GetOrderedPluginActions( PLUGIN_ACTION_SCOPE aScope,
+                                                                           APP_SETTINGS_BASE* aCfg )
 {
     std::vector<const PLUGIN_ACTION*> actions;
     wxCHECK( aCfg, actions );
@@ -1437,20 +1464,17 @@ void EDA_DRAW_FRAME::AddApiPluginTools( ACTION_TOOLBAR* aToolbar )
 
     mgr.ButtonBindings().clear();
 
-    std::vector<const PLUGIN_ACTION*> actions =
-            GetOrderedPluginActions( PluginActionScope(), config() );
+    std::vector<const PLUGIN_ACTION*> actions = GetOrderedPluginActions( PluginActionScope(), config() );
 
     for( const PLUGIN_ACTION* action : actions )
     {
         if( !IsPluginActionButtonVisible( *action, config() ) )
             continue;
 
-        const wxBitmapBundle& icon = KIPLATFORM::UI::IsDarkTheme() && action->icon_dark.IsOk()
-                                             ? action->icon_dark
-                                             : action->icon_light;
+        const wxBitmapBundle& icon = KIPLATFORM::UI::IsDarkTheme() && action->icon_dark.IsOk() ? action->icon_dark
+                                                                                               : action->icon_light;
 
-        wxAuiToolBarItem* button = aToolbar->AddTool( wxID_ANY, wxEmptyString, icon,
-                                                           action->name );
+        wxAuiToolBarItem* button = aToolbar->AddTool( wxID_ANY, wxEmptyString, icon, action->name );
 
         Connect( button->GetId(), wxEVT_COMMAND_MENU_SELECTED,
                  wxCommandEventHandler( EDA_DRAW_FRAME::OnApiPluginInvoke ) );
@@ -1467,6 +1491,13 @@ void EDA_DRAW_FRAME::OnApiPluginInvoke( wxCommandEvent& aEvent )
     API_PLUGIN_MANAGER& mgr = Pgm().GetPluginManager();
 
     if( mgr.ButtonBindings().count( aEvent.GetId() ) )
-        mgr.InvokeAction( mgr.ButtonBindings().at( aEvent.GetId() ) );
+    {
+        std::shared_ptr<REPORTER> reporter;
+
+        if( KISTATUSBAR* statusBar = dynamic_cast<KISTATUSBAR*>( GetStatusBar() ) )
+            reporter = std::make_shared<STATUSBAR_WARNING_REPORTER>( statusBar, wxS( "plugin" ) );
+
+        mgr.InvokeAction( mgr.ButtonBindings().at( aEvent.GetId() ), reporter );
+    }
 #endif
 }

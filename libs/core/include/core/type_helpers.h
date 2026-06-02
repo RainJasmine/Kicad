@@ -23,6 +23,8 @@
 
 #pragma once
 
+#include <type_traits>
+
 /**
  * @brief A type that is always false.
  *
@@ -45,3 +47,8 @@ template <typename T>
 struct always_false : std::false_type
 {
 };
+
+template <typename E>
+constexpr auto to_underlying(E e) noexcept {
+    return static_cast<std::underlying_type_t<E>>(e);
+}

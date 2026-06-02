@@ -60,6 +60,15 @@ macro( create_git_version_header _git_src_path )
             RESULT_VARIABLE _git_rev_parse_head_result
             OUTPUT_STRIP_TRAILING_WHITESPACE)
 
+        execute_process(
+            COMMAND
+            ${GIT_EXECUTABLE} show -s --format=%cd --date=format:%Y-%m-%d
+            WORKING_DIRECTORY ${_git_src_path}
+            OUTPUT_VARIABLE _git_SHOW_DATE_HEAD
+            ERROR_VARIABLE _git_show_date_head_error
+            RESULT_VARIABLE _git_show_date_head_result
+            OUTPUT_STRIP_TRAILING_WHITESPACE)
+
         set( ENV{LC_ALL} ${_Git_SAVED_LC_ALL} )
     endif( GIT_FOUND )
 
@@ -90,6 +99,14 @@ macro( create_git_version_header _git_src_path )
         message( STATUS "git rev-list --count returned error ${_git_rev_count_result}: ${_git_rev_count_error}" )
         # Incase the command failed, we can just default to 0, only a problem in CI right now
         set( KICAD_GIT_REV "0" )
+    endif()
+
+    if( _git_show_date_head_result EQUAL 0 )
+        set( KICAD_COMMIT_DATE "${_git_SHOW_DATE_HEAD}" )
+    else()
+        message( STATUS "git show -s -format=%cd --date=format:%Y-%m-%d returned error ${_git_show_date_head_result}: ${_git_show_date_head_error}" )
+        # Incase command failed, default to 0 to flag a problem
+        set( KICAD_COMMIT_DATE "0")
     endif()
 
 endmacro()

@@ -18,11 +18,11 @@
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef PCBNEW_SETTINGS_H_
-#define PCBNEW_SETTINGS_H_
+#pragma once
 
 #include <core/mirror.h> // for FLIP_DIRECTION
 #include <geometry/eda_angle.h>
+#include <geometry/geometry_utils.h>
 #include <settings/app_settings.h>
 #include <pcb_display_options.h>
 
@@ -48,7 +48,6 @@ struct CONVERT_SETTINGS
     int              m_LineWidth;
     bool             m_DeleteOriginals;
 };
-
 
 
 enum class MAGNETIC_OPTIONS
@@ -110,7 +109,7 @@ class PCB_VIEWERS_SETTINGS_BASE : public APP_SETTINGS_BASE
 public:
     struct VIEWERS_DISPLAY_OPTIONS
     {
-        bool    m_Use45Limit;
+        LEADER_MODE m_AngleSnapMode;
         bool    m_DisplayGraphicsFill;
         bool    m_DisplayTextFill;
         bool    m_DisplayPadNumbers;
@@ -127,7 +126,7 @@ public:
         m_FootprintViewerZoom( 1.0 ),
         m_FootprintViewerAutoZoomOnSelect( true )
     {
-        m_ViewersDisplay.m_Use45Limit = false;
+        m_ViewersDisplay.m_AngleSnapMode = LEADER_MODE::DIRECT;
         m_ViewersDisplay.m_DisplayGraphicsFill = true;
         m_ViewersDisplay.m_DisplayTextFill = true;
         m_ViewersDisplay.m_DisplayPadNumbers = true;
@@ -163,168 +162,22 @@ public:
         int   design_blocks_panel_float_height;
     };
 
-    struct DIALOG_CLEANUP
+    struct DIALOG_EXPORT_D356
     {
-        bool cleanup_refill_zones;
-        bool cleanup_vias;
-        bool delete_dangling_vias;
-        bool cleanup_tracks_in_pad;
-        bool cleanup_unconnected;
-        bool cleanup_short_circuits;
-        bool merge_segments;
+        // Export D356 uses wxFileDialog, so there's no DIALOG_SHIM to save/restore control state
+        bool doNotExportUnconnectedPads;
     };
 
     struct DIALOG_DRC
     {
-        bool refill_zones;
-        bool test_all_track_errors;
-        bool test_footprints;
-        int  severities;
-    };
-
-    struct DIALOG_EXPORT_IDF
-    {
-        bool   auto_adjust;
-        int    ref_units;
-        double ref_x;
-        double ref_y;
-        bool   units_mils;
-        bool   no_unspecified;
-        bool   no_dnp;
-    };
-
-    struct DIALOG_EXPORT_STEP
-    {
-        int    origin_mode;
-        int    origin_units;
-        double origin_x;
-        double origin_y;
-        bool   no_unspecified;
-        bool   no_dnp;
-        bool   replace_models;
-        bool   overwrite_file;
-    };
-
-    struct DIALOG_EXPORT_2581
-    {
-        int    precision;
-        int    units;
-        int    version;
-        bool   compress;
-    };
-
-    struct DIALOG_EXPORT_ODBPP
-    {
-        int    precision;
-        int    units;
-        int    compressFormat;
-    };
-
-    struct DIALOG_EXPORT_VRML
-    {
-        int    units;
-        bool   no_unspecified;
-        bool   no_dnp;
-        bool   copy_3d_models;
-        bool   use_relative_paths;
-        int    ref_units;
-        double ref_x;
-        double ref_y;
-        int    origin_mode;
-    };
-
-    struct DIALOG_FOOTPRINT_WIZARD_LIST
-    {
-        int width;
-        int height;
-    };
-
-    struct DIALOG_GENERATE_DRILL
-    {
-        bool merge_pth_npth;
-        bool minimal_header;
-        bool mirror;
-        bool unit_drill_is_inch;
-        bool use_route_for_oval_holes;
-        int  drill_file_type;
-        int  map_file_type;
-        int  zeros_format;
-        bool generate_map;
-        bool generate_tenting;
-    };
-
-    struct DIALOG_IMPORT_GRAPHICS
-    {
-        int         layer;
-        bool        use_dlg_layer_selection;
-        bool        interactive_placement;
-        bool        group_items;
-        bool        fix_discontinuities;
-        double      tolerance;
-        wxString    last_file;
-        double      dxf_line_width;
-        int         dxf_line_width_units;
-        int         origin_units;
-        double      origin_x;
-        double      origin_y;
-        int         dxf_units;
-    };
-
-    struct DIALOG_NETLIST
-    {
-        int  report_filter;
-        bool update_footprints;
-        bool transfer_groups;
-        bool delete_shorting_tracks;
-        bool delete_extra_footprints;
-        bool associate_by_ref_sch;
-    };
-
-    struct DIALOG_PLACE_FILE
-    {
-        wxString output_directory;  // only used at run-time; actual data in project settings
-        int      units;
-        int      file_options;
-        int      file_format;
-        bool     include_board_edge;
-        bool     exclude_TH;
-        bool     only_SMD;
-        bool     use_aux_origin;
-        bool     negate_xcoord;
-    };
-
-    struct DIALOG_PLOT
-    {
-        int    all_layers_on_one_page;
-        bool   edgecut_on_all_layers;
-        int    pads_drill_mode;
-        double fine_scale_x;
-        double fine_scale_y;
-        double ps_fine_width_adjust;
-        bool   check_zones_before_plotting;
-        bool   mirror;
-        bool   as_item_checkboxes;
-    };
-
-    struct DIALOG_REANNOTATE
-    {
-        bool     sort_on_fp_location;
-        bool     remove_front_prefix;
-        bool     remove_back_prefix;
-        bool     exclude_locked;
-        int      grid_index;
-        int      sort_code;
-        int      annotation_choice;
-        wxString front_refdes_start;
-        wxString back_refdes_start;
-        wxString front_prefix;
-        wxString back_prefix;
-        wxString exclude_list;
-        wxString report_file_name;
+        bool report_all_track_errors;
+        bool crossprobe;
+        bool scroll_on_crossprobe;
     };
 
     struct FOOTPRINT_CHOOSER
     {
+        // Footprint chooser is a FRAME, so there's no DIALOG_SHIM to save/restore control state
         int  width;
         int  height;
         int  sash_h;
@@ -332,11 +185,6 @@ public:
         int  sort_mode;
         bool use_fp_filters;
         bool filter_on_pin_count;
-    };
-
-    struct ZONES
-    {
-        int         net_sort_mode;
     };
 
     struct DISPLAY_OPTIONS
@@ -349,6 +197,7 @@ public:
 
         TRACK_CLEARANCE_MODE m_TrackClearance;
         bool                 m_PadClearance;
+        bool                 m_UseViaColorForNormalTHPadstacks;
 
         int                  m_NetNames;
 
@@ -368,106 +217,59 @@ public:
         bool                 m_Live3DRefresh;
     };
 
-    struct LOCKING_OPTIONS
-    {
-        // Skip lock prompts for the current session
-        bool m_sessionSkipPrompts;
-    };
-
     PCBNEW_SETTINGS();
-
     virtual ~PCBNEW_SETTINGS();
 
     virtual bool MigrateFromLegacy( wxConfigBase* aLegacyConfig ) override;
 
-    AUI_PANELS m_AuiPanels;
+protected:
+    virtual std::string getLegacyFrameName() const override { return "PcbFrame"; }
 
-    DIALOG_CLEANUP m_Cleanup;
+public:
+    AUI_PANELS         m_AuiPanels;
 
-    DIALOG_DRC m_DrcDialog;
+    DIALOG_EXPORT_D356 m_ExportD356;
+    DIALOG_DRC         m_DRCDialog;
+    FOOTPRINT_CHOOSER  m_FootprintChooser;
 
-    DIALOG_EXPORT_IDF m_ExportIdf;
+    WINDOW_SETTINGS    m_FootprintViewer;
+    WINDOW_SETTINGS    m_FootprintWizard;
 
-    DIALOG_EXPORT_STEP m_ExportStep;
+    DISPLAY_OPTIONS    m_Display;
 
-    DIALOG_EXPORT_2581 m_Export2581;
+    MAGNETIC_SETTINGS  m_MagneticItems;
+    TRACK_DRAG_ACTION  m_TrackDragAction;
+    ARC_EDIT_MODE      m_ArcEditMode;
 
-    DIALOG_EXPORT_ODBPP m_ExportODBPP;
+    bool               m_CtrlClickHighlight;
 
-    DIALOG_EXPORT_VRML m_ExportVrml;
+    LEADER_MODE        m_AngleSnapMode;        // Constrain tool actions to horizontal/vertical or 45°/90°
+    FLIP_DIRECTION     m_FlipDirection;
 
-    DIALOG_FOOTPRINT_WIZARD_LIST m_FootprintWizardList;
+    bool      m_ESCClearsNetHighlight;
 
-    DIALOG_GENERATE_DRILL m_GenDrill;
-
-    DIALOG_IMPORT_GRAPHICS m_ImportGraphics;
-
-    DIALOG_NETLIST m_NetlistDialog;
-
-    DIALOG_PLACE_FILE m_PlaceFile;
-
-    DIALOG_PLOT m_Plot;
-
-    DIALOG_REANNOTATE m_Reannotate;
-
-    FOOTPRINT_CHOOSER m_FootprintChooser;
-
-    ZONES m_Zones;
-
-    WINDOW_SETTINGS m_FootprintViewer;
-
-    WINDOW_SETTINGS m_FootprintWizard;
-
-    DISPLAY_OPTIONS m_Display;
-
-    MAGNETIC_SETTINGS m_MagneticItems;
-
-    TRACK_DRAG_ACTION m_TrackDragAction;
-
-    ARC_EDIT_MODE m_ArcEditMode;
-
-    bool m_CtrlClickHighlight;
-
-    bool m_Use45DegreeLimit;            // True to constrain tool actions to horizontal,
-                                        // vertical and 45deg
-    FLIP_DIRECTION m_FlipDirection;
-
-    bool m_ESCClearsNetHighlight;
-
-    bool m_PolarCoords;
+    bool      m_PolarCoords;
 
     EDA_ANGLE m_RotationAngle;
 
-    bool m_ShowPageLimits;
-
-    bool m_ShowCourtyardCollisions;
+    bool      m_ShowPageLimits;
+    bool      m_ShowCourtyardCollisions;
 
     ///<@todo Implement real auto zone filling (not just after zone properties are edited)
-    bool m_AutoRefillZones; // Fill zones after editing the zone using the Zone Properties dialog
+    bool      m_AutoRefillZones; // Fill zones after editing the zone using the Zone Properties dialog
 
-    bool m_AllowFreePads; // True: unlocked pads can be moved freely with respect to the footprint.
-                          // False (default): all pads are treated as locked for the purposes of
-                          // movement and any attempt to move them will move the footprint instead.
+    bool      m_AllowFreePads;  // True: unlocked pads can be moved freely with respect to the footprint.
+                                // False (default): all pads are treated as locked for the purposes of
+                                // movement and any attempt to move them will move the footprint instead.
 
-    wxString m_FootprintTextShownColumns;
+    bool      m_ImportKeepKiCadLayerNames;
 
     std::unique_ptr<PNS::ROUTING_SETTINGS> m_PnsSettings;
 
-    int    m_FootprintViewerLibListWidth;
-    int    m_FootprintViewerFPListWidth;
+    int       m_FootprintViewerLibListWidth;
+    int       m_FootprintViewerFPListWidth;
 
-    wxString m_lastFootprintLibDir;
-
-    wxString m_lastFootprint3dDir;
-
-    LOCKING_OPTIONS m_LockingOptions;
-
-    ACTION_PLUGIN_SETTINGS_LIST m_VisibleActionPlugins;
-
-protected:
-
-    virtual std::string getLegacyFrameName() const override { return "PcbFrame"; }
-
+    wxString  m_LastFootprintLibDir;
+    wxString  m_LastFootprint3dDir;
 };
 
-#endif

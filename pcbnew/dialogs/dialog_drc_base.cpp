@@ -5,6 +5,7 @@
 // PLEASE DO *NOT* EDIT THIS FILE!
 ///////////////////////////////////////////////////////////////////////////
 
+#include "widgets/std_bitmap_button.h"
 #include "widgets/wx_html_report_box.h"
 
 #include "dialog_drc_base.h"
@@ -24,28 +25,40 @@ DIALOG_DRC_BASE::DIALOG_DRC_BASE( wxWindow* parent, wxWindowID id, const wxStrin
 	wxBoxSizer* bSizer12;
 	bSizer12 = new wxBoxSizer( wxVERTICAL );
 
-	m_cbRefillZones = new wxCheckBox( this, wxID_ANY, _("Refill all zones before performing DRC"), wxDefaultPosition, wxDefaultSize, 0 );
-	bSizer12->Add( m_cbRefillZones, 0, wxALL, 5 );
-
-	m_cbReportAllTrackErrors = new wxCheckBox( this, wxID_ANY, _("Report all errors for each track"), wxDefaultPosition, wxDefaultSize, 0 );
-	m_cbReportAllTrackErrors->SetToolTip( _("If selected, all DRC violations for tracks will be reported.  This can be slow for complicated designs.\n\nIf unselected, only the first DRC violation will be reported for each track connection.") );
-
-	bSizer12->Add( m_cbReportAllTrackErrors, 0, wxBOTTOM|wxRIGHT|wxLEFT, 5 );
-
 
 	bSizerOptions->Add( bSizer12, 1, wxEXPAND|wxTOP|wxRIGHT|wxLEFT, 5 );
 
 	wxBoxSizer* bSizerOptSettings;
 	bSizerOptSettings = new wxBoxSizer( wxVERTICAL );
 
-	m_cbTestFootprints = new wxCheckBox( this, wxID_ANY, _("Test for parity between PCB and schematic"), wxDefaultPosition, wxDefaultSize, 0 );
-	bSizerOptSettings->Add( m_cbTestFootprints, 0, wxALL, 5 );
-
 
 	bSizerOptions->Add( bSizerOptSettings, 1, wxEXPAND|wxTOP|wxRIGHT|wxLEFT, 5 );
 
 
 	m_MainSizer->Add( bSizerOptions, 0, wxEXPAND|wxTOP|wxBOTTOM|wxLEFT, 3 );
+
+	wxGridBagSizer* gbSizerOptions;
+	gbSizerOptions = new wxGridBagSizer( 0, 0 );
+	gbSizerOptions->SetFlexibleDirection( wxBOTH );
+	gbSizerOptions->SetNonFlexibleGrowMode( wxFLEX_GROWMODE_SPECIFIED );
+
+	m_cbRefillZones = new wxCheckBox( this, wxID_ANY, _("Refill all zones before performing DRC"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_cbRefillZones->SetValue(true);
+	gbSizerOptions->Add( m_cbRefillZones, wxGBPosition( 0, 0 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL|wxTOP|wxRIGHT|wxLEFT, 5 );
+
+	m_cbTestFootprints = new wxCheckBox( this, wxID_ANY, _("Test for parity between PCB and schematic"), wxDefaultPosition, wxDefaultSize, 0 );
+	gbSizerOptions->Add( m_cbTestFootprints, wxGBPosition( 0, 1 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL|wxTOP|wxRIGHT|wxLEFT, 5 );
+
+	m_bMenu = new STD_BITMAP_BUTTON( this, wxID_ANY, wxNullBitmap, wxDefaultPosition, wxDefaultSize, wxBU_AUTODRAW|0 );
+	gbSizerOptions->Add( m_bMenu, wxGBPosition( 0, 2 ), wxGBSpan( 2, 1 ), wxALIGN_CENTER_VERTICAL|wxRIGHT, 10 );
+
+
+	gbSizerOptions->AddGrowableCol( 0 );
+	gbSizerOptions->AddGrowableCol( 1 );
+	gbSizerOptions->AddGrowableRow( 0 );
+	gbSizerOptions->AddGrowableRow( 1 );
+
+	m_MainSizer->Add( gbSizerOptions, 0, wxEXPAND|wxTOP|wxLEFT, 10 );
 
 	m_runningResultsBook = new wxSimplebook( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, 0 );
 	running = new wxPanel( m_runningResultsBook, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL );
@@ -91,7 +104,6 @@ DIALOG_DRC_BASE::DIALOG_DRC_BASE( wxWindow* parent, wxWindowID id, const wxStrin
 	m_Notebook->SetMinSize( wxSize( 640,-1 ) );
 
 	m_panelViolations = new wxPanel( m_Notebook, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL );
-	wxBoxSizer* bSizerViolationsBox;
 	bSizerViolationsBox = new wxBoxSizer( wxVERTICAL );
 
 	bSizerViolationsBox->SetMinSize( wxSize( -1,320 ) );
@@ -182,12 +194,14 @@ DIALOG_DRC_BASE::DIALOG_DRC_BASE( wxWindow* parent, wxWindowID id, const wxStrin
 	bSeveritySizer->Add( 35, 0, 0, wxEXPAND, 5 );
 
 	m_showErrors = new wxCheckBox( this, wxID_ANY, _("Errors"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_showErrors->SetValue(true);
 	bSeveritySizer->Add( m_showErrors, 0, wxALIGN_CENTER_VERTICAL|wxRIGHT|wxLEFT, 5 );
 
 	m_errorsBadge = new NUMBER_BADGE( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, 0 );
 	bSeveritySizer->Add( m_errorsBadge, 0, wxALIGN_CENTER_VERTICAL|wxRIGHT, 25 );
 
 	m_showWarnings = new wxCheckBox( this, wxID_ANY, _("Warnings"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_showWarnings->SetValue(true);
 	bSeveritySizer->Add( m_showWarnings, 0, wxALIGN_CENTER_VERTICAL|wxRIGHT|wxLEFT, 5 );
 
 	m_warningsBadge = new NUMBER_BADGE( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, 0 );
@@ -239,6 +253,7 @@ DIALOG_DRC_BASE::DIALOG_DRC_BASE( wxWindow* parent, wxWindowID id, const wxStrin
 	// Connect Events
 	this->Connect( wxEVT_ACTIVATE, wxActivateEventHandler( DIALOG_DRC_BASE::OnActivateDlg ) );
 	this->Connect( wxEVT_CLOSE_WINDOW, wxCloseEventHandler( DIALOG_DRC_BASE::OnClose ) );
+	m_bMenu->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_DRC_BASE::OnMenu ), NULL, this );
 	m_messages->Connect( wxEVT_COMMAND_HTML_LINK_CLICKED, wxHtmlLinkEventHandler( DIALOG_DRC_BASE::OnErrorLinkClicked ), NULL, this );
 	m_Notebook->Connect( wxEVT_COMMAND_NOTEBOOK_PAGE_CHANGED, wxNotebookEventHandler( DIALOG_DRC_BASE::OnChangingNotebookPage ), NULL, this );
 	m_markerDataView->Connect( wxEVT_COMMAND_DATAVIEW_ITEM_ACTIVATED, wxDataViewEventHandler( DIALOG_DRC_BASE::OnDRCItemDClick ), NULL, this );
@@ -268,6 +283,7 @@ DIALOG_DRC_BASE::~DIALOG_DRC_BASE()
 	// Disconnect Events
 	this->Disconnect( wxEVT_ACTIVATE, wxActivateEventHandler( DIALOG_DRC_BASE::OnActivateDlg ) );
 	this->Disconnect( wxEVT_CLOSE_WINDOW, wxCloseEventHandler( DIALOG_DRC_BASE::OnClose ) );
+	m_bMenu->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_DRC_BASE::OnMenu ), NULL, this );
 	m_messages->Disconnect( wxEVT_COMMAND_HTML_LINK_CLICKED, wxHtmlLinkEventHandler( DIALOG_DRC_BASE::OnErrorLinkClicked ), NULL, this );
 	m_Notebook->Disconnect( wxEVT_COMMAND_NOTEBOOK_PAGE_CHANGED, wxNotebookEventHandler( DIALOG_DRC_BASE::OnChangingNotebookPage ), NULL, this );
 	m_markerDataView->Disconnect( wxEVT_COMMAND_DATAVIEW_ITEM_ACTIVATED, wxDataViewEventHandler( DIALOG_DRC_BASE::OnDRCItemDClick ), NULL, this );

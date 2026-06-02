@@ -32,6 +32,7 @@ using namespace std::placeholders;
 #include <tool/actions.h>
 #include <view/view_controls.h>
 #include <gal/graphics_abstraction_layer.h>
+#include <preview_items/angle_item.h>
 #include <confirm.h>
 #include <bitmaps.h>
 #include <status_popup.h>
@@ -75,6 +76,7 @@ public:
             points->AddPoint( line->GetEnd() );
             break;
         }
+
         case WSG_RECT_T:
         {
             DS_DRAW_ITEM_RECT* rect = static_cast<DS_DRAW_ITEM_RECT*>( aItem );
@@ -93,6 +95,7 @@ public:
             points->AddPoint( botRight );
             break;
         }
+
         default:
             points.reset();
             break;
@@ -123,6 +126,16 @@ void PL_POINT_EDITOR::Reset( RESET_REASON aReason )
         m_frame = getEditFrame<PL_EDITOR_FRAME>();
     }
 
+    if( KIGFX::VIEW* view = getView() )
+    {
+        if( m_angleItem )
+            view->Remove( m_angleItem.get() );
+
+        if( m_editPoints )
+            view->Remove( m_editPoints.get() );
+    }
+
+    m_angleItem.reset();
     m_editPoints.reset();
 }
 
@@ -174,7 +187,10 @@ int PL_POINT_EDITOR::Main( const TOOL_EVENT& aEvent )
     if( !m_editPoints )
         return 0;
 
+    m_angleItem = std::make_unique<KIGFX::PREVIEW::ANGLE_ITEM>( m_editPoints );
+
     getView()->Add( m_editPoints.get() );
+    getView()->Add( m_angleItem.get() );
     setEditedPoint( nullptr );
     updateEditedPoint( aEvent );
     bool inDrag = false;
@@ -252,11 +268,13 @@ int PL_POINT_EDITOR::Main( const TOOL_EVENT& aEvent )
     if( m_editPoints )
     {
         getView()->Remove( m_editPoints.get() );
+        getView()->Remove( m_angleItem.get() );
 
         if( modified )
             m_frame->OnModify();
 
         m_editPoints.reset();
+        m_angleItem.reset();
         m_frame->GetCanvas()->Refresh();
     }
 
@@ -462,6 +480,7 @@ void PL_POINT_EDITOR::updatePoints()
     }
 
     getView()->Update( m_editPoints.get() );
+    getView()->Update( m_angleItem.get() );
 }
 
 

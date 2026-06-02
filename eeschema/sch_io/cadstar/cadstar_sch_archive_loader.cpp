@@ -161,8 +161,8 @@ CADSTAR_SCH_ARCHIVE_LOADER::loadLibPart( const CADSTAR_PART_ENTRY& aPart )
         for( auto& [storedPinNum, termID] : m_symDefTerminalsMap[symbolID] )
         {
             wxCHECK( termID > 0 && sym.m_Pins.size() >= size_t( termID ), nullptr );
-            SCH_PIN* pin = kiSymDef->GetPin( storedPinNum );
-            size_t   termIdx = size_t( termID ) - 1;
+            std::vector<SCH_PIN*> pins = kiSymDef->GetPinsByNumber( storedPinNum );
+            size_t                termIdx = size_t( termID ) - 1;
 
             // For now leave numerical pin number. Otherwise, when loading the
             // .cpa file we won't be able to link up to the footprint pads, but if
@@ -172,14 +172,18 @@ CADSTAR_SCH_ARCHIVE_LOADER::loadLibPart( const CADSTAR_PART_ENTRY& aPart )
             //  partPinNum = wxString( aPart.m_PinNamesMap.at( termID ) );
             //
             wxString partPinNum = wxString::Format( "%ld", sym.m_Pins[termIdx].m_Identifier );
-            pin->SetNumber( partPinNum );
 
-            if( aPart.m_PinNamesMap.count( termID ) )
-                pin->SetName( HandleTextOverbar( aPart.m_PinNamesMap.at( termID ) ) );
-            else if( aPart.m_PinLabelsMap.count( termID ) )
-                pin->SetName( HandleTextOverbar( aPart.m_PinLabelsMap.at( termID ) ) );
+            for( SCH_PIN* pin : pins )
+            {
+                pin->SetNumber( partPinNum );
 
-            pin->SetType( getKiCadPinType( sym.m_Pins[termIdx].m_Type ) );
+                if( aPart.m_PinNamesMap.count( termID ) )
+                    pin->SetName( HandleTextOverbar( aPart.m_PinNamesMap.at( termID ) ) );
+                else if( aPart.m_PinLabelsMap.count( termID ) )
+                    pin->SetName( HandleTextOverbar( aPart.m_PinLabelsMap.at( termID ) ) );
+
+                pin->SetType( getKiCadPinType( sym.m_Pins[termIdx].m_Type ) );
+            }
 
             // @todo: Load pin/gate swapping information once kicad supports this
         }
@@ -302,11 +306,11 @@ void CADSTAR_SCH_ARCHIVE_LOADER::copySymbolItems( std::unique_ptr<LIB_SYMBOL>& a
                                                   int aDestUnit, bool aOverrideFields )
 {
     // Ensure there are no items on the unit we want to load onto
-    for( SCH_ITEM* item : aDestSym->GetUnitDrawItems( aDestUnit, 0 /*aConvert*/ ) )
+    for( SCH_ITEM* item : aDestSym->GetUnitDrawItems( aDestUnit, 0 /* aBodyStyle */ ) )
         aDestSym->RemoveDrawItem( item );
 
     // Copy all draw items
-    for( SCH_ITEM* newItem : aSourceSym->GetUnitDrawItems( 1, 0 /*aConvert*/ ) )
+    for( SCH_ITEM* newItem : aSourceSym->GetUnitDrawItems( 1, 0 /* aBodyStyle */ ) )
     {
         SCH_ITEM* itemCopy = static_cast<SCH_ITEM*>( newItem->Clone() );
         itemCopy->SetParent( aDestSym.get() );
@@ -585,10 +589,10 @@ void CADSTAR_SCH_ARCHIVE_LOADER::loadSheets()
         std::string filename = wxString::Format( "%s_%02d", loadedFilePath.GetName(),
                                                  getSheetNumber( rootSheetID ) )
                                        .ToStdString();
-        ReplaceIllegalFileNameChars( &filename );
+        ReplaceIllegalFileNameChars( filename );
         filename += wxT( "." ) + wxString( FILEEXT::KiCadSchematicFileExtension );
 
-        wxFileName fn( m_schematic->Prj().GetProjectPath() + filename );
+        wxFileName fn( m_schematic->Project().GetProjectPath() + filename );
         m_rootSheet->GetScreen()->SetFileName( fn.GetFullPath() );
 
         m_sheetMap.insert( { rootSheetID, m_rootSheet } );
@@ -664,7 +668,7 @@ void CADSTAR_SCH_ARCHIVE_LOADER::loadPartsLibrary()
         wxString    escapedPartName = EscapeString( part.Name, CTX_LIBID );
         LIB_SYMBOL* kiSym = new LIB_SYMBOL( escapedPartName );
 
-        kiSym->SetUnitCount( part.Definition.GateSymbols.size() );
+        kiSym->SetUnitCount( part.Definition.GateSymbols.size(), true );
         bool ok = true;
 
         for( std::pair<GATE_ID, PART::DEFINITION::GATE> gatePair : part.Definition.GateSymbols )
@@ -893,7 +897,7 @@ void CADSTAR_SCH_ARCHIVE_LOADER::loadSchematicSymbolInstances()
                     kiPart->SetShowPinNames( false );
                     kiPart->SetShowPinNumbers( false );
 
-                    std::vector<SCH_PIN*> pins = kiPart->GetPins();
+                    std::vector<SCH_PIN*> pins = kiPart->GetGraphicalPins( 0, 0 );
                     wxCHECK( pins.size() == 1, /*void*/ );
 
                     pins.at( 0 )->SetType( ELECTRICAL_PINTYPE::PT_POWER_IN );
@@ -1030,7 +1034,6 @@ void CADSTAR_SCH_ARCHIVE_LOADER::loadBusses()
             std::shared_ptr<BUS_ALIAS> kiBusAlias = std::make_shared<BUS_ALIAS>();
 
             kiBusAlias->SetName( bus.Name );
-            kiBusAlias->SetParent( screen );
             screen->AddBusAlias( kiBusAlias );
             m_busesMap.insert( { bus.ID, kiBusAlias } );
 
@@ -1198,7 +1201,7 @@ void CADSTAR_SCH_ARCHIVE_LOADER::loadNets()
             BUS               bus     = Schematic.Buses.at( busTerm.BusID );
 
             if( !alg::contains( m_busesMap.at( bus.ID )->Members(), netName ) )
-                m_busesMap.at( bus.ID )->Members().emplace_back( netName );
+                m_busesMap.at( bus.ID )->AddMember( netName );
 
             SCH_BUS_WIRE_ENTRY* busEntry =
                     new SCH_BUS_WIRE_ENTRY( getKiCadPoint( busTerm.FirstPoint ), false );
@@ -1541,7 +1544,7 @@ void CADSTAR_SCH_ARCHIVE_LOADER::loadTextVariables()
                 return true;
             };
 
-    PROJECT* pj = &m_schematic->Prj();
+    PROJECT* pj = &m_schematic->Project();
 
     if( pj )
     {
@@ -1722,7 +1725,7 @@ const LIB_SYMBOL* CADSTAR_SCH_ARCHIVE_LOADER::loadSymdef( const SYMDEF_ID& aSymd
 
             for( size_t ii = 0; ii < strings.size(); ++ii )
             {
-                BOX2I    bbox = libtext->GetTextBox( ii );
+                BOX2I    bbox = libtext->GetTextBox( nullptr, ii );
                 VECTOR2I linePos = { bbox.GetLeft(), -bbox.GetBottom() };
 
                 RotatePoint( linePos, libtext->GetTextPos(), -libtext->GetTextAngle() );
@@ -1836,8 +1839,8 @@ void CADSTAR_SCH_ARCHIVE_LOADER::loadSymbolGateAndPartFields( const SYMDEF_ID& a
 
     for( auto&& [storedPinNum, termID] : m_symDefTerminalsMap[aSymdefID] )
     {
-        PART::DEFINITION::PIN csPin = getPartDefinitionPin( aCadstarPart, aGateID, termID );
-        SCH_PIN*              pin = kiSymDef->GetPin( storedPinNum );
+        PART::DEFINITION::PIN     csPin = getPartDefinitionPin( aCadstarPart, aGateID, termID );
+        std::vector<SCH_PIN*>     pins = kiSymDef->GetPinsByNumber( storedPinNum );
 
         wxString pinName = HandleTextOverbar( csPin.Label );
         wxString pinNum = HandleTextOverbar( csPin.Name );
@@ -1852,9 +1855,12 @@ void CADSTAR_SCH_ARCHIVE_LOADER::loadSymbolGateAndPartFields( const SYMDEF_ID& a
                 pinNum = wxString::Format( "%ld", csPin.ID );
         }
 
-        pin->SetType( getKiCadPinType( csPin.Type ) );
-        pin->SetNumber( pinNum );
-        pin->SetName( pinName );
+        for( SCH_PIN* pin : pins )
+        {
+            pin->SetType( getKiCadPinType( csPin.Type ) );
+            pin->SetNumber( pinNum );
+            pin->SetName( pinName );
+        }
 
         pinNumMap.insert( { termID, pinNum } );
     }
@@ -1990,7 +1996,7 @@ void CADSTAR_SCH_ARCHIVE_LOADER::loadLibrarySymbolShapeVertices( const std::vect
     const VERTEX* prev = &aCadstarVertices.at( 0 );
     const VERTEX* cur;
 
-    wxASSERT_MSG( prev->Type == VERTEX_TYPE::POINT, "First vertex should always be a point." );
+    wxASSERT_MSG( prev->Type == VERTEX_TYPE::VT_POINT, "First vertex should always be a point." );
 
     for( size_t i = 1; i < aCadstarVertices.size(); i++ )
     {
@@ -2015,7 +2021,7 @@ void CADSTAR_SCH_ARCHIVE_LOADER::loadLibrarySymbolShapeVertices( const std::vect
 
         switch( cur->Type )
         {
-        case VERTEX_TYPE::POINT:
+        case VERTEX_TYPE::VT_POINT:
             shape = new SCH_SHAPE( SHAPE_T::POLY, LAYER_DEVICE );
             shape->AddPoint( startPoint );
             shape->AddPoint( endPoint );
@@ -2140,13 +2146,14 @@ SCH_SYMBOL* CADSTAR_SCH_ARCHIVE_LOADER::loadSchematicSymbol( const SYMBOL& aCads
     {
         TERMINAL_TO_PINNUM_MAP termNumMap = m_pinNumsMap.at( partGateIndex );
 
-        std::map<wxString, SCH_PIN*> pinNumToLibPinMap;
+        std::map<wxString, std::vector<SCH_PIN*>> pinNumToLibPinsMap;
 
         for( auto& term : termNumMap )
         {
             wxString pinNum = term.second;
-            pinNumToLibPinMap.insert( { pinNum,
-                                        symbol->GetLibSymbolRef()->GetPin( term.second ) } );
+            std::vector<SCH_PIN*> pins =
+                    symbol->GetLibSymbolRef()->GetPinsByNumber( term.second );
+            pinNumToLibPinsMap.insert( { pinNum, pins } );
         }
 
         auto replacePinNumber =
@@ -2155,8 +2162,8 @@ SCH_SYMBOL* CADSTAR_SCH_ARCHIVE_LOADER::loadSchematicSymbol( const SYMBOL& aCads
                     if( aOldPinNum == aNewPinNum )
                         return;
 
-                    SCH_PIN* libpin = pinNumToLibPinMap.at( aOldPinNum );
-                    libpin->SetNumber( HandleTextOverbar( aNewPinNum ) );
+                    for( SCH_PIN* libpin : pinNumToLibPinsMap.at( aOldPinNum ) )
+                        libpin->SetNumber( HandleTextOverbar( aNewPinNum ) );
                 };
 
         //Older versions of Cadstar used pin numbers
@@ -2378,7 +2385,7 @@ void CADSTAR_SCH_ARCHIVE_LOADER::loadShapeVertices( const std::vector<VERTEX>& a
     const VERTEX* prev = &aCadstarVertices.at( 0 );
     const VERTEX* cur;
 
-    wxASSERT_MSG( prev->Type == VERTEX_TYPE::POINT,
+    wxASSERT_MSG( prev->Type == VERTEX_TYPE::VT_POINT,
                   "First vertex should always be a point vertex" );
 
     auto pointTransform =
@@ -2411,7 +2418,7 @@ void CADSTAR_SCH_ARCHIVE_LOADER::loadShapeVertices( const std::vector<VERTEX>& a
             break;
         }
 
-        case VERTEX_TYPE::POINT:
+        case VERTEX_TYPE::VT_POINT:
         {
             SCH_LINE* segment = new SCH_LINE();
 
@@ -2482,12 +2489,12 @@ void CADSTAR_SCH_ARCHIVE_LOADER::loadSheetAndChildSheets( const LAYER_ID&       
     wxString    loadedFilename = wxFileName( Filename ).GetName();
     std::string filename = wxString::Format( "%s_%02d", loadedFilename, sheetNum ).ToStdString();
 
-    ReplaceIllegalFileNameChars( &filename );
+    ReplaceIllegalFileNameChars( filename );
     filename += wxT( "." ) + wxString( FILEEXT::KiCadSchematicFileExtension );
 
     sheet->GetField( FIELD_T::SHEET_FILENAME )->SetText( filename );
 
-    wxFileName fn( m_schematic->Prj().GetProjectPath() + filename );
+    wxFileName fn( m_schematic->Project().GetProjectPath() + filename );
     sheet->GetScreen()->SetFileName( fn.GetFullPath() );
     aParentSheet.Last()->GetScreen()->Append( sheet );
     instance.push_back( sheet );
@@ -2842,7 +2849,7 @@ ELECTRICAL_PINTYPE CADSTAR_SCH_ARCHIVE_LOADER::getKiCadPinType( const CADSTAR_PI
     switch( aPinType )
     {
     case CADSTAR_PIN_TYPE::UNCOMMITTED:        return ELECTRICAL_PINTYPE::PT_PASSIVE;
-    case CADSTAR_PIN_TYPE::INPUT:              return ELECTRICAL_PINTYPE::PT_INPUT;
+    case CADSTAR_PIN_TYPE::PIN_INPUT:              return ELECTRICAL_PINTYPE::PT_INPUT;
     case CADSTAR_PIN_TYPE::OUTPUT_OR:          return ELECTRICAL_PINTYPE::PT_OPENCOLLECTOR;
     case CADSTAR_PIN_TYPE::OUTPUT_NOT_OR:      return ELECTRICAL_PINTYPE::PT_OUTPUT;
     case CADSTAR_PIN_TYPE::OUTPUT_NOT_NORM_OR: return ELECTRICAL_PINTYPE::PT_OUTPUT;
@@ -3300,7 +3307,7 @@ void CADSTAR_SCH_ARCHIVE_LOADER::fixUpLibraryPins( LIB_SYMBOL* aSymbolToFix, int
         }
     }
 
-    for( SCH_PIN* pin : aSymbolToFix->GetPins( aGateNumber, 0 ) )
+    for( SCH_PIN* pin : aSymbolToFix->GetGraphicalPins( aGateNumber, 0 ) )
     {
         auto setPinOrientation =
                 [&]( const EDA_ANGLE& aAngle )

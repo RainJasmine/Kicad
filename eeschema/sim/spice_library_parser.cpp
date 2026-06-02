@@ -24,6 +24,7 @@
 
 #include "sim/spice_library_parser.h"
 
+#include <stdexcept>
 #include <utility>
 
 #include <thread_pool.h>
@@ -32,6 +33,7 @@
 #include <sim/spice_grammar.h>
 #include <sim/sim_model_spice.h>
 #include <richio.h>
+#include <wx/strconv.h>
 
 #include <pegtl.hpp>
 #include <pegtl/contrib/parse_tree.hpp>
@@ -65,8 +67,10 @@ void SPICE_LIBRARY_PARSER::parseFile( const wxString &aFilePath, REPORTER& aRepo
 {
     try
     {
-        tao::pegtl::string_input<> in( SafeReadFile( aFilePath, wxS( "r" ) ).ToStdString(),
-                                       aFilePath.ToStdString() );
+        std::string fileContents = SafeReadFile( aFilePath, wxS( "r" ) ).ToStdString( wxConvUTF8 );
+        std::string filePath = aFilePath.ToStdString( wxConvUTF8 );
+
+        tao::pegtl::string_input<> in( fileContents, filePath );
         auto root = tao::pegtl::parse_tree::parse<SIM_LIBRARY_SPICE_PARSER::libraryGrammar,
                                                   SIM_LIBRARY_SPICE_PARSER::librarySelector,
                                                   tao::pegtl::nothing,
@@ -109,6 +113,12 @@ void SPICE_LIBRARY_PARSER::parseFile( const wxString &aFilePath, REPORTER& aRepo
     {
         aReporter.Report( e.what(), RPT_SEVERITY_ERROR );
     }
+    catch( const std::out_of_range& e )
+    {
+        aReporter.Report( wxString::Format( _( "Error parsing SPICE library '%s': %s" ),
+                                            aFilePath, e.what() ),
+                          RPT_SEVERITY_ERROR );
+    }
 }
 
 
@@ -140,11 +150,10 @@ void SPICE_LIBRARY_PARSER::ReadFile( const wxString& aFilePath, REPORTER& aRepor
     // Read all self-contained models in parallel
     thread_pool& tp = GetKiCadThreadPool();
 
-    auto results = tp.parallelize_loop( modelQueue.size(),
-                            [&]( const int a, const int b )
+    auto results = tp.submit_loop( 0, modelQueue.size(),
+                            [&]( const int ii )
                             {
-                                for( int ii = a; ii < b; ++ii )
-                                    createModel( ii, true );
+                                createModel( ii, true );
                             } );
     results.wait();
 

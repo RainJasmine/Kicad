@@ -24,12 +24,16 @@
 #ifndef STRING_UTILS_H
 #define STRING_UTILS_H
 
+#include <algorithm>
 #include <string>
 #include <vector>
+
 #include <wx/string.h>
 #include <wx/filename.h>
 
 #include <kicommon.h>
+
+class PROJECT;
 
 void ConvertMarkdown2Html( const wxString& aMarkdownInput, wxString& aHtmlOutput );
 
@@ -197,7 +201,29 @@ KICOMMON_API wxString GetISO8601CurrentDateTime();
  *         than \a aString2.
  */
 KICOMMON_API int StrNumCmp( const wxString& aString1, const wxString& aString2,
-                           bool aIgnoreCase = false );
+                            bool aIgnoreCase = false );
+
+
+enum class CASE_SENSITIVITY
+{
+    SENSITIVE,
+    INSENSITIVE
+};
+
+
+/**
+ * Sort a container of wxString objects, in place, using the StrNumCmp() function.
+ */
+template <typename T>
+inline void StrNumSort( T& aList, CASE_SENSITIVITY aCaseSensitivity )
+{
+    std::sort( aList.begin(), aList.end(),
+               [aCaseSensitivity]( const wxString& lhs, const wxString& rhs )
+               {
+                   return StrNumCmp( lhs, rhs, aCaseSensitivity == CASE_SENSITIVITY::INSENSITIVE ) < 0;
+               } );
+}
+
 
 /**
  * Compare a string against wild card (* and ?) pattern using the usual rules.
@@ -262,7 +288,7 @@ KICOMMON_API bool IsFullFileNameValid( const wxString& aFullFilename );
  * @param aReplaceChar (if not 0) is the replacement char.
  * @return true if any characters have been replaced in \a aName.
  */
-KICOMMON_API bool ReplaceIllegalFileNameChars( std::string* aName, int aReplaceChar = 0 );
+KICOMMON_API bool ReplaceIllegalFileNameChars( std::string& aName, int aReplaceChar = 0 );
 KICOMMON_API bool  ReplaceIllegalFileNameChars( wxString& aName, int aReplaceChar = 0 );
 
 
@@ -452,5 +478,66 @@ KICOMMON_API wxString  From_UTF8( const char* cstring );
  */
 KICOMMON_API wxString NormalizeFileUri( const wxString& aFileUri );
 
+/**
+ * Convert a file path to a file:// URI.
+ *
+ * Detects local file paths (absolute, relative, UNC, or containing KiCad
+ * variables) and prepends the appropriate file:// scheme.  Only converts
+ * when the resolved path points to an existing file or directory.
+ * Strings that already have a URI scheme are returned unchanged.
+ *
+ * @param aPath     a file path or URI string.
+ * @param aProject  optional project for variable resolution and relative path handling.
+ * @return file:// URI if input is a path to an existing file, otherwise unchanged.
+ */
+KICOMMON_API wxString ConvertPathToFileUri( const wxString& aPath, const PROJECT* aProject = nullptr );
+
+/**
+ * Expand stacked pin notation like [1,2,3], [1-4], [A1-A4], or [AA1-AA3,AB4,CD12-CD14]
+ * into individual pin numbers, supporting both numeric and alphanumeric pin prefixes.
+ *
+ * Examples:
+ *   "[1,2,3]" -> {"1", "2", "3"}
+ *   "[1-4]" -> {"1", "2", "3", "4"}
+ *   "[A1-A3]" -> {"A1", "A2", "A3"}
+ *   "[AA1-AA3,AB4]" -> {"AA1", "AA2", "AA3", "AB4"}
+ *   "5" -> {"5"} (non-bracketed pins returned as-is)
+ *
+ * @param aPinName is the pin name to expand (may or may not use stacked notation)
+ * @param aValid is optionally set to indicate whether the notation was valid
+ * @return vector of individual pin numbers
+ */
+KICOMMON_API std::vector<wxString> ExpandStackedPinNotation( const wxString& aPinName,
+                                                            bool* aValid = nullptr );
+
+/**
+ * Count the number of pins represented by stacked pin notation without allocating strings.
+ *
+ * This is a fast alternative to ExpandStackedPinNotation().size() for cases where only
+ * the count is needed.
+ *
+ * @param aPinName is the pin name to count (may or may not use stacked notation)
+ * @param aValid is optionally set to indicate whether the notation was valid
+ * @return count of individual pins represented (always >= 1)
+ */
+KICOMMON_API int CountStackedPinNotation( const wxString& aPinName, bool* aValid = nullptr );
+
+
+KICOMMON_API wxString GetDefaultVariantName();
+
+KICOMMON_API int SortVariantNames( const wxString& aLhs, const wxString& aRhs );
+
+struct LOAD_MESSAGE;
+
+/**
+ * Parse library load error messages, extracting user-facing information while
+ * stripping internal code locations.
+ *
+ * @param aErrorString is the raw error string from GetLibraryLoadErrors()
+ * @param aSeverity is the severity to assign to all extracted messages
+ * @return vector of LOAD_MESSAGE with cleaned error text
+ */
+KICOMMON_API std::vector<LOAD_MESSAGE> ExtractLibraryLoadErrors( const wxString& aErrorString,
+                                                                  int aSeverity );
 
 #endif  // STRING_UTILS_H

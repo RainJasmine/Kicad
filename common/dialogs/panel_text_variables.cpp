@@ -32,7 +32,6 @@
 #include <grid_tricks.h>
 #include <widgets/std_bitmap_button.h>
 #include <widgets/grid_text_helpers.h>
-#include <widgets/wx_grid_autosizer.h>
 
 
 enum TEXT_VAR_GRID_COLUMNS
@@ -66,8 +65,7 @@ PANEL_TEXT_VARIABLES::PANEL_TEXT_VARIABLES( wxWindow* aParent, PROJECT* aProject
     m_TextVars->SetSelectionMode( wxGrid::wxGridSelectionModes::wxGridSelectRows );
 
     // wxFormBuilder doesn't include this event...
-    m_TextVars->Connect( wxEVT_GRID_CELL_CHANGING,
-                         wxGridEventHandler( PANEL_TEXT_VARIABLES::OnGridCellChanging ),
+    m_TextVars->Connect( wxEVT_GRID_CELL_CHANGING, wxGridEventHandler( PANEL_TEXT_VARIABLES::OnGridCellChanging ),
                          nullptr, this );
 
     Bind( wxEVT_IDLE,
@@ -85,12 +83,7 @@ PANEL_TEXT_VARIABLES::PANEL_TEXT_VARIABLES( wxWindow* aParent, PROJECT* aProject
               }
           } );
 
-    m_autoSizer = std::make_unique<WX_GRID_AUTOSIZER>( *m_TextVars,
-                                                       WX_GRID_AUTOSIZER::COL_MIN_WIDTHS{
-                                                               { TV_NAME_COL, 72 },
-                                                               { TV_VALUE_COL, 120 },
-                                                       },
-                                                       TV_VALUE_COL );
+    m_TextVars->SetupColumnAutosizer( TV_VALUE_COL );
 }
 
 
@@ -204,31 +197,22 @@ void PANEL_TEXT_VARIABLES::OnGridCellChanging( wxGridEvent& event )
 
 void PANEL_TEXT_VARIABLES::OnAddTextVar( wxCommandEvent& event )
 {
-    if( !m_TextVars->CommitPendingChanges() )
-        return;
-
-    AppendTextVar( wxEmptyString, wxEmptyString );
-
-    m_TextVars->MakeCellVisible( m_TextVars->GetNumberRows() - 1, TV_NAME_COL );
-    m_TextVars->SetGridCursor( m_TextVars->GetNumberRows() - 1, TV_NAME_COL );
-
-    m_TextVars->EnableCellEditControl( true );
-    m_TextVars->ShowCellEditControl();
+    m_TextVars->OnAddRow(
+            [&]() -> std::pair<int, int>
+            {
+                AppendTextVar( wxEmptyString, wxEmptyString );
+                return { m_TextVars->GetNumberRows() - 1, TV_NAME_COL };
+            } );
 }
 
 
 void PANEL_TEXT_VARIABLES::OnRemoveTextVar( wxCommandEvent& event )
 {
-    int curRow = m_TextVars->GetGridCursorRow();
-
-    if( curRow < 0 || m_TextVars->GetNumberRows() <= curRow )
-        return;
-
-    m_TextVars->CommitPendingChanges( true /* silent mode; we don't care if it's valid */ );
-    m_TextVars->DeleteRows( curRow, 1 );
-
-    m_TextVars->MakeCellVisible( std::max( 0, curRow-1 ), m_TextVars->GetGridCursorCol() );
-    m_TextVars->SetGridCursor( std::max( 0, curRow-1 ), m_TextVars->GetGridCursorCol() );
+    m_TextVars->OnDeleteRows(
+            [&]( int row )
+            {
+                m_TextVars->DeleteRows( row, 1 );
+            } );
 }
 
 
@@ -256,6 +240,8 @@ void PANEL_TEXT_VARIABLES::OnUpdateUI( wxUpdateUIEvent& event )
         m_TextVars->EnableCellEditControl( true );
         m_TextVars->ShowCellEditControl();
     }
+
+    event.Skip();
 }
 
 

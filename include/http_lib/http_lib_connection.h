@@ -18,8 +18,7 @@
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef KICAD_HTTP_LIB_CONNECTION_H
-#define KICAD_HTTP_LIB_CONNECTION_H
+#pragma once
 
 #include <any>
 #include <boost/algorithm/string.hpp>
@@ -36,16 +35,15 @@ public:
     static const long DEFAULT_TIMEOUT = 10;
 
     HTTP_LIB_CONNECTION( const HTTP_LIB_SOURCE& aSource, bool aTestConnectionNow );
+    virtual ~HTTP_LIB_CONNECTION() = default;
 
-    ~HTTP_LIB_CONNECTION();
-
-    bool IsValidEndpoint() const;
+    bool IsValidEndpoint() const { return m_endpointValid; }
 
     /**
      * Retrieve a single part with full details from the HTTP library.
      *
-     * @param aPk is the primary key of the part
-     * @param aResult will contain the part if one was found
+     * @param aPartID is the unique ID of the part
+     * @param aFetchedPart will contain the part if one was found
      * @return true if aResult was filled; false otherwise
      */
     bool SelectOne( const std::string& aPartID, HTTP_LIB_PART& aFetchedPart );
@@ -53,8 +51,8 @@ public:
     /**
      * Retrieve all parts from a specific category from the HTTP library.
      *
-     * @param aPk is the primary key of the category
-     * @param aResults will be filled with all parts in that category
+     * @param aCategory is the category to fetch parts from
+     * @param aParts will be filled with all parts in that category
      * @return true if the query succeeded and at least one part was found, false otherwise
      */
     bool SelectAll( const HTTP_LIB_CATEGORY& aCategory, std::vector<HTTP_LIB_PART>& aParts );
@@ -71,7 +69,7 @@ public:
            return "";
     }
 
-    auto& getCachedParts() { return m_cache; }
+    auto& GetCachedParts() { return m_cache; }
 
 private:
     // This is clunky but at the moment the only way to free the pointer after use without
@@ -89,13 +87,11 @@ private:
         return aCurl;
     }
 
-    bool ValidateHTTPLibraryEndpoints();
+    bool validateHttpLibraryEndpoints();
 
     bool syncCategories();
 
     bool checkServerResponse( std::unique_ptr<KICAD_CURL_EASY>& aCurl );
-
-    bool boolFromString( const std::any& aVal, bool aDefaultValue = false );
 
     /**
      * HTTP response status codes indicate whether a specific HTTP request has been
@@ -112,27 +108,18 @@ private:
      */
     wxString httpErrorCodeDescription( uint16_t aHttpCode );
 
+private:
     HTTP_LIB_SOURCE m_source;
+    bool            m_endpointValid = false;
+    std::string     m_lastError;
+
+    std::vector<HTTP_LIB_CATEGORY>     m_categories;
+    std::map<std::string, std::string> m_categoryDescriptions;
+    std::map<std::string, std::string> m_parts;
 
     //          part.id     part
     std::map<std::string, HTTP_LIB_PART> m_cachedParts;
 
     //        part.name               part.id     category.id
     std::map<std::string, std::tuple<std::string, std::string>> m_cache;
-
-    bool m_endpointValid = false;
-
-    std::string m_lastError;
-
-    std::vector<HTTP_LIB_CATEGORY>     m_categories;
-    std::map<std::string, std::string> m_categoryDescriptions;
-
-    std::map<std::string, std::string> m_parts;
-
-    const std::string http_endpoint_categories = "categories";
-    const std::string http_endpoint_parts = "parts";
-    const std::string http_endpoint_settings = "settings";
-    const std::string http_endpoint_auth = "authentication";
 };
-
-#endif //KICAD_HTTP_LIB_CONNECTION_H

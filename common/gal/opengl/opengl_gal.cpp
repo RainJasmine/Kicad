@@ -26,12 +26,15 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include <kicad_gl/kiglu.h> // Must be included first
+#include <kicad_gl/gl_utils.h>
+
 #include <advanced_config.h>
 #include <build_version.h>
 #include <gal/opengl/opengl_gal.h>
 #include <gal/opengl/utils.h>
 #include <gal/definitions.h>
-#include <gal/opengl/gl_context_mgr.h>
+#include <kicad_gl/gl_context_mgr.h>
 #include <geometry/shape_poly_set.h>
 #include <math/vector2wx.h>
 #include <bitmap_base.h>
@@ -40,16 +43,16 @@
 #include <pgm_base.h>
 #include <trace_helpers.h>
 
+#include <wx/app.h>
 #include <wx/frame.h>
 
 #include <macros.h>
+#include <optional>
 #include <geometry/geometry_utils.h>
 #include <thread_pool.h>
 
 #include <core/profile.h>
 #include <trace_helpers.h>
-
-#include <gal/opengl/gl_utils.h>
 
 #include <functional>
 #include <limits>
@@ -68,6 +71,9 @@ using namespace KIGFX;
 using namespace KIGFX::BUILTIN_FONT;
 
 static void InitTesselatorCallbacks( GLUtesselator* aTesselator );
+
+// Trace mask for XOR/difference mode debugging
+static const wxChar* const traceGalXorMode = wxT( "KICAD_GAL_XOR_MODE" );
 
 static wxGLAttributes getGLAttribs()
 {
@@ -348,7 +354,7 @@ OPENGL_GAL::OPENGL_GAL( const KIGFX::VC_SETTINGS& aVcSettings, GAL_DISPLAY_OPTIO
     m_bitmapCache = std::make_unique<GL_BITMAP_CACHE>();
 
     m_compositor = new OPENGL_COMPOSITOR;
-    m_compositor->SetAntialiasingMode( m_options.gl_antialiasing_mode );
+    m_compositor->SetAntialiasingMode( m_options.antialiasing_mode );
 
     // Initialize the flags
     m_isFramebufferInitialized = false;
@@ -407,64 +413,77 @@ OPENGL_GAL::OPENGL_GAL( const KIGFX::VC_SETTINGS& aVcSettings, GAL_DISPLAY_OPTIO
     SetTarget( TARGET_NONCACHED );
 
     // Avoid uninitialized variables:
-    ufm_worldPixelSize = 1;
-    ufm_screenPixelSize = 1;
-    ufm_pixelSizeMultiplier = 1;
-    ufm_antialiasingOffset = 1;
+    ufm_worldPixelSize = -1;
+    ufm_screenPixelSize = -1;
+    ufm_pixelSizeMultiplier = -1;
+    ufm_antialiasingOffset = -1;
+    ufm_minLinePixelWidth = -1;
+    ufm_fontTexture = -1;
+    ufm_fontTextureWidth = -1;
     m_swapInterval  = 0;
 }
 
 
 OPENGL_GAL::~OPENGL_GAL()
 {
-
     GL_CONTEXT_MANAGER* gl_mgr = Pgm().GetGLContextManager();
-    gl_mgr->LockCtx( m_glPrivContext, this );
+    wxASSERT( gl_mgr );
 
-    --m_instanceCounter;
-    glFlush();
-    gluDeleteTess( m_tesselator );
-    ClearCache();
-
-    delete m_compositor;
-
-    if( m_isInitialized )
+    if( gl_mgr )
     {
-        delete m_cachedManager;
-        delete m_nonCachedManager;
-        delete m_overlayManager;
-        delete m_tempManager;
-    }
+        gl_mgr->LockCtx( m_glPrivContext, this );
 
-    gl_mgr->UnlockCtx( m_glPrivContext );
+        --m_instanceCounter;
+        if( m_isInitialized )
+            glFlush();
+        gluDeleteTess( m_tesselator );
+        ClearCache();
 
-    // If it was the main context, then it will be deleted
-    // when the last OpenGL GAL instance is destroyed (a few lines below)
-    if( m_glPrivContext != m_glMainContext )
-        gl_mgr->DestroyCtx( m_glPrivContext );
+        delete m_compositor;
 
-    delete m_shader;
-
-    // Are we destroying the last GAL instance?
-    if( m_instanceCounter == 0 )
-    {
-        gl_mgr->LockCtx( m_glMainContext, this );
-
-        if( m_isBitmapFontLoaded )
+        if( m_isInitialized )
         {
-            glDeleteTextures( 1, &g_fontTexture );
-            m_isBitmapFontLoaded = false;
+            delete m_cachedManager;
+            delete m_nonCachedManager;
+            delete m_overlayManager;
+            delete m_tempManager;
         }
 
-        gl_mgr->UnlockCtx( m_glMainContext );
-        gl_mgr->DestroyCtx( m_glMainContext );
-        m_glMainContext = nullptr;
+        gl_mgr->UnlockCtx( m_glPrivContext );
+
+        // If it was the main context, then it will be deleted
+        // when the last OpenGL GAL instance is destroyed (a few lines below)
+        if( m_glPrivContext != m_glMainContext )
+            gl_mgr->DestroyCtx( m_glPrivContext );
+
+        delete m_shader;
+
+        // Are we destroying the last GAL instance?
+        if( m_instanceCounter == 0 )
+        {
+            gl_mgr->LockCtx( m_glMainContext, this );
+
+            if( m_isBitmapFontLoaded )
+            {
+                glDeleteTextures( 1, &g_fontTexture );
+                m_isBitmapFontLoaded = false;
+            }
+
+            gl_mgr->UnlockCtx( m_glMainContext );
+            gl_mgr->DestroyCtx( m_glMainContext );
+            m_glMainContext = nullptr;
+        }
     }
 }
 
 
 wxString OPENGL_GAL::CheckFeatures( GAL_DISPLAY_OPTIONS& aOptions )
 {
+    static std::optional<wxString> cached;
+
+    if( cached.has_value() )
+        return *cached;
+
     wxString retVal = wxEmptyString;
 
     wxFrame* testFrame = new wxFrame( nullptr, wxID_ANY, wxT( "" ), wxDefaultPosition,
@@ -480,6 +499,13 @@ wxString OPENGL_GAL::CheckFeatures( GAL_DISPLAY_OPTIONS& aOptions )
         testFrame->Raise();
         testFrame->Show();
 
+#ifdef __WXGTK__
+        // On GTK, Show() only queues realization. The GDK drawing window
+        // needed by SetCurrent() may not exist yet. Yield to let the event
+        // loop process the realize signal before we try to lock the context.
+        wxYield();
+#endif
+
         GAL_CONTEXT_LOCKER lock( opengl_gal );
         opengl_gal->init();
     }
@@ -492,6 +518,7 @@ wxString OPENGL_GAL::CheckFeatures( GAL_DISPLAY_OPTIONS& aOptions )
     delete opengl_gal;
     delete testFrame;
 
+    cached = retVal;
     return retVal;
 }
 
@@ -510,9 +537,9 @@ bool OPENGL_GAL::updatedGalDisplayOptions( const GAL_DISPLAY_OPTIONS& aOptions )
 
     bool refresh = false;
 
-    if( m_options.gl_antialiasing_mode != m_compositor->GetAntialiasingMode() )
+    if( m_options.antialiasing_mode != m_compositor->GetAntialiasingMode() )
     {
-        m_compositor->SetAntialiasingMode( m_options.gl_antialiasing_mode );
+        m_compositor->SetAntialiasingMode( m_options.antialiasing_mode );
         m_isFramebufferInitialized = false;
         refresh = true;
     }
@@ -666,14 +693,6 @@ void OPENGL_GAL::BeginDrawing()
             glActiveTexture( GL_TEXTURE0 );
         }
 
-        // Set shader parameter
-        GLint ufm_fontTexture = m_shader->AddParameter( "u_fontTexture" );
-        GLint ufm_fontTextureWidth = m_shader->AddParameter( "u_fontTextureWidth" );
-        ufm_worldPixelSize = m_shader->AddParameter( "u_worldPixelSize" );
-        ufm_screenPixelSize = m_shader->AddParameter( "u_screenPixelSize" );
-        ufm_pixelSizeMultiplier = m_shader->AddParameter( "u_pixelSizeMultiplier" );
-        ufm_antialiasingOffset = m_shader->AddParameter( "u_antialiasingOffset" );
-
         m_shader->Use();
         m_shader->SetParameter( ufm_fontTexture, (int) FONT_TEXTURE_UNIT );
         m_shader->SetParameter( ufm_fontTextureWidth, (int) font_image.width );
@@ -694,6 +713,7 @@ void OPENGL_GAL::BeginDrawing()
     renderingOffset.x *= screenPixelSize.x;
     renderingOffset.y *= screenPixelSize.y;
     m_shader->SetParameter( ufm_antialiasingOffset, renderingOffset );
+    m_shader->SetParameter( ufm_minLinePixelWidth, GetMinLineWidth() );
     m_shader->Deactivate();
 
     // Something between BeginDrawing and EndDrawing seems to depend on
@@ -708,6 +728,18 @@ void OPENGL_GAL::BeginDrawing()
     wxLogTrace( traceGalProfile, wxT( "OPENGL_GAL::beginDrawing(): %.1f ms" ),
                 totalRealTime.msecs() );
 #endif /* KICAD_GAL_PROFILE */
+}
+
+void OPENGL_GAL::SetMinLineWidth( float aLineWidth )
+{
+    GAL::SetMinLineWidth( aLineWidth );
+
+    if( m_shader && ufm_minLinePixelWidth != -1 )
+    {
+        m_shader->Use();
+        m_shader->SetParameter( ufm_minLinePixelWidth, aLineWidth );
+        m_shader->Deactivate();
+    }
 }
 
 
@@ -765,9 +797,11 @@ void OPENGL_GAL::EndDrawing()
 
     cntTotal.Stop();
 
-    KI_TRACE( traceGalProfile, "Timing: %s %s %s %s %s %s\n", cntTotal.to_string(),
+#ifdef KICAD_GAL_PROFILE
+    wxLogTrace( traceGalProfile, "Timing: %s %s %s %s %s %s", cntTotal.to_string(),
               cntEndCached.to_string(), cntEndNoncached.to_string(), cntEndOverlay.to_string(),
               cntComposite.to_string(), cntSwap.to_string() );
+#endif
 }
 
 
@@ -777,7 +811,12 @@ void OPENGL_GAL::LockContext( int aClientCookie )
     m_isContextLocked = true;
     m_lockClientCookie = aClientCookie;
 
-    Pgm().GetGLContextManager()->LockCtx( m_glPrivContext, this );
+    GL_CONTEXT_MANAGER* mgr = Pgm().GetGLContextManager();
+
+    if( !mgr )
+        return;
+
+    mgr->LockCtx( m_glPrivContext, this );
 }
 
 
@@ -792,7 +831,12 @@ void OPENGL_GAL::UnlockContext( int aClientCookie )
 
     m_isContextLocked = false;
 
-    Pgm().GetGLContextManager()->UnlockCtx( m_glPrivContext );
+    GL_CONTEXT_MANAGER* mgr = Pgm().GetGLContextManager();
+
+    if( !mgr )
+        return;
+
+    mgr->UnlockCtx( m_glPrivContext );
 }
 
 
@@ -898,6 +942,25 @@ void OPENGL_GAL::drawSegment( const VECTOR2D& aStartPoint, const VECTOR2D& aEndP
 void OPENGL_GAL::DrawCircle( const VECTOR2D& aCenterPoint, double aRadius )
 {
     drawCircle( aCenterPoint, aRadius );
+}
+
+
+void OPENGL_GAL::DrawHoleWall( const VECTOR2D& aCenterPoint, double aHoleRadius,
+                               double aWallWidth )
+{
+    if( m_isFillEnabled )
+    {
+        m_currentManager->Color( m_fillColor.r, m_fillColor.g, m_fillColor.b, m_fillColor.a );
+
+        m_currentManager->Shader( SHADER_HOLE_WALL, 1.0, aHoleRadius, aWallWidth );
+        m_currentManager->Vertex( aCenterPoint.x, aCenterPoint.y, m_layerDepth );
+
+        m_currentManager->Shader( SHADER_HOLE_WALL, 2.0, aHoleRadius, aWallWidth );
+        m_currentManager->Vertex( aCenterPoint.x, aCenterPoint.y, m_layerDepth );
+
+        m_currentManager->Shader( SHADER_HOLE_WALL, 3.0, aHoleRadius, aWallWidth );
+        m_currentManager->Vertex( aCenterPoint.x, aCenterPoint.y, m_layerDepth );
+    }
 }
 
 
@@ -1522,6 +1585,12 @@ void OPENGL_GAL::DrawBitmap( const BITMAP_BASE& aBitmap, double alphaBlend )
     if( !glIsTexture( texture_id ) ) // ensure the bitmap texture is still valid
         return;
 
+    GLboolean depthMask = GL_TRUE;
+    glGetBooleanv( GL_DEPTH_WRITEMASK, &depthMask );
+
+    if( alpha < 1.0f )
+        glDepthMask( GL_FALSE );
+
     glDepthFunc( GL_ALWAYS );
 
     glAlphaFunc( GL_GREATER, 0.01f );
@@ -1574,6 +1643,8 @@ void OPENGL_GAL::DrawBitmap( const BITMAP_BASE& aBitmap, double alphaBlend )
     glMatrixMode( GL_MODELVIEW );
 
     glDisable( GL_ALPHA_TEST );
+
+    glDepthMask( depthMask );
 
     glDepthFunc( GL_LESS );
 }
@@ -1890,6 +1961,7 @@ void OPENGL_GAL::DrawGrid()
             glDisable( GL_STENCIL_TEST );
     }
 
+    m_nonCachedManager->EnableDepthTest( true );
     glEnable( GL_DEPTH_TEST );
     glEnable( GL_TEXTURE_2D );
 }
@@ -2119,33 +2191,64 @@ bool OPENGL_GAL::HasTarget( RENDER_TARGET aTarget )
 
 void OPENGL_GAL::StartDiffLayer()
 {
+    wxLogTrace( traceGalXorMode, wxT( "OPENGL_GAL::StartDiffLayer() called" ) );
+    wxLogTrace( traceGalXorMode, wxT( "StartDiffLayer(): m_tempBuffer=%u" ), m_tempBuffer );
+
     m_currentManager->EndDrawing();
 
     if( m_tempBuffer )
     {
+        wxLogTrace( traceGalXorMode, wxT( "StartDiffLayer(): setting target to TARGET_TEMP" ) );
         SetTarget( TARGET_TEMP );
         ClearTarget( TARGET_TEMP );
+
+        // ClearTarget restores the previous compositor buffer, so we need to explicitly
+        // set the compositor to render to m_tempBuffer for the layer drawing
+        m_compositor->SetBuffer( m_tempBuffer );
+        wxLogTrace( traceGalXorMode, wxT( "StartDiffLayer(): TARGET_TEMP set and cleared, compositor buffer=%u" ),
+                    m_tempBuffer );
+    }
+    else
+    {
+        wxLogTrace( traceGalXorMode, wxT( "StartDiffLayer(): WARNING - no temp buffer!" ) );
     }
 }
 
 
 void OPENGL_GAL::EndDiffLayer()
 {
+    wxLogTrace( traceGalXorMode, wxT( "OPENGL_GAL::EndDiffLayer() called" ) );
+    wxLogTrace( traceGalXorMode, wxT( "EndDiffLayer(): m_tempBuffer=%u, m_mainBuffer=%u" ),
+                m_tempBuffer, m_mainBuffer );
+
     if( m_tempBuffer )
     {
-        glBlendEquation( GL_MAX );
-        m_currentManager->EndDrawing();
-        glBlendEquation( GL_FUNC_ADD );
+        wxLogTrace( traceGalXorMode, wxT( "EndDiffLayer(): using temp buffer path" ) );
 
-        m_compositor->DrawBuffer( m_tempBuffer, m_mainBuffer );
+        // End drawing to the temp buffer
+        m_currentManager->EndDrawing();
+
+        wxLogTrace( traceGalXorMode, wxT( "EndDiffLayer(): calling DrawBufferDifference" ) );
+
+        // Use difference compositing for true XOR/difference mode:
+        // - Where only one layer has content: shows that layer's color
+        // - Where both layers overlap with identical content: cancels out (black)
+        // - Where layers overlap with different content: shows the absolute difference
+        m_compositor->DrawBufferDifference( m_tempBuffer, m_mainBuffer );
+
+        wxLogTrace( traceGalXorMode, wxT( "EndDiffLayer(): DrawBufferDifference returned" ) );
     }
     else
     {
+        wxLogTrace( traceGalXorMode, wxT( "EndDiffLayer(): NO temp buffer, using fallback path" ) );
+
         // Fall back to imperfect alpha blending on single buffer
         glBlendFunc( GL_SRC_ALPHA, GL_ONE );
         m_currentManager->EndDrawing();
         glBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
     }
+
+    wxLogTrace( traceGalXorMode, wxT( "OPENGL_GAL::EndDiffLayer() complete" ) );
 }
 
 
@@ -2644,13 +2747,26 @@ void OPENGL_GAL::blitCursor()
 
     m_compositor->SetBuffer( OPENGL_COMPOSITOR::DIRECT_RENDERING );
 
-    const int cursorSize = m_fullscreenCursor ? 8000 : 80;
+    VECTOR2D cursorBegin;
+    VECTOR2D cursorEnd;
+    VECTOR2D cursorCenter = m_cursorPosition;
 
-    VECTOR2D cursorBegin = m_cursorPosition - cursorSize / ( 2 * m_worldScale );
-    VECTOR2D cursorEnd = m_cursorPosition + cursorSize / ( 2 * m_worldScale );
-    VECTOR2D cursorCenter = ( cursorBegin + cursorEnd ) / 2;
+    if( m_crossHairMode == CROSS_HAIR_MODE::FULLSCREEN_CROSS )
+    {
+        cursorBegin = m_screenWorldMatrix * VECTOR2D( 0.0, 0.0 );
+        cursorEnd = m_screenWorldMatrix * VECTOR2D( m_screenSize );
+    }
+    else if( m_crossHairMode == CROSS_HAIR_MODE::SMALL_CROSS )
+    {
+        const int cursorSize = 80;
+        cursorBegin = m_cursorPosition - cursorSize / ( 2 * m_worldScale );
+        cursorEnd = m_cursorPosition + cursorSize / ( 2 * m_worldScale );
+    }
 
     const COLOR4D color = getCursorColor();
+
+    GLboolean depthTestEnabled = glIsEnabled( GL_DEPTH_TEST );
+    glDisable( GL_DEPTH_TEST );
 
     glActiveTexture( GL_TEXTURE0 );
     glDisable( GL_TEXTURE_2D );
@@ -2660,13 +2776,57 @@ void OPENGL_GAL::blitCursor()
     glLineWidth( 1.0 );
     glColor4d( color.r, color.g, color.b, color.a );
 
-    glBegin( GL_LINES );
-    glVertex2d( cursorCenter.x, cursorBegin.y );
-    glVertex2d( cursorCenter.x, cursorEnd.y );
+    glMatrixMode( GL_PROJECTION );
+    glPushMatrix();
+    glTranslated( 0, 0, -0.5 );
 
-    glVertex2d( cursorBegin.x, cursorCenter.y );
-    glVertex2d( cursorEnd.x, cursorCenter.y );
+    glBegin( GL_LINES );
+
+    if( m_crossHairMode == CROSS_HAIR_MODE::FULLSCREEN_DIAGONAL )
+    {
+        // Calculate screen bounds in world coordinates
+        VECTOR2D screenTopLeft = m_screenWorldMatrix * VECTOR2D( 0.0, 0.0 );
+        VECTOR2D screenBottomRight = m_screenWorldMatrix * VECTOR2D( m_screenSize );
+
+        // For 45-degree lines passing through cursor position
+        // Line equation: y = x + (cy - cx) for positive slope
+        // Line equation: y = -x + (cy + cx) for negative slope
+        double cx = m_cursorPosition.x;
+        double cy = m_cursorPosition.y;
+
+        // Calculate intersections for positive slope diagonal (y = x + offset)
+        double offset1 = cy - cx;
+        VECTOR2D pos_start( screenTopLeft.x, screenTopLeft.x + offset1 );
+        VECTOR2D pos_end( screenBottomRight.x, screenBottomRight.x + offset1 );
+
+        // Draw positive slope diagonal
+        glVertex2d( pos_start.x, pos_start.y );
+        glVertex2d( pos_end.x, pos_end.y );
+
+        // Calculate intersections for negative slope diagonal (y = -x + offset)
+        double offset2 = cy + cx;
+        VECTOR2D neg_start( screenTopLeft.x, offset2 - screenTopLeft.x );
+        VECTOR2D neg_end( screenBottomRight.x, offset2 - screenBottomRight.x );
+
+        // Draw negative slope diagonal
+        glVertex2d( neg_start.x, neg_start.y );
+        glVertex2d( neg_end.x, neg_end.y );
+    }
+    else
+    {
+        glVertex2d( cursorCenter.x, cursorBegin.y );
+        glVertex2d( cursorCenter.x, cursorEnd.y );
+
+        glVertex2d( cursorBegin.x, cursorCenter.y );
+        glVertex2d( cursorEnd.x, cursorCenter.y );
+    }
+
     glEnd();
+
+    glPopMatrix();
+
+    if( depthTestEnabled )
+        glEnable( GL_DEPTH_TEST );
 }
 
 
@@ -2684,53 +2844,45 @@ unsigned int OPENGL_GAL::getNewGroupNumber()
 
 void OPENGL_GAL::init()
 {
-#ifndef KICAD_USE_EGL
-    wxASSERT( IsShownOnScreen() );
-#endif // KICAD_USE_EGL
-
     wxASSERT_MSG( m_isContextLocked, "This should only be called from within a locked context." );
 
     // Check correct initialization from the constructor
     if( m_tesselator == nullptr )
         throw std::runtime_error( "Could not create the tesselator" );
-    GLenum err = glewInit();
 
-#ifdef KICAD_USE_EGL
-    // TODO: better way to check when EGL is ready (init fails at "getString(GL_VERSION)")
-    for( int i = 0; i < 10; i++ )
-    {
-        if( GLEW_OK == err )
-            break;
+    SetOpenGLBackendInfo( GL_UTILS::DetectGLBackend( this ) );
 
-        std::this_thread::sleep_for( std::chrono::milliseconds( 250 ) );
-        err = glewInit();
-    }
+    int glVersion = gladLoaderLoadGL();
 
-#endif // KICAD_USE_EGL
+    if( glVersion == 0 )
+        throw std::runtime_error( "Failed to load OpenGL via loader" );
 
-    SetOpenGLInfo( (const char*) glGetString( GL_VENDOR ), (const char*) glGetString( GL_RENDERER ),
-                   (const char*) glGetString( GL_VERSION ) );
+    const char* vendor = (const char*) glGetString( GL_VENDOR );
+    const char* renderer = (const char*) glGetString( GL_RENDERER );
+    const char* version = (const char*) glGetString( GL_VERSION );
 
-    if( GLEW_OK != err )
-        throw std::runtime_error( (const char*) glewGetErrorString( err ) );
+    if( !version )
+        throw std::runtime_error( "No GL context is current (glGetString returned NULL)" );
+
+    SetOpenGLInfo( vendor, renderer, version );
 
     // Check the OpenGL version (minimum 2.1 is required)
-    if( !GLEW_VERSION_2_1 )
+    if( !GLAD_GL_VERSION_2_1 )
         throw std::runtime_error( "OpenGL 2.1 or higher is required!" );
 
 #if defined( __LINUX__ ) // calling enableGlDebug crashes opengl on some OS (OSX and some Windows)
 #ifdef DEBUG
-    if( GLEW_ARB_debug_output )
+    if( glDebugMessageCallback )
         enableGlDebug( true );
 #endif
 #endif
 
     // Framebuffers have to be supported
-    if( !GLEW_EXT_framebuffer_object )
+    if( !GLAD_GL_ARB_framebuffer_object )
         throw std::runtime_error( "Framebuffer objects are not supported!" );
 
     // Vertex buffer has to be supported
-    if( !GLEW_ARB_vertex_buffer_object )
+    if( !GLAD_GL_ARB_vertex_buffer_object )
         throw std::runtime_error( "Vertex buffer objects are not supported!" );
 
     // Prepare shaders
@@ -2751,6 +2903,9 @@ void OPENGL_GAL::init()
     if( !m_shader->IsLinked() && !m_shader->Link() )
         throw std::runtime_error( "Cannot link the shaders!" );
 
+    // Set up shader parameters after linking
+    setupShaderParameters();
+
     // Check if video card supports textures big enough to fit the font atlas
     int maxTextureSize;
     glGetIntegerv( GL_MAX_TEXTURE_SIZE, &maxTextureSize );
@@ -2762,7 +2917,12 @@ void OPENGL_GAL::init()
         throw std::runtime_error( "Requested texture size is not supported" );
     }
 
-    m_swapInterval = GL_UTILS::SetSwapInterval( -1 );
+#if wxCHECK_VERSION( 3, 3, 3 )
+    wxGLCanvas::SetSwapInterval( -1 );
+    m_swapInterval = wxGLCanvas::GetSwapInterval();
+#else
+    m_swapInterval = GL_UTILS::SetSwapInterval( this, -1 );
+#endif
 
     m_cachedManager = new VERTEX_MANAGER( true );
     m_nonCachedManager = new VERTEX_MANAGER( false );
@@ -2776,6 +2936,19 @@ void OPENGL_GAL::init()
     m_tempManager->SetShader( *m_shader );
 
     m_isInitialized = true;
+}
+
+
+void OPENGL_GAL::setupShaderParameters()
+{
+    // Initialize shader uniform parameter locations
+    ufm_fontTexture = m_shader->AddParameter( "u_fontTexture" );
+    ufm_fontTextureWidth = m_shader->AddParameter( "u_fontTextureWidth" );
+    ufm_worldPixelSize = m_shader->AddParameter( "u_worldPixelSize" );
+    ufm_screenPixelSize = m_shader->AddParameter( "u_screenPixelSize" );
+    ufm_pixelSizeMultiplier = m_shader->AddParameter( "u_pixelSizeMultiplier" );
+    ufm_antialiasingOffset = m_shader->AddParameter( "u_antialiasingOffset" );
+    ufm_minLinePixelWidth = m_shader->AddParameter( "u_minLinePixelWidth" );
 }
 
 

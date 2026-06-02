@@ -28,21 +28,27 @@
 #include "shapes3D/round_segment_3d.h"
 #include "shapes3D/layer_item_3d.h"
 #include "shapes3D/cylinder_3d.h"
+#include "shapes3D/frustum_3d.h"
 #include "shapes3D/triangle_3d.h"
+#include "shapes3D/dummy_block_3d.h"
 #include "shapes2D/layer_item_2d.h"
 #include "shapes2D/ring_2d.h"
 #include "shapes2D/polygon_2d.h"
+#include "shapes2D/triangle_2d.h"
 #include "shapes2D/filled_circle_2d.h"
 #include "shapes2D/round_segment_2d.h"
 #include "accelerators/bvh_pbrt.h"
 #include "3d_fastmath.h"
 #include "3d_math.h"
+#include "../3d_placeholder_utils.h"
 
 #include <board.h>
 #include <footprint.h>
-#include <fp_lib_table.h>
+#include <footprint_library_adapter.h>
 #include <eda_3d_viewer_frame.h>
 #include <project_pcb.h>
+#include <pad.h>
+#include <pcb_track.h>
 
 #include <base_units.h>
 #include <core/profile.h>        // To use GetRunningMicroSecs or another profiling utility
@@ -145,11 +151,21 @@ void RENDER_3D_RAYTRACE_BASE::setupMaterials()
     const float solderMask_transparency = TransparencyControl( solderMask_gray,
             1.0f - m_boardAdapter.m_SolderMaskColorTop.a );
 
+    // For darker solder mask colors, increase shininess for a more realistic appearance.
+    // Darker colors appear to have a sharper specular highlight in real life.
+    const float minSolderMaskShininess = 0.85f * 128.0f;
+    const float maxSolderMaskShininess = 512.0f;
+    const float solderMaskShininess = minSolderMaskShininess
+            + ( maxSolderMaskShininess - minSolderMaskShininess ) * ( 1.0f - solderMask_gray );
+
+    // Darker solder mask colors need lower reflection to prevent washed-out appearance
+    const float solderMaskReflection = glm::clamp( solderMask_gray * 0.3f, 0.02f, 0.16f );
+
     m_materials.m_SolderMask = BLINN_PHONG_MATERIAL(
             ConvertSRGBToLinear( (SFVEC3F) m_boardAdapter.m_SolderMaskColorTop ) * 0.10f,
             SFVEC3F( 0.0f, 0.0f, 0.0f ),
-            SFVEC3F( glm::clamp( solderMask_gray * 2.0f, 0.25f, 1.0f ) ), 0.85f * 128.0f,
-            solderMask_transparency, 0.16f );
+            SFVEC3F( glm::clamp( solderMask_gray * 2.0f, 0.30f, 1.0f ) ), solderMaskShininess,
+            solderMask_transparency, solderMaskReflection );
 
     m_materials.m_SolderMask.SetCastShadows( true );
     m_materials.m_SolderMask.SetRefractionRayCount( 1 );
@@ -293,6 +309,33 @@ void RENDER_3D_RAYTRACE_BASE::createItemsFromContainer( const BVH_CONTAINER_2D* 
                 for( const OBJECT_2D* hole2d : intersecting )
                     object2d_B->push_back( hole2d );
             }
+
+            // Clip counterbore/countersink cutouts from copper layers
+            // Front cutouts affect F_Cu, back cutouts affect B_Cu
+            auto clipCutouts = [this, &object2d_A, &object2d_B]( const BVH_CONTAINER_2D& cutouts )
+            {
+                if( !cutouts.GetList().empty() )
+                {
+                    CONST_LIST_OBJECT2D intersecting;
+                    cutouts.GetIntersectingObjects( object2d_A->GetBBox(), intersecting );
+
+                    for( const OBJECT_2D* cutout : intersecting )
+                        object2d_B->push_back( cutout );
+                }
+            };
+
+            if( aLayer_id == F_Cu )
+            {
+                clipCutouts( m_boardAdapter.GetFrontCounterboreCutouts() );
+                clipCutouts( m_boardAdapter.GetFrontCountersinkCutouts() );
+                clipCutouts( m_boardAdapter.GetTertiarydrillCutouts() );
+            }
+            else if( aLayer_id == B_Cu )
+            {
+                clipCutouts( m_boardAdapter.GetBackCounterboreCutouts() );
+                clipCutouts( m_boardAdapter.GetBackCountersinkCutouts() );
+                clipCutouts( m_boardAdapter.GetBackdrillCutouts() );
+            }
         }
 
         if( !m_antioutlineBoard2dObjects->GetList().empty() )
@@ -384,6 +427,7 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
 
     m_objectContainer.Clear();
     m_containerWithObjectsToDelete.Clear();
+    m_extrusionMaterials.clear();
 
     setupMaterials();
 
@@ -460,6 +504,60 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
                         {
                             if( object2d_A->Intersects( hole->GetBBox() ) )
                                 object2d_B->push_back( hole );
+                        }
+                    }
+
+                    // Subtract counterbore/countersink cutouts from board body
+                    auto addCutoutsFromContainer =
+                            [&]( const BVH_CONTAINER_2D& aContainer )
+                            {
+                                if( !aContainer.GetList().empty() )
+                                {
+                                    CONST_LIST_OBJECT2D intersecting;
+                                    aContainer.GetIntersectingObjects( object2d_A->GetBBox(),
+                                                                       intersecting );
+
+                                    for( const OBJECT_2D* cutout : intersecting )
+                                    {
+                                        if( object2d_A->Intersects( cutout->GetBBox() ) )
+                                            object2d_B->push_back( cutout );
+                                    }
+                                }
+                            };
+
+                    addCutoutsFromContainer( m_boardAdapter.GetFrontCounterboreCutouts() );
+                    addCutoutsFromContainer( m_boardAdapter.GetBackCounterboreCutouts() );
+                    addCutoutsFromContainer( m_boardAdapter.GetFrontCountersinkCutouts() );
+                    addCutoutsFromContainer( m_boardAdapter.GetBackCountersinkCutouts() );
+
+                    // Subtract backdrill holes (which are in layerHoleMap for F_Cu and B_Cu)
+                    const MAP_CONTAINER_2D_BASE& layerHolesMap = m_boardAdapter.GetLayerHoleMap();
+
+                    if( layerHolesMap.find( F_Cu ) != layerHolesMap.end() )
+                    {
+                        const BVH_CONTAINER_2D* holes2d = layerHolesMap.at( F_Cu );
+                        CONST_LIST_OBJECT2D     intersecting;
+
+                        holes2d->GetIntersectingObjects( object2d_A->GetBBox(), intersecting );
+
+                        for( const OBJECT_2D* hole2d : intersecting )
+                        {
+                            if( object2d_A->Intersects( hole2d->GetBBox() ) )
+                                object2d_B->push_back( hole2d );
+                        }
+                    }
+
+                    if( layerHolesMap.find( B_Cu ) != layerHolesMap.end() )
+                    {
+                        const BVH_CONTAINER_2D* holes2d = layerHolesMap.at( B_Cu );
+                        CONST_LIST_OBJECT2D     intersecting;
+
+                        holes2d->GetIntersectingObjects( object2d_A->GetBBox(), intersecting );
+
+                        for( const OBJECT_2D* hole2d : intersecting )
+                        {
+                            if( object2d_A->Intersects( hole2d->GetBBox() ) )
+                                object2d_B->push_back( hole2d );
                         }
                     }
 
@@ -557,6 +655,9 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
                         }
                     }
                 }
+
+                // Create plugs for backdrilled and post-machined areas
+                backfillPostMachine();
             }
         }
     }
@@ -978,25 +1079,533 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
 }
 
 
+void RENDER_3D_RAYTRACE_BASE::addCounterborePlating( const BOARD_ITEM& aSource,
+                                                     const SFVEC2F& aCenter,
+                                                     float aInnerRadius, float aDepth,
+                                                     float aSurfaceZ, bool aIsFront )
+{
+    const float platingThickness = m_boardAdapter.GetHolePlatingThickness()
+                                   * m_boardAdapter.BiuTo3dUnits();
+
+    if( platingThickness <= 0.0f || aInnerRadius <= 0.0f || aDepth <= 0.0f )
+        return;
+
+    const float outerRadius = aInnerRadius + platingThickness;
+    const float zOther = aIsFront ? ( aSurfaceZ - aDepth ) : ( aSurfaceZ + aDepth );
+    const float zMin = std::min( aSurfaceZ, zOther );
+    const float zMax = std::max( aSurfaceZ, zOther );
+
+    RING_2D* ring = new RING_2D( aCenter, aInnerRadius, outerRadius, aSource );
+    m_containerWithObjectsToDelete.Add( ring );
+
+    LAYER_ITEM* objPtr = new LAYER_ITEM( ring, zMin, zMax );
+    objPtr->SetMaterial( &m_materials.m_Copper );
+    objPtr->SetColor( ConvertSRGBToLinear( m_boardAdapter.m_CopperColor ) );
+
+    m_objectContainer.Add( objPtr );
+}
+
+
+void RENDER_3D_RAYTRACE_BASE::addCountersinkPlating( const SFVEC2F& aCenter,
+                                                     float aTopInnerRadius,
+                                                     float aBottomInnerRadius,
+                                                     float aSurfaceZ, float aDepth,
+                                                     bool aIsFront )
+{
+    const float platingThickness = m_boardAdapter.GetHolePlatingThickness()
+                                   * m_boardAdapter.BiuTo3dUnits();
+
+    if( platingThickness <= 0.0f || aTopInnerRadius <= 0.0f || aBottomInnerRadius <= 0.0f
+            || aDepth <= 0.0f )
+    {
+        return;
+    }
+
+    const float topOuterRadius = aTopInnerRadius + platingThickness;
+    const float bottomOuterRadius = aBottomInnerRadius + platingThickness;
+
+    const float zOther = aIsFront ? ( aSurfaceZ - aDepth ) : ( aSurfaceZ + aDepth );
+    const float zTop = std::max( aSurfaceZ, zOther );
+    const float zBot = std::min( aSurfaceZ, zOther );
+
+    if( topOuterRadius <= 0.0f || bottomOuterRadius <= 0.0f )
+        return;
+
+    const float largestDiameter = 2.0f * std::max( aTopInnerRadius, aBottomInnerRadius );
+    unsigned int segments = std::max( 12u, m_boardAdapter.GetCircleSegmentCount( largestDiameter ) );
+
+    const SFVEC3F copperColor = ConvertSRGBToLinear( m_boardAdapter.m_CopperColor );
+
+    auto addQuad = [&]( const SFVEC3F& p0, const SFVEC3F& p1,
+                        const SFVEC3F& p2, const SFVEC3F& p3 )
+    {
+        TRIANGLE* tri1 = new TRIANGLE( p0, p1, p2 );
+        TRIANGLE* tri2 = new TRIANGLE( p0, p2, p3 );
+
+        tri1->SetMaterial( &m_materials.m_Copper );
+        tri2->SetMaterial( &m_materials.m_Copper );
+        tri1->SetColor( copperColor );
+        tri2->SetColor( copperColor );
+
+        m_objectContainer.Add( tri1 );
+        m_objectContainer.Add( tri2 );
+    };
+
+    auto makePoint = [&]( float radius, float angle, float z )
+    {
+        return SFVEC3F( aCenter.x + cosf( angle ) * radius,
+                        aCenter.y + sinf( angle ) * radius,
+                        z );
+    };
+
+    const float step = 2.0f * glm::pi<float>() / (float) segments;
+
+    SFVEC3F innerTopPrev = makePoint( aTopInnerRadius, 0.0f, zTop );
+    SFVEC3F innerBotPrev = makePoint( aBottomInnerRadius, 0.0f, zBot );
+    SFVEC3F outerTopPrev = makePoint( topOuterRadius, 0.0f, zTop );
+    SFVEC3F outerBotPrev = makePoint( bottomOuterRadius, 0.0f, zBot );
+
+    const SFVEC3F innerTopFirst = innerTopPrev;
+    const SFVEC3F innerBotFirst = innerBotPrev;
+    const SFVEC3F outerTopFirst = outerTopPrev;
+    const SFVEC3F outerBotFirst = outerBotPrev;
+
+    for( unsigned int i = 1; i <= segments; ++i )
+    {
+        const float angle = ( i == segments ) ? 0.0f : step * i;
+
+        const SFVEC3F innerTopCurr = ( i == segments ) ? innerTopFirst
+                                                       : makePoint( aTopInnerRadius, angle, zTop );
+        const SFVEC3F innerBotCurr = ( i == segments ) ? innerBotFirst
+                                                       : makePoint( aBottomInnerRadius, angle, zBot );
+        const SFVEC3F outerTopCurr = ( i == segments ) ? outerTopFirst
+                                                       : makePoint( topOuterRadius, angle, zTop );
+        const SFVEC3F outerBotCurr = ( i == segments ) ? outerBotFirst
+                                                       : makePoint( bottomOuterRadius, angle, zBot );
+
+        // Inner wall
+        addQuad( innerTopPrev, innerTopCurr, innerBotCurr, innerBotPrev );
+
+        // Outer wall
+        addQuad( outerTopPrev, outerBotPrev, outerBotCurr, outerTopCurr );
+
+        // Top rim
+        addQuad( outerTopPrev, outerTopCurr, innerTopCurr, innerTopPrev );
+
+        // Bottom rim
+        addQuad( outerBotPrev, innerBotPrev, innerBotCurr, outerBotCurr );
+
+        innerTopPrev = innerTopCurr;
+        innerBotPrev = innerBotCurr;
+        outerTopPrev = outerTopCurr;
+        outerBotPrev = outerBotCurr;
+    }
+}
+
+
+void RENDER_3D_RAYTRACE_BASE::backfillPostMachine()
+{
+    if( !m_boardAdapter.GetBoard() )
+        return;
+
+    const float unitScale = m_boardAdapter.BiuTo3dUnits();
+    const int platingThickness = m_boardAdapter.GetHolePlatingThickness();
+    const float platingThickness3d = platingThickness * unitScale;
+    const SFVEC3F boardColor = ConvertSRGBToLinear( m_boardAdapter.m_BoardBodyColor );
+
+    const float boardZTop = m_boardAdapter.GetLayerBottomZPos( F_Cu );
+    const float boardZBot = m_boardAdapter.GetLayerBottomZPos( B_Cu );
+
+    // Process vias for backdrill and post-machining plugs
+    for( const PCB_TRACK* track : m_boardAdapter.GetBoard()->Tracks() )
+    {
+        if( track->Type() != PCB_VIA_T )
+            continue;
+
+        const PCB_VIA* via = static_cast<const PCB_VIA*>( track );
+
+        const float holeDiameter = via->GetDrillValue() * unitScale;
+        const float holeInnerRadius = holeDiameter / 2.0f;
+        const float holeOuterRadius = holeInnerRadius + platingThickness3d;
+        const SFVEC2F center( via->GetStart().x * unitScale, -via->GetStart().y * unitScale );
+
+        PCB_LAYER_ID topLayer, bottomLayer;
+        via->LayerPair( &topLayer, &bottomLayer );
+
+        const float viaZTop = m_boardAdapter.GetLayerBottomZPos( topLayer );
+        const float viaZBot = m_boardAdapter.GetLayerBottomZPos( bottomLayer );
+
+        // Handle backdrill plugs
+        const auto secondaryDrillSize = via->GetSecondaryDrillSize();
+
+        if( secondaryDrillSize.has_value() && secondaryDrillSize.value() > 0 )
+        {
+            const float backdrillRadius = secondaryDrillSize.value() * 0.5f * unitScale;
+
+            if( backdrillRadius > holeOuterRadius )
+            {
+                PCB_LAYER_ID secStart = via->GetSecondaryDrillStartLayer();
+                PCB_LAYER_ID secEnd = via->GetSecondaryDrillEndLayer();
+
+                // Calculate where the backdrill ends and plug should start
+                const float secEndZ = m_boardAdapter.GetLayerBottomZPos( secEnd );
+
+                float plugZTop, plugZBot;
+
+                if( secStart == F_Cu )
+                {
+                    // Backdrill from top: plug goes from below backdrill end to via bottom
+                    plugZTop = secEndZ;
+                    plugZBot = viaZBot;
+                }
+                else
+                {
+                    // Backdrill from bottom: plug goes from via top to above backdrill end
+                    plugZTop = viaZTop;
+                    plugZBot = secEndZ;
+                }
+
+                if( plugZTop > plugZBot )
+                {
+                    // Create a ring from holeOuterRadius to backdrillRadius
+                    RING_2D* ring = new RING_2D( center, holeOuterRadius, backdrillRadius, *via );
+                    m_containerWithObjectsToDelete.Add( ring );
+
+                    LAYER_ITEM* objPtr = new LAYER_ITEM( ring, plugZBot, plugZTop );
+                    objPtr->SetMaterial( &m_materials.m_EpoxyBoard );
+                    objPtr->SetColor( boardColor );
+                    m_objectContainer.Add( objPtr );
+                }
+            }
+        }
+
+        // Handle front post-machining plugs
+        const auto frontMode = via->GetFrontPostMachining();
+
+        if( frontMode.has_value()
+            && frontMode.value() != PAD_DRILL_POST_MACHINING_MODE::NOT_POST_MACHINED
+            && frontMode.value() != PAD_DRILL_POST_MACHINING_MODE::UNKNOWN )
+        {
+            const float frontRadius = via->GetFrontPostMachiningSize() * 0.5f * unitScale;
+            const float frontDepth = via->GetFrontPostMachiningDepth() * unitScale;
+
+            if( frontRadius > holeOuterRadius && frontDepth > 0 )
+            {
+                // Plug goes from bottom of post-machining to bottom of via
+                const float pmBottomZ = viaZTop - frontDepth;
+                const float plugZBot = viaZBot;
+
+                if( pmBottomZ > plugZBot )
+                {
+                    if( frontMode.value() == PAD_DRILL_POST_MACHINING_MODE::COUNTERSINK )
+                    {
+                        // For countersink, use a frustum (truncated cone)
+                        EDA_ANGLE angle( via->GetFrontPostMachiningAngle(), TENTHS_OF_A_DEGREE_T );
+                        float angleRad = angle.AsRadians();
+                        if( angleRad < 0.01f )
+                            angleRad = 0.01f;
+
+                        float radialDiff = frontRadius - holeOuterRadius;
+                        float innerHeight = radialDiff / tanf( angleRad );
+                        float totalHeight = pmBottomZ - plugZBot;
+
+                        if( innerHeight > totalHeight )
+                            innerHeight = totalHeight;
+
+                        float zInnerTop = plugZBot + innerHeight;
+
+                        // Create frustum from holeOuterRadius at zInnerTop to frontRadius at pmBottomZ
+                        TRUNCATED_CONE* frustum = new TRUNCATED_CONE( center, zInnerTop, pmBottomZ,
+                                                        holeOuterRadius, frontRadius );
+                        frustum->SetMaterial( &m_materials.m_EpoxyBoard );
+                        frustum->SetColor( boardColor );
+                        m_objectContainer.Add( frustum );
+
+                        // If there's a cylindrical portion below the cone
+                        if( zInnerTop > plugZBot )
+                        {
+                            RING_2D* ring = new RING_2D( center, holeOuterRadius, frontRadius, *via );
+                            m_containerWithObjectsToDelete.Add( ring );
+
+                            LAYER_ITEM* objPtr = new LAYER_ITEM( ring, plugZBot, zInnerTop );
+                            objPtr->SetMaterial( &m_materials.m_EpoxyBoard );
+                            objPtr->SetColor( boardColor );
+                            m_objectContainer.Add( objPtr );
+                        }
+                    }
+                    else
+                    {
+                        RING_2D* ring = new RING_2D( center, holeOuterRadius, frontRadius, *via );
+                        m_containerWithObjectsToDelete.Add( ring );
+
+                        LAYER_ITEM* objPtr = new LAYER_ITEM( ring, plugZBot, pmBottomZ );
+                        objPtr->SetMaterial( &m_materials.m_EpoxyBoard );
+                        objPtr->SetColor( boardColor );
+                        m_objectContainer.Add( objPtr );
+                    }
+                }
+            }
+        }
+
+        // Handle back post-machining plugs
+        const auto backMode = via->GetBackPostMachining();
+
+        if( backMode.has_value()
+            && backMode.value() != PAD_DRILL_POST_MACHINING_MODE::NOT_POST_MACHINED
+            && backMode.value() != PAD_DRILL_POST_MACHINING_MODE::UNKNOWN )
+        {
+            const float backRadius = via->GetBackPostMachiningSize() * 0.5f * unitScale;
+            const float backDepth = via->GetBackPostMachiningDepth() * unitScale;
+
+            if( backRadius > holeOuterRadius && backDepth > 0 )
+            {
+                // Plug goes from top of via to top of post-machining
+                const float plugZTop = viaZTop;
+                const float pmTopZ = viaZBot + backDepth;
+
+                if( plugZTop > pmTopZ )
+                {
+                    if( backMode.value() == PAD_DRILL_POST_MACHINING_MODE::COUNTERSINK )
+                    {
+                        // For countersink, use a frustum (truncated cone)
+                        EDA_ANGLE angle( via->GetBackPostMachiningAngle(), TENTHS_OF_A_DEGREE_T );
+                        float angleRad = angle.AsRadians();
+                        if( angleRad < 0.01f )
+                            angleRad = 0.01f;
+
+                        float radialDiff = backRadius - holeOuterRadius;
+                        float innerHeight = radialDiff / tanf( angleRad );
+                        float totalHeight = plugZTop - pmTopZ;
+
+                        if( innerHeight > totalHeight )
+                            innerHeight = totalHeight;
+
+                        float zInnerBot = plugZTop - innerHeight;
+
+                        // Create frustum from holeOuterRadius at zInnerBot to backRadius at pmTopZ
+                        TRUNCATED_CONE* frustum = new TRUNCATED_CONE( center, pmTopZ, zInnerBot,
+                                                        backRadius, holeOuterRadius );
+                        frustum->SetMaterial( &m_materials.m_EpoxyBoard );
+                        frustum->SetColor( boardColor );
+                        m_objectContainer.Add( frustum );
+
+                        // If there's a cylindrical portion above the cone
+                        if( zInnerBot < plugZTop )
+                        {
+                            RING_2D* ring = new RING_2D( center, holeOuterRadius, backRadius, *via );
+                            m_containerWithObjectsToDelete.Add( ring );
+
+                            LAYER_ITEM* objPtr = new LAYER_ITEM( ring, zInnerBot, plugZTop );
+                            objPtr->SetMaterial( &m_materials.m_EpoxyBoard );
+                            objPtr->SetColor( boardColor );
+                            m_objectContainer.Add( objPtr );
+                        }
+                    }
+                    else
+                    {
+                        RING_2D* ring = new RING_2D( center, holeOuterRadius, backRadius, *via );
+                        m_containerWithObjectsToDelete.Add( ring );
+
+                        LAYER_ITEM* objPtr = new LAYER_ITEM( ring, pmTopZ, plugZTop );
+                        objPtr->SetMaterial( &m_materials.m_EpoxyBoard );
+                        objPtr->SetColor( boardColor );
+                        m_objectContainer.Add( objPtr );
+                    }
+                }
+            }
+        }
+    }
+
+    // Process pads for post-machining plugs
+    for( const FOOTPRINT* footprint : m_boardAdapter.GetBoard()->Footprints() )
+    {
+        for( const PAD* pad : footprint->Pads() )
+        {
+            if( pad->GetAttribute() == PAD_ATTRIB::NPTH )
+                continue;
+
+            if( !pad->HasHole() )
+                continue;
+
+            if( pad->GetDrillShape() != PAD_DRILL_SHAPE::CIRCLE )
+                continue;
+
+            const SFVEC2F padCenter( pad->GetPosition().x * unitScale,
+                                     -pad->GetPosition().y * unitScale );
+            const float holeInnerRadius = pad->GetDrillSize().x * 0.5f * unitScale;
+            const float holeOuterRadius = holeInnerRadius + platingThickness3d;
+
+            const float padZTop = boardZTop;
+            const float padZBot = boardZBot;
+
+            // Handle front post-machining plugs for pads
+            const auto frontMode = pad->GetFrontPostMachining();
+
+            if( frontMode.has_value()
+                && frontMode.value() != PAD_DRILL_POST_MACHINING_MODE::NOT_POST_MACHINED
+                && frontMode.value() != PAD_DRILL_POST_MACHINING_MODE::UNKNOWN )
+            {
+                const float frontRadius = pad->GetFrontPostMachiningSize() * 0.5f * unitScale;
+                const float frontDepth = pad->GetFrontPostMachiningDepth() * unitScale;
+
+                if( frontRadius > holeOuterRadius && frontDepth > 0 )
+                {
+                    const float pmBottomZ = padZTop - frontDepth;
+                    const float plugZBot = padZBot;
+
+                    if( pmBottomZ > plugZBot )
+                    {
+                        if( frontMode.value() == PAD_DRILL_POST_MACHINING_MODE::COUNTERSINK )
+                        {
+                            // For countersink, use a frustum (truncated cone)
+                            EDA_ANGLE angle( pad->GetFrontPostMachiningAngle(), TENTHS_OF_A_DEGREE_T );
+                            float angleRad = angle.AsRadians();
+                            if( angleRad < 0.01f )
+                                angleRad = 0.01f;
+
+                            float radialDiff = frontRadius - holeOuterRadius;
+                            float innerHeight = radialDiff / tanf( angleRad );
+                            float totalHeight = pmBottomZ - plugZBot;
+
+                            if( innerHeight > totalHeight )
+                                innerHeight = totalHeight;
+
+                            float zInnerTop = plugZBot + innerHeight;
+
+                            // Create frustum from holeOuterRadius at zInnerTop to frontRadius at pmBottomZ
+                            TRUNCATED_CONE* frustum = new TRUNCATED_CONE( padCenter, zInnerTop, pmBottomZ,
+                                                            holeOuterRadius, frontRadius );
+                            frustum->SetMaterial( &m_materials.m_EpoxyBoard );
+                            frustum->SetColor( boardColor );
+                            m_objectContainer.Add( frustum );
+
+                            // If there's a cylindrical portion below the cone
+                            if( zInnerTop > plugZBot )
+                            {
+                                RING_2D* ring = new RING_2D( padCenter, holeOuterRadius, frontRadius, *pad );
+                                m_containerWithObjectsToDelete.Add( ring );
+
+                                LAYER_ITEM* objPtr = new LAYER_ITEM( ring, plugZBot, zInnerTop );
+                                objPtr->SetMaterial( &m_materials.m_EpoxyBoard );
+                                objPtr->SetColor( boardColor );
+                                m_objectContainer.Add( objPtr );
+                            }
+                        }
+                        else
+                        {
+                            RING_2D* ring = new RING_2D( padCenter, holeOuterRadius, frontRadius, *pad );
+                            m_containerWithObjectsToDelete.Add( ring );
+
+                            LAYER_ITEM* objPtr = new LAYER_ITEM( ring, plugZBot, pmBottomZ );
+                            objPtr->SetMaterial( &m_materials.m_EpoxyBoard );
+                            objPtr->SetColor( boardColor );
+                            m_objectContainer.Add( objPtr );
+                        }
+                    }
+                }
+            }
+
+            // Handle back post-machining plugs for pads
+            const auto backMode = pad->GetBackPostMachining();
+
+            if( backMode.has_value()
+                && backMode.value() != PAD_DRILL_POST_MACHINING_MODE::NOT_POST_MACHINED
+                && backMode.value() != PAD_DRILL_POST_MACHINING_MODE::UNKNOWN )
+            {
+                const float backRadius = pad->GetBackPostMachiningSize() * 0.5f * unitScale;
+                const float backDepth = pad->GetBackPostMachiningDepth() * unitScale;
+
+                if( backRadius > holeOuterRadius && backDepth > 0 )
+                {
+                    const float plugZTop = padZTop;
+                    const float pmTopZ = padZBot + backDepth;
+
+                    if( plugZTop > pmTopZ )
+                    {
+                        if( backMode.value() == PAD_DRILL_POST_MACHINING_MODE::COUNTERSINK )
+                        {
+                            // For countersink, use a frustum (truncated cone)
+                            EDA_ANGLE angle( pad->GetBackPostMachiningAngle(), TENTHS_OF_A_DEGREE_T );
+                            float angleRad = angle.AsRadians();
+                            if( angleRad < 0.01f )
+                                angleRad = 0.01f;
+
+                            float radialDiff = backRadius - holeOuterRadius;
+                            float innerHeight = radialDiff / tanf( angleRad );
+                            float totalHeight = plugZTop - pmTopZ;
+
+                            if( innerHeight > totalHeight )
+                                innerHeight = totalHeight;
+
+                            float zInnerBot = plugZTop - innerHeight;
+
+                            // Create frustum from holeOuterRadius at zInnerBot to backRadius at pmTopZ
+                            TRUNCATED_CONE* frustum = new TRUNCATED_CONE( padCenter, pmTopZ, zInnerBot,
+                                                            backRadius, holeOuterRadius );
+                            frustum->SetMaterial( &m_materials.m_EpoxyBoard );
+                            frustum->SetColor( boardColor );
+                            m_objectContainer.Add( frustum );
+
+                            // If there's a cylindrical portion above the cone
+                            if( zInnerBot < plugZTop )
+                            {
+                                RING_2D* ring = new RING_2D( padCenter, holeOuterRadius, backRadius, *pad );
+                                m_containerWithObjectsToDelete.Add( ring );
+
+                                LAYER_ITEM* objPtr = new LAYER_ITEM( ring, zInnerBot, plugZTop );
+                                objPtr->SetMaterial( &m_materials.m_EpoxyBoard );
+                                objPtr->SetColor( boardColor );
+                                m_objectContainer.Add( objPtr );
+                            }
+                        }
+                        else
+                        {
+                            RING_2D* ring = new RING_2D( padCenter, holeOuterRadius, backRadius, *pad );
+                            m_containerWithObjectsToDelete.Add( ring );
+
+                            LAYER_ITEM* objPtr = new LAYER_ITEM( ring, pmTopZ, plugZTop );
+                            objPtr->SetMaterial( &m_materials.m_EpoxyBoard );
+                            objPtr->SetColor( boardColor );
+                            m_objectContainer.Add( objPtr );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+
 void RENDER_3D_RAYTRACE_BASE::insertHole( const PCB_VIA* aVia )
 {
+    if( !m_boardAdapter.m_Cfg->m_Render.show_plated_barrels )
+        return;
+
     PCB_LAYER_ID top_layer, bottom_layer;
     int          radiusBUI = ( aVia->GetDrillValue() / 2 );
 
     aVia->LayerPair( &top_layer, &bottom_layer );
 
+    float frontDepth = 0.0f;
+    float backDepth = 0.0f;
+
+    if( aVia->Padstack().FrontPostMachining().mode.value_or( PAD_DRILL_POST_MACHINING_MODE::NOT_POST_MACHINED ) != PAD_DRILL_POST_MACHINING_MODE::NOT_POST_MACHINED )
+        frontDepth = aVia->Padstack().FrontPostMachining().depth * m_boardAdapter.BiuTo3dUnits();
+
+    if( aVia->Padstack().BackPostMachining().mode.value_or( PAD_DRILL_POST_MACHINING_MODE::NOT_POST_MACHINED ) != PAD_DRILL_POST_MACHINING_MODE::NOT_POST_MACHINED )
+        backDepth = aVia->Padstack().BackPostMachining().depth * m_boardAdapter.BiuTo3dUnits();
+
     float topZ = m_boardAdapter.GetLayerBottomZPos( top_layer )
-                 + m_boardAdapter.GetFrontCopperThickness();
+                 + m_boardAdapter.GetFrontCopperThickness() - frontDepth;
 
     float botZ = m_boardAdapter.GetLayerBottomZPos( bottom_layer )
-                 - m_boardAdapter.GetBackCopperThickness();
+                 - m_boardAdapter.GetBackCopperThickness() + backDepth;
 
-    const SFVEC2F center = SFVEC2F( aVia->GetStart().x * m_boardAdapter.BiuTo3dUnits(),
-                                    -aVia->GetStart().y * m_boardAdapter.BiuTo3dUnits() );
+    const float unitScale = m_boardAdapter.BiuTo3dUnits();
+    const SFVEC2F center = SFVEC2F( aVia->GetStart().x * unitScale, -aVia->GetStart().y * unitScale );
 
-    RING_2D* ring = new RING_2D( center, radiusBUI * m_boardAdapter.BiuTo3dUnits(),
-                                 ( radiusBUI + m_boardAdapter.GetHolePlatingThickness() )
-                                 * m_boardAdapter.BiuTo3dUnits(), *aVia );
+    RING_2D* ring = new RING_2D( center, radiusBUI * unitScale,
+                                 ( radiusBUI + m_boardAdapter.GetHolePlatingThickness() ) * unitScale, *aVia );
 
     m_containerWithObjectsToDelete.Add( ring );
 
@@ -1006,38 +1615,93 @@ void RENDER_3D_RAYTRACE_BASE::insertHole( const PCB_VIA* aVia )
     objPtr->SetColor( ConvertSRGBToLinear( m_boardAdapter.m_CopperColor ) );
 
     m_objectContainer.Add( objPtr );
+
+    const float holeInnerRadius = radiusBUI * unitScale;
+    const float frontSurface = topZ + frontDepth;
+    const float backSurface = botZ - backDepth;
+
+    const PAD_DRILL_POST_MACHINING_MODE frontMode =
+            aVia->GetFrontPostMachining().value_or( PAD_DRILL_POST_MACHINING_MODE::NOT_POST_MACHINED );
+    const float frontRadius = 0.5f * aVia->GetFrontPostMachiningSize() * unitScale;
+
+    if( frontDepth > 0.0f && frontRadius > holeInnerRadius )
+    {
+        if( frontMode == PAD_DRILL_POST_MACHINING_MODE::COUNTERBORE )
+        {
+            addCounterborePlating( *aVia, center, frontRadius, frontDepth, frontSurface, true );
+        }
+        else if( frontMode == PAD_DRILL_POST_MACHINING_MODE::COUNTERSINK )
+        {
+            addCountersinkPlating( center, frontRadius, holeInnerRadius, frontSurface, frontDepth,
+                                   true );
+        }
+    }
+
+    const PAD_DRILL_POST_MACHINING_MODE backMode =
+            aVia->GetBackPostMachining().value_or( PAD_DRILL_POST_MACHINING_MODE::NOT_POST_MACHINED );
+    const float backRadius = 0.5f * aVia->GetBackPostMachiningSize() * unitScale;
+
+    if( backDepth > 0.0f && backRadius > holeInnerRadius )
+    {
+        if( backMode == PAD_DRILL_POST_MACHINING_MODE::COUNTERBORE )
+        {
+            addCounterborePlating( *aVia, center, backRadius, backDepth, backSurface, false );
+        }
+        else if( backMode == PAD_DRILL_POST_MACHINING_MODE::COUNTERSINK )
+        {
+            addCountersinkPlating( center, backRadius, holeInnerRadius, backSurface, backDepth,
+                                   false );
+        }
+    }
 }
 
 
 void RENDER_3D_RAYTRACE_BASE::insertHole( const PAD* aPad )
 {
+    if( !m_boardAdapter.m_Cfg->m_Render.show_plated_barrels )
+        return;
+
     const OBJECT_2D* object2d_A = nullptr;
 
     SFVEC3F        objColor = m_boardAdapter.m_CopperColor;
     const VECTOR2I drillsize = aPad->GetDrillSize();
     const bool     hasHole = drillsize.x && drillsize.y;
+    const float    unitScale = m_boardAdapter.BiuTo3dUnits();
+    const bool     isRoundHole = drillsize.x == drillsize.y;
+    SFVEC2F        holeCenter = SFVEC2F( 0.0f, 0.0f );
+    float          holeInnerRadius = 0.0f;
 
     if( !hasHole )
         return;
 
     CONST_LIST_OBJECT2D antiOutlineIntersectionList;
 
+    float frontDepth = 0.0f;
+    float backDepth = 0.0f;
+
+    if( aPad->GetFrontPostMachining() != PAD_DRILL_POST_MACHINING_MODE::NOT_POST_MACHINED )
+        frontDepth = aPad->GetFrontPostMachiningDepth() * m_boardAdapter.BiuTo3dUnits();
+
+    if( aPad->GetBackPostMachining() != PAD_DRILL_POST_MACHINING_MODE::NOT_POST_MACHINED )
+        backDepth = aPad->GetBackPostMachiningDepth() * m_boardAdapter.BiuTo3dUnits();
+
     const float topZ = m_boardAdapter.GetLayerBottomZPos( F_Cu )
-                       + m_boardAdapter.GetFrontCopperThickness() * 0.99f;
+                       + m_boardAdapter.GetFrontCopperThickness() * 0.99f - frontDepth;
 
     const float botZ = m_boardAdapter.GetLayerBottomZPos( B_Cu )
-                       - m_boardAdapter.GetBackCopperThickness() * 0.99f;
+                       - m_boardAdapter.GetBackCopperThickness() * 0.99f + backDepth;
 
-    if( drillsize.x == drillsize.y ) // usual round hole
+    if( isRoundHole ) // usual round hole
     {
-        SFVEC2F center = SFVEC2F( aPad->GetPosition().x * m_boardAdapter.BiuTo3dUnits(),
-                                  -aPad->GetPosition().y * m_boardAdapter.BiuTo3dUnits() );
+        holeCenter = SFVEC2F( aPad->GetPosition().x * unitScale,
+                              -aPad->GetPosition().y * unitScale );
 
         int innerRadius = drillsize.x / 2;
         int outerRadius = innerRadius + m_boardAdapter.GetHolePlatingThickness();
+        holeInnerRadius = innerRadius * unitScale;
 
-        RING_2D* ring = new RING_2D( center, innerRadius * m_boardAdapter.BiuTo3dUnits(),
-                                     outerRadius * m_boardAdapter.BiuTo3dUnits(), *aPad );
+        RING_2D* ring = new RING_2D( holeCenter, innerRadius * unitScale,
+                                     outerRadius * unitScale, *aPad );
 
         m_containerWithObjectsToDelete.Add( ring );
 
@@ -1053,11 +1717,11 @@ void RENDER_3D_RAYTRACE_BASE::insertHole( const PAD* aPad )
 
         if( !antiOutlineIntersectionList.empty() )
         {
-            FILLED_CIRCLE_2D* innerCircle = new FILLED_CIRCLE_2D(
-                    center, innerRadius * m_boardAdapter.BiuTo3dUnits(), *aPad );
+                FILLED_CIRCLE_2D* innerCircle = new FILLED_CIRCLE_2D(
+                    holeCenter, innerRadius * unitScale, *aPad );
 
-            FILLED_CIRCLE_2D* outterCircle = new FILLED_CIRCLE_2D(
-                    center, outerRadius * m_boardAdapter.BiuTo3dUnits(), *aPad );
+                FILLED_CIRCLE_2D* outterCircle = new FILLED_CIRCLE_2D(
+                    holeCenter, outerRadius * unitScale, *aPad );
             std::vector<const OBJECT_2D*>* object2d_B = new std::vector<const OBJECT_2D*>();
             object2d_B->push_back( innerCircle );
 
@@ -1093,19 +1757,19 @@ void RENDER_3D_RAYTRACE_BASE::insertHole( const PAD* aPad )
         VECTOR2I end = VECTOR2I( aPad->GetPosition() ) - ends_offset;
 
         ROUND_SEGMENT_2D* innerSeg =
-                new ROUND_SEGMENT_2D( SFVEC2F( start.x * m_boardAdapter.BiuTo3dUnits(),
-                                               -start.y * m_boardAdapter.BiuTo3dUnits() ),
-                                      SFVEC2F( end.x * m_boardAdapter.BiuTo3dUnits(),
-                                               -end.y * m_boardAdapter.BiuTo3dUnits() ),
-                                      width * m_boardAdapter.BiuTo3dUnits(), *aPad );
+            new ROUND_SEGMENT_2D( SFVEC2F( start.x * unitScale,
+                               -start.y * unitScale ),
+                          SFVEC2F( end.x * unitScale,
+                               -end.y * unitScale ),
+                          width * unitScale, *aPad );
 
         ROUND_SEGMENT_2D* outerSeg =
-                new ROUND_SEGMENT_2D( SFVEC2F( start.x * m_boardAdapter.BiuTo3dUnits(),
-                                               -start.y * m_boardAdapter.BiuTo3dUnits() ),
-                                      SFVEC2F( end.x * m_boardAdapter.BiuTo3dUnits(),
-                                              -end.y * m_boardAdapter.BiuTo3dUnits() ),
-                                      ( width + m_boardAdapter.GetHolePlatingThickness() * 2 )
-                                      * m_boardAdapter.BiuTo3dUnits(), *aPad );
+            new ROUND_SEGMENT_2D( SFVEC2F( start.x * unitScale,
+                               -start.y * unitScale ),
+                          SFVEC2F( end.x * unitScale,
+                              -end.y * unitScale ),
+                          ( width + m_boardAdapter.GetHolePlatingThickness() * 2 )
+                          * unitScale, *aPad );
 
         // NOTE: the round segment width is the "diameter", so we double the thickness
         std::vector<const OBJECT_2D*>* object2d_B = new std::vector<const OBJECT_2D*>();
@@ -1177,6 +1841,48 @@ void RENDER_3D_RAYTRACE_BASE::insertHole( const PAD* aPad )
             m_objectContainer.Add( objPtr );
         }
     }
+
+    if( object2d_A && isRoundHole )
+    {
+        const float frontSurface = topZ + frontDepth;
+        const float backSurface = botZ - backDepth;
+
+        const PAD_DRILL_POST_MACHINING_MODE frontMode =
+                aPad->GetFrontPostMachining().value_or( PAD_DRILL_POST_MACHINING_MODE::NOT_POST_MACHINED );
+        const float frontRadius = 0.5f * aPad->GetFrontPostMachiningSize() * unitScale;
+
+        if( frontDepth > 0.0f && frontRadius > holeInnerRadius )
+        {
+            if( frontMode == PAD_DRILL_POST_MACHINING_MODE::COUNTERBORE )
+            {
+                addCounterborePlating( *aPad, holeCenter, frontRadius, frontDepth, frontSurface,
+                                       true );
+            }
+            else if( frontMode == PAD_DRILL_POST_MACHINING_MODE::COUNTERSINK )
+            {
+                addCountersinkPlating( holeCenter, frontRadius, holeInnerRadius, frontSurface,
+                                       frontDepth, true );
+            }
+        }
+
+        const PAD_DRILL_POST_MACHINING_MODE backMode =
+                aPad->GetBackPostMachining().value_or( PAD_DRILL_POST_MACHINING_MODE::NOT_POST_MACHINED );
+        const float backRadius = 0.5f * aPad->GetBackPostMachiningSize() * unitScale;
+
+        if( backDepth > 0.0f && backRadius > holeInnerRadius )
+        {
+            if( backMode == PAD_DRILL_POST_MACHINING_MODE::COUNTERBORE )
+            {
+                addCounterborePlating( *aPad, holeCenter, backRadius, backDepth, backSurface,
+                                       false );
+            }
+            else if( backMode == PAD_DRILL_POST_MACHINING_MODE::COUNTERSINK )
+            {
+                addCountersinkPlating( holeCenter, backRadius, holeInnerRadius, backSurface,
+                                       backDepth, false );
+            }
+        }
+    }
 }
 
 
@@ -1209,6 +1915,261 @@ void RENDER_3D_RAYTRACE_BASE::addPadsAndVias()
 }
 
 
+void RENDER_3D_RAYTRACE_BASE::addPlaceholderToRaytracer( CONTAINER_3D& aDstContainer, const FOOTPRINT* aFootprint,
+                                                         const glm::mat4& aFpMatrix, bool aHasExtrudedBody )
+{
+    if( aHasExtrudedBody )
+        return;
+
+    BOX2I localBox = CalcPlaceholderLocalBox( aFootprint );
+
+    float bboxW = std::abs( localBox.GetWidth() ) / pcbIUScale.IU_PER_MM * 0.9f;
+    float bboxH = std::abs( localBox.GetHeight() ) / pcbIUScale.IU_PER_MM * 0.9f;
+    float scaleZ = std::min( bboxW, bboxH ) * 0.5f;
+
+    VECTOR2I localCenter = localBox.GetCenter();
+    float    offsetX = localCenter.x / pcbIUScale.IU_PER_MM;
+    float    offsetY = -localCenter.y / pcbIUScale.IU_PER_MM;
+
+    if( aFootprint->IsFlipped() )
+        offsetY = -offsetY;
+
+    SFVEC3F boxMin( offsetX - bboxW * 0.5f, offsetY - bboxH * 0.5f, 0.0f );
+    SFVEC3F boxMax( offsetX + bboxW * 0.5f, offsetY + bboxH * 0.5f, scaleZ );
+
+    BBOX_3D worldBBox;
+    worldBBox.Reset();
+
+    for( int i = 0; i < 8; ++i )
+    {
+        SFVEC3F corner( ( i & 1 ) ? boxMax.x : boxMin.x, ( i & 2 ) ? boxMax.y : boxMin.y,
+                        ( i & 4 ) ? boxMax.z : boxMin.z );
+
+        glm::vec4 transformed = aFpMatrix * glm::vec4( corner, 1.0f );
+        worldBBox.Union( SFVEC3F( transformed ) );
+    }
+
+    DUMMY_BLOCK* placeholder = new DUMMY_BLOCK( worldBBox );
+    placeholder->SetBoardItem( const_cast<FOOTPRINT*>( aFootprint ) );
+    placeholder->SetMaterial( &m_materials.m_EpoxyBoard );
+    placeholder->SetColor( SFVEC3F( 1.0f, 0.5f, 0.0f ) );
+
+    aDstContainer.Add( placeholder );
+}
+
+
+static size_t addOutlineToRaytracerObjects( CONTAINER_2D& aObjContainer, const SHAPE_POLY_SET& aOutline, float aBiuTo3d,
+                                            const BOARD_ITEM& aBoardItem )
+{
+    size_t added = 0;
+
+    for( int oi = 0; oi < aOutline.OutlineCount(); oi++ )
+    {
+        const SHAPE_LINE_CHAIN& chain = aOutline.COutline( oi );
+
+        if( chain.PointCount() < 3 )
+            continue;
+
+        // Convert points to 3D-scaled coordinates
+        SEGMENTS_WIDTH_NORMALS segNormals;
+        SFVEC2F                prevPt;
+
+        for( int i = 0; i < chain.PointCount(); i++ )
+        {
+            const VECTOR2I& a = chain.CPoint( i );
+            SFVEC2F         pt( (float) a.x * aBiuTo3d, (float) ( -a.y ) * aBiuTo3d );
+
+            if( ( i == 0 ) || ( fabs( prevPt.x - pt.x ) > FLT_EPSILON ) || ( fabs( prevPt.y - pt.y ) > FLT_EPSILON ) )
+            {
+                prevPt = pt;
+
+                SEGMENT_WITH_NORMALS sn;
+                sn.m_Start = pt;
+                segNormals.push_back( sn );
+            }
+        }
+
+        // Build side-wall
+        if( segNormals.size() >= 3 )
+        {
+            std::vector<SFVEC2F> tmpNormals( segNormals.size() );
+            unsigned int         j = segNormals.size() - 1;
+
+            for( unsigned int i = 0; i < segNormals.size(); j = i++ )
+            {
+                SFVEC2F slope = segNormals[j].m_Start - segNormals[i].m_Start;
+                segNormals[i].m_Precalc_slope = slope;
+                tmpNormals[i] = glm::normalize( SFVEC2F( slope.y, -slope.x ) );
+            }
+
+            j = segNormals.size() - 1;
+
+            for( unsigned int i = 0; i < segNormals.size(); j = i++ )
+            {
+                const SFVEC2F& nBefore = tmpNormals[j];
+                const SFVEC2F& nCur = tmpNormals[i];
+                const SFVEC2F& nAfter = tmpNormals[( i + 1 ) % segNormals.size()];
+
+                float dotBefore = glm::dot( nBefore, nCur );
+                float dotAfter = glm::dot( nAfter, nCur );
+
+                segNormals[i].m_Normals.m_Start =
+                        ( dotBefore < 0.7f ) ? nCur : glm::normalize( nBefore * dotBefore + nCur );
+                segNormals[i].m_Normals.m_End = ( dotAfter < 0.7f ) ? nCur : glm::normalize( nAfter * dotAfter + nCur );
+            }
+
+            SEGMENTS capSegments( segNormals.size() );
+
+            for( unsigned int i = 0; i < segNormals.size(); i++ )
+                capSegments[i].m_Start = segNormals[i].m_Start;
+
+            j = capSegments.size() - 1;
+
+            for( unsigned int i = 0; i < capSegments.size(); j = i++ )
+            {
+                capSegments[i].m_inv_JY_minus_IY = 1.0f / ( capSegments[j].m_Start.y - capSegments[i].m_Start.y );
+                capSegments[i].m_JX_minus_IX = capSegments[j].m_Start.x - capSegments[i].m_Start.x;
+            }
+
+            OUTERS_AND_HOLES outersAndHoles;
+            outersAndHoles.m_Outers.push_back( capSegments );
+
+            aObjContainer.Add( new POLYGON_2D( segNormals, outersAndHoles, aBoardItem ) );
+            added++;
+        }
+    }
+
+    // top/bottom caps
+    size_t prevSize = aObjContainer.GetList().size();
+    ConvertPolygonToTriangles( aOutline, aObjContainer, aBiuTo3d, aBoardItem );
+    added += aObjContainer.GetList().size() - prevSize;
+
+    return added;
+}
+
+
+bool RENDER_3D_RAYTRACE_BASE::addExtrudedBodyToRaytracer( CONTAINER_3D& aDstContainer, const FOOTPRINT* aFootprint )
+{
+    SHAPE_POLY_SET outline;
+
+    if( !GetExtrusionOutline( aFootprint, outline ) )
+        return false;
+
+    if( outline.OutlineCount() == 0 )
+        return false;
+
+    outline.Simplify();
+
+    const EXTRUDED_3D_BODY* body = aFootprint->GetExtrudedBody();
+    const float             biuTo3d = m_boardAdapter.BiuTo3dUnits();
+
+    VECTOR2I fpPos = aFootprint->GetPosition();
+    ApplyExtrusionTransform( outline, body, fpPos );
+
+    bool  isBack = aFootprint->IsFlipped();
+    float boardSurfaceZ = m_boardAdapter.GetFootprintZPos( isBack );
+    float standoff3d = body->m_standoff * biuTo3d;
+    float bodyThickness = ( body->m_height - body->m_standoff ) * biuTo3d * body->m_scale.z;
+    float zOffset3d = pcbIUScale.mmToIU( body->m_offset.z ) * biuTo3d;
+
+    float zBot, zTop;
+
+    if( !isBack )
+    {
+        zBot = boardSurfaceZ + standoff3d + zOffset3d;
+        zTop = zBot + bodyThickness;
+    }
+    else
+    {
+        zTop = boardSurfaceZ - standoff3d - zOffset3d;
+        zBot = zTop - bodyThickness;
+    }
+
+    KIGFX::COLOR4D c = body->m_color;
+
+    if( c == KIGFX::COLOR4D::UNSPECIFIED )
+        c = EXTRUDED_3D_BODY::GetDefaultColor( body->m_material );
+
+    SFVEC3F objColor = ConvertSRGBToLinear( SFVEC3F( c.r, c.g, c.b ) );
+
+    // Build body 2D objects (side walls + caps)
+    outline.Fracture();
+
+    const LIST_OBJECT2D& objList = m_containerWithObjectsToDelete.GetList();
+    size_t               prevCount = objList.size();
+
+    addOutlineToRaytracerObjects( m_containerWithObjectsToDelete, outline, biuTo3d, *aFootprint );
+
+    EXTRUSION_MATERIAL_PROPS props = GetMaterialProps( body->m_material, objColor );
+
+    m_extrusionMaterials.push_back( std::make_unique<BLINN_PHONG_MATERIAL>(
+            props.m_Ambient, SFVEC3F( 0.0f ), props.m_Specular, props.m_Shininess, 0.0f, 0.0f ) );
+
+    const MATERIAL* bodyMaterial = m_extrusionMaterials.back().get();
+
+    auto it = objList.begin();
+    std::advance( it, prevCount );
+
+    for( ; it != objList.end(); ++it )
+    {
+        LAYER_ITEM* layerItem = new LAYER_ITEM( *it, zBot, zTop );
+        layerItem->SetBoardItem( const_cast<FOOTPRINT*>( aFootprint ) );
+        layerItem->SetMaterial( bodyMaterial );
+        layerItem->SetColor( objColor );
+        aDstContainer.Add( layerItem );
+    }
+
+    // Create metallic pin extrusions for THT pads (from opposite board side to standoff height)
+    if( standoff3d > 0.0f )
+    {
+        SHAPE_POLY_SET pinPoly;
+
+        if( GetExtrusionPinOutline( aFootprint, pinPoly ) )
+        {
+            ApplyExtrusionTransform( pinPoly, body, fpPos );
+
+            float oppositeSurfaceZ = m_boardAdapter.GetFootprintZPos( !isBack );
+            float protrusion = 1.0f * pcbIUScale.IU_PER_MM * biuTo3d;
+            float pinZBot, pinZTop;
+
+            if( !isBack )
+            {
+                pinZBot = oppositeSurfaceZ - protrusion;
+                pinZTop = boardSurfaceZ + standoff3d;
+            }
+            else
+            {
+                pinZTop = oppositeSurfaceZ + protrusion;
+                pinZBot = boardSurfaceZ - standoff3d;
+            }
+
+            SFVEC3F metalColor = ConvertSRGBToLinear( SFVEC3F( 0.75f, 0.75f, 0.75f ) );
+
+            pinPoly.Fracture();
+
+            size_t prevPinCount = objList.size();
+
+            addOutlineToRaytracerObjects( m_containerWithObjectsToDelete, pinPoly, biuTo3d, *aFootprint );
+
+            // Wrap pin objects with material and Z extents
+            auto pinIt = objList.begin();
+            std::advance( pinIt, prevPinCount );
+
+            for( ; pinIt != objList.end(); ++pinIt )
+            {
+                LAYER_ITEM* layerItem = new LAYER_ITEM( *pinIt, pinZBot, pinZTop );
+                layerItem->SetBoardItem( const_cast<FOOTPRINT*>( aFootprint ) );
+                layerItem->SetMaterial( &m_materials.m_Copper );
+                layerItem->SetColor( metalColor );
+                aDstContainer.Add( layerItem );
+            }
+        }
+    }
+
+    return true;
+}
+
+
 void RENDER_3D_RAYTRACE_BASE::load3DModels( CONTAINER_3D& aDstContainer,
                                             bool aSkipMaterialInformation )
 {
@@ -1226,8 +2187,16 @@ void RENDER_3D_RAYTRACE_BASE::load3DModels( CONTAINER_3D& aDstContainer,
     // Go for all footprints
     for( FOOTPRINT* fp : m_boardAdapter.GetBoard()->Footprints() )
     {
-        if( !fp->Models().empty()
-          && m_boardAdapter.IsFootprintShown( (FOOTPRINT_ATTR_T) fp->GetAttributes() ) )
+        bool hasModels = !fp->Models().empty();
+        bool showMissing = m_boardAdapter.m_Cfg->m_Render.show_missing_models;
+
+        // Placeholder is suppressed when an extrusion was built.
+        bool hasExtrudedBody = false;
+
+        if( fp->HasExtrudedBody() && fp->GetExtrudedBody()->m_show && m_boardAdapter.IsFootprintShown( fp ) )
+            hasExtrudedBody = addExtrudedBodyToRaytracer( aDstContainer, fp );
+
+        if( ( hasModels || showMissing ) && m_boardAdapter.IsFootprintShown( fp ) )
         {
             double zpos = m_boardAdapter.GetFootprintZPos( fp->IsFlipped() );
 
@@ -1272,12 +2241,12 @@ void RENDER_3D_RAYTRACE_BASE::load3DModels( CONTAINER_3D& aDstContainer,
                 try
                 {
                     // FindRow() can throw an exception
-                    const FP_LIB_TABLE_ROW* fpRow =
-                        PROJECT_PCB::PcbFootprintLibs( m_boardAdapter.GetBoard()->GetProject() )
-                                ->FindRow( libraryName, false );
+                    std::optional<LIBRARY_TABLE_ROW*> fpRow =
+                    PROJECT_PCB::FootprintLibAdapter( m_boardAdapter.GetBoard()->GetProject() )
+                            ->GetRow( libraryName );
 
                     if( fpRow )
-                        footprintBasePath = fpRow->GetFullURI( true );
+                        footprintBasePath = LIBRARY_MANAGER::GetFullURI( *fpRow, true );
                 }
                 catch( ... )
                 {
@@ -1324,6 +2293,16 @@ void RENDER_3D_RAYTRACE_BASE::load3DModels( CONTAINER_3D& aDstContainer,
                     addModels( aDstContainer, modelPtr, modelMatrix, (float) model.m_Opacity,
                                aSkipMaterialInformation, fp );
                 }
+                else if( showMissing )
+                {
+                    addPlaceholderToRaytracer( aDstContainer, fp, fpMatrix, hasExtrudedBody );
+                }
+            }
+
+            // Footprint with no models assigned at all
+            if( !hasModels && showMissing )
+            {
+                addPlaceholderToRaytracer( aDstContainer, fp, fpMatrix, hasExtrudedBody );
             }
         }
     }

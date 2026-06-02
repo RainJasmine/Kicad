@@ -26,7 +26,7 @@
 #include <drc/drc_item.h>
 #include <pad.h>
 #include <geometry/shape_segment.h>
-#include <drc/drc_test_provider_clearance_base.h>
+#include <drc/drc_test_provider.h>
 #include <footprint.h>
 
 /*
@@ -39,11 +39,11 @@
     - DRCE_NPTH_IN_COURTYARD,
 */
 
-class DRC_TEST_PROVIDER_COURTYARD_CLEARANCE : public DRC_TEST_PROVIDER_CLEARANCE_BASE
+class DRC_TEST_PROVIDER_COURTYARD_CLEARANCE : public DRC_TEST_PROVIDER
 {
 public:
     DRC_TEST_PROVIDER_COURTYARD_CLEARANCE () :
-            DRC_TEST_PROVIDER_CLEARANCE_BASE(),
+            DRC_TEST_PROVIDER(),
             m_largestCourtyardClearance( 0 )
     {
         m_isRuleDriven = false;
@@ -102,7 +102,7 @@ bool DRC_TEST_PROVIDER_COURTYARD_CLEARANCE::testFootprintCourtyardDefinitions()
                     [&]( const wxString& msg, BOARD_ITEM*, BOARD_ITEM*, const VECTOR2I& pt )
                     {
                         std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_MALFORMED_COURTYARD );
-                        drcItem->SetErrorMessage( drcItem->GetErrorText() + wxS( " " ) + msg );
+                        drcItem->SetErrorDetail( msg );
                         drcItem->SetItems( footprint );
                         reportViolation( drcItem, pt, UNDEFINED_LAYER );
                     };
@@ -227,21 +227,19 @@ bool DRC_TEST_PROVIDER_COURTYARD_CLEARANCE::testCourtyardClearances()
                 {
                     if( frontA.Collide( &frontB, clearance, &actual, &pos ) )
                     {
-                        auto drce = DRC_ITEM::Create( DRCE_OVERLAPPING_FOOTPRINTS );
+                        std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_OVERLAPPING_FOOTPRINTS );
 
                         if( clearance > 0 )
                         {
-                            wxString msg = formatMsg( _( "(%s clearance %s; actual %s)" ),
-                                                      constraint.GetName(),
-                                                      clearance,
-                                                      actual );
-
-                            drce->SetErrorMessage( drce->GetErrorText() + wxS( " " ) + msg );
+                            drcItem->SetErrorDetail( formatMsg( _( "(%s clearance %s; actual %s)" ),
+                                                                constraint.GetName(),
+                                                                clearance,
+                                                                actual ) );
                         }
 
-                        drce->SetViolatingRule( constraint.GetParentRule() );
-                        drce->SetItems( fpA, fpB );
-                        reportViolation( drce, pos, F_CrtYd );
+                        drcItem->SetViolatingRule( constraint.GetParentRule() );
+                        drcItem->SetItems( fpA, fpB );
+                        reportTwoShapeGeometry( drcItem, pos, &frontA, &frontB, F_CrtYd, actual );
                     }
                 }
             }
@@ -259,21 +257,19 @@ bool DRC_TEST_PROVIDER_COURTYARD_CLEARANCE::testCourtyardClearances()
                 {
                     if( backA.Collide( &backB, clearance, &actual, &pos ) )
                     {
-                        auto drce = DRC_ITEM::Create( DRCE_OVERLAPPING_FOOTPRINTS );
+                        std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_OVERLAPPING_FOOTPRINTS );
 
                         if( clearance > 0 )
                         {
-                            wxString msg = formatMsg( _( "(%s clearance %s; actual %s)" ),
-                                                      constraint.GetName(),
-                                                      clearance,
-                                                      actual );
-
-                            drce->SetErrorMessage( drce->GetErrorText() + wxS( " " ) + msg );
+                            drcItem->SetErrorDetail( formatMsg( _( "(%s clearance %s; actual %s)" ),
+                                                                constraint.GetName(),
+                                                                clearance,
+                                                                actual ) );
                         }
 
-                        drce->SetViolatingRule( constraint.GetParentRule() );
-                        drce->SetItems( fpA, fpB );
-                        reportViolation( drce, pos, B_CrtYd );
+                        drcItem->SetViolatingRule( constraint.GetParentRule() );
+                        drcItem->SetItems( fpA, fpB );
+                        reportTwoShapeGeometry( drcItem, pos, &backA, &backB, B_CrtYd, actual );
                     }
                 }
             }

@@ -24,6 +24,7 @@
 #pragma once
 
 #include <memory>
+#include <vector>
 
 #include <pin_type.h>
 #include <sch_item.h>
@@ -70,6 +71,9 @@ public:
 
     SCH_PIN& operator=( const SCH_PIN& aPin );
 
+    void Serialize( google::protobuf::Any& aContainer ) const override;
+    bool Deserialize( const google::protobuf::Any& aContainer ) override;
+
     wxString GetClass() const override
     {
         return wxT( "SCH_PIN" );
@@ -113,15 +117,41 @@ public:
     void SetVisible( bool aVisible ) { m_hidden = !aVisible; }
 
     const wxString& GetName() const;
-    wxString GetShownName() const;
-    void SetName( const wxString& aName );
+    const wxString& GetShownName() const;
+    void            SetName( const wxString& aName );
     /**
      * Get the name without any alternates
      */
     const wxString& GetBaseName() const;
 
-    const wxString& GetNumber() const { return m_number; }
-    wxString GetShownNumber() const;
+    const wxString&       GetNumber() const { return m_number; }
+    const wxString&       GetShownNumber() const;
+    std::vector<wxString> GetStackedPinNumbers( bool* aValid = nullptr ) const;
+
+    /**
+     * Return the count of logical pins represented by this pin's stacked notation.
+     *
+     * This is a fast alternative to GetStackedPinNumbers().size() that avoids
+     * allocating and populating a vector of strings.
+     *
+     * @param aValid Optional pointer to bool that will be set to indicate if the
+     *               stacked notation is valid (true) or malformed (false).
+     * @return The number of logical pins represented (always >= 1).
+     */
+    int GetStackedPinCount( bool* aValid = nullptr ) const;
+
+    /**
+     * Return the smallest logical pin number if this pin uses stacked
+     * notation and it is valid.  Otherwise returns std::nullopt.
+     */
+    std::optional<wxString> GetSmallestLogicalNumber() const;
+
+    /**
+     * Return the pin number to be used for deterministic operations such as
+     * auto‑generated net names.  For stacked pins this is the smallest logical
+     * number; otherwise it is the shown number.
+     */
+    wxString GetEffectivePadNumber() const;
     void SetNumber( const wxString& aNumber );
 
     int GetNameTextSize() const;
@@ -285,6 +315,8 @@ public:
 
     bool IsConnectable() const override { return true; }
 
+    bool IsLocked() const override;
+
     bool HasConnectivityChanges( const SCH_ITEM* aItem,
                                  const SCH_SHEET_PATH* aInstance = nullptr ) const override;
 
@@ -321,7 +353,7 @@ public:
      * laid out than just the bounding box, you can use this. The SCH_PAINTER,
      * for example, can use this to avoid having to duplicate text extent calcs.
      */
-    PIN_LAYOUT_CACHE& GetLayoutCache() const { return *m_layoutCache; }
+    PIN_LAYOUT_CACHE& GetLayoutCache() const;
 
 protected:
     wxString getItemDescription( ALT* aAlt ) const;

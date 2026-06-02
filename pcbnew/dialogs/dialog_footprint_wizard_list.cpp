@@ -22,38 +22,28 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-/**
- * @file dialog_footprint_wizard_list.cpp
- */
-
 #include <wx/grid.h>
 
-#include <pcbnew_settings.h>
+#include <api/api_plugin_manager.h>
 #include <pgm_base.h>
-#include <settings/settings_manager.h>
 #include <string_utils.h>
 #include <kiface_base.h>
 #include <dialog_footprint_wizard_list.h>
 #include <footprint_wizard_frame.h>
 
-#include <python/scripting/pcbnew_scripting.h>
-
 
 enum FPGeneratorRowNames
 {
-    FP_GEN_ROW_NUMBER = 0,
-    FP_GEN_ROW_NAME,
+    FP_GEN_ROW_NAME = 0,
     FP_GEN_ROW_DESCR,
 };
 
 
-DIALOG_FOOTPRINT_WIZARD_LIST::DIALOG_FOOTPRINT_WIZARD_LIST( wxWindow* aParent ) :
+DIALOG_FOOTPRINT_WIZARD_LIST::DIALOG_FOOTPRINT_WIZARD_LIST( FOOTPRINT_WIZARD_FRAME* aParent ) :
         DIALOG_FOOTPRINT_WIZARD_LIST_BASE( aParent )
 {
+    OptOut( this );
     initLists();
-
-    if( PCBNEW_SETTINGS* cfg = GetAppSettings<PCBNEW_SETTINGS>( "pcbnew" ) )
-        SetSize( wxSize( cfg->m_FootprintWizardList.width, cfg->m_FootprintWizardList.height ) );
 
     SetupStandardButtons();
     finishDialogSettings();
@@ -62,61 +52,47 @@ DIALOG_FOOTPRINT_WIZARD_LIST::DIALOG_FOOTPRINT_WIZARD_LIST( wxWindow* aParent ) 
 }
 
 
-DIALOG_FOOTPRINT_WIZARD_LIST::~DIALOG_FOOTPRINT_WIZARD_LIST()
+FOOTPRINT_WIZARD_FRAME* DIALOG_FOOTPRINT_WIZARD_LIST::ParentFrame()
 {
-    if( !IsIconized() )
-    {
-        if( PCBNEW_SETTINGS* cfg = GetAppSettings<PCBNEW_SETTINGS>( "pcbnew" ) )
-        {
-            cfg->m_FootprintWizardList.width  = GetSize().x;
-            cfg->m_FootprintWizardList.height = GetSize().y;
-        }
-    }
+    return static_cast<FOOTPRINT_WIZARD_FRAME*>( m_parent );
 }
 
 
 void DIALOG_FOOTPRINT_WIZARD_LIST::initLists()
 {
-    // Current wizard selection, empty or first
-    m_footprintWizard = NULL;
+    m_selectedWizard = wxEmptyString;
+    m_footprintGeneratorsGrid->ClearGrid();
 
-    int n_wizards = FOOTPRINT_WIZARD_LIST::GetWizardsCount();
+    FOOTPRINT_WIZARD_MANAGER* manager = ParentFrame()->Manager();
 
-    if( n_wizards )
-        m_footprintWizard = FOOTPRINT_WIZARD_LIST::GetWizard( 0 );
-
-    // Choose selection mode and insert the needed rows
+    manager->ReloadWizards();
+    std::vector<FOOTPRINT_WIZARD*> wizards = manager->Wizards();
 
     m_footprintGeneratorsGrid->SetSelectionMode( wxGrid::wxGridSelectRows );
 
-    int curr_row_cnt = m_footprintGeneratorsGrid->GetNumberRows();
-
-    if( curr_row_cnt )
-        m_footprintGeneratorsGrid->DeleteRows( 0, curr_row_cnt );
-
-    if( n_wizards )
-        m_footprintGeneratorsGrid->InsertRows( 0, n_wizards );
-
-    // Put all wizards in the list
-    for( int ii = 0; ii < n_wizards; ii++ )
+    if( !wizards.empty() )
     {
-        wxString num = wxString::Format( wxT( "%d" ), ii+1 );
-        FOOTPRINT_WIZARD *wizard = FOOTPRINT_WIZARD_LIST::GetWizard( ii );
-        wxString name = wizard->GetName();
-        wxString description = wizard->GetDescription();
+        m_selectedWizard = wizards[0]->Identifier();
+        m_footprintGeneratorsGrid->InsertRows( 0, wizards.size() );
+    }
 
-        m_footprintGeneratorsGrid->SetCellValue( ii, FP_GEN_ROW_NUMBER, num );
-        m_footprintGeneratorsGrid->SetCellValue( ii, FP_GEN_ROW_NAME, name );
-        m_footprintGeneratorsGrid->SetCellValue( ii, FP_GEN_ROW_DESCR, description );
+    int idx = 0;
 
+    for( FOOTPRINT_WIZARD* wizard : wizards )
+    {
+        wxString name = wizard->Info().meta.name;
+        wxString description = wizard->Info().meta.description;
+
+        m_footprintGeneratorsGrid->SetCellValue( idx, FP_GEN_ROW_NAME, name );
+        m_footprintGeneratorsGrid->SetCellValue( idx++, FP_GEN_ROW_DESCR, description );
     }
 
     m_footprintGeneratorsGrid->AutoSizeColumns();
 
     // Auto-expand the description column
-    int width = m_footprintGeneratorsGrid->GetClientSize().GetWidth() -
-                m_footprintGeneratorsGrid->GetRowLabelSize() -
-                m_footprintGeneratorsGrid->GetColSize( FP_GEN_ROW_NAME );
+    int width = m_footprintGeneratorsGrid->GetClientSize().GetWidth()
+                    - m_footprintGeneratorsGrid->GetRowLabelSize()
+                    - m_footprintGeneratorsGrid->GetColSize( FP_GEN_ROW_NAME );
 
     if ( width > m_footprintGeneratorsGrid->GetColMinimalAcceptableWidth() )
         m_footprintGeneratorsGrid->SetColSize( FP_GEN_ROW_DESCR, width );
@@ -126,42 +102,23 @@ void DIALOG_FOOTPRINT_WIZARD_LIST::initLists()
 
     if( m_footprintGeneratorsGrid->GetNumberRows() > 0 )
         m_footprintGeneratorsGrid->SelectRow( 0, false );
-
-    // Display info about scripts: Search paths
-    wxString message;
-    pcbnewGetScriptsSearchPaths( message );
-    m_tcSearchPaths->SetValue( message );
-
-    // Display info about scripts: unloadable scripts (due to syntax errors is python source).
-    pcbnewGetUnloadableScriptNames( message );
-
-    if( message.IsEmpty() )
-    {
-        m_tcNotLoaded->SetValue( _( "All footprint generator scripts were loaded" ) );
-        m_buttonShowTrace->Show( false );
-    }
-    else
-        m_tcNotLoaded->SetValue( message );
-}
-
-
-void DIALOG_FOOTPRINT_WIZARD_LIST::onUpdatePythonModulesClick( wxCommandEvent& event )
-{
-    FOOTPRINT_WIZARD_FRAME* fpw_frame = static_cast<FOOTPRINT_WIZARD_FRAME*>( GetParent() );
-    fpw_frame->PythonPluginsReload();
-
-    initLists();
 }
 
 
 void DIALOG_FOOTPRINT_WIZARD_LIST::OnCellFpGeneratorClick( wxGridEvent& event )
 {
     int click_row = event.GetRow();
-    m_footprintWizard = FOOTPRINT_WIZARD_LIST::GetWizard( click_row );
+
+    FOOTPRINT_WIZARD_MANAGER* manager = ParentFrame()->Manager();
+    std::vector<FOOTPRINT_WIZARD*> wizards = manager->Wizards();
+
+    if( click_row >= 0 && click_row < static_cast<int>( wizards.size() ) )
+        m_selectedWizard = wizards[click_row]->Identifier();
+
     m_footprintGeneratorsGrid->SelectRow( event.GetRow(), false );
 
     // Move the grid cursor to the active line, mainly for aesthetic reasons:
-    m_footprintGeneratorsGrid->GoToCell( event.GetRow(), FP_GEN_ROW_NUMBER );
+    m_footprintGeneratorsGrid->GoToCell( event.GetRow(), FP_GEN_ROW_NAME );
 }
 
 
@@ -171,20 +128,7 @@ void DIALOG_FOOTPRINT_WIZARD_LIST::OnCellFpGeneratorDoubleClick( wxGridEvent& ev
 }
 
 
-void DIALOG_FOOTPRINT_WIZARD_LIST::onShowTrace( wxCommandEvent& event )
+const wxString& DIALOG_FOOTPRINT_WIZARD_LIST::GetWizard()
 {
-    wxString trace;
-    pcbnewGetWizardsBackTrace( trace );
-
-    // Now display the filtered trace in our dialog
-    // (a simple wxMessageBox is really not suitable for long messages)
-    DIALOG_FOOTPRINT_WIZARD_LOG logWindow( this );
-    logWindow.m_Message->SetValue( trace );
-    logWindow.ShowModal();
-}
-
-
-FOOTPRINT_WIZARD* DIALOG_FOOTPRINT_WIZARD_LIST::GetWizard()
-{
-    return m_footprintWizard;
+    return m_selectedWizard;
 }

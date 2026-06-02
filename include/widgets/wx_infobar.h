@@ -29,6 +29,7 @@
 #include <wx/panel.h>
 #include <wx/sizer.h>
 #include <reporter.h>
+#include <widgets/wx_infobar_message_type.h>
 
 
 class wxAuiManager;
@@ -87,16 +88,7 @@ public:
     ~WX_INFOBAR();
 
 
-    /**
-     * Sets the type of message for special handling if needed
-     */
-    enum class MESSAGE_TYPE
-    {
-        GENERIC,          /**< GENERIC Are messages that do not have special handling */
-        OUTDATED_SAVE,    /**< OUTDATED_SAVE Messages that should be cleared on save */
-        DRC_RULES_ERROR,
-        DRC_VIOLATION
-    };
+    using MESSAGE_TYPE = INFOBAR_MESSAGE_TYPE;
 
     MESSAGE_TYPE GetMessageType() const { return m_type; }
 
@@ -327,7 +319,9 @@ class INFOBAR_REPORTER : public REPORTER
 {
 public:
     INFOBAR_REPORTER( WX_INFOBAR* aInfoBar ) :
-            REPORTER(), m_messageSet( false ), m_infoBar( aInfoBar ),
+            REPORTER(),
+            m_messageSet( false ),
+            m_infoBar( aInfoBar ),
             m_severity( RPT_SEVERITY_UNDEFINED )
     {
     }

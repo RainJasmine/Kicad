@@ -27,24 +27,28 @@
 
 
 // Set of dialogs that have been chosen not to be shown again
-static std::unordered_map<unsigned long, int> doNotShowAgainDlgs;
+static std::unordered_map<unsigned long, int> g_doNotShowAgainDlgs;
 
 
-KIDIALOG::KIDIALOG( wxWindow* aParent, const wxString& aMessage, const wxString& aCaption,
-                    long aStyle )
-    : KIDIALOG_BASE( aParent, aMessage, aCaption, aStyle | wxCENTRE | wxSTAY_ON_TOP ),
-      m_hash( 0 ),
-      m_cancelMeansCancel( true )
+KIDIALOG::KIDIALOG( wxWindow* aParent, const wxString& aMessage, const wxString& aCaption, long aStyle ) :
+        KIDIALOG_BASE( aParent, aMessage, aCaption, aStyle | wxCENTRE | wxSTAY_ON_TOP ),
+        m_hash( 0 ),
+        m_cancelMeansCancel( true )
 {
 }
 
 
-KIDIALOG::KIDIALOG( wxWindow* aParent, const wxString& aMessage, KD_TYPE aType,
-                    const wxString& aCaption )
-    : KIDIALOG_BASE( aParent, aMessage, getCaption( aType, aCaption ), getStyle( aType ) ),
-      m_hash( 0 ),
-      m_cancelMeansCancel( true )
+KIDIALOG::KIDIALOG( wxWindow* aParent, const wxString& aMessage, KD_TYPE aType, const wxString& aCaption ) :
+        KIDIALOG_BASE( aParent, aMessage, getCaption( aType, aCaption ), getStyle( aType ) ),
+        m_hash( 0 ),
+        m_cancelMeansCancel( true )
 {
+}
+
+
+void KIDIALOG::ClearDoNotShowAgainDialogs()
+{
+    g_doNotShowAgainDlgs = {};
 }
 
 
@@ -58,13 +62,7 @@ void KIDIALOG::DoNotShowCheckbox( wxString aUniqueId, int line )
 
 bool KIDIALOG::DoNotShowAgain() const
 {
-    return doNotShowAgainDlgs.count( m_hash ) > 0;
-}
-
-
-void KIDIALOG::ForceShowAgain()
-{
-    doNotShowAgainDlgs.erase( m_hash );
+    return g_doNotShowAgainDlgs.count( m_hash ) > 0;
 }
 
 
@@ -74,9 +72,9 @@ bool KIDIALOG::Show( bool aShow )
     if( aShow )
     {
         // Check if this dialog should be shown to the user
-        auto it = doNotShowAgainDlgs.find( m_hash );
+        auto it = g_doNotShowAgainDlgs.find( m_hash );
 
-        if( it != doNotShowAgainDlgs.end() )
+        if( it != g_doNotShowAgainDlgs.end() )
             return it->second;
     }
 
@@ -86,7 +84,7 @@ bool KIDIALOG::Show( bool aShow )
     // Note that we don't save a Cancel value unless the Cancel button is being used for some
     // other function (which is actually more common than it being used for Cancel).
     if( IsCheckBoxChecked() && (!m_cancelMeansCancel || ret != wxID_CANCEL ) )
-        doNotShowAgainDlgs[m_hash] = ret;
+        g_doNotShowAgainDlgs[m_hash] = ret;
 
     return ret;
 }
@@ -95,9 +93,9 @@ bool KIDIALOG::Show( bool aShow )
 int KIDIALOG::ShowModal()
 {
     // Check if this dialog should be shown to the user
-    auto it = doNotShowAgainDlgs.find( m_hash );
+    auto it = g_doNotShowAgainDlgs.find( m_hash );
 
-    if( it != doNotShowAgainDlgs.end() )
+    if( it != g_doNotShowAgainDlgs.end() )
         return it->second;
 
     int ret = KIDIALOG_BASE::ShowModal();
@@ -106,7 +104,7 @@ int KIDIALOG::ShowModal()
     // Note that we don't save a Cancel value unless the Cancel button is being used for some
     // other function (which is actually more common than it being used for Cancel).
     if( IsCheckBoxChecked() && (!m_cancelMeansCancel || ret != wxID_CANCEL ) )
-        doNotShowAgainDlgs[m_hash] = ret;
+        g_doNotShowAgainDlgs[m_hash] = ret;
 
     return ret;
 }
@@ -138,9 +136,9 @@ long KIDIALOG::getStyle( KD_TYPE aType )
     {
     case KD_NONE:       break;
     case KD_INFO:       style |= wxICON_INFORMATION; break;
-    case KD_QUESTION:   style |= wxICON_QUESTION; break;
-    case KD_WARNING:    style |= wxICON_WARNING; break;
-    case KD_ERROR:      style |= wxICON_ERROR; break;
+    case KD_QUESTION:   style |= wxICON_QUESTION;    break;
+    case KD_WARNING:    style |= wxICON_WARNING;     break;
+    case KD_ERROR:      style |= wxICON_ERROR;       break;
     }
 
     return style;

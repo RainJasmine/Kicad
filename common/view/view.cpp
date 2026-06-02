@@ -28,6 +28,7 @@
 
 #include <layer_ids.h>
 #include <trace_helpers.h>
+#include <wx/log.h>
 
 #include <view/view.h>
 #include <view/view_group.h>
@@ -38,11 +39,14 @@
 #include <gal/definitions.h>
 #include <gal/graphics_abstraction_layer.h>
 #include <gal/painter.h>
+#include <algorithm>
+#include <unordered_map>
 
 #include <core/profile.h>
 
 #ifdef KICAD_GAL_PROFILE
 #include <wx/log.h>
+#include <trace_helpers.h>
 #endif
 
 namespace KIGFX {
@@ -240,11 +244,14 @@ VIEW::VIEW() :
     m_scale( 4.0 ),
     m_minScale( 0.2 ), m_maxScale( 50000.0 ),
     m_mirrorX( false ), m_mirrorY( false ),
+    m_layerVisibilityCache( VIEW_MAX_LAYERS ),
+    m_layerCachedFlagCache( VIEW_MAX_LAYERS ),
     m_painter( nullptr ),
     m_gal( nullptr ),
     m_useDrawPriority( false ),
     m_nextDrawPriority( 0 ),
-    m_reverseDrawOrder( false )
+    m_reverseDrawOrder( false ),
+    m_hasPendingItemUpdates( false )
 {
     // Set m_boundary to define the max area size. The default area size
     // is defined here as the max value of a int.
@@ -281,7 +288,7 @@ VIEW::VIEW() :
         l.target         = TARGET_CACHED;
     }
 
-    sortOrderedLayers();
+    SortOrderedLayers();
 
     m_preview.reset( new KIGFX::VIEW_GROUP() );
     Add( m_preview.get() );
@@ -312,6 +319,15 @@ void VIEW::Add( VIEW_ITEM* aItem, int aDrawPriority )
     aItem->m_viewPrivData->m_cachedIndex = m_allItems->size();
 
     std::vector<int> layers = aItem->ViewGetLayers();
+
+    std::erase_if( layers, []( int layer )
+    {
+        return layer < 0 || layer >= VIEW_MAX_LAYERS;
+    } );
+
+    if( layers.empty() )
+        return;
+
     aItem->viewPrivData()->saveLayers( layers );
 
     m_allItems->push_back( aItem );
@@ -328,13 +344,78 @@ void VIEW::Add( VIEW_ITEM* aItem, int aDrawPriority )
 }
 
 
+void VIEW::AddBatch( const std::vector<VIEW_ITEM*>& aItems )
+{
+    // Phase 1: Register all items and collect per-layer data
+    std::unordered_map<int, std::vector<std::pair<VIEW_ITEM*, BOX2I>>> layerBulk;
+
+    for( VIEW_ITEM* item : aItems )
+    {
+        if( !item )
+            continue;
+
+        int drawPriority = m_nextDrawPriority++;
+
+        if( !item->m_viewPrivData )
+            item->m_viewPrivData = new VIEW_ITEM_DATA;
+
+        item->m_viewPrivData->m_view = this;
+        item->m_viewPrivData->m_drawPriority = drawPriority;
+        const BOX2I bbox = item->ViewBBox();
+        item->m_viewPrivData->m_bbox = bbox;
+        item->m_viewPrivData->m_cachedIndex = m_allItems->size();
+
+        std::vector<int> layers = item->ViewGetLayers();
+
+        std::erase_if( layers, []( int layer )
+        {
+            return layer < 0 || layer >= VIEW_MAX_LAYERS;
+        } );
+
+        if( layers.empty() )
+            continue;
+
+        item->viewPrivData()->saveLayers( layers );
+        m_allItems->push_back( item );
+
+        for( int layer : layers )
+            layerBulk[layer].emplace_back( item, bbox );
+    }
+
+    // Phase 2: Bulk load each layer's R-tree
+    for( auto& [layerId, items] : layerBulk )
+    {
+        VIEW_LAYER& l = m_layers[layerId];
+        l.items->BulkLoad( items );
+        MarkTargetDirty( l.target );
+    }
+
+    // Phase 3: Set visibility and queue initial invalidation.
+    // INITIAL_ADD is required even though VIEW_ITEM_DATA defaults VISIBLE=true (making
+    // SetVisible a no-op). Without it, items reused after VIEW::Clear() retain stale GAL
+    // cache group IDs that point to freed memory.
+    for( VIEW_ITEM* item : aItems )
+    {
+        if( !item || !item->m_viewPrivData || item->m_viewPrivData->m_view != this )
+            continue;
+
+        SetVisible( item, true );
+        Update( item, KIGFX::INITIAL_ADD );
+    }
+}
+
+
 void VIEW::Remove( VIEW_ITEM* aItem )
 {
     static int s_gcCounter = 0;
 
     if( aItem && aItem->m_viewPrivData )
     {
-        wxCHECK_MSG( aItem->m_viewPrivData->m_view == this, /*void*/, aItem->GetClass() );
+        if( aItem->m_viewPrivData->m_view != nullptr && aItem->m_viewPrivData->m_view != this )
+        {
+            wxLogDebug( wxT( "VIEW::Remove: item %s belongs to a different view" ), aItem->GetClass() );
+            return;
+        }
 
         std::vector<VIEW_ITEM*>::iterator item = m_allItems->end();
         int                               cachedIndex = aItem->m_viewPrivData->m_cachedIndex;
@@ -360,7 +441,7 @@ void VIEW::Remove( VIEW_ITEM* aItem )
             if( s_gcCounter > 4096 )
             {
                 // Perform defragmentation
-                alg::delete_if( *m_allItems,
+                std::erase_if( *m_allItems,
                                 []( VIEW_ITEM* it )
                                 {
                                     return it == nullptr;
@@ -643,11 +724,12 @@ void VIEW::SetCenter( const VECTOR2D& aCenter, const std::vector<BOX2D>& obscuri
 }
 
 
-void VIEW::SetLayerOrder( int aLayer, int aRenderingOrder )
+void VIEW::SetLayerOrder( int aLayer, int aRenderingOrder, bool aAutoSort )
 {
     m_layers[aLayer].renderingOrder = aRenderingOrder;
 
-    sortOrderedLayers();
+    if( aAutoSort )
+        SortOrderedLayers();
 }
 
 
@@ -690,7 +772,7 @@ void VIEW::ReorderLayerData( std::unordered_map<int, int> aReorderMap )
     // Transfer reordered data (using the copy assignment operator ):
     m_layers = new_map;
 
-    sortOrderedLayers();
+    SortOrderedLayers();
 
     for( VIEW_ITEM* item : *m_allItems )
     {
@@ -708,6 +790,7 @@ void VIEW::ReorderLayerData( std::unordered_map<int, int> aReorderMap )
         viewData->reorderGroups( aReorderMap );
 
         viewData->m_requiredUpdate |= COLOR;
+        m_hasPendingItemUpdates = true;
     }
 
     UpdateItems();
@@ -895,7 +978,7 @@ void VIEW::ClearTopLayers()
 
 void VIEW::UpdateAllLayersOrder()
 {
-    sortOrderedLayers();
+    SortOrderedLayers();
 
     if( m_gal->IsVisible() )
     {
@@ -999,8 +1082,14 @@ struct VIEW::DRAW_ITEM_VISITOR
 
 void VIEW::redrawRect( const BOX2I& aRect )
 {
+
+    syncLayerVisibilityCache();
+
     for( VIEW_LAYER* l : m_orderedLayers )
     {
+        if( l->items->IsEmpty() )
+            continue;
+
         if( l->visible && IsTargetDirty( l->target ) && areRequiredLayersEnabled( l->id ) )
         {
             DRAW_ITEM_VISITOR drawFunc( this, l->id, m_useDrawPriority, m_reverseDrawOrder );
@@ -1047,7 +1136,7 @@ void VIEW::draw( VIEW_ITEM* aItem, int aLayer, bool aImmediate )
     if( !viewData )
         return;
 
-    if( IsCached( aLayer ) && !aImmediate )
+    if( m_layerCachedFlagCache[ aLayer ] && !aImmediate )
     {
         // Draw using cached information or create one
         int group = viewData->getGroup( aLayer );
@@ -1119,7 +1208,7 @@ struct VIEW::RECACHE_ITEM_VISITOR
             gal->DeleteGroup( group );
 
         viewData->setGroup( layer, -1 );
-        view->Update( aItem );
+        view->Update( aItem, KIGFX::REPAINT );
 
         return true;
     }
@@ -1134,6 +1223,16 @@ void VIEW::Clear()
 {
     BOX2I r;
     r.SetMaximum();
+
+    // Invalidate viewPrivData for all items before clearing. This ensures that items
+    // which persist outside the view (like selection groups) won't have stale references
+    // to this view, which could cause issues if they're later removed and re-added.
+    for( VIEW_ITEM* item : *m_allItems )
+    {
+        if( item && item->m_viewPrivData )
+            item->m_viewPrivData->m_view = nullptr;
+    }
+
     m_allItems->clear();
 
     for( auto& [_, layer] : m_layers )
@@ -1167,7 +1266,8 @@ void VIEW::ClearTargets()
 void VIEW::Redraw()
 {
 #ifdef KICAD_GAL_PROFILE
-    PROF_TIMER totalRealTime;
+    PROF_TIMER totalRealTime("view-redraw-total");
+    latencyProbeZoomToRender.Checkpoint("view-redraw-start");
 #endif /* KICAD_GAL_PROFILE */
 
     VECTOR2D screenSize = m_gal->GetScreenPixelSize();
@@ -1185,6 +1285,9 @@ void VIEW::Redraw()
 #ifdef KICAD_GAL_PROFILE
     totalRealTime.Stop();
     wxLogTrace( traceGalProfile, wxS( "VIEW::Redraw(): %.1f ms" ), totalRealTime.msecs() );
+    latencyProbeZoomToRender.AddTimer( totalRealTime );
+    latencyProbeZoomToRender.Checkpoint("view-redraw-end");
+    
 #endif /* KICAD_GAL_PROFILE */
 }
 
@@ -1264,7 +1367,7 @@ void VIEW::invalidateItem( VIEW_ITEM* aItem, int aUpdateFlags )
 }
 
 
-void VIEW::sortOrderedLayers()
+void VIEW::SortOrderedLayers()
 {
     int n = 0;
 
@@ -1341,7 +1444,11 @@ void VIEW::updateBbox( VIEW_ITEM* aItem )
     wxASSERT( aItem->m_viewPrivData ); //must have a viewPrivData
 
     const BOX2I  new_bbox = aItem->ViewBBox();
-    const BOX2I* old_bbox = &aItem->m_viewPrivData->m_bbox;
+    const BOX2I& old_bbox = aItem->m_viewPrivData->m_bbox;
+
+    if( new_bbox == old_bbox )
+        return;
+
     aItem->m_viewPrivData->m_bbox = new_bbox;
 
     for( int layer : layers )
@@ -1352,7 +1459,7 @@ void VIEW::updateBbox( VIEW_ITEM* aItem )
             continue;
 
         VIEW_LAYER& l = it->second;
-        l.items->Remove( aItem, old_bbox );
+        l.items->Remove( aItem, &old_bbox );
         l.items->Insert( aItem, new_bbox );
         MarkTargetDirty( l.target );
     }
@@ -1366,8 +1473,15 @@ void VIEW::updateLayers( VIEW_ITEM* aItem )
     if( !viewData )
         return;
 
+    const BOX2I  new_bbox = aItem->ViewBBox();
+    std::vector<int> newLayers = aItem->ViewGetLayers();
+
+    // If neither the layers nor the bbox have changed, skip the expensive R-tree operations
+    if( newLayers == viewData->m_layers && new_bbox == viewData->m_bbox )
+        return;
+
     // Remove the item from previous layer set
-    const BOX2I* old_bbox = &aItem->m_viewPrivData->m_bbox;
+    const BOX2I& old_bbox = aItem->m_viewPrivData->m_bbox;
 
     for( int layer : aItem->m_viewPrivData->m_layers )
     {
@@ -1377,7 +1491,7 @@ void VIEW::updateLayers( VIEW_ITEM* aItem )
             continue;
 
         VIEW_LAYER& l = it->second;
-        l.items->Remove( aItem, old_bbox );
+        l.items->Remove( aItem, &old_bbox );
         MarkTargetDirty( l.target );
 
         if( IsCached( l.id ) )
@@ -1393,14 +1507,10 @@ void VIEW::updateLayers( VIEW_ITEM* aItem )
         }
     }
 
-    const BOX2I new_bbox = aItem->ViewBBox();
     aItem->m_viewPrivData->m_bbox = new_bbox;
+    viewData->saveLayers( newLayers );
 
-    // Add the item to new layer set
-    std::vector<int> layers = aItem->ViewGetLayers();
-    viewData->saveLayers( layers );
-
-    for( int layer : layers )
+    for( int layer : newLayers )
     {
         auto it = m_layers.find( layer );
 
@@ -1460,6 +1570,13 @@ void VIEW::UpdateItems()
     if( !m_gal->IsVisible() || !m_gal->IsInitialized() )
         return;
 
+#ifdef KICAD_GAL_PROFILE
+    latencyProbeZoomToRender.Checkpoint("view-update-items");
+#endif
+
+    if( !m_hasPendingItemUpdates )
+        return;
+
     unsigned int cntGeomUpdate = 0;
     bool         anyUpdated = false;
 
@@ -1478,9 +1595,7 @@ void VIEW::UpdateItems()
             anyUpdated = true;
 
             if( vpd->m_requiredUpdate & ( GEOMETRY | LAYERS ) )
-            {
                 cntGeomUpdate++;
-            }
         }
     }
 
@@ -1488,21 +1603,20 @@ void VIEW::UpdateItems()
 
     double ratio = (double) cntGeomUpdate / (double) cntTotal;
 
-    // Optimization to improve view update time. If a lot of items (say, 30%) have their
-    // bboxes/geometry changed it's way faster (around 10 times) to rebuild the R-Trees
-    // from scratch rather than update the bbox of each changed item. Pcbnew does multiple
-    // full geometry updates during file load, this can save a solid 30 seconds on load time
-    // for larger designs...
-
-    if( ratio > 0.3 )
+    // R*-tree individual inserts use forced reinsertion on node overflow, making them
+    // significantly more expensive than simple R-tree inserts. At ~5% changed items
+    // the cost of individual Remove+Insert operations exceeds a full bulk rebuild.
+    if( ratio > 0.05 )
     {
         auto allItems = *m_allItems;
 
-        // kill all Rtrees
+        // Clear all R-trees
         for( auto& [_, layer] : m_layers )
             layer.items->RemoveAll();
 
-        // and re-insert items from scratch
+        // Collect items per layer for bulk loading
+        std::unordered_map<int, std::vector<std::pair<VIEW_ITEM*, BOX2I>>> layerBulk;
+
         for( VIEW_ITEM* item : allItems )
         {
             if( !item )
@@ -1519,13 +1633,29 @@ void VIEW::UpdateItems()
                 auto it = m_layers.find( layer );
 
                 wxCHECK2_MSG( it != m_layers.end(), continue, wxS( "Invalid layer" ) );
-
-                VIEW_LAYER& l = it->second;
-                l.items->Insert( item, bbox );
-                MarkTargetDirty( l.target );
+                layerBulk[layer].emplace_back( item, bbox );
             }
 
-            item->viewPrivData()->m_requiredUpdate &= ~( LAYERS | GEOMETRY );
+            // The bulk rebuild handled R-tree reinsertion, so clear LAYERS|GEOMETRY
+            // to avoid redundant R-tree work in invalidateItem(). Replace with REPAINT
+            // so items still reach updateItemGeometry() for GAL cache rebuilds.
+            if( item->viewPrivData()->m_requiredUpdate & ( LAYERS | GEOMETRY ) )
+            {
+                item->viewPrivData()->m_requiredUpdate &= ~( LAYERS | GEOMETRY );
+                item->viewPrivData()->m_requiredUpdate |= REPAINT;
+            }
+        }
+
+        // Bulk load each layer's R-tree
+        for( auto& [layerId, items] : layerBulk )
+        {
+            auto it = m_layers.find( layerId );
+
+            if( it != m_layers.end() )
+            {
+                it->second.items->BulkLoad( items );
+                MarkTargetDirty( it->second.target );
+            }
         }
     }
 
@@ -1543,17 +1673,27 @@ void VIEW::UpdateItems()
         }
     }
 
-    KI_TRACE( traceGalProfile, wxS( "View update: total items %u, geom %u anyUpdated %u\n" ),
+#ifdef KICAD_GAL_PROFILE
+    wxLogTrace( traceGalProfile, wxS( "View update: total items %u, geom %u anyUpdated %u" ),
               cntTotal, cntGeomUpdate, (unsigned) anyUpdated );
+#endif
+
+    m_hasPendingItemUpdates = false;
 }
 
 
 void VIEW::UpdateAllItems( int aUpdateFlags )
 {
+    if( aUpdateFlags == NONE )
+        return;
+
     for( VIEW_ITEM* item : *m_allItems )
     {
         if( item && item->viewPrivData() )
+        {
             item->viewPrivData()->m_requiredUpdate |= aUpdateFlags;
+            m_hasPendingItemUpdates = true;
+        }
     }
 }
 
@@ -1561,6 +1701,9 @@ void VIEW::UpdateAllItems( int aUpdateFlags )
 void VIEW::UpdateAllItemsConditionally( int aUpdateFlags,
                                         std::function<bool( VIEW_ITEM* )> aCondition )
 {
+    if( aUpdateFlags == NONE )
+        return;
+
     for( VIEW_ITEM* item : *m_allItems )
     {
         if( !item )
@@ -1569,7 +1712,10 @@ void VIEW::UpdateAllItemsConditionally( int aUpdateFlags,
         if( aCondition( item ) )
         {
             if( item->viewPrivData() )
+            {
                 item->viewPrivData()->m_requiredUpdate |= aUpdateFlags;
+                m_hasPendingItemUpdates = true;
+            }
         }
     }
 }
@@ -1583,7 +1729,13 @@ void VIEW::UpdateAllItemsConditionally( std::function<int( VIEW_ITEM* )> aItemFl
             continue;
 
         if( item->viewPrivData() )
-            item->viewPrivData()->m_requiredUpdate |= aItemFlagsProvider( item );
+        {
+            int flags = aItemFlagsProvider( item );
+            item->viewPrivData()->m_requiredUpdate |= flags;
+
+            if( flags != NONE )
+                m_hasPendingItemUpdates = true;
+        }
     }
 }
 
@@ -1594,7 +1746,8 @@ std::unique_ptr<VIEW> VIEW::DataReference() const
     std::unique_ptr<VIEW> ret = std::make_unique<VIEW>();
     ret->m_allItems = m_allItems;
     ret->m_layers = m_layers;
-    ret->sortOrderedLayers();
+    ret->m_hasPendingItemUpdates = m_hasPendingItemUpdates;
+    ret->SortOrderedLayers();
     return ret;
 }
 
@@ -1682,6 +1835,7 @@ void VIEW::Update( const VIEW_ITEM* aItem, int aUpdateFlags ) const
     assert( aUpdateFlags != NONE );
 
     viewData->m_requiredUpdate |= aUpdateFlags;
+    m_hasPendingItemUpdates = true;
 }
 
 
@@ -1735,5 +1889,14 @@ void VIEW::ShowPreview( bool aShow )
    SetVisible( m_preview.get(), aShow );
 }
 
+void VIEW::syncLayerVisibilityCache()
+{
+    for( const auto& layer : m_layers )
+    {
+        m_layerVisibilityCache[ layer.first ] = layer.second.visible;
+        m_layerCachedFlagCache[ layer.first ] = (layer.second.target == TARGET_CACHED);
+    }
+}
 
 } // namespace KIGFX
+

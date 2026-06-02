@@ -25,20 +25,29 @@
 #pragma once
 
 #include <panel_image_editor_base.h>
+#include <widgets/unit_binder.h>
+#include <math/vector2d.h>
 
 #include <memory>
 
+class UNITS_PROVIDER;
 class BITMAP_BASE;
 
 
 class PANEL_IMAGE_EDITOR : public PANEL_IMAGE_EDITOR_BASE
 {
 public:
-    PANEL_IMAGE_EDITOR( wxWindow* aParent, const BITMAP_BASE& aItem );
-    ~PANEL_IMAGE_EDITOR();
+    PANEL_IMAGE_EDITOR( UNITS_PROVIDER* aUnitsProvider, wxWindow* aParent, const BITMAP_BASE& aItem );
+    ~PANEL_IMAGE_EDITOR() = default;
 
 public:
+    bool TransferDataToWindow() override;
     bool TransferDataFromWindow() override;
+
+    double GetScale() const;
+    void   SetScale( double aScale );
+    VECTOR2I GetImageSize() const;
+    wxTextCtrl* GetScaleCtrl() const { return m_textCtrlScale; }
 
     /**
      * Copy edited image to \a aItem.
@@ -51,6 +60,7 @@ private:
 
     bool CheckValues();
 
-    // A copy of BITMAP_BASE to be edited
-    std::unique_ptr<BITMAP_BASE> m_workingImage;
+private:
+    UNIT_BINDER                  m_scale;
+    std::unique_ptr<BITMAP_BASE> m_workingImage;    // A copy of BITMAP_BASE to be edited
 };

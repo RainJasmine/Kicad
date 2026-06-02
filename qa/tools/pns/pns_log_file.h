@@ -72,9 +72,10 @@ public:
     // Saves a P&S event log only (e.g. after fixing a bug and wanting a new "golden" commit state)
     bool SaveLog( const wxFileName& logFileName, REPORTER* aRpt );
 
-    // Loads a P&S event log and the associated board file. These two always go together.
-    bool Load( const wxFileName& logFileName, REPORTER* aRpt );
-
+    // Loads a P&S event log and the associated board file. These always go together.
+    bool Load( const wxFileName& logFileName, REPORTER* aRpt, const wxString boardFileName = wxT("") );
+    const std::optional<wxString> GetLogBoardHash( const wxString& logFileName );
+    
     std::vector<BOARD_CONNECTED_ITEM*> ItemsById( const PNS::LOGGER::EVENT_ENTRY& evt );
     BOARD_CONNECTED_ITEM* ItemById( const PNS::LOGGER::EVENT_ENTRY& evt );
 
@@ -97,19 +98,24 @@ public:
     PNS::ROUTER_MODE GetMode() const { return m_mode; }
 
     void SetMode( PNS::ROUTER_MODE aMode ) { m_mode = aMode; }
-
+    void SetTestCaseType( PNS::LOGGER::TEST_CASE_TYPE aType ) { m_testCaseType = aType; }
+    std::optional<PNS::LOGGER::TEST_CASE_TYPE> GetTestCaseType() const { return m_testCaseType; }
+    
 private:
-    bool parseCommonPnsProps( PNS::ITEM* aItem, const wxString& cmd, wxStringTokenizer& aTokens );
+    bool parseLegacyCommonPnsProps( PNS::ITEM* aItem, const wxString& cmd, wxStringTokenizer& aTokens );
+    std::unique_ptr<PNS::SEGMENT> parseLegacyPnsSegmentFromString( wxStringTokenizer& aTokens );
+    std::unique_ptr<PNS::VIA> parseLegacyPnsViaFromString( wxStringTokenizer& aTokens );
+    std::unique_ptr<PNS::ITEM> parseLegacyItemFromString( wxStringTokenizer& aTokens );
+    std::shared_ptr<SHAPE> parseLegacyShape( SHAPE_TYPE expectedType, wxStringTokenizer& aTokens );
 
-    std::unique_ptr<PNS::SEGMENT> parsePnsSegmentFromString( wxStringTokenizer& aTokens );
-
-    std::unique_ptr<PNS::VIA> parsePnsViaFromString( wxStringTokenizer& aTokens );
-
-    std::unique_ptr<PNS::ITEM> parseItemFromString( wxStringTokenizer& aTokens );
-
-    std::shared_ptr<SHAPE> parseShape( SHAPE_TYPE expectedType, wxStringTokenizer& aTokens );
-
+    std::shared_ptr<SHAPE> parseShape( const nlohmann::json& aJSON );
+    bool parseCommonPnsProps( const nlohmann::json& aJSON, PNS::ITEM* aItem );
+    std::unique_ptr<PNS::ITEM> parseItem( const nlohmann::json& aJSON );
+    bool loadJsonLog( const wxString& aFilename, REPORTER* aRpt, bool aHashOnly = false );
+    bool loadLegacyLog( const wxString& aFilename, REPORTER* aRpt );
+    
 private:
+    std::optional<wxString>                 m_boardHash;
     std::shared_ptr<SETTINGS_MANAGER>       m_settingsMgr;
     std::unique_ptr<PNS::ROUTING_SETTINGS>  m_routerSettings;
     std::vector<PNS::LOGGER::EVENT_ENTRY>   m_events;
@@ -117,6 +123,7 @@ private:
     COMMIT_STATE                            m_commitState;
     std::vector<std::unique_ptr<PNS::ITEM>> m_parsed_items;
     PNS::ROUTER_MODE                        m_mode;
+    std::optional<PNS::LOGGER::TEST_CASE_TYPE> m_testCaseType;
 };
 
 #endif

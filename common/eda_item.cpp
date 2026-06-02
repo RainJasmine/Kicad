@@ -35,6 +35,8 @@
 #include <wx/fdrepdlg.h>
 #include <wx/regex.h>
 #include <eda_pattern_match.h>
+#include <properties/property.h>
+#include <properties/property_mgr.h>
 
 EDA_ITEM::EDA_ITEM( EDA_ITEM* parent, KICAD_T idType, bool isSCH_ITEM, bool isBOARD_ITEM ) :
         KIGFX::VIEW_ITEM( isSCH_ITEM, isBOARD_ITEM ),
@@ -42,8 +44,8 @@ EDA_ITEM::EDA_ITEM( EDA_ITEM* parent, KICAD_T idType, bool isSCH_ITEM, bool isBO
         m_flags( 0 ),
         m_parent( parent ),
         m_group( nullptr ),
-        m_forceVisible( false ),
-        m_isRollover( false )
+        m_isRollover( false ),
+        m_forceVisible( false )
 { }
 
 
@@ -53,8 +55,8 @@ EDA_ITEM::EDA_ITEM( KICAD_T idType, bool isSCH_ITEM, bool isBOARD_ITEM ) :
         m_flags( 0 ),
         m_parent( nullptr ),
         m_group( nullptr ),
-        m_forceVisible( false ),
-        m_isRollover( false )
+        m_isRollover( false ),
+        m_forceVisible( false )
 { }
 
 
@@ -65,8 +67,8 @@ EDA_ITEM::EDA_ITEM( const EDA_ITEM& base ) :
         m_flags( base.m_flags ),
         m_parent( base.m_parent ),
         m_group( base.m_group ),
-        m_forceVisible( base.m_forceVisible ),
-        m_isRollover( false )
+        m_isRollover( false ),
+        m_forceVisible( base.m_forceVisible )
 {
     SetForcedTransparency( base.GetForcedTransparency() );
 }
@@ -85,6 +87,14 @@ EDA_ITEM* EDA_ITEM::findParent( KICAD_T aType ) const
     }
 
     return nullptr;
+}
+
+
+void EDA_ITEM::SetParent( EDA_ITEM* aParent )
+{
+    wxCHECK( aParent != this, /* void */ );
+
+    m_parent = aParent;
 }
 
 
@@ -143,8 +153,7 @@ INSPECT_RESULT EDA_ITEM::Visit( INSPECTOR inspector, void* testData,
 
 wxString EDA_ITEM::GetItemDescription( UNITS_PROVIDER* aUnitsProvider, bool aFull ) const
 {
-    wxFAIL_MSG( wxT( "GetItemDescription() was not overridden for schematic item type " ) +
-                GetClass() );
+    wxFAIL_MSG( wxT( "GetItemDescription() was not overridden for item type " ) + GetClass() );
 
     return wxString( wxT( "Undefined item description for " ) + GetClass() );
 }
@@ -413,6 +422,7 @@ static struct EDA_ITEM_DESC
             .Undefined( TYPE_NOT_INIT )
             .Map( NOT_USED,                wxT( "<not used>" ) )
             .Map( SCREEN_T,                _HKI( "Screen" ) )
+            .Map( SCHEMATIC_T,             _HKI( "Schematic" ) )
 
             .Map( PCB_FOOTPRINT_T,         _HKI( "Footprint" ) )
             .Map( PCB_PAD_T,               _HKI( "Pad" ) )
@@ -434,10 +444,12 @@ static struct EDA_ITEM_DESC
             .Map( PCB_DIM_RADIAL_T,        _HKI( "Dimension" ) )
             .Map( PCB_DIM_LEADER_T,        _HKI( "Leader" ) )
             .Map( PCB_TARGET_T,            _HKI( "Target" ) )
+            .Map( PCB_POINT_T,             _HKI( "Point" ) )
             .Map( PCB_ZONE_T,              _HKI( "Zone" ) )
             .Map( PCB_ITEM_LIST_T,         _HKI( "ItemList" ) )
             .Map( PCB_NETINFO_T,           _HKI( "NetInfo" ) )
             .Map( PCB_GROUP_T,             _HKI( "Group" ) )
+            .Map( PCB_BARCODE_T,           _HKI( "Barcode" ) )
 
             .Map( SCH_MARKER_T,            _HKI( "Marker" ) )
             .Map( SCH_JUNCTION_T,          _HKI( "Junction" ) )

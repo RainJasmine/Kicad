@@ -25,11 +25,10 @@
 
 #include "geometry/roundrect.h"
 
-#include <ki_exception.h>
-
 #include <geometry/shape_poly_set.h>
 #include <geometry/shape_utils.h>
-#include <wx/intl.h>
+
+#include <wx/log.h>
 
 
 namespace
@@ -51,20 +50,21 @@ SHAPE_ARC MakeSideArcCw180( const SHAPE_RECT& aRect, int aRadius, DIRECTION_45::
 } // namespace
 
 
-ROUNDRECT::ROUNDRECT( SHAPE_RECT aRect, int aRadius ) :
+ROUNDRECT::ROUNDRECT( SHAPE_RECT aRect, int aRadius, bool aNormalizeOnCreate ) :
         m_rect( std::move( aRect ) ),
         m_radius( aRadius )
 {
-    if( m_radius > m_rect.MajorDimension() )
-    {
-        throw KI_PARAM_ERROR(
-                _( "Roundrect radius is larger than the rectangle's major dimension" ) );
-    }
+    if( aNormalizeOnCreate )
+        m_rect.Normalize();
+
+    // Ensure radius is compatible with rectangle size:
+    int min_radius = std::abs( m_rect.MinorDimension() )/2;
+
+    if( m_radius > min_radius )
+        m_radius = min_radius;
 
     if( m_radius < 0 )
-    {
-        throw KI_PARAM_ERROR( _( "Roundrect radius must be non-negative" ) );
-    }
+        m_radius = 0;
 }
 
 
@@ -80,20 +80,35 @@ ROUNDRECT ROUNDRECT::GetInflated( int aOutset ) const
 }
 
 
-void ROUNDRECT::TransformToPolygon( SHAPE_POLY_SET& aBuffer ) const
+void ROUNDRECT::TransformToPolygon( SHAPE_POLY_SET& aBuffer, int aMaxError ) const
 {
-    const int         idx = aBuffer.NewOutline();
-    SHAPE_LINE_CHAIN& outline = aBuffer.Outline( idx );
+    // Roundrects won't have a gazillion points, so we use a higher definition than the
+    // typical maxError.
+    int               maxError = aMaxError / 5;
+
+    SHAPE_POLY_SET    tmp;
+    const int         idx = tmp.NewOutline();
+    SHAPE_LINE_CHAIN& outline = tmp.Outline( idx );
 
     const int w = m_rect.GetWidth();
     const int h = m_rect.GetHeight();
+
+    // Handle non normalized rect (i.e. w or h < 0 )
+    if( w < 0 || h < 0 )
+    {
+        ROUNDRECT norm_rr( m_rect, m_radius, true );    // build a normalized ROUNDRECT (w,h >= 0)
+        norm_rr.TransformToPolygon( aBuffer, aMaxError );
+        return;
+    }
+
+    // This code works fine only with normalized rect (i.e. w or h >= 0 )
     const int x_edge = m_rect.GetWidth() - 2 * m_radius;
     const int y_edge = m_rect.GetHeight() - 2 * m_radius;
 
-    // This is a class invariant
-    wxASSERT( x_edge >= 0 );
-    wxASSERT( y_edge >= 0 );
-    wxASSERT( m_radius >= 0 );
+    // Handle degenerate cases where dimensions are invalid
+    // This can happen with negative inflate values or zero-size rectangles
+    if( x_edge < 0 || y_edge < 0 || m_radius < 0 || w <= 0 || h <= 0 )
+        return;
 
     const VECTOR2I& m_p0 = m_rect.GetPosition();
 
@@ -109,7 +124,7 @@ void ROUNDRECT::TransformToPolygon( SHAPE_POLY_SET& aBuffer ) const
     {
         // It's a circle
         outline.Append( SHAPE_ARC( m_p0 + VECTOR2I( m_radius, m_radius ),
-                                   m_p0 + VECTOR2I( -m_radius, 0 ), ANGLE_360 ) );
+                                   m_p0 + VECTOR2I( -m_radius, 0 ), ANGLE_360 ), maxError );
     }
     else
     {
@@ -127,13 +142,13 @@ void ROUNDRECT::TransformToPolygon( SHAPE_POLY_SET& aBuffer ) const
 
             if( y_edge > 0 )
             {
-                outline.Append( MakeCornerArcCw90( inner_rect, m_radius, DIRECTION_45::NE ) );
+                outline.Append( MakeCornerArcCw90( inner_rect, m_radius, DIRECTION_45::NE ), maxError );
                 outline.Append( m_p0 + VECTOR2I( w, m_radius + y_edge ) );
-                outline.Append( MakeCornerArcCw90( inner_rect, m_radius, DIRECTION_45::SE ) );
+                outline.Append( MakeCornerArcCw90( inner_rect, m_radius, DIRECTION_45::SE ), maxError );
             }
             else
             {
-                outline.Append( MakeSideArcCw180( inner_rect, m_radius, DIRECTION_45::E ) );
+                outline.Append( MakeSideArcCw180( inner_rect, m_radius, DIRECTION_45::E ), maxError );
             }
 
             // Bottom side
@@ -141,24 +156,25 @@ void ROUNDRECT::TransformToPolygon( SHAPE_POLY_SET& aBuffer ) const
 
             if( y_edge > 0 )
             {
-                outline.Append( MakeCornerArcCw90( inner_rect, m_radius, DIRECTION_45::SW ) );
+                outline.Append( MakeCornerArcCw90( inner_rect, m_radius, DIRECTION_45::SW ), maxError );
                 outline.Append( m_p0 + VECTOR2I( 0, m_radius ) );
-                outline.Append( MakeCornerArcCw90( inner_rect, m_radius, DIRECTION_45::NW ) );
+                outline.Append( MakeCornerArcCw90( inner_rect, m_radius, DIRECTION_45::NW ), maxError );
             }
             else
             {
-                outline.Append( MakeSideArcCw180( inner_rect, m_radius, DIRECTION_45::W ) );
+                outline.Append( MakeSideArcCw180( inner_rect, m_radius, DIRECTION_45::W ), maxError );
             }
         }
         else
         {
             // x_edge is 0 but y_edge is not, so it's an oval the other way up
             outline.Append( m_p0 + VECTOR2I( 0, m_radius ) );
-            outline.Append( MakeSideArcCw180( inner_rect, m_radius, DIRECTION_45::N ) );
+            outline.Append( MakeSideArcCw180( inner_rect, m_radius, DIRECTION_45::N ), maxError );
             outline.Append( m_p0 + VECTOR2I( w, m_radius + y_edge ) );
-            outline.Append( MakeSideArcCw180( inner_rect, m_radius, DIRECTION_45::S ) );
+            outline.Append( MakeSideArcCw180( inner_rect, m_radius, DIRECTION_45::S ), maxError );
         }
     }
 
     outline.SetClosed( true );
+    aBuffer = std::move( tmp );
 }

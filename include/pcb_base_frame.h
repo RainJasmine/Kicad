@@ -37,6 +37,7 @@
 #include <vector>
 
 #include <wx/datetime.h>
+#include <wx/filename.h>
 #include <wx/timer.h>
 
 /* Forward declarations of classes. */
@@ -59,9 +60,14 @@ class PCB_VIEWERS_SETTINGS_BASE;
 class PCBNEW_SETTINGS;
 class FOOTPRINT_EDITOR_SETTINGS;
 struct MAGNETIC_SETTINGS;
-class NL_PCBNEW_PLUGIN;
 class PROGRESS_REPORTER;
 class PCB_LAYER_BOX_SELECTOR;
+
+#if defined(__linux__) || defined(__FreeBSD__)
+class SPNAV_2D_PLUGIN;
+#else
+class NL_PCBNEW_PLUGIN;
+#endif
 
 #ifdef wxHAS_INOTIFY
 #define wxFileSystemWatcher wxInotifyFileSystemWatcher
@@ -78,6 +84,7 @@ class PCB_LAYER_BOX_SELECTOR;
 class wxFileSystemWatcher;
 class wxFileSystemWatcherEvent;
 
+wxDECLARE_EVENT( EDA_EVT_BOARD_CHANGING, wxCommandEvent );
 wxDECLARE_EVENT( EDA_EVT_BOARD_CHANGED, wxCommandEvent );
 
 /**
@@ -204,7 +211,6 @@ public:
 
     BOARD* GetBoard() const
     {
-        wxASSERT( m_pcb );
         return m_pcb;
     }
 
@@ -215,9 +221,10 @@ public:
 
     EDA_ITEM* ResolveItem( const KIID& aId, bool aAllowNullptrReturn = false ) const override;
 
-    void FocusOnItem( EDA_ITEM* aItem ) override;
-    void FocusOnItem( BOARD_ITEM* aItem, PCB_LAYER_ID aLayer = UNDEFINED_LAYER );
-    void FocusOnItems( std::vector<BOARD_ITEM*> aItems, PCB_LAYER_ID aLayer = UNDEFINED_LAYER );
+    void FocusOnItem( EDA_ITEM* aItem, bool aAllowScroll = true ) override;
+    void FocusOnItem( BOARD_ITEM* aItem, PCB_LAYER_ID aLayer = UNDEFINED_LAYER, bool aAllowScroll = true );
+    void FocusOnItems( std::vector<BOARD_ITEM*> aItems, PCB_LAYER_ID aLayer = UNDEFINED_LAYER,
+                       bool aAllowScroll = true );
 
     void HideSolderMask();
     void ShowSolderMask();
@@ -226,7 +233,7 @@ public:
     virtual void ShowChangedLanguage() override;
     virtual void UpdateStatusBar() override;
 
-    PCB_SCREEN* GetScreen() const override { return (PCB_SCREEN*) EDA_DRAW_FRAME::GetScreen(); }
+    PCB_SCREEN* GetScreen() const override;
 
     /**
      * Show the 3D view frame.
@@ -239,14 +246,6 @@ public:
      * @return global configuration options.
      */
     GENERAL_COLLECTORS_GUIDE GetCollectorsGuide();
-
-    /**
-     * Put up a dialog and allows the user to pick a library, for unspecified use.
-     *
-     * @param aNicknameExisting is the current choice to highlight.
-     * @return the library or wxEmptyString on abort.
-     */
-    wxString SelectLibrary( const wxString& aNicknameExisting );
 
     /**
      * Must be called after a change in order to set the "modify" flag and update other data
@@ -270,12 +269,12 @@ public:
     FOOTPRINT* CreateNewFootprint( wxString aFootprintName, const wxString& aLibName );
 
     /**
-     * Place \a aFootprint at the current cursor position and updates footprint coordinates
+     * Place \a aFootprint at the current cursor position (or provided one) and updates footprint coordinates
      * with the new position.
      *
      * @param aRecreateRatsnest A bool true redraws the footprint ratsnest.
      */
-    void PlaceFootprint( FOOTPRINT* aFootprint, bool aRecreateRatsnest = true );
+    void PlaceFootprint( FOOTPRINT* aFootprint, bool aRecreateRatsnest = true, std::optional<VECTOR2I> aPosition = std::nullopt );
 
     void ShowPadPropertiesDialog( PAD* aPad );
 
@@ -348,8 +347,8 @@ public:
      */
     virtual void SwitchLayer( PCB_LAYER_ID aLayer );
 
-    virtual void SetActiveLayer( PCB_LAYER_ID aLayer ) { GetScreen()->m_Active_Layer = aLayer; }
-    virtual PCB_LAYER_ID GetActiveLayer() const { return GetScreen()->m_Active_Layer; }
+    virtual void SetActiveLayer( PCB_LAYER_ID aLayer );
+    virtual PCB_LAYER_ID GetActiveLayer() const;
 
     SEVERITY GetSeverity( int aErrorCode ) const override;
 
@@ -398,6 +397,9 @@ public:
      */
     void OnFpChangeDebounceTimer( wxTimerEvent& aEvent );
 
+    void GetLibraryItemsForListDialog( wxArrayString& aHeaders,
+                                       std::vector<wxArrayString>& aItemsToDisplay );
+
 protected:
     bool canCloseWindow( wxCloseEvent& aCloseEvent ) override;
 
@@ -435,15 +437,17 @@ protected:
     PCB_ORIGIN_TRANSFORMS   m_originTransforms;
 
 private:
+#if defined(__linux__) || defined(__FreeBSD__)
+    std::unique_ptr<SPNAV_2D_PLUGIN>    m_spaceMouse;
+#else
     std::unique_ptr<NL_PCBNEW_PLUGIN>    m_spaceMouse;
+#endif
 
     std::unique_ptr<wxFileSystemWatcher> m_watcher;
     wxFileName                           m_watcherFileName;
     wxDateTime                           m_watcherLastModified;
     wxTimer                              m_watcherDebounceTimer;
     bool                                 m_inFpChangeTimerEvent;
-
-    std::vector<wxEvtHandler*> m_boardChangeListeners;
 };
 
 #endif  // PCB_BASE_FRAME_H

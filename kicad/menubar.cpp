@@ -24,15 +24,19 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include <settings/common_settings.h>
 #include <advanced_config.h>
 #include <bitmaps.h>
 #include <file_history.h>
 #include <kiplatform/policy.h>
+#include <kiway.h>
+#include <local_history.h>
 #include <paths.h>
 #include <policy_keys.h>
 #include <tool/action_manager.h>
 #include <tool/action_toolbar.h>
 #include <tool/tool_manager.h>
+#include <tool/selection.h>
 #include <tools/kicad_manager_control.h>
 #include <tools/kicad_manager_actions.h>
 #include "kicad_manager_frame.h"
@@ -40,6 +44,8 @@
 #include "kicad_id.h"
 #include <widgets/wx_menubar.h>
 #include <wx/dir.h>
+#include <wx/utils.h>
+#include <local_history.h>
 
 
 void KICAD_MANAGER_FRAME::doReCreateMenuBar()
@@ -74,17 +80,12 @@ void KICAD_MANAGER_FRAME::doReCreateMenuBar()
     openRecentMenu->SetTitle( _( "Open Recent" ) );
 
     fileMenu->Add( KICAD_MANAGER_ACTIONS::newProject );
-    fileMenu->Add( KICAD_MANAGER_ACTIONS::newFromTemplate );
 
-    if( Pgm().GetCommonSettings()->m_Git.enableGit )
-    {
+    if( Pgm().GetCommonSettings() && Pgm().GetCommonSettings()->m_Git.enableGit )
         fileMenu->Add( KICAD_MANAGER_ACTIONS::newFromRepository );
-    }
 
     if( wxDir::Exists( PATHS::GetStockDemosPath() ) )
-    {
         fileMenu->Add( KICAD_MANAGER_ACTIONS::openDemoProject );
-    }
 
     fileMenu->Add( KICAD_MANAGER_ACTIONS::openProject );
 
@@ -101,6 +102,16 @@ void KICAD_MANAGER_FRAME::doReCreateMenuBar()
 
     fileMenu->AppendSeparator();
     fileMenu->Add( KICAD_MANAGER_ACTIONS::closeProject );
+
+    fileMenu->AppendSeparator();
+    wxMenuItem* restoreItem = fileMenu->Add( KICAD_MANAGER_ACTIONS::restoreLocalHistory );
+    ACTION_CONDITIONS historyCond;
+    historyCond.Enable( [&]( const SELECTION& )
+    {
+        return Pgm().GetCommonSettings()->m_System.local_history_enabled
+               && Kiway().LocalHistory().HistoryExists( Prj().GetProjectPath() );
+    } );
+    RegisterUIUpdateHandler( restoreItem->GetId(), historyCond );
 
     fileMenu->AppendSeparator();
     fileMenu->Add( ACTIONS::saveAs );
@@ -135,6 +146,15 @@ void KICAD_MANAGER_FRAME::doReCreateMenuBar()
                      _( "Import EasyEDA (JLCEDA) Professional schematic and board" ),
                      ID_IMPORT_EASYEDAPRO_PROJECT, BITMAPS::import_project );
 
+    importMenu->Add( _( "PADS Project..." ),
+                     _( "Import PADS Logic schematic and PADS ASCII PCB (*.asc, *.txt)" ),
+                     ID_IMPORT_PADS_PROJECT, BITMAPS::import_project );
+
+    importMenu->Add( _( "gEDA / Lepton EDA Project..." ),
+                     _( "Import gEDA or Lepton EDA schematic and PCB layout" ),
+                     ID_IMPORT_GEDA_PROJECT,
+                     BITMAPS::import_project );
+
     fileMenu->Add( importMenu );
 
     fileMenu->AppendSeparator();
@@ -157,10 +177,25 @@ void KICAD_MANAGER_FRAME::doReCreateMenuBar()
     editMenu->Add( ACTIONS::copy );
     editMenu->Add( ACTIONS::paste );
 
+    wxString editCfgEnv;
+    if( wxGetEnv( wxS( "KICAD_EDIT_ADVANCED_CFG" ), &editCfgEnv ); editCfgEnv == wxS( "1" ) )
+    {
+        editMenu->Add( _( "Edit Advanced Config..." ),
+                        _( "Edit advanced settings" ),
+                        ID_EDIT_ADVANCED_CFG,
+                        BITMAPS::editor );
+    }
+
     //-- View menu -----------------------------------------------------------
     //
     ACTION_MENU* viewMenu = new ACTION_MENU( false, controlTool );
 
+    ACTION_MENU* panelsMenu = new ACTION_MENU( false, controlTool );
+    panelsMenu->SetTitle( _( "Panels" ) );
+    panelsMenu->Add( KICAD_MANAGER_ACTIONS::showLocalHistory, ACTION_MENU::CHECK );
+    viewMenu->Add( panelsMenu );
+
+    viewMenu->AppendSeparator();
     viewMenu->Add( ACTIONS::zoomRedraw );
 
     viewMenu->AppendSeparator();

@@ -24,7 +24,7 @@ include( KiCadQABuildUtils )
 macro(setup_qa_env target_name)
     set( MACOS_BIN "" )
     if( APPLE AND ${target_name} STREQUAL "qa_cli" )
-        set( MACOS_BIN "PATH=path_list_prepend:${CMAKE_INSTALL_PREFIX}/KiCad.app/Contents/MacOS" )
+        set( MACOS_BIN "PATH=path_list_prepend:${CMAKE_BINARY_DIR}/kicad/KiCad.app/Contents/MacOS" )
     endif()
 
     set( VCPKG_BIN "" )
@@ -48,9 +48,25 @@ macro(setup_qa_env target_name)
       "PATH=path_list_prepend:${CMAKE_BINARY_DIR}/pcbnew/"
       "PATH=path_list_prepend:${CMAKE_BINARY_DIR}/eeschema/"
       "PATH=path_list_prepend:${CMAKE_BINARY_DIR}/cvpcb/" )
+
     set_tests_properties( ${target_name}
         PROPERTIES
             ENVIRONMENT_MODIFICATION "${PATH_MODIFICATION}"
+    )
+
+    get_test_property( ${target_name} ENVIRONMENT current_env )
+
+    # We now add another variable that holds the same paths as above but explicitly so that python tests
+    # can configure python using its os.add_dll_directory() function. because python wont read from PATH anymore.
+    set( KICAD_BUILD_PATHS
+    "KICAD_BUILD_PATHS=${CMAKE_BINARY_DIR}/kicad:${CMAKE_BINARY_DIR}/common:${CMAKE_BINARY_DIR}/api:${CMAKE_BINARY_DIR}/common/gal:${CMAKE_BINARY_DIR}/pcbnew:${CMAKE_BINARY_DIR}/eeschema:${CMAKE_BINARY_DIR}/cvpcb"
+    )
+
+    # We also set KICAD_RUN_FROM_BUILD_DIR as its the only way all unit tests will run from the build directory
+    set( new_env "KICAD_RUN_FROM_BUILD_DIR=1;${current_env};${KICAD_BUILD_PATHS}" )
+    set_tests_properties( ${target_name}
+        PROPERTIES
+            ENVIRONMENT "${new_env}"
     )
 endmacro()
 
@@ -64,6 +80,7 @@ add_subdirectory( tests )
 
 # Utility/debugging/profiling programs
 add_subdirectory( tools )
+add_subdirectory( fuzz )
 
 if( KICAD_SIGNAL_INTEGRITY )
     #add_subdirectory( ibis )

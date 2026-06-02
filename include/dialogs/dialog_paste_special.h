@@ -21,8 +21,7 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#ifndef DIALOG_PASTE_SPECIAL_H
-#define DIALOG_PASTE_SPECIAL_H
+#pragma once
 
 
 #include <dialog_paste_special_base.h>
@@ -33,10 +32,9 @@ class SCH_SHEET_PIN;
 
 enum class PASTE_MODE
 {
-    UNIQUE_ANNOTATIONS = 0,
-    KEEP_ANNOTATIONS = 1,
-    REMOVE_ANNOTATIONS = 2,
-    RESPECT_OPTIONS = 3,
+    UNIQUE_ANNOTATIONS,
+    KEEP_ANNOTATIONS,
+    REMOVE_ANNOTATIONS
 };
 
 
@@ -44,8 +42,7 @@ class DIALOG_PASTE_SPECIAL : public DIALOG_PASTE_SPECIAL_BASE
 {
 
 public:
-    DIALOG_PASTE_SPECIAL( wxWindow* aParent, PASTE_MODE* aMode,
-                          const wxString& aReplacement = wxS( "?" ) );
+    DIALOG_PASTE_SPECIAL( wxWindow* aParent, PASTE_MODE* aMode, const wxString& aDefaultRef = wxS( "?" ) );
 
     bool TransferDataToWindow() override;
     bool TransferDataFromWindow() override;
@@ -68,4 +65,3 @@ private:
     PASTE_MODE* m_mode;
 };
 
-#endif // DIALOG_PASTE_SPECIAL_H

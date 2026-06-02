@@ -74,15 +74,13 @@ public:
 
     EDA_ANGLE m_RotationAngle;
 
-    bool m_Use45Limit;
+    LEADER_MODE m_AngleSnapMode;
 
     ARC_EDIT_MODE m_ArcEditMode;
 
     int m_LibWidth;
 
     wxString m_LastExportPath;
-
-    wxString m_FootprintTextShownColumns;
 
     PCB_SELECTION_FILTER_OPTIONS m_SelectionFilter;
 

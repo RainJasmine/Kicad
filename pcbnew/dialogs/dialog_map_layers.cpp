@@ -22,7 +22,10 @@
 #include <layer_ids.h>
 #include <lseq.h>
 #include <dialog_map_layers.h>
+#include <pcb_base_frame.h>
+#include <pcbnew_settings.h>
 
+#include <wx/checkbox.h>
 #include <wx/msgdlg.h>
 
 
@@ -154,8 +157,7 @@ void DIALOG_MAP_LAYERS::RemoveMappings( int aStatus )
     wxArrayInt rowsToDelete;
     int        itemIndex = -1;
 
-    while( ( itemIndex = m_matched_layers_list->GetNextItem( itemIndex, wxLIST_NEXT_ALL, aStatus ) )
-            != wxNOT_FOUND )
+    while( ( itemIndex = m_matched_layers_list->GetNextItem( itemIndex, wxLIST_NEXT_ALL, aStatus ) ) != wxNOT_FOUND )
     {
         wxString selectedLayerName     = m_matched_layers_list->GetItemText( itemIndex, 0 );
         wxString pureSelectedLayerName = UnwrapRequired( selectedLayerName );
@@ -188,8 +190,7 @@ void DIALOG_MAP_LAYERS::OnAutoMatchLayersClicked( wxCommandEvent& event )
     wxArrayInt rowsToDelete;
 
     while( ( itemIndex = m_unmatched_layers_list->GetNextItem( itemIndex, wxLIST_NEXT_ALL,
-                                                               wxLIST_STATE_DONTCARE ) )
-            != wxNOT_FOUND )
+                                                               wxLIST_STATE_DONTCARE ) ) != wxNOT_FOUND )
     {
         wxString     layerName      = m_unmatched_layers_list->GetItemText( itemIndex );
         PCB_LAYER_ID autoMatchLayer = GetAutoMatchLayerID( layerName );
@@ -206,8 +207,7 @@ void DIALOG_MAP_LAYERS::OnAutoMatchLayersClicked( wxCommandEvent& event )
         m_matched_layers_map.insert( { UnwrapRequired( layerName ), autoMatchLayer } );
 
         // remove selected layer from vector and also GUI list
-        for( auto iter = m_unmatched_layer_names.begin(); iter != m_unmatched_layer_names.end();
-                ++iter )
+        for( auto iter = m_unmatched_layer_names.begin(); iter != m_unmatched_layer_names.end(); ++iter )
         {
             if( *iter == layerName )
             {
@@ -223,8 +223,7 @@ void DIALOG_MAP_LAYERS::OnAutoMatchLayersClicked( wxCommandEvent& event )
 }
 
 
-DIALOG_MAP_LAYERS::DIALOG_MAP_LAYERS( wxWindow* aParent,
-                                      const std::vector<INPUT_LAYER_DESC>& aLayerDesc ) :
+DIALOG_MAP_LAYERS::DIALOG_MAP_LAYERS( wxWindow* aParent, const std::vector<INPUT_LAYER_DESC>& aLayerDesc ) :
         DIALOG_IMPORTED_LAYERS_BASE( aParent )
 {
     LSET kiCadLayers;
@@ -297,6 +296,9 @@ DIALOG_MAP_LAYERS::DIALOG_MAP_LAYERS( wxWindow* aParent,
     // Auto select the first item to improve ease-of-use
     m_kicad_layers_list->SetItemState( 0, wxLIST_STATE_SELECTED, wxLIST_STATE_SELECTED );
 
+    if( auto* frame = dynamic_cast<PCB_BASE_FRAME*>( m_parentFrame ) )
+        m_cbKeepKiCadLayerNames->SetValue( frame->GetPcbNewSettings()->m_ImportKeepKiCadLayerNames );
+
     SetupStandardButtons();
 
     Fit();
@@ -333,9 +335,8 @@ DIALOG_MAP_LAYERS::RunModal( wxWindow* aParent, const std::vector<INPUT_LAYER_DE
 
         if( dlg.GetUnmappedRequiredLayers().size() > 0 )
         {
-            wxMessageBox( _( "All required layers (marked with '*') must be matched. "
-                             "Please click on 'Auto-Match Layers' to "
-                             "automatically match the remaining layers" ),
+            wxMessageBox( _( "All required layers (marked with '*') must be matched. Please click "
+                             "'Auto-Match Layers' to automatically match the remaining layers" ),
                           _( "Unmatched Layers" ), wxICON_ERROR | wxOK );
         }
         else
@@ -343,6 +344,9 @@ DIALOG_MAP_LAYERS::RunModal( wxWindow* aParent, const std::vector<INPUT_LAYER_DE
             dataOk = true;
         }
     }
+
+    if( auto* frame = dynamic_cast<PCB_BASE_FRAME*>( dlg.m_parentFrame ) )
+        frame->GetPcbNewSettings()->m_ImportKeepKiCadLayerNames = dlg.m_cbKeepKiCadLayerNames->GetValue();
 
     return dlg.m_matched_layers_map;
 }

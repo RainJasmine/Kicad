@@ -36,7 +36,8 @@ public:
         POST,
         DXF,
         PDF,
-        SVG
+        SVG,
+        PNG
     };
 
     JOB_EXPORT_PCB_PLOT( PLOT_FORMAT aFormat, const std::string& aType, bool aOutputIsDirectory );
@@ -50,6 +51,7 @@ public:
     wxString m_filename;
     wxString m_colorTheme;
     wxString m_drawingSheet;
+    wxString m_variant;
 
     /**
      * Common Options
@@ -79,4 +81,6 @@ public:
 
     ///< Used by SVG/DXF/PDF/Gerbers
     bool m_useDrillOrigin;
+
+    bool m_checkZonesBeforePlot;
 };

@@ -104,6 +104,10 @@ public:
 
     void ShutdownCanvases();
 
+    wxObjectDataPtr<LIB_TREE_MODEL_ADAPTER> Adapter() const { return m_adapter; }
+
+    void Regenerate();
+
 protected:
     static constexpr int DBLCLICK_DELAY = 100; // milliseconds
 
@@ -167,7 +171,7 @@ protected:
     LIB_TREE*                 m_tree;
     HTML_WINDOW*              m_details;
 
-    SCH_BASE_FRAME*           m_frame;
+    static SCH_BASE_FRAME*    m_frame;      // Must be static becuase used in a static function
     std::function<void()>     m_acceptHandler;
     std::function<void()>     m_escapeHandler;
 

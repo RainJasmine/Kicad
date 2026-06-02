@@ -57,6 +57,7 @@ class DIALOG_IMPORT_SETTINGS_BASE : public DIALOG_SHIM
 	public:
 		wxCheckBox* m_LayersOpt;
 		wxCheckBox* m_MaskAndPasteOpt;
+		wxCheckBox* m_ZoneHatchingOffsetsOpt;
 		wxCheckBox* m_TextAndGraphicsOpt;
 		wxCheckBox* m_FormattingOpt;
 		wxCheckBox* m_ConstraintsOpt;
@@ -65,7 +66,7 @@ class DIALOG_IMPORT_SETTINGS_BASE : public DIALOG_SHIM
 		wxCheckBox* m_TuningPatternsOpt;
 		wxCheckBox* m_NetclassesOpt;
 		wxCheckBox* m_ComponentClassesOpt;
-		wxCheckBox* m_TimeDomainParametersOpt;
+		wxCheckBox* m_TuningProfilesOpt;
 		wxCheckBox* m_CustomRulesOpt;
 		wxCheckBox* m_SeveritiesOpt;
 

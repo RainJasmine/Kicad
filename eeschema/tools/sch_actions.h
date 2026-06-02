@@ -114,6 +114,12 @@ public:
 
     // Interactive Editing
     static TOOL_ACTION alignToGrid;
+    static TOOL_ACTION alignTop;
+    static TOOL_ACTION alignBottom;
+    static TOOL_ACTION alignLeft;
+    static TOOL_ACTION alignRight;
+    static TOOL_ACTION alignCenterX;
+    static TOOL_ACTION alignCenterY;
     static TOOL_ACTION move;
     static TOOL_ACTION drag;
     static TOOL_ACTION repeatDrawItem;
@@ -122,17 +128,18 @@ public:
     static TOOL_ACTION mirrorV;
     static TOOL_ACTION mirrorH;
     static TOOL_ACTION swap;
+    static TOOL_ACTION swapPins;
+    static TOOL_ACTION swapPinLabels;
+    static TOOL_ACTION swapUnitLabels;
     static TOOL_ACTION properties;
     static TOOL_ACTION editReference;
     static TOOL_ACTION editValue;
     static TOOL_ACTION editFootprint;
     static TOOL_ACTION autoplaceFields;
-    static TOOL_ACTION toggleDeMorgan;
-    static TOOL_ACTION showDeMorganStandard;
-    static TOOL_ACTION showDeMorganAlternate;
+    static TOOL_ACTION cycleBodyStyle;
     static TOOL_ACTION editSymbolUnit;
     static TOOL_ACTION toLabel;
-    static TOOL_ACTION toCLabel;
+    static TOOL_ACTION toDLabel;
     static TOOL_ACTION toHLabel;
     static TOOL_ACTION toGLabel;
     static TOOL_ACTION toText;
@@ -148,14 +155,19 @@ public:
     static TOOL_ACTION incrementAnnotations;
     static TOOL_ACTION editSymbolFields;
     static TOOL_ACTION editSymbolLibraryLinks;
+    static TOOL_ACTION showLibFieldsTable;
+    static TOOL_ACTION showRelatedLibFieldsTable;
     static TOOL_ACTION symbolProperties;
     static TOOL_ACTION pinTable;
+    static TOOL_ACTION convertStackedPins;
+    static TOOL_ACTION explodeStackedPin;
     static TOOL_ACTION changeSymbols;
     static TOOL_ACTION updateSymbols;
     static TOOL_ACTION changeSymbol;
     static TOOL_ACTION updateSymbol;
     static TOOL_ACTION assignFootprints;
     static TOOL_ACTION assignNetclass;
+    static TOOL_ACTION findNetInInspector;
     static TOOL_ACTION schematicSetup;
     static TOOL_ACTION editPageNumber;
     static TOOL_ACTION checkSymbol;
@@ -179,20 +191,25 @@ public:
     static TOOL_ACTION generateBOMExternal;
     static TOOL_ACTION addSymbolToSchematic;
     static TOOL_ACTION exportSymbolsToLibrary;
-    static TOOL_ACTION exportSymbolsToNewLibrary;
+
+    // Variant operations
+    static TOOL_ACTION addVariant;
+    static TOOL_ACTION removeVariant;
+    static TOOL_ACTION editVariantDescription;
 
     // Attribute Toggles
     static TOOL_ACTION setExcludeFromBOM;
-    static TOOL_ACTION setExcludeFromSimulation;
+    static TOOL_ACTION setExcludeFromSim;
     static TOOL_ACTION setExcludeFromBoard;
     static TOOL_ACTION setDNP;
 
     // Design Block management
     static TOOL_ACTION showDesignBlockPanel;
+    static TOOL_ACTION showRemoteSymbolPanel;
     static TOOL_ACTION saveSheetAsDesignBlock;
     static TOOL_ACTION saveSelectionAsDesignBlock;
-    static TOOL_ACTION saveSheetToDesignBlock;
-    static TOOL_ACTION saveSelectionToDesignBlock;
+    static TOOL_ACTION updateDesignBlockFromSheet;
+    static TOOL_ACTION updateDesignBlockFromSelection;
     static TOOL_ACTION deleteDesignBlock;
     static TOOL_ACTION editDesignBlockProperties;
 
@@ -212,7 +229,7 @@ public:
     static TOOL_ACTION importSymbol;
     static TOOL_ACTION exportSymbol;
     static TOOL_ACTION updateSymbolFields;
-    static TOOL_ACTION setUnitDisplayName;
+    static TOOL_ACTION flattenSymbol;
 
     // Hierarchy navigation
     static TOOL_ACTION changeSheet;
@@ -254,18 +271,21 @@ public:
     static TOOL_ACTION symbolTreeSearch;
     static TOOL_ACTION drawSheetOnClipboard;
     static TOOL_ACTION importGraphics;
+    static TOOL_ACTION importNonKicadSchematic;
     static TOOL_ACTION exportSymbolView;
     static TOOL_ACTION exportSymbolAsSVG;
-    static TOOL_ACTION showPythonConsole;
-    static TOOL_ACTION repairSchematic;
     static TOOL_ACTION previousUnit;
     static TOOL_ACTION nextUnit;
+    static TOOL_ACTION previousSymbol;
+    static TOOL_ACTION nextSymbol;
 
     // Line modes
     static TOOL_ACTION lineModeFree;
     static TOOL_ACTION lineMode90;
     static TOOL_ACTION lineMode45;
     static TOOL_ACTION lineModeNext;
+    // Notify listeners when angle snap/line mode changes
+    static TOOL_ACTION angleSnapModeChanged;
 
     // Annotation
     static TOOL_ACTION toggleAnnotateAuto;
@@ -302,6 +322,8 @@ public:
 
     // Drag and drop
     static TOOL_ACTION ddAppendFile;
+    static TOOL_ACTION ddAddImage;
+    static TOOL_ACTION ddImportGraphics;
 
     struct PLACE_SYMBOL_PARAMS
     {
@@ -309,5 +331,13 @@ public:
         SCH_SYMBOL* m_Symbol = nullptr;
         ///< If a symbol is provide, reannotate it?
         bool m_Reannotate = true;
+    };
+
+    struct PLACE_SYMBOL_UNIT_PARAMS
+    {
+        ///< Symbol used as reference for unit placement
+        SCH_SYMBOL* m_Symbol = nullptr;
+        ///< Unit number to place; 0 means next available unit
+        int m_Unit = 0;
     };
 };

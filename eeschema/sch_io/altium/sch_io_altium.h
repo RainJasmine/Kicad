@@ -149,7 +149,6 @@ private:
     SCH_SHEET* getCurrentSheet();
 
     bool ShouldPutItemOnSheet( int aOwnerindex );
-    bool IsComponentPartVisible( const ASCH_OWNER_INTERFACE& aElem ) const;
     const ASCH_STORAGE_FILE* GetFileFromStorage( const wxString& aFilename ) const;
     void CreateAliases();
     void AddTextBox( const ASCH_TEXT_FRAME* aElem );
@@ -259,6 +258,9 @@ private:
 
     // List of available fonts with font name and font size in pt
     std::vector<std::pair<wxString, int>> m_fonts;
+
+    // Persists across sheets so variant application can match by Altium UniqueId
+    std::map<const SCH_SYMBOL*, wxString> m_altiumSymbolToUid;
 
     // Cache the error messages to avoid duplicate messages
     std::unordered_map<wxString, SEVERITY > m_errorMessages;

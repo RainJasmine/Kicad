@@ -23,6 +23,7 @@
 #include <wx/filedlg.h>
 #include <wx/hyperlink.h>
 #include <advanced_config.h>
+#include <kiplatform/ui.h>
 
 #include <functional>
 #include <iomanip>
@@ -30,18 +31,22 @@
 #include <sstream>
 
 using namespace std::placeholders;
+#include <tool/action_manager.h>
 #include <board.h>
 #include <board_design_settings.h>
 #include <board_item.h>
+#include <collectors.h>
 #include <footprint.h>
 #include <geometry/geometry_utils.h>
 #include <pad.h>
 #include <zone.h>
 #include <pcb_edit_frame.h>
+#include <pcb_track.h>
 #include <pcbnew_id.h>
 #include <dialogs/dialog_pns_settings.h>
 #include <dialogs/dialog_pns_diff_pair_dimensions.h>
 #include <dialogs/dialog_track_via_size.h>
+#include <dialogs/dialog_router_save_test_case.h>
 #include <math/vector2wx.h>
 #include <paths.h>
 #include <confirm.h>
@@ -70,6 +75,8 @@ using namespace std::placeholders;
 #include <project/project_file.h>
 #include <project/project_local_settings.h>
 
+#include <io/io_utils.h>
+
 #include "router_tool.h"
 #include "router_status_view_item.h"
 #include "pns_router.h"
@@ -86,16 +93,42 @@ using namespace std::placeholders;
 
 using namespace KIGFX;
 
+namespace
+{
+
+// Saves and restores the global wxUpdateUIEvent interval so it cannot leak on
+// early returns or exceptions.
+class UI_UPDATE_INTERVAL_GUARD
+{
+public:
+    UI_UPDATE_INTERVAL_GUARD( long aNewInterval ) :
+            m_saved( wxUpdateUIEvent::GetUpdateInterval() )
+    {
+        wxUpdateUIEvent::SetUpdateInterval( aNewInterval );
+    }
+
+    ~UI_UPDATE_INTERVAL_GUARD()
+    {
+        wxUpdateUIEvent::SetUpdateInterval( m_saved );
+    }
+
+private:
+    long m_saved;
+};
+
+} // anonymous namespace
+
 /**
  * Flags used by via tool actions
  */
 enum VIA_ACTION_FLAGS
 {
     // Via type
-    VIA_MASK     = 0x03,
+    VIA_MASK     = 0x07,
     VIA          = 0x00,     ///< Normal via
-    BLIND_VIA    = 0x01,     ///< blind/buried via
-    MICROVIA     = 0x02,     ///< Microvia
+    BLIND_VIA    = 0x01,     ///< blind via
+    BURIED_VIA   = 0x02,     ///< buried via
+    MICROVIA     = 0x04,     ///< Microvia
 
     // Select layer
     SELECT_LAYER = VIA_MASK + 1,    ///< Ask user to select layer before adding via
@@ -192,13 +225,43 @@ static const TOOL_ACTION ACT_SwitchPosture( TOOL_ACTION_ARGS()
         .Tooltip( _( "Switches posture of the currently routed track." ) )
         .Icon( BITMAPS::change_entry_orient ) );
 
-static const TOOL_ACTION ACT_SwitchCornerMode( TOOL_ACTION_ARGS()
-        .Name( "pcbnew.InteractiveRouter.SwitchRounding" )
+        // This old command ( track corner switch mode) is now moved to a submenu with other corner mode options
+static const TOOL_ACTION ACT_SwitchCornerModeToNext( TOOL_ACTION_ARGS()
+        .Name( "pcbnew.InteractiveRouter.SwitchRoundingToNext" )
         .Scope( AS_CONTEXT )
         .DefaultHotkey( MD_CTRL + '/' )
-        .FriendlyName( _( "Track Corner Mode" ) )
+        .FriendlyName( _( "Track Corner Mode Switch" ) )
         .Tooltip( _( "Switches between sharp/rounded and 45°/90° corners when routing tracks." ) )
         .Icon( BITMAPS::switch_corner_rounding_shape ) );
+
+// hotkeys W and Shift+W  are used to switch to track width changes
+static const TOOL_ACTION ACT_SwitchCornerMode45( TOOL_ACTION_ARGS()
+        .Name( "pcbnew.InteractiveRouter.SwitchRounding45" )
+        .Scope( AS_CONTEXT )
+        .DefaultHotkey( MD_CTRL + 'W' )
+        .FriendlyName( _( "Track Corner Mode 45" ) )
+        .Tooltip( _( "Switch to 45° corner when routing tracks." ) ) );
+
+static const TOOL_ACTION ACT_SwitchCornerMode90( TOOL_ACTION_ARGS()
+        .Name( "pcbnew.InteractiveRouter.SwitchRounding90" )
+        .Scope( AS_CONTEXT )
+        .DefaultHotkey(  MD_CTRL + MD_ALT + 'W' )
+        .FriendlyName( _( "Track Corner Mode 90" ) )
+        .Tooltip( _( "Switch to 90° corner when routing tracks." ) ) );
+
+static const TOOL_ACTION ACT_SwitchCornerModeArc45( TOOL_ACTION_ARGS()
+        .Name( "pcbnew.InteractiveRouter.SwitchRoundingArc45" )
+        .Scope( AS_CONTEXT )
+        .DefaultHotkey( MD_CTRL + MD_SHIFT + 'W' )
+        .FriendlyName( _( "Track Corner Mode Arc 45" ) )
+        .Tooltip( _( "Switch to arc 45° corner when routing tracks." ) ) );
+
+static const TOOL_ACTION ACT_SwitchCornerModeArc90( TOOL_ACTION_ARGS()
+        .Name( "pcbnew.InteractiveRouter.SwitchRoundingArc90" )
+        .Scope( AS_CONTEXT )
+        .DefaultHotkey( MD_ALT + 'W' )
+        .FriendlyName( _( "Track Corner Mode Arc 90" ) )
+        .Tooltip( _( "Switch to arc 90° corner when routing tracks." ) ) );
 
 #undef _
 #define _(s) wxGetTranslation((s))
@@ -208,7 +271,9 @@ ROUTER_TOOL::ROUTER_TOOL() :
         TOOL_BASE( "pcbnew.InteractiveRouter" ),
         m_lastTargetLayer( UNDEFINED_LAYER ),
         m_originalActiveLayer( UNDEFINED_LAYER ),
-        m_inRouterTool( false )
+        m_inRouterTool( false ),
+        m_inRouteSelected( false ),
+        m_startWithVia( false )
 {
 }
 
@@ -267,7 +332,7 @@ protected:
 
             int menuIdx = ID_POPUP_PCB_SELECT_WIDTH1 + i;
             Append( menuIdx, msg, wxEmptyString, wxITEM_CHECK );
-            Check( menuIdx, useIndex && bds.GetTrackWidthIndex() == i );
+            Check( menuIdx, useIndex && bds.GetTrackWidthIndex() == (int) i );
         }
 
         AppendSeparator();
@@ -295,7 +360,7 @@ protected:
 
             int menuIdx = ID_POPUP_PCB_SELECT_VIASIZE1 + i;
             Append( menuIdx, msg, wxEmptyString, wxITEM_CHECK );
-            Check( menuIdx, useIndex && bds.GetViaSizeIndex() == i );
+            Check( menuIdx, useIndex && bds.GetViaSizeIndex() == (int) i );
         }
     }
 
@@ -421,7 +486,7 @@ protected:
 
             int menuIdx = ID_POPUP_PCB_SELECT_DIFFPAIR1 + i - 1;
             Append( menuIdx, msg, wxEmptyString, wxITEM_CHECK );
-            Check( menuIdx, !bds.UseCustomDiffPairDimensions() && bds.GetDiffPairIndex() == i );
+            Check( menuIdx, !bds.UseCustomDiffPairDimensions() && bds.GetDiffPairIndex() == (int) i );
         }
     }
 
@@ -473,7 +538,7 @@ bool ROUTER_TOOL::Init()
     wxASSERT( frame );
 
     auto& menu = m_menu->GetMenu();
-    menu.SetTitle( _( "Interactive Router" ) );
+    menu.SetUntranslatedTitle( _HKI( "Interactive Router" ) );
 
     m_trackViaMenu = std::make_shared<TRACK_WIDTH_MENU>( *frame );
     m_trackViaMenu->SetTool( this );
@@ -483,8 +548,10 @@ bool ROUTER_TOOL::Init()
     m_diffPairMenu->SetTool( this );
     m_menu->RegisterSubMenu( m_diffPairMenu );
 
+    ACTION_MANAGER* mgr = frame->GetToolManager()->GetActionManager();
+
     auto haveHighlight =
-            [&]( const SELECTION& sel )
+            [this]( const SELECTION& sel )
             {
                 KIGFX::RENDER_SETTINGS* cfg = m_toolMgr->GetView()->GetPainter()->GetSettings();
 
@@ -497,8 +564,14 @@ bool ROUTER_TOOL::Init()
                 return !m_router->RoutingInProgress();
             };
 
+    auto inRouteSelected =
+            [this]( const SELECTION& )
+            {
+                return m_inRouteSelected;
+            };
+
     auto hasOtherEnd =
-            [&]( const SELECTION& )
+            [this]( const SELECTION& )
             {
                 std::vector<PNS::NET_HANDLE> currentNets = m_router->GetCurrentNets();
 
@@ -515,6 +588,7 @@ bool ROUTER_TOOL::Init()
             };
 
     menu.AddItem( ACTIONS::cancelInteractive,         SELECTION_CONDITIONS::ShowAlways, 1 );
+    menu.AddItem( PCB_ACTIONS::cancelCurrentItem,     inRouteSelected, 1 );
     menu.AddSeparator( 1 );
 
     menu.AddItem( PCB_ACTIONS::clearHighlight,        haveHighlight, 2 );
@@ -540,15 +614,59 @@ bool ROUTER_TOOL::Init()
     menu.AddItem( ACT_SelLayerAndPlaceBlindVia,       SELECTION_CONDITIONS::ShowAlways );
     menu.AddItem( ACT_SelLayerAndPlaceMicroVia,       SELECTION_CONDITIONS::ShowAlways );
     menu.AddItem( ACT_SwitchPosture,                  SELECTION_CONDITIONS::ShowAlways );
-    menu.AddItem( ACT_SwitchCornerMode,               SELECTION_CONDITIONS::ShowAlways );
 
-    menu.AddSeparator();
+    // Add submenu for track corner mode handling
+    CONDITIONAL_MENU* submenuCornerMode = new CONDITIONAL_MENU( this );
+    submenuCornerMode->SetTitle( _( "Track Corner Mode" ) );
+    submenuCornerMode->SetIcon( BITMAPS::switch_corner_rounding_shape );
+
+    submenuCornerMode->AddItem( ACT_SwitchCornerModeToNext, SELECTION_CONDITIONS::ShowAlways );
+    submenuCornerMode->AddSeparator( 1 );
+    submenuCornerMode->AddCheckItem( ACT_SwitchCornerMode45, SELECTION_CONDITIONS::ShowAlways );
+    submenuCornerMode->AddCheckItem( ACT_SwitchCornerModeArc45, SELECTION_CONDITIONS::ShowAlways );
+    submenuCornerMode->AddCheckItem( ACT_SwitchCornerMode90, SELECTION_CONDITIONS::ShowAlways );
+    submenuCornerMode->AddCheckItem( ACT_SwitchCornerModeArc90, SELECTION_CONDITIONS::ShowAlways );
+
+    menu.AddMenu( submenuCornerMode );
+
+    // Manage check/uncheck marks in this submenu items
+    auto cornerMode45Cond =
+        [this]( const SELECTION& )
+        {
+            return m_router->Settings().GetCornerMode() == DIRECTION_45::CORNER_MODE::MITERED_45;
+        };
+
+    auto cornerMode90Cond =
+        [this]( const SELECTION& )
+        {
+            return m_router->Settings().GetCornerMode() == DIRECTION_45::CORNER_MODE::MITERED_90;
+        };
+
+    auto cornerModeArc45Cond =
+        [this]( const SELECTION& )
+        {
+            return m_router->Settings().GetCornerMode() == DIRECTION_45::CORNER_MODE::ROUNDED_45;
+        };
+
+    auto cornerModeArc90Cond =
+        [this]( const SELECTION& )
+        {
+            return m_router->Settings().GetCornerMode() == DIRECTION_45::CORNER_MODE::ROUNDED_90;
+        };
+
+#define CHECK( x )  ACTION_CONDITIONS().Check( x )
+    mgr->SetConditions( ACT_SwitchCornerMode45,       CHECK( cornerMode45Cond ) );
+    mgr->SetConditions( ACT_SwitchCornerMode90,       CHECK( cornerMode90Cond ) );
+    mgr->SetConditions( ACT_SwitchCornerModeArc45,    CHECK( cornerModeArc45Cond ) );
+    mgr->SetConditions( ACT_SwitchCornerModeArc90,    CHECK( cornerModeArc90Cond ) );
 
     auto diffPairCond =
         [this]( const SELECTION& )
         {
             return m_router->Mode() == PNS::PNS_MODE_ROUTE_DIFF_PAIR;
         };
+
+    menu.AddSeparator();
 
     menu.AddMenu( m_trackViaMenu.get(),               SELECTION_CONDITIONS::ShowAlways );
     menu.AddMenu( m_diffPairMenu.get(),               diffPairCond );
@@ -574,8 +692,11 @@ void ROUTER_TOOL::Reset( RESET_REASON aReason )
 
 void ROUTER_TOOL::saveRouterDebugLog()
 {
-    static wxString mruPath = PATHS::GetDefaultUserProjectsPath();
+    wxString testCaseDir = ADVANCED_CFG::GetCfg().m_RouterTestCaseDirectory;
+    wxString logPath;
     static size_t   lastLoggerSize = 0;
+    static wxString mruPath;
+    PNS::LOGGER::LOG_DATA logData;
 
     auto logger = m_router->Logger();
 
@@ -585,9 +706,52 @@ void ROUTER_TOOL::saveRouterDebugLog()
         return;
     }
 
+    if( !testCaseDir.IsEmpty() )
+    {
+        DIALOG_ROUTER_SAVE_TEST_CASE saveDlg( frame(), testCaseDir );
+        bool doExit = false;
+
+        if( saveDlg.ShowModal() == wxID_OK )
+        {
+            wxFileName path( testCaseDir );
+            path.AppendDir( saveDlg.getTestCaseName() );
+            logData.m_TestCaseType = saveDlg.getTestCaseType();
+
+            if( path.DirExists() )
+            {
+                doExit = !IsOK( frame(), wxString::Format( _("Test case in directory %s already exists. Overwrite?"), path.GetFullPath() ) );
+            }
+            else
+            {
+                wxMkdir( path.GetFullPath() );
+            }
+
+            path.SetName( wxT("pns") );
+            logPath = path.GetFullPath();
+        }
+        else
+        {
+            doExit = true;
+        }
+
+        if( doExit )
+        {
+            lastLoggerSize = logger->GetEvents().size(); // prevent re-entry
+            return;
+        }        
+    }
+    else
+    {
+        if ( mruPath.IsEmpty() )
+        {
+            mruPath = PATHS::GetDefaultUserProjectsPath();
+        }
+
     wxFileDialog dlg( frame(), _( "Save router log" ), mruPath, "pns.log",
                       "PNS log files" + AddFileExtListToFilter( { "log" } ),
                       wxFD_OVERWRITE_PROMPT | wxFD_SAVE );
+
+    KIPLATFORM::UI::AllowNetworkFileSystems( &dlg );
 
     if( dlg.ShowModal() != wxID_OK )
     {
@@ -595,8 +759,14 @@ void ROUTER_TOOL::saveRouterDebugLog()
         return;
     }
 
-    wxFileName fname_log( dlg.GetPath() );
+        logPath = dlg.GetPath();
+    }
+
+
+    wxFileName fname_log( logPath );
     mruPath = fname_log.GetPath();
+    fname_log.SetExt( "log" );
+    wxLogTrace( wxT( "PNS" ), wxT( "save log to: %s" ), fname_log.GetFullPath() );
 
     wxFileName fname_dump( fname_log );
     fname_dump.SetExt( "dump" );
@@ -621,23 +791,28 @@ void ROUTER_TOOL::saveRouterDebugLog()
     prj->GetLocalSettings().SaveAs( fname_dump.GetPath(), fname_dump.GetName() );
 
     // Build log file:
-    std::vector<PNS::ITEM*> added, removed, heads;
-    m_router->GetUpdatedItems( removed, added, heads );
+    std::vector<PNS::ITEM*> removed;
+    m_router->GetUpdatedItems( removed, logData.m_AddedItems, logData.m_Heads );
 
-    std::set<KIID> removedKIIDs;
 
     for( auto item : removed )
     {
         wxASSERT_MSG( item->Parent() != nullptr, "removed an item with no parent uuid?" );
 
         if( item->Parent() )
-            removedKIIDs.insert( item->Parent()->m_Uuid );
+            logData.m_RemovedItems.insert( item->Parent()->m_Uuid );
     }
 
+    logData.m_BoardHash = IO_UTILS::fileHashMMH3( fname_dump.GetAbsolutePath() );
+
+    if( !logData.m_BoardHash ) // should never happen...
+        return;
+
+    logData.m_Mode = m_router->Mode();    
+    logData.m_Events = logger->GetEvents();
+
     FILE*    log_f = wxFopen( fname_log.GetAbsolutePath(), "wb" );
-    wxString logString = PNS::LOGGER::FormatLogFileAsString( m_router->Mode(),
-                                                             added, removedKIIDs, heads,
-                                                             logger->GetEvents() );
+    wxString logString = PNS::LOGGER::FormatLogFileAsJSON( logData );
 
     if( !log_f )
     {
@@ -678,6 +853,56 @@ void ROUTER_TOOL::handleCommonEvents( TOOL_EVENT& aEvent )
     default:
         break;
     }
+}
+
+int ROUTER_TOOL::handlePnSCornerModeChange( const TOOL_EVENT& aEvent )
+{
+    bool asChanged = false;
+
+    if( aEvent.IsAction( &ACT_SwitchCornerModeToNext ) )
+    {
+        DIRECTION_45::CORNER_MODE curr_mode = m_router->Settings().GetCornerMode();
+
+        if( curr_mode == DIRECTION_45::CORNER_MODE::MITERED_45 )
+            m_router->Settings().SetCornerMode( DIRECTION_45::CORNER_MODE::ROUNDED_45 );
+        else if( curr_mode == DIRECTION_45::CORNER_MODE::ROUNDED_45 )
+            m_router->Settings().SetCornerMode( DIRECTION_45::CORNER_MODE::MITERED_90 );
+        else if( curr_mode == DIRECTION_45::CORNER_MODE::MITERED_90 )
+            m_router->Settings().SetCornerMode( DIRECTION_45::CORNER_MODE::ROUNDED_90 );
+        else if( curr_mode == DIRECTION_45::CORNER_MODE::ROUNDED_90 )
+            m_router->Settings().SetCornerMode( DIRECTION_45::CORNER_MODE::MITERED_45 );
+
+        asChanged = true;
+    }
+    else if( aEvent.IsAction( &ACT_SwitchCornerMode45 ) )
+    {
+        m_router->Settings().SetCornerMode( DIRECTION_45::CORNER_MODE::MITERED_45 );
+        asChanged = true;
+    }
+    else if( aEvent.IsAction( &ACT_SwitchCornerModeArc45 ) )
+    {
+        m_router->Settings().SetCornerMode( DIRECTION_45::CORNER_MODE::ROUNDED_45 );
+        asChanged = true;
+    }
+    else if( aEvent.IsAction( &ACT_SwitchCornerMode90 ) )
+    {
+        m_router->Settings().SetCornerMode( DIRECTION_45::CORNER_MODE::MITERED_90 );
+        asChanged = true;
+    }
+    else if( aEvent.IsAction( &ACT_SwitchCornerModeArc90 ) )
+    {
+        m_router->Settings().SetCornerMode( DIRECTION_45::CORNER_MODE::ROUNDED_90 );
+        asChanged = true;
+    }
+
+    if( asChanged )
+    {
+        UpdateMessagePanel();
+        updateEndItem( aEvent );
+        m_router->Move( m_endSnapPoint, m_endItem );        // refresh
+    }
+
+    return 0;
 }
 
 
@@ -840,7 +1065,9 @@ static VIATYPE getViaTypeFromFlags( int aFlags )
     case VIA_ACTION_FLAGS::VIA:
         return VIATYPE::THROUGH;
     case VIA_ACTION_FLAGS::BLIND_VIA:
-        return VIATYPE::BLIND_BURIED;
+        return VIATYPE::BLIND;
+    case VIA_ACTION_FLAGS::BURIED_VIA:
+        return VIATYPE::BURIED;
     case VIA_ACTION_FLAGS::MICROVIA:
         return VIATYPE::MICROVIA;
     default:
@@ -903,7 +1130,6 @@ int ROUTER_TOOL::handleLayerSwitch( const TOOL_EVENT& aEvent, bool aForceVia )
     {
         size_t idx = 0;
         size_t target_idx = 0;
-        PCB_LAYER_ID lastTargetLayer = m_lastTargetLayer;
 
         for( size_t i = 0; i < layers.size(); i++ )
         {
@@ -1005,8 +1231,7 @@ int ROUTER_TOOL::handleLayerSwitch( const TOOL_EVENT& aEvent, bool aForceVia )
         }
     }
 
-    BOARD_DESIGN_SETTINGS& bds        = board()->GetDesignSettings();
-    const int              layerCount = bds.GetCopperLayerCount();
+    BOARD_DESIGN_SETTINGS& bds = board()->GetDesignSettings();
 
     PCB_LAYER_ID pairTop    = frame()->GetScreen()->m_Route_Layer_TOP;
     PCB_LAYER_ID pairBottom = frame()->GetScreen()->m_Route_Layer_BOTTOM;
@@ -1064,7 +1289,7 @@ int ROUTER_TOOL::handleLayerSwitch( const TOOL_EVENT& aEvent, bool aForceVia )
     sizes.ClearLayerPairs();
 
     // Convert blind/buried via to a through hole one, if it goes through all layers
-    if( viaType == VIATYPE::BLIND_BURIED
+    if( viaType != VIATYPE::THROUGH
             && ( ( targetLayer == B_Cu && currentLayer == F_Cu )
                        || ( targetLayer == F_Cu && currentLayer == B_Cu ) ) )
     {
@@ -1089,8 +1314,21 @@ int ROUTER_TOOL::handleLayerSwitch( const TOOL_EVENT& aEvent, bool aForceVia )
             }
             else
             {
-                // use the layer of the other end
-                targetLayer = m_iface->GetBoardLayerFromPNSLayer( otherEndLayers.Start() );
+                // use the layer of the other end, unless it is the same layer as the currently active layer, in which
+                // case use the layer pair (if applicable)
+                PCB_LAYER_ID otherEndLayerPcbId = m_iface->GetBoardLayerFromPNSLayer( otherEndLayers.Start() );
+                const std::optional<int> pairedLayerPns = m_router->Sizes().PairedLayer( m_router->GetCurrentLayer() );
+
+                if( currentLayer == otherEndLayerPcbId && pairedLayerPns.has_value() )
+                {
+                    // Closest ratsnest layer is the same as the active layer - assume the via is being placed for
+                    // other routing reasons and switch the layer
+                    targetLayer = m_iface->GetBoardLayerFromPNSLayer( *pairedLayerPns );
+                }
+                else
+                {
+                    targetLayer = m_iface->GetBoardLayerFromPNSLayer( otherEndLayers.Start() );
+                }
             }
         }
         else
@@ -1302,6 +1540,17 @@ void ROUTER_TOOL::performRouting( VECTOR2D aStartPosition )
     // Set initial cursor
     setCursor();
 
+    // If the user pressed 'V' before starting to route, enable via placement now
+    if( m_startWithVia )
+    {
+        m_startWithVia = false;
+        handleLayerSwitch( ACT_PlaceThroughVia.MakeEvent(), true );
+    }
+
+    // Throttle wxEVT_UPDATE_UI during routing. The idle sweep fires between every Wait()
+    // iteration and its cost dominates at interactive frame rates.
+    UI_UPDATE_INTERVAL_GUARD uiGuard( 200 );
+
     while( TOOL_EVENT* evt = Wait() )
     {
         setCursor();
@@ -1393,7 +1642,6 @@ void ROUTER_TOOL::performRouting( VECTOR2D aStartPosition )
         {
             updateEndItem( *evt );
             bool needLayerSwitch = m_router->IsPlacingVia();
-            bool forceFinish = evt->Modifier( MD_SHIFT );
             bool forceCommit = false;
 
             if( m_router->FixRoute( m_endSnapPoint, m_endItem, false, forceCommit ) )
@@ -1414,13 +1662,6 @@ void ROUTER_TOOL::performRouting( VECTOR2D aStartPosition )
             updateEndItem( *evt );
             m_router->Move( m_endSnapPoint, m_endItem );
             m_startItem = nullptr;
-        }
-        else if( evt->IsAction( &ACT_SwitchCornerMode ) )
-        {
-            m_router->ToggleCornerMode();
-            UpdateMessagePanel();
-            updateEndItem( *evt );
-            m_router->Move( m_endSnapPoint, m_endItem );        // refresh
         }
         else if( evt->IsAction( &ACT_SwitchPosture ) )
         {
@@ -1448,10 +1689,11 @@ void ROUTER_TOOL::performRouting( VECTOR2D aStartPosition )
             m_router->FixRoute( m_endSnapPoint, m_endItem, forceFinish, forceCommit );
             break;
         }
-        else if( evt->IsCancelInteractive() || evt->IsActivate()
+        else if( evt->IsCancelInteractive() || evt->IsAction( &PCB_ACTIONS::cancelCurrentItem )
+                 || evt->IsActivate()
                  || evt->IsAction( &PCB_ACTIONS::routerInlineDrag ) )
         {
-            if( evt->IsCancelInteractive() && !m_router->RoutingInProgress() )
+            if( evt->IsCancelInteractive() && ( m_inRouteSelected || !m_router->RoutingInProgress() ) )
                 m_cancelled = true;
 
             if( evt->IsActivate() && !evt->IsMoveTool() )
@@ -1604,6 +1846,8 @@ int ROUTER_TOOL::RouteSelected( const TOOL_EVENT& aEvent )
             };
 
     Activate();
+    m_inRouteSelected = true;
+
     // Must be done after Activate() so that it gets set into the correct context
     controls->ShowCursor( true );
     controls->ForceCursorPosition( false );
@@ -1630,6 +1874,7 @@ int ROUTER_TOOL::RouteSelected( const TOOL_EVENT& aEvent )
 
     // For putting sequential tracks that successfully autoroute into one undo commit
     bool groupStart = true;
+    m_cancelled = false;
 
     for( BOARD_CONNECTED_ITEM* item : itemList )
     {
@@ -1670,7 +1915,6 @@ int ROUTER_TOOL::RouteSelected( const TOOL_EVENT& aEvent )
             if( frame->GetActiveLayer() != originalLayer )
                 frame->SetActiveLayer( originalLayer );
 
-            VECTOR2I ignore;
             m_startItem = m_router->GetWorld()->FindItemByParent( anchor->Parent() );
             m_startSnapPoint = anchor->Pos();
             m_router->SetMode( mode );
@@ -1694,15 +1938,22 @@ int ROUTER_TOOL::RouteSelected( const TOOL_EVENT& aEvent )
             // Start interactive routing. Will automatically finish if possible.
             performRouting( VECTOR2D() );
 
+            if( m_cancelled )
+                break;
+
             // Route didn't complete automatically, need to a new undo commit
             // for the next line so those can group as far as they autoroute
             if( !autoRouted )
                 groupStart = true;
         }
+
+        if( m_cancelled )
+            break;
     }
 
     m_iface->SetCommitFlags( 0 );
     frame->PopTool( pushedEvent );
+    m_inRouteSelected = false;
     return 0;
 }
 
@@ -1747,6 +1998,7 @@ int ROUTER_TOOL::MainLoop( const TOOL_EVENT& aEvent )
 
     m_router->SetMode( mode );
     m_cancelled = false;
+    m_startWithVia = false;
 
     if( aEvent.HasPosition() )
         m_toolMgr->PrimeTool( aEvent.Position() );
@@ -1814,6 +2066,7 @@ int ROUTER_TOOL::MainLoop( const TOOL_EVENT& aEvent )
         }
         else if( evt->IsAction( &ACT_PlaceThroughVia ) )
         {
+            m_startWithVia = true;
             m_toolMgr->RunAction( PCB_ACTIONS::layerToggle );
         }
         else if( evt->IsAction( &PCB_ACTIONS::layerChanged ) )
@@ -1904,6 +2157,8 @@ void ROUTER_TOOL::performDragging( int aMode )
     m_gridHelper->SetAuxAxes( true, m_startSnapPoint );
     frame()->UndoRedoBlock( true );
 
+    UI_UPDATE_INTERVAL_GUARD uiGuard( 200 );
+
     while( TOOL_EVENT* evt = Wait() )
     {
         ctls->ForceCursorPosition( false );
@@ -1948,7 +2203,8 @@ void ROUTER_TOOL::performDragging( int aMode )
         {
             m_menu->ShowContextMenu( selection() );
         }
-        else if( evt->IsCancelInteractive() || evt->IsActivate() )
+        else if( evt->IsCancelInteractive() || evt->IsAction( &PCB_ACTIONS::cancelCurrentItem )
+                || evt->IsActivate() )
         {
             if( evt->IsCancelInteractive() && !m_startItem )
                 m_cancelled = true;
@@ -2095,12 +2351,12 @@ bool ROUTER_TOOL::CanInlineDrag( int aDragMode )
     {
         return selection.Front()->IsType( GENERAL_COLLECTOR::DraggableItems );
     }
-    else if( selection.CountType( PCB_FOOTPRINT_T ) == selection.Size() )
+    else if( selection.CountType( PCB_FOOTPRINT_T ) == (size_t) selection.Size() )
     {
         // Footprints cannot be dragged freely.
         return !( aDragMode & PNS::DM_FREE_ANGLE );
     }
-    else if( selection.CountType( PCB_TRACE_T ) == selection.Size() )
+    else if( selection.CountType( PCB_TRACE_T ) == (size_t) selection.Size() )
     {
         return true;
     }
@@ -2181,7 +2437,6 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
 
     m_startItem = nullptr;
 
-    PNS::ITEM*    startItem = nullptr;
     PNS::ITEM_SET itemsToDrag;
 
     bool showCourtyardConflicts = frame()->GetPcbNewSettings()->m_ShowCourtyardCollisions;
@@ -2195,6 +2450,10 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
     VECTOR2I                            lastOffset;
     std::vector<PNS::ITEM*>             leaderSegments;
     bool                                singleFootprintDrag = false;
+
+    // The PNS world may be stale if the board has been modified since the last sync (e.g. by
+    // a Move operation). Sync it now so that FindItemByParent and joint lookups work correctly.
+    m_router->SyncWorld();
 
     if( !footprints.empty() )
     {
@@ -2274,26 +2533,41 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
     m_gridHelper->SetUseGrid( gal->GetGridSnapping() && !aEvent.DisableGridSnapping()  );
     m_gridHelper->SetSnap( !aEvent.Modifier( MD_SHIFT ) );
 
-    std::set<PNS::NET_HANDLE> highlightNetcodes;
-
     if( itemsToDrag.Count() >= 1 )
     {
-        int layer = m_iface->GetPNSLayerFromBoardLayer( m_originalActiveLayer );
+        // Snap to closest item. Use the frame's active layer rather than m_originalActiveLayer,
+        // which is only set during prepareInteractive() and remains UNDEFINED_LAYER for inline
+        // drag operations.
+        PCB_LAYER_ID activeLayer = frame()->GetActiveLayer();
+        int          layer = m_iface->GetPNSLayerFromBoardLayer( activeLayer );
+        PNS::ITEM*   closestItem = nullptr;
+        SEG::ecoord  closestDistSq = std::numeric_limits<SEG::ecoord>::max();
 
         for( PNS::ITEM* pitem : itemsToDrag.Items() )
         {
-            if( pitem->Shape( layer )->Collide( p0, 0 ) )
-            {
-                p = snapToItem( pitem, p0 );
-                m_startItem = pitem;
+            const SHAPE* shape = pitem->Shape( layer );
 
-                if( pitem->Net() )
-                    highlightNetcodes.insert( pitem->Net() );
+            if( !shape )
+                continue;
+
+            SEG::ecoord distSq = shape->SquaredDistance( p0, 0 );
+
+            if( distSq < closestDistSq )
+            {
+                closestDistSq = distSq;
+                closestItem = pitem;
             }
         }
 
-        if( highlightNetcodes.size() )
-            highlightNets( true, highlightNetcodes );
+        if( closestItem )
+        {
+            p = snapToItem( closestItem, p0 );
+
+            m_startItem = closestItem;
+
+            if( closestItem->Net() )
+                highlightNets( true, { closestItem->Net() } );
+        }
     }
 
     if( !footprints.empty() && singleFootprintDrag )
@@ -2368,6 +2642,8 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
     // Send an initial movement to prime the collision detection
     m_router->Move( p, nullptr );
 
+    UI_UPDATE_INTERVAL_GUARD uiGuard( 200 );
+
     bool hasMouseMoved = false;
     bool hasMultidragCancelled = false;
 
@@ -2375,7 +2651,8 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
     {
         setCursor();
 
-        if( evt->IsCancelInteractive() || evt->IsActivate() )
+        if( evt->IsCancelInteractive() || evt->IsAction( &PCB_ACTIONS::cancelCurrentItem )
+                || evt->IsActivate() )
         {
             if( wasLocked )
                 item->SetLocked( true );
@@ -2890,4 +3167,10 @@ void ROUTER_TOOL::setTransitions()
 
     Go( &ROUTER_TOOL::CustomTrackWidthDialog, ACT_CustomTrackWidth.MakeEvent() );
     Go( &ROUTER_TOOL::onTrackViaSizeChanged,  PCB_ACTIONS::trackViaSizeChanged.MakeEvent() );
+
+    Go( &ROUTER_TOOL::handlePnSCornerModeChange, ACT_SwitchCornerModeToNext.MakeEvent() );
+    Go( &ROUTER_TOOL::handlePnSCornerModeChange, ACT_SwitchCornerMode45.MakeEvent() );
+    Go( &ROUTER_TOOL::handlePnSCornerModeChange, ACT_SwitchCornerMode90.MakeEvent() );
+    Go( &ROUTER_TOOL::handlePnSCornerModeChange, ACT_SwitchCornerModeArc45.MakeEvent() );
+    Go( &ROUTER_TOOL::handlePnSCornerModeChange, ACT_SwitchCornerModeArc90.MakeEvent() );
 }

@@ -32,18 +32,54 @@ void INDEX::Add( ITEM* aItem )
 
     if( m_subIndices.size() <= static_cast<size_t>( range.End() ) )
     {
-        for( int i = 0; i <= range.End(); ++i )
+        int startIdx = static_cast<int>( m_subIndices.size() );
+
+        for( int i = startIdx; i <= range.End(); ++i )
             m_subIndices.emplace_back( std::make_unique<ITEM_SHAPE_INDEX>( i ) );
     }
 
-    for( int i = range.Start(); i <= range.End(); ++i )
-        m_subIndices[i]->Add( aItem );
+    if( !m_deferred )
+    {
+        for( int i = range.Start(); i <= range.End(); ++i )
+            m_subIndices[i]->Add( aItem );
+    }
 
     m_allItems.insert( aItem );
     NET_HANDLE net = aItem->Net();
 
     if( net )
         m_netMap[net].push_back( aItem );
+}
+
+
+void INDEX::SetDeferred( bool aDeferred )
+{
+    m_deferred = aDeferred;
+}
+
+
+void INDEX::BuildSpatialIndex()
+{
+    // Group items by sub-index layer
+    std::map<int, std::vector<std::pair<ITEM*, BOX2I>>> layerItems;
+
+    for( ITEM* item : m_allItems )
+    {
+        const PNS_LAYER_RANGE& range = item->Layers();
+
+        for( int i = range.Start(); i <= range.End(); ++i )
+        {
+            BOX2I box = boundingBox( item, i );
+            layerItems[i].emplace_back( item, box );
+        }
+    }
+
+    // Bulk load each sub-index
+    for( auto& [layerId, items] : layerItems )
+    {
+        if( static_cast<size_t>( layerId ) < m_subIndices.size() )
+            m_subIndices[layerId]->BulkLoad( items );
+    }
 }
 
 

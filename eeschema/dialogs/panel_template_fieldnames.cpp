@@ -35,6 +35,7 @@
 #include <bitmaps.h>
 #include <richio.h>
 #include <string_utils.h>
+#include <confirm.h>
 
 PANEL_TEMPLATE_FIELDNAMES::PANEL_TEMPLATE_FIELDNAMES( wxWindow* aWindow,
                                                       TEMPLATES* aProjectTemplateMgr ) :
@@ -64,14 +65,13 @@ PANEL_TEMPLATE_FIELDNAMES::PANEL_TEMPLATE_FIELDNAMES( wxWindow* aWindow,
     m_bpMoveUp->SetBitmap( KiBitmapBundle( BITMAPS::small_up ) );
     m_bpMoveDown->SetBitmap( KiBitmapBundle( BITMAPS::small_down ) );
 
-    m_checkboxColWidth = m_grid->GetColSize( 1 );
-
     m_grid->SetUseNativeColLabels();
 
     m_grid->PushEventHandler( new GRID_TRICKS( m_grid, [this]( wxCommandEvent& aEvent )
                                                        {
                                                            OnAddButtonClick( aEvent );
                                                        } ) );
+    m_grid->SetupColumnAutosizer( 0 );
     m_grid->SetSelectionMode( wxGrid::wxGridSelectRows );
 }
 
@@ -93,107 +93,50 @@ bool PANEL_TEMPLATE_FIELDNAMES::TransferDataToWindow()
 
 void PANEL_TEMPLATE_FIELDNAMES::OnAddButtonClick( wxCommandEvent& event )
 {
-    if( !m_grid->CommitPendingChanges() )
-        return;
+    m_grid->OnAddRow(
+            [&]() -> std::pair<int, int>
+            {
+                int row = m_grid->GetNumberRows();
+                TransferDataFromGrid();
 
-    int row = m_grid->GetNumberRows();
-    TransferDataFromGrid();
+                TEMPLATE_FIELDNAME newFieldname = TEMPLATE_FIELDNAME( _( "Untitled Field" ) );
+                newFieldname.m_Visible = false;
+                m_fields.insert( m_fields.end(), newFieldname );
 
-    TEMPLATE_FIELDNAME newFieldname = TEMPLATE_FIELDNAME( _( "Untitled Field" ) );
-    newFieldname.m_Visible = false;
-    m_fields.insert( m_fields.end(), newFieldname );
-    TransferDataToGrid();
-
-    // wx documentation is wrong, SetGridCursor does not make visible.
-    m_grid->MakeCellVisible( row, 0 );
-    m_grid->SetGridCursor( row, 0 );
-
-    m_grid->EnableCellEditControl( true );
-    m_grid->ShowCellEditControl();
+                TransferDataToGrid();
+                return { row, 0 };
+            } );
 }
 
 
 void PANEL_TEMPLATE_FIELDNAMES::OnDeleteButtonClick( wxCommandEvent& event )
 {
-    if( !m_grid->CommitPendingChanges() )
-        return;
-
-    wxArrayInt selectedRows = m_grid->GetSelectedRows();
-
-    if( selectedRows.empty() && m_grid->GetGridCursorRow() >= 0 )
-        selectedRows.push_back( m_grid->GetGridCursorRow() );
-
-    if( selectedRows.empty() )
-        return;
-
-    // Reverse sort so deleting a row doesn't change the indexes of the other rows.
-    selectedRows.Sort(
-            []( int* first, int* second )
+    m_grid->OnDeleteRows(
+            [&]( int row )
             {
-                return *second - *first;
+                m_fields.erase( m_fields.begin() + row );
+                m_grid->DeleteRows( row );
             } );
-
-    for( int row : selectedRows )
-    {
-        m_fields.erase( m_fields.begin() + row );
-        m_grid->DeleteRows( row );
-
-        m_grid->MakeCellVisible( std::max( 0, row-1 ), m_grid->GetGridCursorCol() );
-        m_grid->SetGridCursor( std::max( 0, row-1 ), m_grid->GetGridCursorCol() );
-    }
-}
-
-
-void swapRows( WX_GRID* aGrid, int aRowA, int aRowB )
-{
-    for( int col = 0; col < aGrid->GetNumberCols(); ++col )
-    {
-        wxString temp = aGrid->GetCellValue( aRowA, col );
-        aGrid->SetCellValue( aRowA, col, aGrid->GetCellValue( aRowB, col ) );
-        aGrid->SetCellValue( aRowB, col, temp );
-    }
 }
 
 
 void PANEL_TEMPLATE_FIELDNAMES::OnMoveUp( wxCommandEvent& event )
 {
-    if( !m_grid->CommitPendingChanges() )
-        return;
-
-    int i = m_grid->GetGridCursorRow();
-
-    if( i > 0 )
-    {
-        swapRows( m_grid, i, i - 1 );
-
-        m_grid->SetGridCursor( i - 1, m_grid->GetGridCursorCol() );
-        m_grid->MakeCellVisible( m_grid->GetGridCursorRow(), m_grid->GetGridCursorCol() );
-    }
-    else
-    {
-        wxBell();
-    }
+    m_grid->OnMoveRowUp(
+            [&]( int row )
+            {
+                m_grid->SwapRows( row, row - 1 );
+            } );
 }
 
 
 void PANEL_TEMPLATE_FIELDNAMES::OnMoveDown( wxCommandEvent& event )
 {
-    if( !m_grid->CommitPendingChanges() )
-        return;
-
-    int i = m_grid->GetGridCursorRow();
-
-    if( i >= 0 && i + 1 < m_grid->GetNumberRows() )
-    {
-        swapRows( m_grid, i, i + 1 );
-
-        m_grid->SetGridCursor( i + 1, m_grid->GetGridCursorCol() );
-        m_grid->MakeCellVisible( m_grid->GetGridCursorRow(), m_grid->GetGridCursorCol() );
-    }
-    else
-    {
-        wxBell();
-    }
+    m_grid->OnMoveRowDown(
+            [&]( int row )
+            {
+                m_grid->SwapRows( row, row + 1 );
+            } );
 }
 
 
@@ -271,7 +214,7 @@ bool PANEL_TEMPLATE_FIELDNAMES::TransferDataFromWindow()
                 msg.Printf( _( "The field name '%s' contains trailing and/or leading white space." ),
                             field.m_Name );
 
-                wxMessageDialog dlg( this, msg, _( "Warning" ), wxOK|wxCANCEL|wxCENTER|wxICON_WARNING );
+                KICAD_MESSAGE_DIALOG dlg( this, msg, _( "Warning" ), wxOK | wxCANCEL | wxCENTER | wxICON_WARNING );
 
                 dlg.SetExtendedMessage( _( "This may result in what appears to be duplicate field "
                                            "names but are actually unique names differing only by "
@@ -279,8 +222,8 @@ bool PANEL_TEMPLATE_FIELDNAMES::TransferDataFromWindow()
                                            "characters will have no effect on existing symbol "
                                            "field names." ) );
 
-                dlg.SetOKCancelLabels( wxMessageDialog::ButtonLabel( _( "Remove White Space" ) ),
-                                       wxMessageDialog::ButtonLabel( _( "Keep White Space" ) ) );
+                dlg.SetOKCancelLabels( KICAD_MESSAGE_DIALOG::ButtonLabel( _( "Remove White Space" ) ),
+                                       KICAD_MESSAGE_DIALOG::ButtonLabel( _( "Keep White Space" ) ) );
 
                 if( dlg.ShowModal() == wxID_OK )
                     field.m_Name = trimmedName;
@@ -306,28 +249,6 @@ bool PANEL_TEMPLATE_FIELDNAMES::TransferDataFromWindow()
     }
 
     return true;
-}
-
-
-void PANEL_TEMPLATE_FIELDNAMES::AdjustGridColumns( int aWidth )
-{
-    if( aWidth <= 0 )
-        return;
-
-    // Account for scroll bars
-    aWidth -= ( m_grid->GetSize().x - m_grid->GetClientSize().x );
-
-    m_grid->SetColSize( 0, std::max( 72, aWidth - 2 * m_checkboxColWidth ) );
-    m_grid->SetColSize( 1, m_checkboxColWidth );
-    m_grid->SetColSize( 2, m_checkboxColWidth );
-}
-
-
-void PANEL_TEMPLATE_FIELDNAMES::OnSizeGrid( wxSizeEvent& event )
-{
-    AdjustGridColumns( event.GetSize().GetX() );
-
-    event.Skip();
 }
 
 

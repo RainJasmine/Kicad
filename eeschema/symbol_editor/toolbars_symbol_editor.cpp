@@ -30,13 +30,16 @@
 #include <symbol_editor_settings.h>
 #include <symbol_library_manager.h>
 #include <toolbars_symbol_editor.h>
+#include <tool/action_menu.h>
 #include <tool/action_toolbar.h>
 #include <tool/tool_manager.h>
+#include <tool/ui/toolbar_context_menu_registry.h>
 #include <tools/sch_actions.h>
 #include <tools/sch_selection_tool.h>
 #include <widgets/sch_properties_panel.h>
 #include <widgets/sch_properties_panel.h>
 #include <widgets/wx_aui_utils.h>
+#include <wx/combobox.h>
 
 #ifdef __UNIX__
 #define LISTBOX_WIDTH 140
@@ -57,11 +60,23 @@ std::optional<TOOLBAR_CONFIGURATION> SYMBOL_EDIT_TOOLBAR_SETTINGS::DefaultToolba
 
     case TOOLBAR_LOC::LEFT:
         config.AppendAction( ACTIONS::toggleGrid )
+              .WithContextMenu(
+                      []( TOOL_MANAGER* aToolMgr )
+                      {
+                          SCH_SELECTION_TOOL* selTool = aToolMgr->GetTool<SCH_SELECTION_TOOL>();
+                          auto               menu = std::make_unique<ACTION_MENU>( false, selTool );
+                          menu->Add( ACTIONS::gridProperties );
+                          return menu;
+                      } )
               .AppendAction( ACTIONS::toggleGridOverrides )
-              .AppendAction( ACTIONS::inchesUnits )
-              .AppendAction( ACTIONS::milsUnits )
-              .AppendAction( ACTIONS::millimetersUnits )
-              .AppendAction( ACTIONS::toggleCursorStyle );
+              .AppendGroup( TOOLBAR_GROUP_CONFIG( _( "Units" ) )
+                            .AddAction( ACTIONS::millimetersUnits )
+                            .AddAction( ACTIONS::inchesUnits )
+                            .AddAction( ACTIONS::milsUnits ) )
+              .AppendGroup( TOOLBAR_GROUP_CONFIG( _( "Crosshair modes" ) )
+                            .AddAction( ACTIONS::cursorSmallCrosshairs )
+                            .AddAction( ACTIONS::cursorFullCrosshairs )
+                            .AddAction( ACTIONS::cursor45Crosshairs ) );
 
         config.AppendSeparator()
               .AppendAction( SCH_ACTIONS::showElectricalTypes )
@@ -75,13 +90,6 @@ std::optional<TOOLBAR_CONFIGURATION> SYMBOL_EDIT_TOOLBAR_SETTINGS::DefaultToolba
         config.AppendSeparator()
               .AppendAction( ACTIONS::showLibraryTree )
               .AppendAction( ACTIONS::showProperties );
-
-        /* TODO: Implement context menus
-        EE_SELECTION_TOOL* selTool = m_toolManager->GetTool<EE_SELECTION_TOOL>();
-        std::unique_ptr<ACTION_MENU> gridMenu = std::make_unique<ACTION_MENU>( false, selTool );
-        gridMenu->Add( ACTIONS::gridProperties );
-        m_tbLeft->AddToolContextMenu( ACTIONS::toggleGrid, std::move( gridMenu ) );
-        */
         break;
 
     case TOOLBAR_LOC::RIGHT:
@@ -102,18 +110,17 @@ std::optional<TOOLBAR_CONFIGURATION> SYMBOL_EDIT_TOOLBAR_SETTINGS::DefaultToolba
         break;
 
     case TOOLBAR_LOC::TOP_MAIN:
-        config.AppendAction( SCH_ACTIONS::newSymbol );
-
-/* TODO (ISM): Handle visibility changes
-        if( !IsSymbolFromSchematic() )
-            config.AppendAction( ACTIONS::saveAll );
-        else
-            config.AppendAction( ACTIONS::save );
-*/
+        config.AppendAction( SCH_ACTIONS::newSymbol )
+              .AppendAction( ACTIONS::saveAll )
+              .AppendAction( ACTIONS::save );
 
         config.AppendSeparator()
               .AppendAction( ACTIONS::undo )
               .AppendAction( ACTIONS::redo );
+
+        config.AppendSeparator()
+              .AppendAction( ACTIONS::find )
+              .AppendAction( ACTIONS::findAndReplace );
 
         config.AppendSeparator()
               .AppendAction( ACTIONS::zoomRedraw )
@@ -137,8 +144,7 @@ std::optional<TOOLBAR_CONFIGURATION> SYMBOL_EDIT_TOOLBAR_SETTINGS::DefaultToolba
               .AppendAction( SCH_ACTIONS::checkSymbol );
 
         config.AppendSeparator()
-              .AppendAction( SCH_ACTIONS::showDeMorganStandard )
-              .AppendAction( SCH_ACTIONS::showDeMorganAlternate );
+              .AppendControl( ACTION_TOOLBAR_CONTROLS::bodyStyleSelector );
 
         config.AppendSeparator()
               .AppendControl( ACTION_TOOLBAR_CONTROLS::unitSelector );
@@ -161,19 +167,47 @@ void SYMBOL_EDIT_FRAME::configureToolbars()
     SCH_BASE_FRAME::configureToolbars();
 
     auto unitDisplayFactory =
-        [this]( ACTION_TOOLBAR* aToolbar )
-        {
-            if( !m_unitSelectBox )
+            [this]( ACTION_TOOLBAR* aToolbar )
             {
-                m_unitSelectBox = new wxComboBox( aToolbar, ID_LIBEDIT_SELECT_UNIT_NUMBER,
-                                                  wxEmptyString, wxDefaultPosition,
-                                                  wxSize( LISTBOX_WIDTH, -1 ), 0,
-                                                  nullptr, wxCB_READONLY );
-            }
+                if( !m_unitSelectBox )
+                {
+                    m_unitSelectBox = new wxComboBox( aToolbar, ID_LIBEDIT_SELECT_UNIT_NUMBER,
+                                                      wxEmptyString, wxDefaultPosition,
+                                                      wxSize( LISTBOX_WIDTH, -1 ), 0,
+                                                      nullptr, wxCB_READONLY );
+                }
 
-            aToolbar->Add( m_unitSelectBox );
-        };
+                aToolbar->Add( m_unitSelectBox );
+            };
+
+    auto bodyDisplayFactory =
+            [this]( ACTION_TOOLBAR* aToolbar )
+            {
+                if( !m_bodyStyleSelectBox )
+                {
+                    m_bodyStyleSelectBox = new wxComboBox( aToolbar, ID_LIBEDIT_SELECT_BODY_STYLE,
+                                                           wxEmptyString, wxDefaultPosition,
+                                                           wxSize( LISTBOX_WIDTH, -1 ), 0,
+                                                           nullptr, wxCB_READONLY );
+                }
+
+                aToolbar->Add( m_bodyStyleSelectBox );
+            };
 
     RegisterCustomToolbarControlFactory( ACTION_TOOLBAR_CONTROLS::unitSelector, unitDisplayFactory );
+    RegisterCustomToolbarControlFactory( ACTION_TOOLBAR_CONTROLS::bodyStyleSelector, bodyDisplayFactory );
 }
+
+
+void SYMBOL_EDIT_FRAME::ClearToolbarControl( int aId )
+{
+    SCH_BASE_FRAME::ClearToolbarControl( aId );
+
+    switch( aId )
+    {
+    case ID_LIBEDIT_SELECT_UNIT_NUMBER: m_unitSelectBox = nullptr;      break;
+    case ID_LIBEDIT_SELECT_BODY_STYLE:  m_bodyStyleSelectBox = nullptr; break;
+    }
+}
+
 

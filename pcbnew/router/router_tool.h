@@ -77,6 +77,7 @@ private:
 
     void handleCommonEvents( TOOL_EVENT& evt );
     int handleLayerSwitch( const TOOL_EVENT& aEvent, bool aForceVia );
+    int handlePnSCornerModeChange( const TOOL_EVENT& aEvent );
 
     // Returns the board layer ID for the start layer of the router
     PCB_LAYER_ID getStartLayer( const PNS::ITEM* aItem );
@@ -102,6 +103,9 @@ private:
     PCB_LAYER_ID                 m_originalActiveLayer;
 
     bool                         m_inRouterTool;         // Re-entrancy guard
+    bool                         m_inRouteSelected;
+
+    bool                         m_startWithVia;         // User pressed V before routing started
 };
 
 #endif

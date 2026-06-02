@@ -35,6 +35,7 @@ public:
     virtual bool MigrateFromLegacy( wxConfigBase* aLegacyConfig ) override;
 
     int m_LeftWinWidth;
+    bool m_ShowHistoryPanel;
 
 
     std::vector<wxString> m_OpenProjects;
@@ -53,6 +54,8 @@ public:
     bool m_PcmLibAutoRemove;
     // Generated library nickname prefix
     wxString m_PcmLibPrefix;
+    // Last used repository (for pre-selection in dialog)
+    wxString m_PcmLastSelectedRepoId;
 
     bool     m_KiCadUpdateCheck;
     wxString m_lastUpdateCheckTime;
@@ -62,6 +65,11 @@ public:
     wxPoint m_TemplateWindowPos;
     // Last size of the template window
     wxSize m_TemplateWindowSize;
+    // Last used project template path (for pre-selection in dialog)
+    wxString m_LastUsedTemplate;
+
+    std::vector<wxString> m_RecentTemplates;
+    int                   m_TemplateFilterChoice = 0;
 
 protected:
     virtual std::string getLegacyFrameName() const override { return "KicadFrame"; }

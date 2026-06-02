@@ -50,10 +50,23 @@ bool DUMMY_BLOCK::Intersect( const RAY& aRay, HITINFO& aHitInfo ) const
         aHitInfo.m_tHit = t;
         aHitInfo.m_HitPoint = aRay.at( t );
 
-        if( aRay.m_dirIsNeg[2] )
+        // Determine which face was hit by checking which box face
+        // the hit point is closest to
+        const SFVEC3F hitPt = aHitInfo.m_HitPoint;
+        const float   eps = 0.0001f;
+
+        if( std::abs( hitPt.x - m_bbox.Min().x ) < eps )
+            aHitInfo.m_HitNormal = SFVEC3F( -1.0f, 0.0f, 0.0f );
+        else if( std::abs( hitPt.x - m_bbox.Max().x ) < eps )
+            aHitInfo.m_HitNormal = SFVEC3F( 1.0f, 0.0f, 0.0f );
+        else if( std::abs( hitPt.y - m_bbox.Min().y ) < eps )
+            aHitInfo.m_HitNormal = SFVEC3F( 0.0f, -1.0f, 0.0f );
+        else if( std::abs( hitPt.y - m_bbox.Max().y ) < eps )
+            aHitInfo.m_HitNormal = SFVEC3F( 0.0f, 1.0f, 0.0f );
+        else if( aRay.m_dirIsNeg[2] )
             aHitInfo.m_HitNormal = SFVEC3F( 0.0f, 0.0f, 1.0f );
         else
-            aHitInfo.m_HitNormal = SFVEC3F( 0.0f, 0.0f,-1.0f );
+            aHitInfo.m_HitNormal = SFVEC3F( 0.0f, 0.0f, -1.0f );
 
         m_material->Generate( aHitInfo.m_HitNormal, aRay, aHitInfo );
 

@@ -35,6 +35,7 @@
 #define ARG_DRAWING_SHEET "--drawing-sheet"
 #define ARG_DEFINE_VAR_SHORT "-D"
 #define ARG_DEFINE_VAR_LONG "--define-var"
+#define ARG_VARIANT "--variant"
 
 namespace CLI
 {
@@ -61,18 +62,25 @@ public:
 
     void PrintHelp();
 
+    enum class IO_TYPE
+    {
+        FILE,
+        DIRECTORY,
+        FILE_OR_DIRECTORY
+    };
+
 protected:
     /**
      * Set up the most common of args used across cli
      *
      * @param aInput Configures the input arg
      * @param aOutput Configures the output arg
-     * @param aInputCanBeDir Configures whether the input arg description will be for either a
-     *                       file or directory
-     * @param aOutputIsDir Configures whether the output arg description will be for a file or
-     *                     directory
+     * @param aInputType Configures whether the input arg description will be for either a
+     *                       file, a directory or either
+     * @param aOutputType Configures whether the output arg description will be for a file, a
+     *                     directory or either
      */
-    void addCommonArgs( bool aInput, bool aOutput, bool aInputCanBeDir, bool aOutputIsDir );
+    void addCommonArgs( bool aInput, bool aOutput, IO_TYPE aInputType, IO_TYPE aOutputType );
 
     /**
      * Set up the drawing sheet arg used by many of the export commands
@@ -83,6 +91,11 @@ protected:
      * Set up the drawing sheet arg used by many of the export commands
      */
     void addDefineArg();
+
+    /**
+     * Set up the list of variants to output arguement.
+     */
+    void addVariantsArg();
 
     /**
      * The internal handler that should be overloaded to implement command specific
@@ -143,6 +156,18 @@ protected:
      * Value of the drawing sheet arg if configured
      */
     std::map<wxString, wxString>    m_argDefineVars;
+
+    /**
+     * Whether or not the input argument for variant names was added for parsing.
+     */
+    bool                     m_hasVariantArg;
+
+    /**
+     * The list of variant names to output.
+     *
+     * An empty vector indicates the default variant.
+     */
+    std::vector<wxString>    m_argVariantNames;
 };
 
 }

@@ -33,6 +33,7 @@
 
 #include <set>
 #include <core/kicad_algo.h>
+#include <algorithm>
 #include <view/view_group.h>
 #include <view/view.h>
 #include <view/view_item.h>
@@ -69,7 +70,7 @@ void VIEW_GROUP::Add( VIEW_ITEM* aItem )
 
 void VIEW_GROUP::Remove( VIEW_ITEM* aItem )
 {
-    alg::delete_matching( m_groupItems, aItem );
+    std::erase( m_groupItems, aItem );
 }
 
 
@@ -172,6 +173,10 @@ void VIEW_GROUP::ViewDraw( int aLayer, VIEW* aView ) const
         else if( IsClearanceLayer( layer ) )
         {
             draw = aView->IsLayerVisible( layer - LAYER_CLEARANCE_START );
+        }
+        else if( IsPointsLayer( layer ) )
+        {
+            draw = aView->IsLayerVisible( layer - LAYER_POINT_START );
         }
 
         if( isSelection )

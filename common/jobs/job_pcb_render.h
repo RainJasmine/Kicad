@@ -53,6 +53,7 @@ public:
     wxString GetSettingsDialogTitle() const override;
 
     wxString m_filename;
+    wxString m_variant;
 
     // Do not rename enum values as they are used for CLI args
     enum class QUALITY
@@ -86,6 +87,7 @@ public:
     int         m_width = 0;
     int         m_height = 0;
     std::string m_appearancePreset;
+    bool        m_useBoardStackupColors = true;
     SIDE        m_side = SIDE::TOP;
     double      m_zoom = 1.0;
     bool        m_perspective = false;

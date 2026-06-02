@@ -17,9 +17,7 @@
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-
-#ifndef IO_BASE_H_
-#define IO_BASE_H_
+#pragma once
 
 #include <map>
 #include <vector>
@@ -32,6 +30,8 @@
 
 class REPORTER;
 class PROGRESS_REPORTER;
+class DIALOG_SHIM;
+class wxWindow;
 
 class KICOMMON_API IO_BASE
 {
@@ -77,6 +77,11 @@ public:
      * Return a brief hard coded name for this IO interface.
      */
     const wxString& GetName() const { return m_name; }
+
+    /**
+     * Work-around for lack of dynamic_cast across compile units on Mac
+     */
+    virtual bool IsPCB_IO() const { return false; }
 
     /**
      * Set an optional reporter for warnings/errors.
@@ -194,25 +199,37 @@ public:
      */
     virtual void GetLibraryOptions( std::map<std::string, UTF8>* aListToAppendTo ) const;
 
+
+    /**
+     * @return true if this plugin supports a GUI for configuration that can be launched from
+     *         the library table configuration dialog or other UI contexts
+     */
+    virtual bool SupportsConfigurationDialog() const { return false; }
+
+    /**
+     * @return a new instance of dialog that configures this plugin, or nullptr if this plugin
+     *         does not support a configuration dialog.  Caller takes ownership.
+     */
+    virtual DIALOG_SHIM* CreateConfigurationDialog( wxWindow* aParent ) { return nullptr; }
+
     virtual void Report( const wxString& aText, SEVERITY aSeverity = RPT_SEVERITY_UNDEFINED );
 
     virtual void AdvanceProgressPhase();
 
-protected:
     // Delete the zero-argument base constructor to force proper construction
     IO_BASE() = delete;
 
+protected:
     /**
      * @param aName is the user-visible name for the IO loader
      */
     IO_BASE( const wxString& aName ) :
-        m_name( aName ),
-        m_reporter( nullptr ),
-        m_progressReporter( nullptr )
-    {
-    }
+            m_name( aName ),
+            m_reporter( nullptr ),
+            m_progressReporter( nullptr )
+    {}
 
-
+protected:
     /// Name of the IO loader
     wxString m_name;
 
@@ -223,4 +240,3 @@ protected:
     PROGRESS_REPORTER* m_progressReporter;
 };
 
-#endif // IO_BASE_H_

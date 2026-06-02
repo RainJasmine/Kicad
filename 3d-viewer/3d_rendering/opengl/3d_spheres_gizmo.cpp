@@ -22,8 +22,9 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#include <gal/opengl/kiglew.h> // Must be included first
+#include <kicad_gl/kiglu.h> // Must be included first
 #include <glm/geometric.hpp>
+#include <limits>
 
 #include "3d_spheres_gizmo.h"
 
@@ -133,80 +134,27 @@ void SPHERES_GIZMO::render3dSpheresGizmo( glm::mat4 aCameraRotationMatrix )
 
     setGizmoMaterial();
 
-    // Intersection test
-    glm::mat4 proj = glm::perspective( glm::radians( fov ), 1.0f, 0.001f, 2.0f * RANGE_SCALE_3D );
-    glm::mat4 invVP = glm::inverse( proj * ViewMatrix );
+    auto drawBillboardCircle =
+            []( const glm::vec3& aCenter, float aRadius, const glm::vec3& aColor,
+                const glm::vec3& aCamRight, const glm::vec3& aCamUp, int aSegments = 64 )
+            {
+                float thickness = aRadius * 0.4f;
+                glColor3f( aColor.r, aColor.g, aColor.b );
 
-    glm::vec4 rayStartNDC( m_ndcX, m_ndcY, -1.0f, 1.0f );
-    glm::vec4 rayEndNDC( m_ndcX, m_ndcY, 1.0f, 1.0f );
+                glBegin( GL_TRIANGLE_STRIP );
+                for( int i = 0; i <= aSegments; ++i )
+                {
+                    float     angle = 2.0f * glm::pi<float>() * i / aSegments;
+                    glm::vec3 dir = cos( angle ) * aCamRight + sin( angle ) * aCamUp;
 
-    glm::vec4 rayStartWorld = invVP * rayStartNDC;
-    rayStartWorld /= rayStartWorld.w;
+                    glm::vec3 outer = aCenter + dir * ( aRadius + thickness * 0.5f );
+                    glm::vec3 inner = aCenter + dir * ( aRadius - thickness * 0.5f );
 
-    glm::vec4 rayEndWorld = invVP * rayEndNDC;
-    rayEndWorld /= rayEndWorld.w;
-
-    glm::vec3 rayOrigin = glm::vec3( rayStartWorld );
-    glm::vec3 rayDirection = glm::normalize( glm::vec3( rayEndWorld - rayStartWorld ) );
-
-    auto intersects =
-            []( const glm::vec3& aRayOrigin, const glm::vec3& aRayDir, const glm::vec3& aSphereCenter, float aRadius )
-    {
-        glm::vec3 L = aSphereCenter - aRayOrigin;
-        float     tca = glm::dot( L, aRayDir );
-        float     d2 = glm::dot( L, L ) - tca * tca;
-        return d2 <= aRadius * aRadius;
-    };
-
-    int clickedIndex = -1;
-    m_selectedGizmoSphere = GizmoSphereSelection::None;
-    for( size_t i = 0; i < m_spheres.size(); ++i )
-    {
-        const auto& sphere = m_spheres[i];
-        if( intersects( rayOrigin, rayDirection, sphere.m_position, sphere.m_radius ) )
-        {
-            clickedIndex = static_cast<int>( i );
-
-            m_selectedGizmoSphere = static_cast<GizmoSphereSelection>( i );
-            break; // only pick the first intersected sphere
-        }
-    }
-
-    // Update colors
-    for( size_t i = 0; i < m_spheres.size(); ++i )
-    {
-        if( static_cast<int>( i ) == clickedIndex )
-        {
-            m_spheres[i].m_color = { 1.0f, 1.0f, 1.0f }; // White
-        }
-        else
-        {
-            m_spheres[i].m_color = m_spheres[i].m_originalColor; // Restore default
-        }
-    }
-
-    // Intersection test done
-
-    auto drawBillboardCircle = []( const glm::vec3& aCenter, float aRadius, const glm::vec3& aColor,
-                                   const glm::vec3& aCamRight, const glm::vec3& aCamUp, int aSegments = 64 )
-    {
-        float thickness = aRadius * 0.4f;
-        glColor3f( aColor.r, aColor.g, aColor.b );
-
-        glBegin( GL_TRIANGLE_STRIP );
-        for( int i = 0; i <= aSegments; ++i )
-        {
-            float     angle = 2.0f * glm::pi<float>() * i / aSegments;
-            glm::vec3 dir = cos( angle ) * aCamRight + sin( angle ) * aCamUp;
-
-            glm::vec3 outer = aCenter + dir * ( aRadius + thickness * 0.5f );
-            glm::vec3 inner = aCenter + dir * ( aRadius - thickness * 0.5f );
-
-            glVertex3f( outer.x, outer.y, outer.z );
-            glVertex3f( inner.x, inner.y, inner.z );
-        }
-        glEnd();
-    };
+                    glVertex3f( outer.x, outer.y, outer.z );
+                    glVertex3f( inner.x, inner.y, inner.z );
+                }
+                glEnd();
+            };
 
     glm::vec3 camRight( aCameraRotationMatrix[0][0], aCameraRotationMatrix[1][0], aCameraRotationMatrix[2][0] );
     glm::vec3 camUp( aCameraRotationMatrix[0][1], aCameraRotationMatrix[1][1], aCameraRotationMatrix[2][1] );
@@ -237,77 +185,81 @@ void SPHERES_GIZMO::render3dSpheresGizmo( glm::mat4 aCameraRotationMatrix )
 
     // View direction (camera looks along negative Z in view space)
     // So we offset a little toward the camera to avoid z-fighting
-    glm::vec3 offset = glm::normalize( -rayDirection ) * 0.02f;
+    glm::vec3 camForward( m_cameraRotationMatrix[0][2], m_cameraRotationMatrix[1][2], m_cameraRotationMatrix[2][2] );
+    glm::vec3 offset = camForward * 0.02f;
 
     glColor4f( 0.0f, 0.0f, 0.0f, 1.0f );
 
-    auto drawX = []( const glm::vec3& aPos, float aSize, const glm::vec3& aColor, const glm::vec3& aCamRight,
-                     const glm::vec3& aCamUp )
-    {
-        glColor3f( aColor.r, aColor.g, aColor.b );
-        glLineWidth( 3.0f );
+    auto drawX =
+            []( const glm::vec3& aPos, float aSize, const glm::vec3& aColor, const glm::vec3& aCamRight,
+                const glm::vec3& aCamUp )
+            {
+                glColor3f( aColor.r, aColor.g, aColor.b );
+                glLineWidth( 3.0f );
 
-        float h = aSize * 0.5f;
+                float h = aSize * 0.5f;
 
-        // Define two diagonal line directions in camera-facing plane
-        glm::vec3 dir1 = ( -aCamRight + aCamUp ) * h; // one diagonal
-        glm::vec3 dir2 = ( -aCamRight - aCamUp ) * h; // other diagonal
+                // Define two diagonal line directions in camera-facing plane
+                glm::vec3 dir1 = ( -aCamRight + aCamUp ) * h; // one diagonal
+                glm::vec3 dir2 = ( -aCamRight - aCamUp ) * h; // other diagonal
 
-        glBegin( GL_LINES );
-        glVertex3f( ( aPos - dir1 ).x, ( aPos - dir1 ).y, ( aPos - dir1 ).z );
-        glVertex3f( ( aPos + dir1 ).x, ( aPos + dir1 ).y, ( aPos + dir1 ).z );
+                glBegin( GL_LINES );
+                glVertex3f( ( aPos - dir1 ).x, ( aPos - dir1 ).y, ( aPos - dir1 ).z );
+                glVertex3f( ( aPos + dir1 ).x, ( aPos + dir1 ).y, ( aPos + dir1 ).z );
 
-        glVertex3f( ( aPos - dir2 ).x, ( aPos - dir2 ).y, ( aPos - dir2 ).z );
-        glVertex3f( ( aPos + dir2 ).x, ( aPos + dir2 ).y, ( aPos + dir2 ).z );
-        glEnd();
-    };
+                glVertex3f( ( aPos - dir2 ).x, ( aPos - dir2 ).y, ( aPos - dir2 ).z );
+                glVertex3f( ( aPos + dir2 ).x, ( aPos + dir2 ).y, ( aPos + dir2 ).z );
+                glEnd();
+            };
 
-    auto drawY = []( const glm::vec3& aPos, float aSize, const glm::vec3& aColor, const glm::vec3& aCamRight,
-                     const glm::vec3& aCamUp )
-    {
-        glColor3f( aColor.r, aColor.g, aColor.b );
-        glLineWidth( 3.0f );
+    auto drawY =
+            []( const glm::vec3& aPos, float aSize, const glm::vec3& aColor, const glm::vec3& aCamRight,
+                const glm::vec3& aCamUp )
+            {
+                glColor3f( aColor.r, aColor.g, aColor.b );
+                glLineWidth( 3.0f );
 
-        float h = aSize * 0.5f;
+                float h = aSize * 0.5f;
 
-        // Top-left and top-right in screen plane
-        glm::vec3 topLeft = aPos + aCamUp * h - aCamRight * h;
-        glm::vec3 topRight = aPos + aCamUp * h + aCamRight * h;
-        glm::vec3 bottom = aPos - aCamUp * h;
+                // Top-left and top-right in screen plane
+                glm::vec3 topLeft = aPos + aCamUp * h - aCamRight * h;
+                glm::vec3 topRight = aPos + aCamUp * h + aCamRight * h;
+                glm::vec3 bottom = aPos - aCamUp * h;
 
-        glBegin( GL_LINES );
-        glVertex3f( topLeft.x, topLeft.y, topLeft.z );
-        glVertex3f( aPos.x, aPos.y, aPos.z );
+                glBegin( GL_LINES );
+                glVertex3f( topLeft.x, topLeft.y, topLeft.z );
+                glVertex3f( aPos.x, aPos.y, aPos.z );
 
-        glVertex3f( topRight.x, topRight.y, topRight.z );
-        glVertex3f( aPos.x, aPos.y, aPos.z );
+                glVertex3f( topRight.x, topRight.y, topRight.z );
+                glVertex3f( aPos.x, aPos.y, aPos.z );
 
-        glVertex3f( aPos.x, aPos.y, aPos.z );
-        glVertex3f( bottom.x, bottom.y, bottom.z );
-        glEnd();
-    };
+                glVertex3f( aPos.x, aPos.y, aPos.z );
+                glVertex3f( bottom.x, bottom.y, bottom.z );
+                glEnd();
+            };
 
-    auto drawZ = []( const glm::vec3& aPos, float aSize, const glm::vec3& aColor, const glm::vec3& aCamRight,
-                     const glm::vec3& aCamUp )
-    {
-        glColor3f( aColor.r, aColor.g, aColor.b );
-        glLineWidth( 3.0f );
+    auto drawZ =
+            []( const glm::vec3& aPos, float aSize, const glm::vec3& aColor, const glm::vec3& aCamRight,
+                const glm::vec3& aCamUp )
+            {
+                glColor3f( aColor.r, aColor.g, aColor.b );
+                glLineWidth( 3.0f );
 
-        float h = aSize * 0.5f;
+                float h = aSize * 0.5f;
 
-        // Define corners in screen plane relative to camera
-        glm::vec3 topLeft = aPos + aCamUp * h - aCamRight * h;
-        glm::vec3 topRight = aPos + aCamUp * h + aCamRight * h;
-        glm::vec3 bottomLeft = aPos - aCamUp * h - aCamRight * h;
-        glm::vec3 bottomRight = aPos - aCamUp * h + aCamRight * h;
+                // Define corners in screen plane relative to camera
+                glm::vec3 topLeft = aPos + aCamUp * h - aCamRight * h;
+                glm::vec3 topRight = aPos + aCamUp * h + aCamRight * h;
+                glm::vec3 bottomLeft = aPos - aCamUp * h - aCamRight * h;
+                glm::vec3 bottomRight = aPos - aCamUp * h + aCamRight * h;
 
-        glBegin( GL_LINE_STRIP );
-        glVertex3f( topLeft.x, topLeft.y, topLeft.z );
-        glVertex3f( topRight.x, topRight.y, topRight.z );
-        glVertex3f( bottomLeft.x, bottomLeft.y, bottomLeft.z );
-        glVertex3f( bottomRight.x, bottomRight.y, bottomRight.z );
-        glEnd();
-    };
+                glBegin( GL_LINE_STRIP );
+                glVertex3f( topLeft.x, topLeft.y, topLeft.z );
+                glVertex3f( topRight.x, topRight.y, topRight.z );
+                glVertex3f( bottomLeft.x, bottomLeft.y, bottomLeft.z );
+                glVertex3f( bottomRight.x, bottomRight.y, bottomRight.z );
+                glEnd();
+            };
 
     for( size_t i = 0; i < m_spheres.size(); ++i )
     {
@@ -365,4 +317,67 @@ void SPHERES_GIZMO::resetSelectedGizmoSphere()
     m_selectedGizmoSphere = GizmoSphereSelection::None;
     m_ndcX = -1.0f;
     m_ndcY = -1.0f;
+}
+
+
+void SPHERES_GIZMO::updateSelection( glm::mat4 aCameraRotationMatrix )
+{
+    m_cameraRotationMatrix = aCameraRotationMatrix;
+
+    float     fov = 60.0f;
+    glm::mat4 TranslationMatrix = glm::translate( glm::mat4( 1.0f ), SFVEC3F( 0.0f, 0.0f, -( m_arrowSize * 2.75f ) ) );
+    glm::mat4 ViewMatrix = TranslationMatrix * aCameraRotationMatrix;
+
+    glm::mat4 proj = glm::perspective( glm::radians( fov ), 1.0f, 0.001f, 2.0f * RANGE_SCALE_3D );
+    glm::mat4 invVP = glm::inverse( proj * ViewMatrix );
+
+    glm::vec4 rayStartNDC( m_ndcX, m_ndcY, -1.0f, 1.0f );
+    glm::vec4 rayEndNDC( m_ndcX, m_ndcY, 1.0f, 1.0f );
+
+    glm::vec4 rayStartWorld = invVP * rayStartNDC;
+    rayStartWorld /= rayStartWorld.w;
+
+    glm::vec4 rayEndWorld = invVP * rayEndNDC;
+    rayEndWorld /= rayEndWorld.w;
+
+    glm::vec3 rayOrigin = glm::vec3( rayStartWorld );
+    glm::vec3 rayDirection = glm::normalize( glm::vec3( rayEndWorld - rayStartWorld ) );
+
+    auto intersectDist = []( const glm::vec3& aRayOrigin, const glm::vec3& aRayDir, const glm::vec3& aSphereCenter,
+                             float aRadius ) -> float
+    {
+        glm::vec3 L = aSphereCenter - aRayOrigin;
+        float     tca = glm::dot( L, aRayDir );
+        float     d2 = glm::dot( L, L ) - tca * tca;
+
+        if( d2 > aRadius * aRadius )
+            return -1.0f;
+
+        return tca;
+    };
+
+    int   clickedIndex = -1;
+    float closestDist = std::numeric_limits<float>::max();
+    m_selectedGizmoSphere = GizmoSphereSelection::None;
+
+    for( size_t i = 0; i < m_spheres.size(); ++i )
+    {
+        const auto& sphere = m_spheres[i];
+        float       dist = intersectDist( rayOrigin, rayDirection, sphere.m_position, sphere.m_radius );
+
+        if( dist >= 0.0f && dist < closestDist )
+        {
+            closestDist = dist;
+            clickedIndex = static_cast<int>( i );
+            m_selectedGizmoSphere = static_cast<GizmoSphereSelection>( i );
+        }
+    }
+
+    for( size_t i = 0; i < m_spheres.size(); ++i )
+    {
+        if( static_cast<int>( i ) == clickedIndex )
+            m_spheres[i].m_color = { 1.0f, 1.0f, 1.0f };
+        else
+            m_spheres[i].m_color = m_spheres[i].m_originalColor;
+    }
 }

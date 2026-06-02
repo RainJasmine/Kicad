@@ -353,7 +353,6 @@ BOARD_STACKUP::BOARD_STACKUP()
                                         // (Loss tg and Epison R)
     m_HasThicknessConstrains = false;   // True if some dielectric or copper layers have constrains
     m_EdgeConnectorConstraints = BS_EDGE_CONNECTOR_NONE;
-    m_CastellatedPads = false;          // True if some castellated pads exist
     m_EdgePlating = false;              // True if edge board is plated
     m_FinishType = wxT( "None" );       // undefined finish type
 }
@@ -364,7 +363,6 @@ BOARD_STACKUP::BOARD_STACKUP( const BOARD_STACKUP& aOther )
     m_HasDielectricConstrains  = aOther.m_HasDielectricConstrains;
     m_HasThicknessConstrains   = aOther.m_HasThicknessConstrains;
     m_EdgeConnectorConstraints = aOther.m_EdgeConnectorConstraints;
-    m_CastellatedPads          = aOther.m_CastellatedPads;
     m_EdgePlating              = aOther.m_EdgePlating;
     m_FinishType               = aOther.m_FinishType;
 
@@ -383,7 +381,6 @@ BOARD_STACKUP& BOARD_STACKUP::operator=( const BOARD_STACKUP& aOther )
     m_HasDielectricConstrains  = aOther.m_HasDielectricConstrains;
     m_HasThicknessConstrains   = aOther.m_HasThicknessConstrains;
     m_EdgeConnectorConstraints = aOther.m_EdgeConnectorConstraints;
-    m_CastellatedPads          = aOther.m_CastellatedPads;
     m_EdgePlating              = aOther.m_EdgePlating;
     m_FinishType               = aOther.m_FinishType;
 
@@ -406,7 +403,6 @@ bool BOARD_STACKUP::operator==( const BOARD_STACKUP& aOther ) const
     if( m_HasDielectricConstrains  != aOther.m_HasDielectricConstrains ) return false;
     if( m_HasThicknessConstrains   != aOther.m_HasThicknessConstrains ) return false;
     if( m_EdgeConnectorConstraints != aOther.m_EdgeConnectorConstraints ) return false;
-    if( m_CastellatedPads          != aOther.m_CastellatedPads ) return false;
     if( m_EdgePlating              != aOther.m_EdgePlating ) return false;
     if( m_FinishType               != aOther.m_FinishType ) return false;
 
@@ -606,7 +602,6 @@ bool BOARD_STACKUP::SynchronizeWithBoard( BOARD_DESIGN_SETTINGS* aSettings )
     const BOARD_STACKUP& source_stackup = aSettings->GetStackupDescriptor();
     m_HasDielectricConstrains  = source_stackup.m_HasDielectricConstrains;
     m_EdgeConnectorConstraints = source_stackup.m_EdgeConnectorConstraints;
-    m_CastellatedPads = source_stackup.m_CastellatedPads;
     m_EdgePlating     = source_stackup.m_EdgePlating;
     m_FinishType      = source_stackup.m_FinishType;
 
@@ -732,7 +727,6 @@ void BOARD_STACKUP::BuildDefaultStackupList( const BOARD_DESIGN_SETTINGS* aSetti
         const BOARD_STACKUP& source_stackup = aSettings->GetStackupDescriptor();
         m_EdgeConnectorConstraints = source_stackup.m_EdgeConnectorConstraints;
         m_HasDielectricConstrains = source_stackup.m_HasDielectricConstrains;
-        m_CastellatedPads = source_stackup.m_CastellatedPads;
         m_EdgePlating     = source_stackup.m_EdgePlating;
         m_FinishType      = source_stackup.m_FinishType;
     }
@@ -817,9 +811,6 @@ void BOARD_STACKUP::FormatBoardStackup( OUTPUTFORMATTER* aFormatter, const BOARD
                            m_EdgeConnectorConstraints > 1 ? "bevelled": "yes" );
     }
 
-    if( m_CastellatedPads )
-        KICAD_FORMAT::FormatBool( aFormatter, "castellated_pads", true );
-
     if( m_EdgePlating )
         KICAD_FORMAT::FormatBool( aFormatter, "edge_plating", true );
 
@@ -840,12 +831,12 @@ int BOARD_STACKUP::GetLayerDistance( PCB_LAYER_ID aFirstLayer, PCB_LAYER_ID aSec
 
     int total = 0;
     bool start = false;
-    bool half  = false;
+    bool half = false;
 
-    for( BOARD_STACKUP_ITEM* item : m_list )
+    for( const BOARD_STACKUP_ITEM* item : m_list )
     {
         // Will be UNDEFINED_LAYER for dielectrics
-        PCB_LAYER_ID layer = item->GetBrdLayerId();
+        const PCB_LAYER_ID layer = item->GetBrdLayerId();
 
         if( layer != UNDEFINED_LAYER && !IsCopperLayer( layer ) )
             continue;   // Silk/mask layer
@@ -854,18 +845,25 @@ int BOARD_STACKUP::GetLayerDistance( PCB_LAYER_ID aFirstLayer, PCB_LAYER_ID aSec
         if( !start && ( layer != UNDEFINED_LAYER && layer == aFirstLayer ) )
         {
             start = true;
-            half = true;
+
+            // Only count half of each internal copper layer
+            if( aFirstLayer != F_Cu && aFirstLayer != B_Cu )
+                half = true;
         }
         else if( !start )
             continue;
 
         // Reached the stop copper layer?  we're done
         if( start && ( layer != UNDEFINED_LAYER && layer == aSecondLayer ) )
-            half = true;
+        {
+            // Only count half of each internal copper layer
+            if( aSecondLayer != F_Cu && aSecondLayer != B_Cu )
+                half = true;
+        }
 
         for( int sublayer = 0; sublayer < item->GetSublayersCount(); sublayer++ )
         {
-            int subThickness = item->GetThickness( sublayer );
+            const int subThickness = item->GetThickness( sublayer );
             total += half ? ( subThickness / 2 ) : subThickness;
         }
 

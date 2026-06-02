@@ -33,7 +33,10 @@
 #include <stroke_params.h>
 
 #include <wx/xml/xml.h>
+#include <array>
 #include <memory>
+#include <map>
+#include <set>
 
 class BOARD;
 class BOARD_ITEM;
@@ -42,6 +45,7 @@ class FOOTPRINT;
 class PROGRESS_REPORTER;
 class NETINFO_ITEM;
 class PAD;
+class PADSTACK;
 class PCB_SHAPE;
 class PCB_VIA;
 class PCB_TEXT;
@@ -65,9 +69,13 @@ public:
         m_shape_std_node = nullptr;
         m_line_node = nullptr;
         m_last_padstack = nullptr;
+        m_backdrill_spec_index = 0;
+        m_cad_header_node = nullptr;
         m_progress_reporter = nullptr;
         m_xml_doc = nullptr;
         m_xml_root = nullptr;
+        m_contentNode = nullptr;
+        m_lastAppendedNode = nullptr;
     }
 
     ~PCB_IO_IPC2581() override;
@@ -208,13 +216,19 @@ private:
 
     void addPadStack( wxXmlNode* aContentNode, const PCB_VIA* aVia );
 
+    void ensureBackdrillSpecs( const wxString& aPadstackName, const PADSTACK& aPadstack );
+
+    void addBackdrillSpecRefs( wxXmlNode* aHoleNode, const wxString& aPadstackName );
+
+    void pruneUnusedBackdrillSpecs();
+
     void addLocationNode( wxXmlNode* aContentNode, double aX, double aY );
 
     void addLocationNode( wxXmlNode* aContentNode, const PAD& aPad, bool aRelative );
 
     void addLocationNode( wxXmlNode* aContentNode, const PCB_SHAPE& aShape );
 
-    void addShape( wxXmlNode* aContentNode, const PCB_SHAPE& aShape );
+    void addShape( wxXmlNode* aContentNode, const PCB_SHAPE& aShape, bool aInline = false );
 
     void addShape( wxXmlNode* aContentNode, const PAD& aPad, PCB_LAYER_ID aLayer );
 
@@ -245,6 +259,7 @@ private:
 
     size_t shapeHash( const PCB_SHAPE& aShape );
 
+    wxString sanitizeId( const wxString& aStr ) const;
     wxString genString( const wxString& aStr, const char* aPrefix = nullptr ) const;
     wxString genLayerString( PCB_LAYER_ID aLayer, const char* aPrefix ) const;
     wxString genLayersString( PCB_LAYER_ID aTop, PCB_LAYER_ID aBottom, const char* aPrefix ) const;
@@ -270,6 +285,8 @@ private:
 
     void insertNodeAfter( wxXmlNode* aPrev, wxXmlNode* aNode );
 
+    void deleteNode( wxXmlNode*& aNode );
+
     void addLayerAttributes( wxXmlNode* aNode, PCB_LAYER_ID aLayer );
 
     bool isValidLayerFor2581( PCB_LAYER_ID aLayer );
@@ -286,6 +303,7 @@ private:
     wxString                m_mfg;          //<! If set, field name containing the part manufacturer
     wxString                m_distpn;       //<! If set, field name containing the distributor part number
     wxString                m_dist;         //<! If set, field name containing the distributor name
+    wxString                m_bomRev;       //<! BOM revision string for the BomHeader element
 
     // Node pointer to the main enterprise node to be used for adding
     // enterprises later when forming the AVL
@@ -307,6 +325,12 @@ private:
     std::map<size_t, wxString> m_padstack_dict;     //<! Map between padstack hash values and reference id string (PADSTACK_##)
     std::vector<wxXmlNode*>    m_padstacks;         //<! Holding vector for padstacks.  These need to be inserted prior to the components
     wxXmlNode*                 m_last_padstack;     //<! Pointer to padstack list where we can insert the VIA padstacks once we process tracks
+
+    std::map<wxString, std::array<wxString, 2>>       m_padstack_backdrill_specs;
+    std::map<wxString, wxXmlNode*>                    m_backdrill_spec_nodes;
+    std::set<wxString>                                m_backdrill_spec_used;
+    int                                               m_backdrill_spec_index;
+    wxXmlNode*                                        m_cad_header_node;
 
     std::map<size_t, wxString>
             m_footprint_dict; //<! Map between the footprint hash values and reference id string (<fpid>_##)
@@ -337,10 +361,16 @@ private:
 
     PROGRESS_REPORTER*      m_progress_reporter;
 
+    mutable std::set<wxString>           m_element_names;   //<! Track generated element names
+    mutable std::map<wxString, wxString> m_generated_names; //<! Map input keys to unique names
+
     std::set<wxUniChar>     m_acceptable_chars;     //<! IPC2581B and C have differing sets of allowed characters in names
 
     wxXmlDocument*          m_xml_doc;
     wxXmlNode*              m_xml_root;
+    wxXmlNode*              m_contentNode;
+
+    wxXmlNode*              m_lastAppendedNode;     ///< Optimization for appendNode to avoid O(n) child traversal
 };
 
 #endif // PCB_IO_IPC2581_H_

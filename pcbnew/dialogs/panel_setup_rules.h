@@ -29,6 +29,7 @@
 #include <panel_setup_rules_base.h>
 
 class DRC;
+class DRC_RULE;
 class PAGED_DIALOG;
 class PCB_EDIT_FRAME;
 class SCINTILLA_TRICKS;
@@ -51,6 +52,8 @@ private:
     void OnErrorLinkClicked( wxHtmlLinkEvent& event ) override;
     void onCharHook( wxKeyEvent& aEvent );
     void OnContextMenu( wxMouseEvent& event ) override;
+
+    void checkPlausibility( const std::vector<std::shared_ptr<DRC_RULE>>& aRules );
 
     bool TransferDataToWindow() override;
     bool TransferDataFromWindow() override;

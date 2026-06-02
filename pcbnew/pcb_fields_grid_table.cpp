@@ -227,7 +227,7 @@ wxGridCellAttr* PCB_FIELDS_GRID_TABLE::GetAttr( int aRow, int aCol,
             m_valueAttr->IncRef();
             return enhanceAttr( m_valueAttr, aRow, aCol, aKind );
         }
-        else if( field.GetId() == FIELD_T::DATASHEET || field.IsHypertext() )
+        else if( field.GetId() == FIELD_T::DATASHEET || field.HasHypertext() )
         {
             m_urlAttr->IncRef();
             return enhanceAttr( m_urlAttr, aRow, aCol, aKind );
@@ -345,13 +345,15 @@ void PCB_FIELDS_GRID_TABLE::SetValue( int aRow, int aCol, const wxString &aValue
     VECTOR2I  pos;
     wxString  value = aValue;
 
-    switch( aCol )
+    if( aCol != PFC_VALUE )
+        value.Trim( true ).Trim( false );
+
+    if( aCol == PFC_WIDTH
+     || aCol == PFC_HEIGHT
+     || aCol == PFC_THICKNESS
+     || aCol == PFC_XOFFSET
+     || aCol == PFC_YOFFSET )
     {
-    case PFC_WIDTH:
-    case PFC_HEIGHT:
-    case PFC_THICKNESS:
-    case PFC_XOFFSET:
-    case PFC_YOFFSET:
         m_eval->SetDefaultUnits( m_frame->GetUserUnits() );
 
         if( m_eval->Process( value ) )
@@ -359,11 +361,6 @@ void PCB_FIELDS_GRID_TABLE::SetValue( int aRow, int aCol, const wxString &aValue
             m_evalOriginal[ { aRow, aCol } ] = value;
             value = m_eval->Result();
         }
-
-        break;
-
-    default:
-        break;
     }
 
     switch( aCol )
@@ -430,7 +427,12 @@ void PCB_FIELDS_GRID_TABLE::SetValueAsLong( int aRow, int aCol, long aValue )
     {
     case PFC_LAYER:
         field.SetLayer( ToLAYER_ID( (int) aValue ) );
-        field.SetMirrored( IsBackLayer( field.GetLayer() ) );
+
+        if( BOARD* board = field.GetBoard() )
+            field.SetMirrored( board->IsBackLayer( field.GetLayer() ) );
+        else
+            field.SetMirrored( IsBackLayer( field.GetLayer() ) );
+
         break;
 
     default:

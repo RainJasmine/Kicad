@@ -27,17 +27,17 @@
  * for curved tracks (PCB_ARC) and vias (PCB_VIA).  All told there are three KICAD_Ts:
  * PCB_TRACK_T, PCB_ARC_T, and PCB_VIA_T.
  *
- * For vias there is a further VIATYPE which indicates THROUGH, BLIND_BURIED, or MICROVIA,
- * which are supported by the synthetic KICAD_Ts PCB_LOCATE_STDVIA_T, PCB_LOCATE_BBVIA_T, and
- * PCB_LOCATE_UVIA_T.
+ * For vias there is a further VIATYPE which indicates THROUGH, BLIND, BURIED, or MICROVIA,
+ * which are supported by the synthetic KICAD_Ts PCB_LOCATE_STDVIA_T, PCB_LOCATE_BLINDVIA_T,
+ * PCB_LOCATE_BURIEDVIA_T and PCB_LOCATE_UVIA_T.
  */
 
-#ifndef CLASS_TRACK_H
-#define CLASS_TRACK_H
+#pragma once
 
-
-#include <mutex>
 #include <array>
+#include <optional>
+#include <mutex>
+
 #include <board_connected_item.h>
 #include <base_units.h>
 #include <geometry/shape_segment.h>
@@ -45,68 +45,13 @@
 #include <core/arraydim.h>
 #include <lset.h>
 #include <padstack.h>
+#include <pcb_track_types.h>
 
-class PCB_TRACK;
-class PCB_VIA;
 class PAD;
 class MSG_PANEL_ITEM;
 class SHAPE_POLY_SET;
 class SHAPE_ARC;
 
-
-// Flag used in locate routines (from which endpoint work)
-enum ENDPOINT_T : int
-{
-    ENDPOINT_START = 0,
-    ENDPOINT_END = 1
-};
-
-// Note that this enum must be synchronized to GAL_LAYER_ID
-enum class VIATYPE : int
-{
-    THROUGH      = 3, /* Always a through hole via */
-    BLIND_BURIED = 2, /* this via can be on internal layers */
-    MICROVIA     = 1, /* this via which connect from an external layer
-                       * to the near neighbor internal layer */
-    NOT_DEFINED  = 0  /* not yet used */
-};
-
-enum class TENTING_MODE
-{
-    FROM_RULES = 0,
-    TENTED = 1,
-    NOT_TENTED = 2
-};
-
-enum class COVERING_MODE
-{
-    FROM_RULES = 0,
-    COVERED = 1,
-    NOT_COVERED = 2
-};
-
-enum class PLUGGING_MODE
-{
-    FROM_RULES = 0,
-    PLUGGED = 1,
-    NOT_PLUGGED = 2
-};
-
-enum class CAPPING_MODE
-{
-    FROM_RULES = 0,
-    CAPPED = 1,
-    NOT_CAPPED = 2
-};
-
-enum class FILLING_MODE
-{
-    FROM_RULES = 0,
-    FILLED = 1,
-    NOT_FILLED = 2
-};
-
-#define UNDEFINED_DRILL_DIAMETER  -1       //< Undefined via drill diameter.
 
 // Used for tracks and vias for algorithmic safety, not to enforce constraints
 #define GEOMETRY_MIN_SIZE (int) ( 0.001 * pcbIUScale.IU_PER_MM )
@@ -246,6 +191,7 @@ public:
 
     bool HitTest( const VECTOR2I& aPosition, int aAccuracy = 0 ) const override;
     bool HitTest( const BOX2I& aRect, bool aContained, int aAccuracy = 0 ) const override;
+    bool HitTest( const SHAPE_LINE_CHAIN& aPoly, bool aContained ) const override;
 
     bool ApproxCollinear( const PCB_TRACK& aTrack );
 
@@ -435,7 +381,9 @@ public:
                 return true;
             else if( scanType == PCB_LOCATE_UVIA_T && m_viaType == VIATYPE::MICROVIA )
                 return true;
-            else if( scanType == PCB_LOCATE_BBVIA_T && m_viaType == VIATYPE::BLIND_BURIED )
+            else if( scanType == PCB_LOCATE_BLINDVIA_T && m_viaType == VIATYPE::BLIND )
+                return true;
+            else if( scanType == PCB_LOCATE_BURIEDVIA_T && m_viaType == VIATYPE::BURIED )
                 return true;
         }
 
@@ -459,6 +407,59 @@ public:
     PADSTACK& Padstack()                          { return m_padStack; }
     void SetPadstack( const PADSTACK& aPadstack ) { m_padStack = aPadstack; }
 
+    BACKDRILL_MODE GetBackdrillMode() const { return m_padStack.GetBackdrillMode(); }
+    void SetBackdrillMode( BACKDRILL_MODE aMode ) { m_padStack.SetBackdrillMode( aMode ); }
+
+    std::optional<int> GetBottomBackdrillSize() const { return m_padStack.GetBackdrillSize( false ); }
+    void SetBottomBackdrillSize( std::optional<int> aSize ) { m_padStack.SetBackdrillSize( false, aSize ); }
+
+    PCB_LAYER_ID GetBottomBackdrillLayer() const { return m_padStack.GetBackdrillEndLayer( false ); }
+    void SetBottomBackdrillLayer( PCB_LAYER_ID aLayer ) { m_padStack.SetBackdrillEndLayer( false, aLayer ); }
+
+    std::optional<int> GetTopBackdrillSize() const { return m_padStack.GetBackdrillSize( true ); }
+    void SetTopBackdrillSize( std::optional<int> aSize ) { m_padStack.SetBackdrillSize( true, aSize ); }
+
+    PCB_LAYER_ID GetTopBackdrillLayer() const { return m_padStack.GetBackdrillEndLayer( true ); }
+    void SetTopBackdrillLayer( PCB_LAYER_ID aLayer ) { m_padStack.SetBackdrillEndLayer( true, aLayer ); }
+
+    bool IsMicroVia() const;
+    bool IsBlindVia() const;
+    bool IsBuriedVia() const;
+
+    struct VIA_PARAMETER_ERROR
+    {
+        enum class FIELD
+        {
+            NONE,
+            DIAMETER,
+            DRILL,
+            START_LAYER,
+            END_LAYER,
+            SECONDARY_DRILL,
+            SECONDARY_START_LAYER,
+            SECONDARY_END_LAYER,
+            TERTIARY_DRILL,
+            TERTIARY_START_LAYER,
+            TERTIARY_END_LAYER
+        };
+
+        wxString m_Message;
+        FIELD m_Field = FIELD::NONE;
+    };
+
+    static std::optional<VIA_PARAMETER_ERROR>
+            ValidateViaParameters( std::optional<int> aDiameter,
+                                    std::optional<int> aPrimaryDrill,
+                                    std::optional<PCB_LAYER_ID> aPrimaryStartLayer = std::nullopt,
+                                    std::optional<PCB_LAYER_ID> aPrimaryEndLayer = std::nullopt,
+                                    std::optional<int> aSecondaryDrill = std::nullopt,
+                                    std::optional<PCB_LAYER_ID> aSecondaryStartLayer = std::nullopt,
+                                    std::optional<PCB_LAYER_ID> aSecondaryEndLayer = std::nullopt,
+                                    std::optional<int> aTertiaryDrill = std::nullopt,
+                                    std::optional<PCB_LAYER_ID> aTertiaryStartLayer = std::nullopt,
+                                    std::optional<PCB_LAYER_ID> aTertiaryEndLayer = std::nullopt,
+                                    int aCopperLayerCount = 0 );
+
     const BOX2I GetBoundingBox() const override;
     const BOX2I GetBoundingBox( PCB_LAYER_ID aLayer ) const;
 
@@ -479,7 +480,7 @@ public:
 
     bool HasDrilledHole() const override
     {
-        return m_viaType == VIATYPE::THROUGH || m_viaType == VIATYPE::BLIND_BURIED;
+        return m_viaType == VIATYPE::THROUGH || m_viaType == VIATYPE::BLIND || m_viaType == VIATYPE::BURIED;
     }
 
     std::shared_ptr<SHAPE_SEGMENT> GetEffectiveHoleShape() const override;
@@ -591,14 +592,13 @@ public:
      */
     void SetRemoveUnconnected( bool aSet )
     {
-        m_padStack.SetUnconnectedLayerMode( aSet
-                ? PADSTACK::UNCONNECTED_LAYER_MODE::REMOVE_ALL
-                : PADSTACK::UNCONNECTED_LAYER_MODE::KEEP_ALL );
+        m_padStack.SetUnconnectedLayerMode( aSet ? UNCONNECTED_LAYER_MODE::REMOVE_ALL
+                                                 : UNCONNECTED_LAYER_MODE::KEEP_ALL );
     }
 
     bool GetRemoveUnconnected() const
     {
-        return m_padStack.UnconnectedLayerMode() != PADSTACK::UNCONNECTED_LAYER_MODE::KEEP_ALL;
+        return m_padStack.UnconnectedLayerMode() != UNCONNECTED_LAYER_MODE::KEEP_ALL;
     }
 
     /**
@@ -607,32 +607,28 @@ public:
      */
     void SetKeepStartEnd( bool aSet )
     {
-        m_padStack.SetUnconnectedLayerMode( aSet
-                ? PADSTACK::UNCONNECTED_LAYER_MODE::REMOVE_EXCEPT_START_AND_END
-                : PADSTACK::UNCONNECTED_LAYER_MODE::REMOVE_ALL );
+        m_padStack.SetUnconnectedLayerMode( aSet ? UNCONNECTED_LAYER_MODE::REMOVE_EXCEPT_START_AND_END
+                                                 : UNCONNECTED_LAYER_MODE::REMOVE_ALL );
     }
 
     bool GetKeepStartEnd() const
     {
-        return m_padStack.UnconnectedLayerMode()
-               == PADSTACK::UNCONNECTED_LAYER_MODE::REMOVE_EXCEPT_START_AND_END;
+        return m_padStack.UnconnectedLayerMode() == UNCONNECTED_LAYER_MODE::REMOVE_EXCEPT_START_AND_END;
     }
 
     bool ConditionallyFlashed( PCB_LAYER_ID aLayer ) const
     {
         switch( m_padStack.UnconnectedLayerMode() )
         {
-        case PADSTACK::UNCONNECTED_LAYER_MODE::KEEP_ALL:
+        case UNCONNECTED_LAYER_MODE::KEEP_ALL:
             return false;
 
-        case PADSTACK::UNCONNECTED_LAYER_MODE::REMOVE_ALL:
+        case UNCONNECTED_LAYER_MODE::REMOVE_ALL:
             return true;
 
-        case PADSTACK::UNCONNECTED_LAYER_MODE::REMOVE_EXCEPT_START_AND_END:
-        {
-            if( aLayer == m_padStack.Drill().start || aLayer == m_padStack.Drill().end )
-                return false;
-        }
+        case UNCONNECTED_LAYER_MODE::REMOVE_EXCEPT_START_AND_END:
+        case UNCONNECTED_LAYER_MODE::START_END_ONLY:
+            return aLayer != m_padStack.Drill().start && aLayer != m_padStack.Drill().end;
         }
 
         return true;
@@ -668,9 +664,90 @@ public:
      *
      * @param aDrill is the new drill diameter
      */
+    void SetPrimaryDrillSize( const VECTOR2I& aSize );
+    const VECTOR2I& GetPrimaryDrillSize() const { return m_padStack.Drill().size; }
+
+    void SetPrimaryDrillShape( PAD_DRILL_SHAPE aShape );
+    PAD_DRILL_SHAPE GetPrimaryDrillShape() const { return m_padStack.Drill().shape; }
+
+    void SetPrimaryDrillStartLayer( PCB_LAYER_ID aLayer );
+    PCB_LAYER_ID GetPrimaryDrillStartLayer() const { return m_padStack.Drill().start; }
+
+    void SetPrimaryDrillEndLayer( PCB_LAYER_ID aLayer );
+    PCB_LAYER_ID GetPrimaryDrillEndLayer() const { return m_padStack.Drill().end; }
+
+    void SetFrontPostMachining( const std::optional<PAD_DRILL_POST_MACHINING_MODE>& aMode );
+    std::optional<PAD_DRILL_POST_MACHINING_MODE> GetFrontPostMachining() const { return m_padStack.FrontPostMachining().mode; }
+
+    void SetFrontPostMachiningMode( PAD_DRILL_POST_MACHINING_MODE aMode )
+    {
+        m_padStack.FrontPostMachining().mode = aMode;
+    }
+
+    PAD_DRILL_POST_MACHINING_MODE GetFrontPostMachiningMode() const
+    {
+        return m_padStack.FrontPostMachining().mode.value_or( PAD_DRILL_POST_MACHINING_MODE::NOT_POST_MACHINED );
+    }
+
+    void SetFrontPostMachiningSize( int aSize ) { m_padStack.FrontPostMachining().size = aSize; }
+    int GetFrontPostMachiningSize() const { return m_padStack.FrontPostMachining().size; }
+    void SetFrontPostMachiningDepth( int aDepth ) { m_padStack.FrontPostMachining().depth = aDepth; }
+    int GetFrontPostMachiningDepth() const { return m_padStack.FrontPostMachining().depth; }
+    void SetFrontPostMachiningAngle( int aAngle ) { m_padStack.FrontPostMachining().angle = aAngle; }
+    int GetFrontPostMachiningAngle() const { return m_padStack.FrontPostMachining().angle; }
+
+    void SetBackPostMachining( const std::optional<PAD_DRILL_POST_MACHINING_MODE>& aMode );
+    std::optional<PAD_DRILL_POST_MACHINING_MODE> GetBackPostMachining() const { return m_padStack.BackPostMachining().mode; }
+
+    void SetBackPostMachiningMode( PAD_DRILL_POST_MACHINING_MODE aMode )
+    {
+        m_padStack.BackPostMachining().mode = aMode;
+    }
+
+    PAD_DRILL_POST_MACHINING_MODE GetBackPostMachiningMode() const
+    {
+        return m_padStack.BackPostMachining().mode.value_or( PAD_DRILL_POST_MACHINING_MODE::NOT_POST_MACHINED );
+    }
+
+    void SetBackPostMachiningSize( int aSize ) { m_padStack.BackPostMachining().size = aSize; }
+    int GetBackPostMachiningSize() const { return m_padStack.BackPostMachining().size; }
+    void SetBackPostMachiningDepth( int aDepth ) { m_padStack.BackPostMachining().depth = aDepth; }
+    int GetBackPostMachiningDepth() const { return m_padStack.BackPostMachining().depth; }
+    void SetBackPostMachiningAngle( int aAngle ) { m_padStack.BackPostMachining().angle = aAngle; }
+    int GetBackPostMachiningAngle() const { return m_padStack.BackPostMachining().angle; }
+
+    /**
+     * Check if a layer is affected by backdrilling or post-machining operations.
+     *
+     * This checks both the secondary/tertiary drills (backdrill) and post-machining
+     * (counterbore/countersink) settings to determine if the given layer has had copper removed.
+     *
+     * @param aLayer the copper layer to check
+     * @return true if the layer is affected by backdrilling or post-machining
+     */
+    bool IsBackdrilledOrPostMachined( PCB_LAYER_ID aLayer ) const;
+
+    /**
+     * Get the knockout diameter for a layer affected by post-machining.
+     *
+     * @param aLayer the copper layer to check
+     * @return the diameter to knockout on this layer, or 0 if layer is not affected
+     */
+    int GetPostMachiningKnockout( PCB_LAYER_ID aLayer ) const;
+
+    void SetPrimaryDrillFilled( const std::optional<bool>& aFilled );
+    void SetPrimaryDrillFilledFlag( bool aFilled );
+    std::optional<bool> GetPrimaryDrillFilled() const { return m_padStack.Drill().is_filled; }
+    bool GetPrimaryDrillFilledFlag() const { return m_padStack.Drill().is_filled.value_or( false ); }
+
+    void SetPrimaryDrillCapped( const std::optional<bool>& aCapped );
+    void SetPrimaryDrillCappedFlag( bool aCapped );
+    std::optional<bool> GetPrimaryDrillCapped() const { return m_padStack.Drill().is_capped; }
+    bool GetPrimaryDrillCappedFlag() const { return m_padStack.Drill().is_capped.value_or( false ); }
+
     void SetDrill( int aDrill )
     {
-        m_padStack.Drill().size = { aDrill, aDrill };
+        SetPrimaryDrillSize( { aDrill, aDrill } );
     }
 
     /**
@@ -678,7 +755,7 @@ public:
      *
      * @note Use GetDrillValue() to get the calculated value.
      */
-    int GetDrill() const                    { return m_padStack.Drill().size.x; }
+    int GetDrill() const                    { return GetPrimaryDrillSize().x; }
 
     /**
      * Calculate the drill value for vias (m_drill if > 0, or default drill value for the board).
@@ -694,6 +771,34 @@ public:
     {
         m_padStack.Drill().size = { UNDEFINED_DRILL_DIAMETER, UNDEFINED_DRILL_DIAMETER };
     }
+
+    void SetSecondaryDrillSize( const VECTOR2I& aSize );
+    void ClearSecondaryDrillSize();
+    void SetSecondaryDrillSize( const std::optional<int>& aDrill );
+    std::optional<int> GetSecondaryDrillSize() const;
+
+    void SetSecondaryDrillStartLayer( PCB_LAYER_ID aLayer );
+    PCB_LAYER_ID GetSecondaryDrillStartLayer() const { return m_padStack.SecondaryDrill().start; }
+
+    void SetSecondaryDrillEndLayer( PCB_LAYER_ID aLayer );
+    PCB_LAYER_ID GetSecondaryDrillEndLayer() const { return m_padStack.SecondaryDrill().end; }
+
+    void SetSecondaryDrillShape( PAD_DRILL_SHAPE aShape );
+    PAD_DRILL_SHAPE GetSecondaryDrillShape() const { return m_padStack.SecondaryDrill().shape; }
+
+    void SetTertiaryDrillSize( const VECTOR2I& aSize );
+    void ClearTertiaryDrillSize();
+    void SetTertiaryDrillSize( const std::optional<int>& aDrill );
+    std::optional<int> GetTertiaryDrillSize() const;
+
+    void SetTertiaryDrillStartLayer( PCB_LAYER_ID aLayer );
+    PCB_LAYER_ID GetTertiaryDrillStartLayer() const { return m_padStack.TertiaryDrill().start; }
+
+    void SetTertiaryDrillEndLayer( PCB_LAYER_ID aLayer );
+    PCB_LAYER_ID GetTertiaryDrillEndLayer() const { return m_padStack.TertiaryDrill().end; }
+
+    void SetTertiaryDrillShape( PAD_DRILL_SHAPE aShape );
+    PAD_DRILL_SHAPE GetTertiaryDrillShape() const { return m_padStack.TertiaryDrill().shape; }
 
     /**
      * Check if the via is a free via (as opposed to one created on a track by the router).
@@ -723,10 +828,10 @@ public:
     void Serialize( google::protobuf::Any &aContainer ) const override;
     bool Deserialize( const google::protobuf::Any &aContainer ) override;
 
+    wxString LayerMaskDescribe() const override;
+
 protected:
     void swapData( BOARD_ITEM* aImage ) override;
-
-    wxString layerMaskDescribe() const override;
 
 private:
     // Silence GCC warning about hiding the PCB_TRACK base method
@@ -741,6 +846,3 @@ private:
     std::mutex                                  m_zoneLayerOverridesMutex;
     std::map<PCB_LAYER_ID, ZONE_LAYER_OVERRIDE> m_zoneLayerOverrides;
 };
-
-
-#endif // CLASS_TRACK_H

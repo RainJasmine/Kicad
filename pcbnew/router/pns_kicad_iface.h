@@ -23,6 +23,8 @@
 #define __PNS_KICAD_IFACE_H
 
 #include <unordered_set>
+#include <unordered_map>
+#include <vector>
 
 #include "pns_router.h"
 
@@ -35,9 +37,13 @@ class PCB_TEXT;
 class PCB_DISPLAY_OPTIONS;
 class PCB_TOOL_BASE;
 class FOOTPRINT;
+class PCB_BARCODE;
+class PCB_DIMENSION_BASE;
 class PAD;
 class EDA_TEXT;
 class LENGTH_DELAY_CALCULATION_ITEM;
+class BOARD_ITEM;
+class EDA_GROUP;
 
 namespace PNS
 {
@@ -120,9 +126,11 @@ protected:
     std::unique_ptr<PNS::ARC>     syncArc( PCB_ARC* aArc );
     std::unique_ptr<PNS::VIA>     syncVia( PCB_VIA* aVia );
     bool syncTextItem( PNS::NODE* aWorld, BOARD_ITEM* aItem, PCB_LAYER_ID aLayer );
+    bool syncDimension( PNS::NODE* aWorld, PCB_DIMENSION_BASE* aDimension );
     bool syncGraphicalItem( PNS::NODE* aWorld, PCB_SHAPE* aItem );
     bool syncZone( PNS::NODE* aWorld, ZONE* aZone, SHAPE_POLY_SET* aBoardOutline );
-    bool inheritTrackWidth( PNS::ITEM* aItem, int* aInheritedWidth );
+    bool syncBarcode( PNS::NODE* aWorld, PCB_BARCODE* aBarcode );
+    bool inheritTrackWidth( PNS::ITEM* aItem, int* aInheritedWidth, const VECTOR2I& aStartPosition );
     std::vector<LENGTH_DELAY_CALCULATION_ITEM> getLengthDelayCalculationItems( const PNS::ITEM_SET& aLine,
                                                                                const NETCLASS*      aNetClass ) const;
 
@@ -175,6 +183,9 @@ protected:
     KIGFX::VIEW*                    m_view;
     KIGFX::VIEW_GROUP*              m_previewItems;
     std::unordered_set<BOARD_ITEM*> m_hiddenItems;
+
+    std::unordered_map<BOARD_ITEM*, EDA_GROUP*>               m_itemGroups;
+    std::unordered_map<BOARD_ITEM*, std::vector<BOARD_ITEM*>> m_replacementMap;
 
     PCB_TOOL_BASE*                  m_tool;
     std::unique_ptr<BOARD_COMMIT>   m_commit;

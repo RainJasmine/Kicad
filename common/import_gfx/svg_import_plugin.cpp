@@ -28,6 +28,7 @@
 #include <nanosvg.h>
 #include <algorithm>
 #include <cmath>
+#include <wx/math.h>
 #include <locale_io.h>
 
 #include <eda_item.h>
@@ -481,6 +482,13 @@ static float distanceFromPointToLine( const VECTOR2D& aPoint, const VECTOR2D& aL
                                       const VECTOR2D& aLineEnd )
 {
     auto lineDirection = aLineEnd - aLineStart;
+
+    // When start and end coincide (e.g. a single-node closed bezier), the line degenerates to a
+    // point.  Perpendicular().Resize(1) on a zero vector returns (0,0), which makes the dot
+    // product always zero and prevents bezier subdivision.  Fall back to point-to-point distance.
+    if( lineDirection.x == 0.0 && lineDirection.y == 0.0 )
+        return ( aPoint - aLineStart ).EuclideanNorm();
+
     auto lineNormal = lineDirection.Perpendicular().Resize( 1.f );
     auto lineStartToPoint = aPoint - aLineStart;
 

@@ -38,6 +38,7 @@
 
 #include <string_utils.h>
 #include <erc/erc_settings.h>
+#include <refdes_tracker.h>
 #include <sch_symbol.h>
 #include <sch_edit_frame.h>
 
@@ -58,6 +59,18 @@ bool SCH_REFERENCE_LIST::Contains( const SCH_REFERENCE& aItem ) const
     }
 
     return false;
+}
+
+
+SCH_REFERENCE* SCH_REFERENCE_LIST::FindItem( const SCH_REFERENCE& aItem )
+{
+    for( unsigned ii = 0; ii < GetCount(); ii++ )
+    {
+        if( m_flatList[ii].IsSameInstance( aItem ) )
+            return &m_flatList[ii];
+    }
+
+    return nullptr;
 }
 
 
@@ -152,6 +165,12 @@ bool SCH_REFERENCE_LIST::sortByTimeStamp( const SCH_REFERENCE& item1,
         return item1.m_symbolUuid < item2.m_symbolUuid;     // ensure a deterministic sort
     else
         return ii < 0;
+}
+
+
+bool SCH_REFERENCE_LIST::sortBySymbolPtr( const SCH_REFERENCE& item1, const SCH_REFERENCE& item2 )
+{
+    return item1.m_rootSymbol < item2.m_rootSymbol;
 }
 
 
@@ -256,33 +275,7 @@ int SCH_REFERENCE_LIST::FindFirstUnusedReference( const SCH_REFERENCE& aRef, int
         refNumberMap[ref.m_numRef].push_back( ref );
     }
 
-    // Start at the given minimum value
-    int minFreeNumber = aMinValue;
-
-    for( ; refNumberMap[minFreeNumber].size() > 0; ++minFreeNumber )
-    {
-        auto isNumberInUse = [&]() -> bool
-                             {
-                                for( const int& unit : aRequiredUnits )
-                                {
-                                    for( const SCH_REFERENCE& ref : refNumberMap[minFreeNumber] )
-                                    {
-                                        if( ref.CompareLibName( aRef ) || ref.CompareValue( aRef )
-                                            || ref.GetUnit() == unit )
-                                        {
-                                            return true;
-                                        }
-                                    }
-                                }
-
-                                return false;
-                             };
-
-        if( !isNumberInUse() )
-            return minFreeNumber;
-    }
-
-    return minFreeNumber;
+    return m_refDesTracker->GetNextRefDesForUnits( aRef, refNumberMap, aRequiredUnits, aMinValue );
 }
 
 
@@ -301,41 +294,6 @@ std::vector<SCH_SYMBOL_INSTANCE> SCH_REFERENCE_LIST::GetSymbolInstances() const
     }
 
     return retval;
-}
-
-
-int SCH_REFERENCE_LIST::createFirstFreeRefId( std::vector<int>& aIdList, int aFirstValue )
-{
-    int expectedId = aFirstValue;
-
-    // We search for expected Id a value >= aFirstValue.
-    // Skip existing Id < aFirstValue
-    unsigned ii = 0;
-
-    for( ; ii < aIdList.size(); ii++ )
-    {
-        if( expectedId <= aIdList[ii] )
-            break;
-    }
-
-    // Ids are sorted by increasing value, from aFirstValue
-    // So we search from aFirstValue the first not used value, i.e. the first hole in list.
-    for( ; ii < aIdList.size(); ii++ )
-    {
-        if( expectedId != aIdList[ii] )    // This id is not yet used.
-        {
-            // Insert this free Id, in order to keep list sorted
-            aIdList.insert( aIdList.begin() + ii, expectedId );
-            return expectedId;
-        }
-
-        expectedId++;
-    }
-
-    // All existing Id are tested, and all values are found in use.
-    // So Create a new one.
-    aIdList.push_back( expectedId );
-    return expectedId;
 }
 
 
@@ -381,7 +339,7 @@ void SCH_REFERENCE_LIST::ReannotateByOptions( ANNOTATE_ORDER_T             aSort
                           wxS( "Attempting to annotate item on sheet not part of the "
                                "hierarchy?" ) );
 
-            ref.SetSheetNumber( path->GetVirtualPageNumber() );
+            ref.SetSheetNumber( path->GetPageNumberAsInt() );
         }
 
         // Never lock unassigned references
@@ -398,9 +356,9 @@ void SCH_REFERENCE_LIST::ReannotateByOptions( ANNOTATE_ORDER_T             aSort
 }
 
 
-void SCH_REFERENCE_LIST::ReannotateDuplicates( const SCH_REFERENCE_LIST& aAdditionalReferences )
+void SCH_REFERENCE_LIST::ReannotateDuplicates( const SCH_REFERENCE_LIST& aAdditionalReferences, ANNOTATE_ALGO_T aAlgoOption )
 {
-    ReannotateByOptions( UNSORTED, INCREMENTAL_BY_REF, 0, aAdditionalReferences, true, nullptr );
+    ReannotateByOptions( UNSORTED, aAlgoOption, 0, aAdditionalReferences, true, nullptr );
 }
 
 
@@ -448,8 +406,15 @@ void SCH_REFERENCE_LIST::AnnotateByOptions( ANNOTATE_ORDER_T                    
 
 void SCH_REFERENCE_LIST::Annotate( bool aUseSheetNum, int aSheetIntervalId, int aStartNumber,
                                    const SCH_MULTI_UNIT_REFERENCE_MAP& aLockedUnitMap,
-                                   const SCH_REFERENCE_LIST& aAdditionalRefs, bool aStartAtCurrent )
+                                   const SCH_REFERENCE_LIST& aAdditionalRefs,
+                                   bool aStartAtCurrent )
 {
+    if( !m_refDesTracker )
+    {
+        wxLogError( wxS( "No reference tracker set for SCH_REFERENCE_LIST::Annotate()" ) );
+        return;
+    }
+
     if ( m_flatList.size() == 0 )
         return;
 
@@ -553,9 +518,7 @@ void SCH_REFERENCE_LIST::Annotate( bool aUseSheetNum, int aSheetIntervalId, int 
         {
             if( ref_unit.m_isNew )
             {
-                std::vector<int> idList;
-                GetRefsInUse( first, idList, minRefId );
-                LastReferenceNumber = createFirstFreeRefId( idList, minRefId );
+                LastReferenceNumber = FindFirstUnusedReference( ref_unit, minRefId, {} );
                 ref_unit.m_numRef = LastReferenceNumber;
                 ref_unit.m_numRefStr = ref_unit.formatRefStr( LastReferenceNumber );
             }
@@ -803,6 +766,24 @@ SCH_REFERENCE::SCH_REFERENCE( SCH_SYMBOL* aSymbol, const SCH_SHEET_PATH& aSheetP
     wxASSERT( aSymbol != nullptr );
 
     m_rootSymbol = aSymbol;
+
+    // Ensure the symbol has instance data for the current sheet path so that the unit selection
+    // remains consistent even when loading a sheet without symbol instance records (for example
+    // when editing a subsheet directly).
+    SCH_SYMBOL_INSTANCE instance;
+
+    if( !aSymbol->GetInstance( instance, aSheetPath.Path(), false ) )
+    {
+        instance.m_Path = aSheetPath.Path();
+        instance.m_Reference = aSymbol->GetRef( &aSheetPath, false );
+
+        if( instance.m_Reference.IsEmpty() )
+            instance.m_Reference = aSymbol->GetField( FIELD_T::REFERENCE )->GetText();
+
+        instance.m_Unit = aSymbol->GetUnit();
+        aSymbol->AddHierarchicalReference( instance );
+    }
+
     m_unit       = aSymbol->GetUnitSelection( &aSheetPath );
     m_footprint  = aSymbol->GetFootprintFieldText( true, &aSheetPath, false );
     m_sheetPath  = aSheetPath;
@@ -820,10 +801,12 @@ SCH_REFERENCE::SCH_REFERENCE( SCH_SYMBOL* aSymbol, const SCH_SHEET_PATH& aSheetP
 
     m_numRef = -1;
 
-    if( aSymbol->GetValue( false, &aSheetPath, false ).IsEmpty() )
-        aSymbol->SetValueFieldText( wxT( "~" ) );
+    wxString value = aSymbol->GetValue( false, &aSheetPath, false );
 
-    m_value = aSymbol->GetValue( false, &aSheetPath, false );
+    if( value.IsEmpty() )
+        value = wxT( "~" );
+
+    m_value = std::move( value );
 }
 
 
@@ -964,6 +947,38 @@ wxString SCH_REFERENCE_LIST::Shorthand( std::vector<SCH_REFERENCE> aList,
 }
 
 
+bool SCH_REFERENCE::GetSymbolDNP( const wxString& aVariant ) const
+{
+    wxCHECK( m_rootSymbol, false );
+
+    return m_rootSymbol->GetDNP( &m_sheetPath, aVariant );
+}
+
+
+bool SCH_REFERENCE::GetSymbolExcludedFromBOM( const wxString& aVariant ) const
+{
+    wxCHECK( m_rootSymbol, false );
+
+    return m_rootSymbol->GetExcludedFromBOM( &m_sheetPath, aVariant );
+}
+
+
+bool SCH_REFERENCE::GetSymbolExcludedFromSim( const wxString& aVariant ) const
+{
+    wxCHECK( m_rootSymbol, false );
+
+    return m_rootSymbol->GetExcludedFromSim( &m_sheetPath, aVariant );
+}
+
+
+bool SCH_REFERENCE::GetSymbolExcludedFromBoard() const
+{
+    wxCHECK( m_rootSymbol, false );
+
+    return m_rootSymbol->GetExcludedFromBoard();
+}
+
+
 wxString SCH_REFERENCE::formatRefStr( int aNumber ) const
 {
     // To avoid a risk of duplicate, for power symbols the ref number is 0nnn instead of nnn.
@@ -972,6 +987,38 @@ wxString SCH_REFERENCE::formatRefStr( int aNumber ) const
         return wxString::Format( "0%d", aNumber );
 
     return wxString::Format( "%d", aNumber );
+}
+
+
+void SCH_REFERENCE::SetSymbolDNP( bool aEnable, const wxString& aVariant )
+{
+    wxCHECK( m_rootSymbol, /* void */ );
+
+    m_rootSymbol->SetDNP( aEnable, &m_sheetPath, aVariant );
+}
+
+
+void SCH_REFERENCE::SetSymbolExcludedFromBOM( bool aEnable, const wxString& aVariant )
+{
+    wxCHECK( m_rootSymbol, /* void */ );
+
+    m_rootSymbol->SetExcludedFromBOM( aEnable, &m_sheetPath, aVariant );
+}
+
+
+void SCH_REFERENCE::SetSymbolExcludedFromSim( bool aEnable, const wxString& aVariant )
+{
+    wxCHECK( m_rootSymbol, /* void */ );
+
+    m_rootSymbol->SetExcludedFromSim( aEnable, &m_sheetPath, aVariant );
+}
+
+
+void SCH_REFERENCE::SetSymbolExcludedFromBoard( bool aEnable )
+{
+    wxCHECK( m_rootSymbol, /* void */ );
+
+    m_rootSymbol->SetExcludedFromBoard( aEnable );
 }
 
 

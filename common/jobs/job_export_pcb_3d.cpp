@@ -28,11 +28,13 @@ NLOHMANN_JSON_SERIALIZE_ENUM( JOB_EXPORT_PCB_3D::FORMAT,
                                       { JOB_EXPORT_PCB_3D::FORMAT::STEPZ,   "stpz" },
                                       { JOB_EXPORT_PCB_3D::FORMAT::STEP,    "step" },
                                       { JOB_EXPORT_PCB_3D::FORMAT::BREP,    "brep" },
-                                      { JOB_EXPORT_PCB_3D::FORMAT::GLB,     "step" },
+                                      { JOB_EXPORT_PCB_3D::FORMAT::GLB,     "glb" },
                                       { JOB_EXPORT_PCB_3D::FORMAT::VRML,    "vrml" },
                                       { JOB_EXPORT_PCB_3D::FORMAT::XAO,     "xao" },
                                       { JOB_EXPORT_PCB_3D::FORMAT::PLY,     "ply" },
                                       { JOB_EXPORT_PCB_3D::FORMAT::STL,     "stl" },
+                                      { JOB_EXPORT_PCB_3D::FORMAT::U3D,     "u3d" },
+                                      { JOB_EXPORT_PCB_3D::FORMAT::PDF,     "pdf" },
                               } )
 
 NLOHMANN_JSON_SERIALIZE_ENUM( JOB_EXPORT_PCB_3D::VRML_UNITS,
@@ -47,14 +49,16 @@ wxString EXPORTER_STEP_PARAMS::GetDefaultExportExtension() const
 {
     switch( m_Format )
     {
-    case EXPORTER_STEP_PARAMS::FORMAT::STEP: return wxS( "step" );
+    case EXPORTER_STEP_PARAMS::FORMAT::STEP:  return wxS( "step" );
     case EXPORTER_STEP_PARAMS::FORMAT::STEPZ: return wxS( "stpz" );
-    case EXPORTER_STEP_PARAMS::FORMAT::BREP: return wxS( "brep" );
-    case EXPORTER_STEP_PARAMS::FORMAT::XAO:  return wxS( "xao" );
-    case EXPORTER_STEP_PARAMS::FORMAT::GLB:  return wxS( "glb" );
-    case EXPORTER_STEP_PARAMS::FORMAT::PLY:  return wxS( "ply" );
-    case EXPORTER_STEP_PARAMS::FORMAT::STL:  return wxS( "stl" );
-    default:                                 return wxEmptyString; // shouldn't happen
+    case EXPORTER_STEP_PARAMS::FORMAT::BREP:  return wxS( "brep" );
+    case EXPORTER_STEP_PARAMS::FORMAT::XAO:   return wxS( "xao" );
+    case EXPORTER_STEP_PARAMS::FORMAT::GLB:   return wxS( "glb" );
+    case EXPORTER_STEP_PARAMS::FORMAT::PLY:   return wxS( "ply" );
+    case EXPORTER_STEP_PARAMS::FORMAT::STL:   return wxS( "stl" );
+    case EXPORTER_STEP_PARAMS::FORMAT::U3D:   return wxS( "u3d" );
+    case EXPORTER_STEP_PARAMS::FORMAT::PDF:   return wxS( "pdf" );
+    default:                                  return wxEmptyString; // shouldn't happen
     }
 }
 
@@ -63,15 +67,17 @@ wxString EXPORTER_STEP_PARAMS::GetFormatName() const
 {
     switch( m_Format )
     {
-        // honestly these names shouldn't be translated since they are mostly industry standard acronyms
-    case EXPORTER_STEP_PARAMS::FORMAT::STEP: return wxS( "STEP" );
+    // honestly these names shouldn't be translated since they are mostly industry standard acronyms
+    case EXPORTER_STEP_PARAMS::FORMAT::STEP:  return wxS( "STEP" );
     case EXPORTER_STEP_PARAMS::FORMAT::STEPZ: return wxS( "STPZ" );
-    case EXPORTER_STEP_PARAMS::FORMAT::BREP: return wxS( "BREP" );
-    case EXPORTER_STEP_PARAMS::FORMAT::XAO:  return wxS( "XAO" );
-    case EXPORTER_STEP_PARAMS::FORMAT::GLB:  return wxS( "Binary GLTF" );
-    case EXPORTER_STEP_PARAMS::FORMAT::PLY:  return wxS( "PLY" );
-    case EXPORTER_STEP_PARAMS::FORMAT::STL:  return wxS( "STL" );
-    default:                                 return wxEmptyString; // shouldn't happen
+    case EXPORTER_STEP_PARAMS::FORMAT::BREP:  return wxS( "BREP" );
+    case EXPORTER_STEP_PARAMS::FORMAT::XAO:   return wxS( "XAO" );
+    case EXPORTER_STEP_PARAMS::FORMAT::GLB:   return wxS( "Binary GLTF" );
+    case EXPORTER_STEP_PARAMS::FORMAT::PLY:   return wxS( "PLY" );
+    case EXPORTER_STEP_PARAMS::FORMAT::STL:   return wxS( "STL" );
+    case EXPORTER_STEP_PARAMS::FORMAT::U3D:   return wxS( "Universal 3D" );
+    case EXPORTER_STEP_PARAMS::FORMAT::PDF:   return wxS( "PDF" );
+    default:                                  return wxEmptyString; // shouldn't happen
     }
 }
 
@@ -140,6 +146,7 @@ JOB_EXPORT_PCB_3D::JOB_EXPORT_PCB_3D() :
     m_params.emplace_back( new JOB_PARAM<JOB_EXPORT_PCB_3D::FORMAT>( "format", &m_format, m_format ) );
     m_params.emplace_back( new JOB_PARAM<EXPORTER_STEP_PARAMS::FORMAT>( "occt_format", &m_3dparams.m_Format,
                                                                         m_3dparams.m_Format ) );
+    m_params.emplace_back( new JOB_PARAM<wxString>( "variant", &m_variant, m_variant ) );
 }
 
 
@@ -161,13 +168,15 @@ void JOB_EXPORT_PCB_3D::SetStepFormat( EXPORTER_STEP_PARAMS::FORMAT aFormat )
 
     switch( m_3dparams.m_Format )
     {
-    case EXPORTER_STEP_PARAMS::FORMAT::STEP: m_format = JOB_EXPORT_PCB_3D::FORMAT::STEP; break;
+    case EXPORTER_STEP_PARAMS::FORMAT::STEP:  m_format = JOB_EXPORT_PCB_3D::FORMAT::STEP;  break;
     case EXPORTER_STEP_PARAMS::FORMAT::STEPZ: m_format = JOB_EXPORT_PCB_3D::FORMAT::STEPZ; break;
-    case EXPORTER_STEP_PARAMS::FORMAT::GLB:  m_format = JOB_EXPORT_PCB_3D::FORMAT::GLB;  break;
-    case EXPORTER_STEP_PARAMS::FORMAT::XAO:  m_format = JOB_EXPORT_PCB_3D::FORMAT::XAO;  break;
-    case EXPORTER_STEP_PARAMS::FORMAT::BREP: m_format = JOB_EXPORT_PCB_3D::FORMAT::BREP; break;
-    case EXPORTER_STEP_PARAMS::FORMAT::PLY:  m_format = JOB_EXPORT_PCB_3D::FORMAT::PLY;  break;
-    case EXPORTER_STEP_PARAMS::FORMAT::STL:  m_format = JOB_EXPORT_PCB_3D::FORMAT::STL;  break;
+    case EXPORTER_STEP_PARAMS::FORMAT::GLB:   m_format = JOB_EXPORT_PCB_3D::FORMAT::GLB;   break;
+    case EXPORTER_STEP_PARAMS::FORMAT::XAO:   m_format = JOB_EXPORT_PCB_3D::FORMAT::XAO;   break;
+    case EXPORTER_STEP_PARAMS::FORMAT::BREP:  m_format = JOB_EXPORT_PCB_3D::FORMAT::BREP;  break;
+    case EXPORTER_STEP_PARAMS::FORMAT::PLY:   m_format = JOB_EXPORT_PCB_3D::FORMAT::PLY;   break;
+    case EXPORTER_STEP_PARAMS::FORMAT::STL:   m_format = JOB_EXPORT_PCB_3D::FORMAT::STL;   break;
+    case EXPORTER_STEP_PARAMS::FORMAT::U3D:   m_format = JOB_EXPORT_PCB_3D::FORMAT::U3D;   break;
+    case EXPORTER_STEP_PARAMS::FORMAT::PDF:   m_format = JOB_EXPORT_PCB_3D::FORMAT::PDF;   break;
     }
 }
 

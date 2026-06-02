@@ -56,12 +56,15 @@ public:
      */
     virtual void GetChooserFields( std::map<wxString , wxString>& aColumnMap ) {}
 
-    virtual std::vector<SEARCH_TERM> GetSearchTerms() { return std::vector<SEARCH_TERM>(); }
+    virtual std::vector<SEARCH_TERM>& GetSearchTerms() = 0;
 
     /**
      * For items having aliases, IsRoot() indicates the principal item.
      */
     virtual bool IsRoot() const { return true; }
+
+    /// For symbols that could be a power symbol
+    virtual bool IsPowerSymbol() const { return false; }
 
     /**
      * For items with footprint fields.
@@ -81,17 +84,7 @@ public:
     /**
      * For items with units, return an identifier for unit x.
      */
-    virtual wxString GetUnitReference( int aUnit ) { return wxEmptyString; }
-
-    /**
-     * For items with units, return a display name for unit x.
-     */
-    virtual wxString GetUnitDisplayName( int aUnit ) { return wxEmptyString; }
-
-    /**
-     * For items with units, return true if a display name is set for x.
-     */
-    virtual bool HasUnitDisplayName( int aUnit ) { return false; }
+    virtual wxString GetUnitName( int aUnit ) const { return wxEmptyString; }
 };
 
 #endif //LIB_TREE_ITEM_H

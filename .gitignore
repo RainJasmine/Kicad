@@ -4,6 +4,7 @@ boost_root
 /Build*
 /build*
 /cmake-build-*
+texteval/
 common/fp_lib_table_keywords.cpp
 common/drc_rules_keywords.cpp
 common/drc_rules_lexer.h
@@ -24,10 +25,7 @@ common/template_fieldnames_lexer.h
 eeschema/schematic_keywords.*
 pcbnew/pcb_plot_params_keywords.cpp
 pcbnew/pcb_plot_params_lexer.h
-pcbnew/dialogs/panel_setup_rules_help_*.h
 Makefile
-CMakeUserPresets.json
-CMakeCache.txt
 .cache/
 auto_renamed_to_cpp
 Testing
@@ -54,11 +52,23 @@ fp-info-cache
 qa/tests/output/**
 qa/tests/cli/output/**
 
+# CMake
+CMakeUserPresets.json
+CMakeCache.txt
+
 # demo project auxiliary files
 demos/**/*-bak
 demos/**/_autosave-*
 demos/**/fp-info-cache
 demos/**/~*.lck
+demos/**/.history
+
+# QA data aux files
+qa/data**/*-bak
+qa/data/**/_autosave-*
+qa/data/**/fp-info-cache
+qa/data/**/~*.lck
+qa/data/**/.history
 
 # MacOS package info created by CMake
 bitmap2component/Info.plist
@@ -135,6 +145,9 @@ i18n_status.csv
 # QA dataoutput
 qa/data/**/*.csv
 qa/data/**/*.spice
+
+# Unignore variant test comparison files
+!qa/data/cli/variants/*.bom.csv
 
 # Don't actually ignore any of these files, since we need them in the tree
 !resources/linux/icons/hicolor/**/**/*

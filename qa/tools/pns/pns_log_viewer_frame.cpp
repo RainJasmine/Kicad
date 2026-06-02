@@ -27,6 +27,7 @@
 #include <string>
 
 #include <confirm.h>
+#include <common.h>
 #include <wx/clipbrd.h>
 #include <pgm_base.h>
 #include <core/profile.h>
@@ -35,6 +36,7 @@
 #include <view/view_overlay.h>
 #include <view/view_controls.h>
 #include <wildcards_and_files_ext.h>
+#include <kiplatform/ui.h>
 
 
 #include "label_manager.h"
@@ -87,7 +89,7 @@ void PNS_LOG_VIEWER_OVERLAY::AnnotatedPolyline( const SHAPE_LINE_CHAIN& aL, std:
     Polyline( aL );
 
     if( name.length() > 0  && aL.PointCount() > 0 )
-        m_labelMgr->Add( aL.CPoint( -1 ), name, GetStrokeColor() );
+        m_labelMgr->Add( aL.CLastPoint(), name, GetStrokeColor() );
 
     if( aShowVertexNumbers )
     {
@@ -351,7 +353,10 @@ void PNS_LOG_VIEWER_FRAME::LoadLogFile( const wxString& aFile )
     logFn.MakeAbsolute();
 
     if( logFile->Load( logFn, m_reporter.get() ) )
+    {
         SetLogFile( logFile.release() );
+        m_mruPath = logFn.GetPath();
+    }
 }
 
 
@@ -417,6 +422,8 @@ void PNS_LOG_VIEWER_FRAME::onOpen( wxCommandEvent& event )
                       "PNS log files" + AddFileExtListToFilter( { "log" } ),
                       wxFD_OPEN | wxFD_FILE_MUST_EXIST );
 
+    KIPLATFORM::UI::AllowNetworkFileSystems( &dlg );
+
     if( dlg.ShowModal() != wxID_CANCEL )
     {
         wxString logPath = dlg.GetPath();
@@ -438,6 +445,8 @@ void PNS_LOG_VIEWER_FRAME::onSaveAs( wxCommandEvent& event )
                       "PNS log files" + AddFileExtListToFilter( { "log" } ),
                       wxFD_SAVE | wxFD_OVERWRITE_PROMPT );
 
+    KIPLATFORM::UI::AllowNetworkFileSystems( &dlg );
+
     if( dlg.ShowModal() != wxID_CANCEL )
     {
         // Enforce the extension, wxFileDialog is inept.
@@ -445,10 +454,18 @@ void PNS_LOG_VIEWER_FRAME::onSaveAs( wxCommandEvent& event )
 
         wxASSERT_MSG( create_me.IsAbsolute(), wxS( "wxFileDialog returned non-absolute path" ) );
 
+        int option = SelectSingleOption( this, _( "Select test case type" ), _( "Select test case type" ),
+                                         { _( "Testcase (strict geometry)" ), _( "Testcase (connectivity only)" ),
+                                           _( "Testcase (expected failure)" ), _( "Known bug" ) } );
+
+        if ( option >= 0 )
+        {
+            m_logFile->SetTestCaseType( static_cast<PNS::LOGGER::TEST_CASE_TYPE>( option ) );
+        }
+
         m_logFile->SaveLog( create_me, m_reporter.get() );
         m_mruPath = create_me.GetPath();
     }
-
 }
 
 
@@ -1013,7 +1030,7 @@ int render_perftest_main_func( int argc, char* argv[] )
     std::shared_ptr<BOARD> brd ( loadBoard( argv[1] ) );
     cnt.Stop();
 
-    KI_TRACE( traceGalProfile, "%s\n", cnt.to_string() );
+    wxLogTrace( traceGalProfile, "%s", cnt.to_string() );
 
     frame->SetBoard2( brd );
 

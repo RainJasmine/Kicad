@@ -22,29 +22,28 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#ifndef _DIALOG_FOOTPRINT_WIZARD_LIST_H_
-#define _DIALOG_FOOTPRINT_WIZARD_LIST_H_
+#pragma once
 
 #include <dialog_footprint_wizard_list_base.h>
 #include <footprint_wizard.h>
 
+class FOOTPRINT_WIZARD_FRAME;
+
+
 class DIALOG_FOOTPRINT_WIZARD_LIST: public DIALOG_FOOTPRINT_WIZARD_LIST_BASE
 {
-private:
-    FOOTPRINT_WIZARD* m_footprintWizard;    ///< The selected python script wizard
-
 public:
-    DIALOG_FOOTPRINT_WIZARD_LIST( wxWindow * aParent );
-    ~DIALOG_FOOTPRINT_WIZARD_LIST();
+    DIALOG_FOOTPRINT_WIZARD_LIST( FOOTPRINT_WIZARD_FRAME* aParent );
+    ~DIALOG_FOOTPRINT_WIZARD_LIST() = default;
 
-    FOOTPRINT_WIZARD* GetWizard();
+    const wxString& GetWizard();
+    FOOTPRINT_WIZARD_FRAME* ParentFrame();
 
 private:
     void initLists();
     void OnCellFpGeneratorClick( wxGridEvent& event ) override;
     void OnCellFpGeneratorDoubleClick( wxGridEvent& event ) override;
-    void onShowTrace( wxCommandEvent& event ) override;
-    void onUpdatePythonModulesClick( wxCommandEvent& event ) override;
-};
 
-#endif  // _DIALOG_FOOTPRINT_WIZARD_LIST_H_
+private:
+    wxString m_selectedWizard;    ///< The selected footprint wizard identifier
+};

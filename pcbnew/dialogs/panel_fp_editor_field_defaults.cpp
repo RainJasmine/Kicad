@@ -32,6 +32,7 @@
 #include <grid_tricks.h>
 #include <eda_text.h>
 #include <grid_layer_box_helpers.h>
+#include <board_design_settings.h>
 #include <bitmaps.h>
 #include <confirm.h>
 
@@ -127,8 +128,7 @@ public:
     long GetValueAsLong( int row, int col ) override { return m_items[row].m_Layer; }
     void SetValueAsLong( int row, int col, long value ) override
     {
-        if( col == GetNumberCols() - 1 )    // only last column uses a long value
-                                            // (probably useless test)
+        if( col == GetNumberCols() - 1 )
             m_items[row].m_Layer = static_cast<PCB_LAYER_ID>( value );
     }
 
@@ -173,10 +173,8 @@ static FOOTPRINT_EDITOR_SETTINGS& GetPgmSettings()
 }
 
 
-PANEL_FP_EDITOR_FIELD_DEFAULTS::PANEL_FP_EDITOR_FIELD_DEFAULTS( wxWindow*       aParent,
-                                                                UNITS_PROVIDER* aUnitsProvider ) :
+PANEL_FP_EDITOR_FIELD_DEFAULTS::PANEL_FP_EDITOR_FIELD_DEFAULTS( wxWindow* aParent ) :
         PANEL_FP_EDITOR_FIELD_DEFAULTS_BASE( aParent ),
-        m_unitProvider( aUnitsProvider ),
         m_designSettings( GetPgmSettings().m_DesignSettings )
 {
     m_fieldPropsGrid->SetTable( new TEXT_ITEMS_GRID_TABLE( true ), true );
@@ -185,7 +183,7 @@ PANEL_FP_EDITOR_FIELD_DEFAULTS::PANEL_FP_EDITOR_FIELD_DEFAULTS( wxWindow*       
 
     wxGridCellAttr* attr = new wxGridCellAttr;
     attr->SetRenderer( new wxGridCellBoolRenderer() );
-    attr->SetReadOnly(); // not really; we delegate interactivity to GRID_TRICKS
+    attr->SetReadOnly();
     attr->SetAlignment( wxALIGN_CENTER, wxALIGN_CENTER );
     m_fieldPropsGrid->SetColAttr( 1, attr );
 
@@ -202,12 +200,14 @@ PANEL_FP_EDITOR_FIELD_DEFAULTS::PANEL_FP_EDITOR_FIELD_DEFAULTS( wxWindow*       
     attr->SetRenderer( new GRID_CELL_LAYER_RENDERER( nullptr ) );
     attr->SetEditor( new GRID_CELL_LAYER_SELECTOR( nullptr, {} ) );
     m_textItemsGrid->SetColAttr( 1, attr );
+
+    m_bpAdd->SetBitmap( KiBitmapBundle( BITMAPS::small_plus ) );
+    m_bpDelete->SetBitmap( KiBitmapBundle( BITMAPS::small_trash ) );
 }
 
 
 PANEL_FP_EDITOR_FIELD_DEFAULTS::~PANEL_FP_EDITOR_FIELD_DEFAULTS()
 {
-    // destroy GRID_TRICKS before grids.
     m_fieldPropsGrid->PopEventHandler( true );
     m_textItemsGrid->PopEventHandler( true );
 }
@@ -215,7 +215,6 @@ PANEL_FP_EDITOR_FIELD_DEFAULTS::~PANEL_FP_EDITOR_FIELD_DEFAULTS()
 
 void PANEL_FP_EDITOR_FIELD_DEFAULTS::loadFPSettings( const FOOTPRINT_EDITOR_SETTINGS* aCfg )
 {
-    // Footprint defaults
     wxGridTableBase* table = m_fieldPropsGrid->GetTable();
     table->DeleteRows( 0, m_fieldPropsGrid->GetNumberRows() );
     table->AppendRows( 2 );
@@ -232,8 +231,6 @@ void PANEL_FP_EDITOR_FIELD_DEFAULTS::loadFPSettings( const FOOTPRINT_EDITOR_SETT
     table = m_textItemsGrid->GetTable();
     table->DeleteRows( 0, m_textItemsGrid->GetNumberRows() );
 
-    // if aCfg->m_DesignSettings.m_DefaultFPTextItems.size() is > 2 (first and second are ref and
-    // value), some extra texts must be added to the list of default texts
     int extra_texts_cnt = (int) aCfg->m_DesignSettings.m_DefaultFPTextItems.size() - 2;
 
     if( extra_texts_cnt > 0 )
@@ -267,9 +264,6 @@ bool PANEL_FP_EDITOR_FIELD_DEFAULTS::Show( bool aShow )
 
     if( aShow )
     {
-        // These *should* work in the constructor, and indeed they do if this panel is the
-        // first displayed.  However, on OSX 3.0.5 (at least), if another panel is displayed
-        // first then the icons will be blank unless they're set here.
         m_bpAdd->SetBitmap( KiBitmapBundle( BITMAPS::small_plus ) );
         m_bpDelete->SetBitmap( KiBitmapBundle( BITMAPS::small_trash ) );
     }
@@ -285,7 +279,6 @@ bool PANEL_FP_EDITOR_FIELD_DEFAULTS::TransferDataFromWindow()
 
     BOARD_DESIGN_SETTINGS& cfg = m_designSettings;
 
-    // Footprint defaults
     cfg.m_DefaultFPTextItems.clear();
 
     wxGridTableBase* table = m_fieldPropsGrid->GetTable();
@@ -315,68 +308,40 @@ bool PANEL_FP_EDITOR_FIELD_DEFAULTS::TransferDataFromWindow()
 
 void PANEL_FP_EDITOR_FIELD_DEFAULTS::OnAddTextItem( wxCommandEvent& event )
 {
-    if( !m_textItemsGrid->CommitPendingChanges() )
-        return;
+    m_textItemsGrid->OnAddRow(
+            [&]() -> std::pair<int, int>
+            {
+                wxGridTableBase* table = m_textItemsGrid->GetTable();
 
-    wxGridTableBase* table = m_textItemsGrid->GetTable();
+                int newRow = m_textItemsGrid->GetNumberRows();
+                table->AppendRows( 1 );
 
-    int newRow = m_textItemsGrid->GetNumberRows();
-    table->AppendRows( 1 );
+                long defaultBoardLayer = F_SilkS;
 
-    long defaultBoardLayer = F_SilkS;
+                if( newRow > 0 )
+                     defaultBoardLayer = table->GetValueAsLong( newRow - 1, 1 );
 
-    if( newRow > 0 )
-         defaultBoardLayer = table->GetValueAsLong( newRow - 1, 1 );
+                table->SetValueAsLong( newRow, 1, defaultBoardLayer );
 
-    table->SetValueAsLong( newRow, 1, defaultBoardLayer );
-
-    m_textItemsGrid->MakeCellVisible( newRow, 0 );
-    m_textItemsGrid->SetGridCursor( newRow, 0 );
-
-    m_textItemsGrid->EnableCellEditControl( true );
-    m_textItemsGrid->ShowCellEditControl();
+                return { newRow, 0 };
+            } );
 }
 
 
 void PANEL_FP_EDITOR_FIELD_DEFAULTS::OnDeleteTextItem( wxCommandEvent& event )
 {
-    wxArrayInt selectedRows = m_textItemsGrid->GetSelectedRows();
-
-    if( selectedRows.empty() && m_textItemsGrid->GetGridCursorRow() >= 0 )
-        selectedRows.push_back( m_textItemsGrid->GetGridCursorRow() );
-
-    if( selectedRows.empty() )
-        return;
-
-    if( !m_textItemsGrid->CommitPendingChanges() )
-        return;
-
-    // Reverse sort so deleting a row doesn't change the indexes of the other rows.
-    selectedRows.Sort(
-            []( int* first, int* second )
+    m_textItemsGrid->OnDeleteRows(
+            [&]( int row )
             {
-                return *second - *first;
+                m_textItemsGrid->GetTable()->DeleteRows( row, 1 );
             } );
-
-    for( int row : selectedRows )
-    {
-        m_textItemsGrid->GetTable()->DeleteRows( row, 1 );
-
-        if( m_textItemsGrid->GetNumberRows() > 0 )
-        {
-            m_textItemsGrid->MakeCellVisible( std::max( 0, row - 1 ),
-                                              m_textItemsGrid->GetGridCursorCol() );
-            m_textItemsGrid->SetGridCursor( std::max( 0, row - 1 ),
-                                            m_textItemsGrid->GetGridCursorCol() );
-        }
-    }
 }
 
 
 void PANEL_FP_EDITOR_FIELD_DEFAULTS::ResetPanel()
 {
     FOOTPRINT_EDITOR_SETTINGS cfg;
-    cfg.Load(); // Loading without a file will init to defaults
+    cfg.Load();
 
     loadFPSettings( &cfg );
 }

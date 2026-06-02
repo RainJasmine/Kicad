@@ -38,6 +38,7 @@
 #include <pcb_track.h>
 #include <panel_setup_layers.h>
 #include <board_stackup_manager/panel_board_stackup.h>
+#include <dialogs/dialog_items_list.h>
 
 #include <wx/choicdlg.h>
 #include <wx/msgdlg.h>
@@ -888,105 +889,81 @@ bool PANEL_SETUP_LAYERS::TransferDataFromWindow()
 
     if( !removedLayers.empty() )
     {
-        if( !IsOK( parent, _( "Items have been found on removed layers. This operation will "
-                              "delete all items from removed layers and cannot be undone.\n"
-                              "Do you wish to continue?" ) ) )
+        std::vector<BOARD_ITEM*> items;
+        std::vector<wxString>    itemDescriptions;
+
+        for( PCB_LAYER_ID layer : removedLayers )
         {
-            return false;
+            PCB_LAYER_COLLECTOR collector;
+            collector.SetLayerId( layer );
+            collector.Collect( m_pcb, GENERAL_COLLECTOR::BoardLevelItems );
+
+            for( int i = 0; i < collector.GetCount(); i++ )
+            {
+                BOARD_ITEM* item = collector[i];
+
+                if( item->Type() == PCB_FOOTPRINT_T || item->GetParentFootprint() )
+                    continue;
+
+                items.push_back( item );
+                itemDescriptions.push_back( item->GetItemDescription( m_frame, true ) );
+            }
+
+            for( FOOTPRINT* footprint : m_pcb->Footprints() )
+            {
+                for( PAD* pad : footprint->Pads() )
+                {
+                    if( pad->HasExplicitDefinitionForLayer( layer ) )
+                    {
+                        items.push_back( pad );
+                        itemDescriptions.push_back( wxString::Format( _( "Pad %s of %s on %s" ),
+                                                                      pad->GetNumber(),
+                                                                      footprint->GetReference(),
+                                                                      m_pcb->GetLayerName( layer ) ) );
+                    }
+                }
+            }
+        }
+
+        if( !items.empty() )
+        {
+            DIALOG_ITEMS_LIST dlg( parent, _( "Warning" ),
+                                   _( "Items have been found on removed layers. This operation will "
+                                      "delete all items from removed layers and cannot be undone." ),
+                                   _( "Show Details" ) );
+
+            dlg.AddItems( itemDescriptions );
+
+            dlg.SetSelectionCallback(
+                    [&]( int index )
+                    {
+                        if( index >= 0 && index < (int) items.size() )
+                        {
+                            m_frame->GetToolManager()->RunAction( ACTIONS::selectionClear );
+                            m_frame->GetToolManager()->RunAction( ACTIONS::selectItem, static_cast<EDA_ITEM*>( items[index] ) );
+                            m_frame->GetCanvas()->Refresh();
+                        }
+                    } );
+
+            if( dlg.ShowModal() != wxID_OK )
+                return false;
         }
     }
 
     // Delete all objects on layers that have been removed.  Leaving them in copper layers
     // can (will?) result in DRC errors and it pollutes the board file with cruft.
-    bool hasRemovedBoardItemLayers = false;
-
     if( !removedLayers.empty() )
     {
         m_frame->GetToolManager()->RunAction( ACTIONS::selectionClear );
 
-        PCB_LAYER_COLLECTOR collector;
-
         for( PCB_LAYER_ID layer_id : removedLayers )
-        {
-            collector.SetLayerId( layer_id );
-            collector.Collect( m_pcb, GENERAL_COLLECTOR::BoardLevelItems );
-
-            // Bye-bye items on removed layer.
-            for( int i = 0; i < collector.GetCount(); i++ )
-            {
-                BOARD_ITEM* item = collector[i];
-
-                // Do not remove/change an item owned by a footprint
-                if( item->GetParentFootprint() )
-                    continue;
-
-                // Do not remove footprints
-                if( item->Type() == PCB_FOOTPRINT_T )
-                    continue;
-
-                // Note: vias are specific. They are only on copper layers,  and
-                // do not use a layer set, only store the copper top and the copper bottom.
-                // So reinit the layer set does not work with vias
-                if( item->Type() == PCB_VIA_T )
-                {
-                    PCB_VIA* via = static_cast<PCB_VIA*>( item );
-
-                    if( via->GetViaType() == VIATYPE::THROUGH )
-                    {
-                        hasRemovedBoardItemLayers = true;
-                        continue;
-                    }
-                    else if( via->IsOnLayer( layer_id ) )
-                    {
-                        PCB_LAYER_ID top_layer;
-                        PCB_LAYER_ID bottom_layer;
-                        via->LayerPair( &top_layer, &bottom_layer );
-
-                        if( top_layer == layer_id || bottom_layer == layer_id )
-                        {
-                            // blind/buried vias with a top or bottom layer on a removed layer
-                            // are removed. Perhaps one could just modify the top/bottom layer,
-                            // but I am not sure this is better.
-                            m_pcb->Remove( item );
-                            delete item;
-                            modified = true;
-                        }
-
-                        hasRemovedBoardItemLayers = true;
-                    }
-                }
-                else if( item->IsOnLayer( layer_id ) )
-                {
-                    LSET layers = item->GetLayerSet();
-
-                    layers.reset( layer_id );
-
-                    if( layers.any() )
-                    {
-                        item->SetLayerSet( layers );
-                    }
-                    else
-                    {
-                        m_pcb->Remove( item );
-                        delete item;
-                        modified = true;
-                    }
-
-                    hasRemovedBoardItemLayers = true;
-                }
-            }
-        }
+            modified |= m_pcb->RemoveAllItemsOnLayer( layer_id );
 
         // Undo state may have copies of pointers deleted above
         m_frame->ClearUndoRedoList();
     }
 
     modified |= transferDataFromWindow();
-
-    // If some board items are deleted: Rebuild the connectivity, because it is likely some
-    // tracks and vias were removed
-    if( hasRemovedBoardItemLayers )
-        m_pcb->BuildConnectivity();
 
     if( modified )
         m_frame->OnModify();
@@ -1066,50 +1043,32 @@ LSEQ PANEL_SETUP_LAYERS::getRemovedLayersWithItems()
     if( newLayers == curLayers ) // Return an empty list if no change
         return removedLayers;
 
-    PCB_LAYER_COLLECTOR collector;
-
     for( PCB_LAYER_ID layer_id : curLayers )
     {
         if( !newLayers[layer_id] )
         {
-            collector.SetLayerId( layer_id );
-            collector.Collect( m_pcb, GENERAL_COLLECTOR::BoardLevelItems );
+            bool hasItems = m_pcb->HasItemsOnLayer( layer_id );
 
-            if( collector.GetCount() != 0 )
+            if( !hasItems )
             {
-                // Skip items owned by footprints and footprints when building
-                // the actual list of removed layers: these items are not removed
-                for( int i = 0; i < collector.GetCount(); i++ )
+                // Check for pads with custom properties on this layer
+                for( FOOTPRINT* footprint : m_pcb->Footprints() )
                 {
-                    BOARD_ITEM* item = collector[i];
-
-                    if( item->Type() == PCB_FOOTPRINT_T || item->GetParentFootprint() )
-                        continue;
-
-                    // Vias are on multiple adjacent layers, but only the top and
-                    // the bottom layers are stored. So there are issues only if one
-                    // is on a removed layer
-                    if( item->Type() == PCB_VIA_T )
+                    for( PAD* pad : footprint->Pads() )
                     {
-                        PCB_VIA* via = static_cast<PCB_VIA*>( item );
-
-                        if( via->GetViaType() == VIATYPE::THROUGH )
-                            continue;
-                        else
+                        if( pad->HasExplicitDefinitionForLayer( layer_id ) )
                         {
-                            PCB_LAYER_ID top_layer;
-                            PCB_LAYER_ID bottom_layer;
-                            via->LayerPair( &top_layer, &bottom_layer );
-
-                            if( top_layer != layer_id && bottom_layer != layer_id )
-                                continue;
+                            hasItems = true;
+                            break;
                         }
                     }
-
-                    removedLayers.push_back( layer_id );
-                    break;
+                    if( hasItems )
+                        break;
                 }
             }
+
+            if( hasItems )
+                removedLayers.push_back( layer_id );
         }
     }
 

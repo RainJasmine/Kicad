@@ -56,8 +56,6 @@ public:
 protected:
     int ShowWizards( const TOOL_EVENT& aEvent );
     int ResetWizardPrms( const TOOL_EVENT& aEvent );
-    int SelectPreviousWizardPage( const TOOL_EVENT& aEvent );
-    int SelectNextWizardPage( const TOOL_EVENT& aEvent );
     int ExportFpToEditor( const TOOL_EVENT& aEvent );
 
     FOOTPRINT_WIZARD_FRAME* frame() const

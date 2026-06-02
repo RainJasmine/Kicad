@@ -22,8 +22,7 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#ifndef DIALOG_SHEET_PROPERTIES_H
-#define DIALOG_SHEET_PROPERTIES_H
+#pragma once
 
 #include <fields_grid_table.h>
 #include <widgets/unit_binder.h>
@@ -56,12 +55,8 @@ private:
     void OnDeleteField( wxCommandEvent& event ) override;
     void OnMoveUp( wxCommandEvent& event ) override;
     void OnMoveDown( wxCommandEvent& event ) override;
-    void OnSizeGrid( wxSizeEvent& event ) override;
     void OnGridCellChanging( wxGridEvent& event );
     void OnUpdateUI( wxUpdateUIEvent& event ) override;
-    void OnInitDlg( wxInitDialogEvent& event ) override;
-
-    void AdjustGridColumns();
 
 private:
     SCH_EDIT_FRAME*    m_frame;
@@ -71,7 +66,6 @@ private:
     bool*              m_updateHierarchyNavigator;
     wxString*          m_sourceSheetFilename;
 
-    wxSize             m_size;
     int                m_delayedFocusRow;
     int                m_delayedFocusColumn;
     std::bitset<64>    m_shownColumns;
@@ -82,5 +76,3 @@ private:
     SCH_SHEET          m_dummySheet;
     SCH_FIELD          m_dummySheetNameField;
 };
-
-#endif // DIALOG_SHEET_PROPERTIES_H

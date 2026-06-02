@@ -77,10 +77,15 @@ std::optional<TOOLBAR_CONFIGURATION> FOOTPRINT_VIEWER_TOOLBAR_SETTINGS::DefaultT
         config.AppendSeparator()
               .AppendAction( ACTIONS::toggleGrid )
               .AppendAction( ACTIONS::togglePolarCoords )
-              .AppendAction( ACTIONS::inchesUnits )
-              .AppendAction( ACTIONS::milsUnits )
-              .AppendAction( ACTIONS::millimetersUnits )
-              .AppendAction( ACTIONS::toggleCursorStyle );
+              .AppendGroup( TOOLBAR_GROUP_CONFIG( _( "Units" ) )
+                            .AddAction( ACTIONS::millimetersUnits )
+                            .AddAction( ACTIONS::inchesUnits )
+                            .AddAction( ACTIONS::milsUnits ) )
+                            .AppendSeparator()
+              .AppendGroup( TOOLBAR_GROUP_CONFIG( _( "Crosshair modes" ) )
+                            .AddAction( ACTIONS::cursorSmallCrosshairs )
+                            .AddAction( ACTIONS::cursorFullCrosshairs )
+                            .AddAction( ACTIONS::cursor45Crosshairs ) );
 
         config.AppendSeparator()
               .AppendAction( PCB_ACTIONS::showPadNumbers )

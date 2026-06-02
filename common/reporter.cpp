@@ -28,12 +28,16 @@
 #include <mutex>
 #include <macros.h>
 #include <reporter.h>
+#include <font/fontconfig.h>
 #include <string_utils.h>
+#include <widgets/kistatusbar.h>
 #include <widgets/wx_infobar.h>
 #include <wx/crt.h>
 #include <wx/log.h>
 #include <wx/textctrl.h>
 #include <wx/statusbr.h>
+#include <wx/tokenzr.h>
+#include <wx/weakref.h>
 
 
 /**
@@ -44,6 +48,30 @@
 static const wxChar traceReporter[] = wxT( "KICAD_REPORTER" );
 
 static std::mutex g_logReporterMutex;
+
+
+class STATUSBAR_WARNING_REPORTER_IMPL
+{
+public:
+    STATUSBAR_WARNING_REPORTER_IMPL( KISTATUSBAR* aStatusBar, const wxString& aSource ) :
+            m_statusBar( aStatusBar ),
+            m_source( aSource )
+    {
+    }
+
+    KISTATUSBAR* GetStatusBar() const
+    {
+        KISTATUSBAR* statusBar = m_statusBar.get();
+
+        if( statusBar && !statusBar->IsBeingDeleted() )
+            return statusBar;
+
+        return nullptr;
+    }
+
+    wxWeakRef<KISTATUSBAR> m_statusBar;
+    wxString               m_source;
+};
 
 
 REPORTER& REPORTER::Report( const char* aText, SEVERITY aSeverity )
@@ -62,12 +90,6 @@ REPORTER& WX_TEXT_CTRL_REPORTER::Report( const wxString& aText, SEVERITY aSeveri
 
     m_textCtrl->AppendText( aText + wxS( "\n" ) );
     return *this;
-}
-
-
-bool WX_TEXT_CTRL_REPORTER::HasMessage() const
-{
-    return !m_textCtrl->IsEmpty();
 }
 
 
@@ -93,12 +115,6 @@ void WX_STRING_REPORTER::Clear()
 }
 
 
-bool WX_STRING_REPORTER::HasMessage() const
-{
-    return !m_string.IsEmpty();
-}
-
-
 REPORTER& NULL_REPORTER::Report( const wxString& aText, SEVERITY aSeverity )
 {
     return REPORTER::Report( aText, aSeverity );
@@ -120,6 +136,10 @@ REPORTER& CLI_REPORTER::Report( const wxString& aMsg, SEVERITY aSeverity )
 {
     REPORTER::Report( aMsg, aSeverity );
 
+    // Skip debug messages unless verbose mode is enabled
+    if( aSeverity == RPT_SEVERITY_DEBUG && !m_verbose )
+        return *this;
+
     FILE* target = stdout;
 
     if( aSeverity == RPT_SEVERITY_ERROR )
@@ -138,7 +158,7 @@ REPORTER& CLI_REPORTER::Report( const wxString& aMsg, SEVERITY aSeverity )
 }
 
 
-REPORTER& CLI_REPORTER::GetInstance()
+CLI_REPORTER& CLI_REPORTER::GetInstance()
 {
     static CLI_REPORTER s_cliReporter;
 
@@ -211,6 +231,82 @@ REPORTER& WXLOG_REPORTER::GetInstance()
 }
 
 
+REPORTER& LOAD_INFO_REPORTER::Report( const wxString& aMsg, SEVERITY aSeverity )
+{
+    REPORTER::Report( aMsg, aSeverity );
+
+    REPORTER* target = m_redirectTarget;
+
+    if( !target )
+        target = &WXLOG_REPORTER::GetInstance();
+
+    target->Report( aMsg, aSeverity );
+
+    return *this;
+}
+
+
+LOAD_INFO_REPORTER& LOAD_INFO_REPORTER::GetInstance()
+{
+    static LOAD_INFO_REPORTER s_loadInfoReporter;
+    std::lock_guard lock( g_logReporterMutex );
+
+    return s_loadInfoReporter;
+}
+
+
+void LOAD_INFO_REPORTER::SetRedirectTarget( REPORTER* aReporter )
+{
+    std::lock_guard lock( g_logReporterMutex );
+    m_redirectTarget = aReporter;
+}
+
+
+REPORTER* LOAD_INFO_REPORTER::GetRedirectTarget() const
+{
+    std::lock_guard lock( g_logReporterMutex );
+    return m_redirectTarget;
+}
+
+
+LOAD_INFO_REPORTER_SCOPE::LOAD_INFO_REPORTER_SCOPE( REPORTER* aReporter ) :
+        m_reporter( LOAD_INFO_REPORTER::GetInstance() ),
+        m_previousReporter( m_reporter.GetRedirectTarget() )
+{
+    m_reporter.SetRedirectTarget( aReporter );
+}
+
+
+LOAD_INFO_REPORTER_SCOPE::~LOAD_INFO_REPORTER_SCOPE()
+{
+    m_reporter.SetRedirectTarget( m_previousReporter );
+}
+
+
+FONTCONFIG_REPORTER_SCOPE::FONTCONFIG_REPORTER_SCOPE( REPORTER* aReporter ) :
+        m_previousReporter( fontconfig::FONTCONFIG::GetReporter() )
+{
+    fontconfig::FONTCONFIG::SetReporter( aReporter );
+}
+
+
+FONTCONFIG_REPORTER_SCOPE::~FONTCONFIG_REPORTER_SCOPE()
+{
+    fontconfig::FONTCONFIG::SetReporter( m_previousReporter );
+}
+
+
+REPORTER& REDIRECT_REPORTER::Report( const wxString& aText, SEVERITY aSeverity )
+{
+    REPORTER::Report( aText, aSeverity );
+
+    if( m_redirectTarget )
+        m_redirectTarget->Report( aText, aSeverity );
+
+    return *this;
+}
+
+
 REPORTER& STATUSBAR_REPORTER::Report( const wxString& aText, SEVERITY aSeverity )
 {
     REPORTER::Report( aText, aSeverity );
@@ -222,10 +318,45 @@ REPORTER& STATUSBAR_REPORTER::Report( const wxString& aText, SEVERITY aSeverity 
 }
 
 
-bool STATUSBAR_REPORTER::HasMessage() const
+STATUSBAR_WARNING_REPORTER::STATUSBAR_WARNING_REPORTER( KISTATUSBAR* aStatusBar,
+                                                        const wxString& aSource ) :
+        m_impl( std::make_shared<STATUSBAR_WARNING_REPORTER_IMPL>( aStatusBar, aSource ) )
 {
-    if( m_statusBar )
-        return !m_statusBar->GetStatusText( m_position ).IsEmpty();
+}
 
-    return false;
+
+STATUSBAR_WARNING_REPORTER::~STATUSBAR_WARNING_REPORTER() = default;
+
+
+REPORTER& STATUSBAR_WARNING_REPORTER::Report( const wxString& aText, SEVERITY aSeverity )
+{
+    REPORTER::Report( aText, aSeverity );
+
+    KISTATUSBAR* statusBar = m_impl ? m_impl->GetStatusBar() : nullptr;
+
+    if( !statusBar || aText.IsEmpty() )
+        return *this;
+
+    std::vector<LOAD_MESSAGE> messages;
+    wxStringTokenizer tokenizer( aText, wxS( "\n" ), wxTOKEN_STRTOK );
+    SEVERITY severity = aSeverity == RPT_SEVERITY_UNDEFINED ? RPT_SEVERITY_WARNING : aSeverity;
+
+    while( tokenizer.HasMoreTokens() )
+    {
+        LOAD_MESSAGE message;
+        message.message = tokenizer.GetNextToken();
+        message.severity = severity;
+        messages.emplace_back( std::move( message ) );
+    }
+
+    if( messages.empty() )
+    {
+        LOAD_MESSAGE message;
+        message.message = aText;
+        message.severity = severity;
+        messages.emplace_back( std::move( message ) );
+    }
+
+    statusBar->AddWarningMessages( m_impl->m_source, messages );
+    return *this;
 }

@@ -25,6 +25,8 @@
 #ifndef RENDER_3D_OPENGL_H
 #define RENDER_3D_OPENGL_H
 
+#include <kicad_gl/kiglad.h> // Must be included first
+
 #include "../render_3d_base.h"
 #include "layer_triangles.h"
 #include "3d_spheres_gizmo.h"
@@ -39,6 +41,9 @@
 #include "3d_model.h"
 
 #include "3d_cache/3d_info.h"
+
+#include <geometry/eda_angle.h>
+#include <pad.h> // For PAD_DRILL_POST_MACHINING_MODE
 
 #include <map>
 
@@ -71,7 +76,9 @@ public:
      * Load footprint models if they are not already loaded, i.e. if m_3dModelMap is empty
      */
     void Load3dModelsIfNeeded();
+
     void                                handleGizmoMouseInput( int mouseX, int mouseY );
+    void                                updateGizmoSelection( glm::mat4 aCameraRotationMatrix );
     void                                setGizmoViewport( int x, int y, int width, int height );
     std::tuple<int, int, int, int>      getGizmoViewport() const;
     SPHERES_GIZMO::GizmoSphereSelection getSelectedGizmoSphere() const;
@@ -123,7 +130,37 @@ private:
                            float aZtop, float aZbot, unsigned int aNr_sides_per_circle,
                            TRIANGLE_DISPLAY_LIST* aDstLayer );
 
+    void generateInvCone( const SFVEC2F& aCenter, float aInnerRadius, float aOuterRadius,
+                          float aZtop, float aZbot, unsigned int aNr_sides_per_circle,
+                          TRIANGLE_DISPLAY_LIST* aDstLayer, EDA_ANGLE aAngle );
+
+    void generateDisk( const SFVEC2F& aCenter, float aRadius, float aZ,
+                       unsigned int aNr_sides_per_circle, TRIANGLE_DISPLAY_LIST* aDstLayer,
+                       bool aTop );
+
+    void generateDimple( const SFVEC2F& aCenter, float aRadius, float aZ, float aDepth,
+                         unsigned int aNr_sides_per_circle, TRIANGLE_DISPLAY_LIST* aDstLayer,
+                         bool aTop );
+
     void generateViasAndPads();
+
+    bool appendPostMachiningGeometry( TRIANGLE_DISPLAY_LIST* aDstLayer,
+                                      const SFVEC2F& aHoleCenter,
+                                      PAD_DRILL_POST_MACHINING_MODE aMode,
+                                      int aSizeIU,
+                                      int aDepthIU,
+                                      float aHoleInnerRadius,
+                                      float aZSurface,
+                                      bool aIsFront,
+                                      float aPlatingThickness3d,
+                                      float aUnitScale,
+                                      float* aZEnd );
+
+    void generateViaBarrels( float aPlatingThickness3d, float aUnitScale );
+
+    void generatePlatedHoleShells( int aPlatingThickness, float aUnitScale );
+
+    void generateViaCovers( float aPlatingThickness3d, float aUnitScale );
 
     /**
      * Load footprint models from the cache and load it to openGL lists in the form of
@@ -134,6 +171,7 @@ private:
      */
     void load3dModels( REPORTER* aStatusReporter );
 
+    void createPlaceholderModel();
     struct MODELTORENDER
     {
         glm::mat4 m_modelWorldMat;
@@ -155,6 +193,10 @@ private:
         {
         }
     };
+
+    void renderPlaceholderForFootprint( std::list<MODELTORENDER>& aDstRenderList, const glm::mat4& aFpMatrix,
+                                        const FOOTPRINT* aFootprint, bool aRenderTransparentOnly, bool aIsSelected,
+                                        float aOpacity );
 
     void renderOpaqueModels( const glm::mat4 &aCameraViewMatrix );
     void renderTransparentModels( const glm::mat4 &aCameraViewMatrix );
@@ -193,6 +235,14 @@ private:
     bool initializeOpenGL();
     OPENGL_RENDER_LIST* createBoard( const SHAPE_POLY_SET& aBoardPoly,
                                      const BVH_CONTAINER_2D* aThroughHoles = nullptr );
+
+    /**
+     * Create ring-shaped plugs for holes that have backdrill or post-machining.
+     * These plugs represent the board material that remains in the hole where
+     * the backdrill or post-machining didn't reach.
+     */
+    void backfillPostMachine();
+
     void reload( REPORTER* aStatusReporter, REPORTER* aWarningReporter );
 
     void setArrowMaterial();
@@ -223,6 +273,7 @@ private:
     MAP_OGL_DISP_LISTS  m_innerLayerHoles;
     OPENGL_RENDER_LIST* m_board;
     OPENGL_RENDER_LIST* m_boardWithHoles;
+    OPENGL_RENDER_LIST* m_postMachinePlugs;     ///< Board material plugs for backdrill/counterbore/countersink
     OPENGL_RENDER_LIST* m_antiBoard;
     OPENGL_RENDER_LIST* m_outerThroughHoles;
     OPENGL_RENDER_LIST* m_outerViaThroughHoles;
@@ -236,6 +287,8 @@ private:
 
     OPENGL_RENDER_LIST* m_microviaHoles;
     OPENGL_RENDER_LIST* m_padHoles;
+    OPENGL_RENDER_LIST* m_viaFrontCover;
+    OPENGL_RENDER_LIST* m_viaBackCover;
 
     // Caches
     std::map<wxString, MODEL_3D*>           m_3dModelMap;
@@ -246,6 +299,12 @@ private:
     SHAPE_POLY_SET m_antiBoardPolys; ///< The negative polygon representation of the board
                                      ///< outline.
     SPHERES_GIZMO* m_spheres_gizmo;
+    MODEL_3D*      m_placeholderModel = nullptr;
+
+    std::map<const FOOTPRINT*, OPENGL_RENDER_LIST*> m_extrudedBodyLists;
+    std::map<const FOOTPRINT*, OPENGL_RENDER_LIST*> m_extrudedPadLists;
+
+    void renderExtrudedBodies();
 };
 
 #endif // RENDER_3D_OPENGL_H

@@ -44,18 +44,339 @@
 #include <dialogs/dialog_lib_edit_pin_table.h>
 #include <dialogs/dialog_update_symbol_fields.h>
 #include <view/view_controls.h>
+#include <view/view.h>
 #include <richio.h>
 #include <sch_io/kicad_sexpr/sch_io_kicad_sexpr.h>
 #include <sch_textbox.h>
+#include <lib_symbol_library_manager.h>
 #include <wx/textdlg.h>     // for wxTextEntryDialog
 #include <math/util.h>      // for KiROUND
 #include <io/kicad/kicad_io_utils.h>
+#include <trace_helpers.h>
+#include <plotters/plotters_pslike.h>
+#include <sch_painter.h>
+#include <sch_plotter.h>
+#include <locale_io.h>
+#include <gal/gal_print.h>
+#include <gal/graphics_abstraction_layer.h>
+#include <zoom_defines.h>
+#include <wx/ffile.h>
+#include <wx/mstream.h>
+#include <wx/dcmemory.h>
+
+
+namespace
+{
+constexpr int    clipboardMaxBitmapSize = 4096;
+constexpr double clipboardBboxInflation = 0.02;
+
+
+void appendMimeData( std::vector<CLIPBOARD_MIME_DATA>& aMimeData, const wxString& aMimeType,
+                     const wxMemoryBuffer& aBuffer )
+{
+    if( aBuffer.GetDataLen() == 0 )
+        return;
+
+    CLIPBOARD_MIME_DATA entry;
+    entry.m_mimeType = aMimeType;
+    entry.m_data = aBuffer;
+    aMimeData.push_back( entry );
+}
+
+
+void appendMimeData( std::vector<CLIPBOARD_MIME_DATA>& aMimeData, const wxString& aMimeType,
+                     wxImage&& aImage )
+{
+    if( !aImage.IsOk() )
+        return;
+
+    CLIPBOARD_MIME_DATA entry;
+    entry.m_mimeType = aMimeType;
+    entry.m_image = std::move( aImage );
+    aMimeData.push_back( std::move( entry ) );
+}
+
+
+bool loadFileToBuffer( const wxString& aFileName, wxMemoryBuffer& aBuffer )
+{
+    wxFFile file( aFileName, wxS( "rb" ) );
+
+    if( !file.IsOpened() )
+        return false;
+
+    wxFileOffset size = file.Length();
+
+    if( size <= 0 )
+        return false;
+
+    void* data = aBuffer.GetWriteBuf( size );
+
+    if( file.Read( data, size ) != static_cast<size_t>( size ) )
+    {
+        aBuffer.UngetWriteBuf( 0 );
+        return false;
+    }
+
+    aBuffer.UngetWriteBuf( size );
+    return true;
+}
+
+
+bool plotSymbolToSvg( SYMBOL_EDIT_FRAME* aFrame, LIB_SYMBOL* aSymbol, const BOX2I& aBBox,
+                      int aUnit, int aBodyStyle, wxMemoryBuffer& aBuffer )
+{
+    if( !aSymbol )
+        return false;
+
+    SCH_RENDER_SETTINGS renderSettings;
+    renderSettings.LoadColors( aFrame->GetColorSettings() );
+    renderSettings.SetDefaultPenWidth( aFrame->GetRenderSettings()->GetDefaultPenWidth() );
+
+    std::unique_ptr<SVG_PLOTTER> plotter = std::make_unique<SVG_PLOTTER>();
+    plotter->SetRenderSettings( &renderSettings );
+
+    PAGE_INFO pageInfo = aFrame->GetScreen()->GetPageSettings();
+    pageInfo.SetWidthMils( schIUScale.IUToMils( aBBox.GetWidth() ) );
+    pageInfo.SetHeightMils( schIUScale.IUToMils( aBBox.GetHeight() ) );
+
+    plotter->SetPageSettings( pageInfo );
+    plotter->SetColorMode( true );
+
+    VECTOR2I plot_offset = aBBox.GetOrigin();
+    plotter->SetViewport( plot_offset, schIUScale.IU_PER_MILS / 10, 1.0, false );
+    plotter->SetCreator( wxT( "Eeschema-SVG" ) );
+
+    wxFileName tempFile( wxFileName::CreateTempFileName( wxS( "kicad_symbol_svg" ) ) );
+
+    if( !plotter->OpenFile( tempFile.GetFullPath() ) )
+    {
+        wxRemoveFile( tempFile.GetFullPath() );
+        return false;
+    }
+
+    LOCALE_IO     toggle;
+    SCH_PLOT_OPTS plotOpts;
+
+    plotter->StartPlot( wxT( "1" ) );
+
+    constexpr bool background = true;
+    aSymbol->Plot( plotter.get(), background, plotOpts, aUnit, aBodyStyle, VECTOR2I( 0, 0 ), false );
+    aSymbol->Plot( plotter.get(), !background, plotOpts, aUnit, aBodyStyle, VECTOR2I( 0, 0 ), false );
+    aSymbol->PlotFields( plotter.get(), !background, plotOpts, aUnit, aBodyStyle, VECTOR2I( 0, 0 ), false );
+
+    plotter->EndPlot();
+    plotter.reset();
+
+    bool ok = loadFileToBuffer( tempFile.GetFullPath(), aBuffer );
+    wxRemoveFile( tempFile.GetFullPath() );
+    return ok;
+}
+
+
+wxImage renderSymbolToBitmap( SYMBOL_EDIT_FRAME* aFrame, LIB_SYMBOL* aSymbol, const BOX2I& aBBox,
+                              int aUnit, int aBodyStyle, int aWidth, int aHeight,
+                              double aViewScale, const wxColour& aBgColor )
+{
+    if( !aSymbol )
+        return wxImage();
+
+    wxBitmap bitmap( aWidth, aHeight, 24 );
+    wxMemoryDC dc;
+    dc.SelectObject( bitmap );
+    dc.SetBackground( wxBrush( aBgColor ) );
+    dc.Clear();
+
+    KIGFX::GAL_DISPLAY_OPTIONS options;
+    options.antialiasing_mode = KIGFX::GAL_ANTIALIASING_MODE::AA_HIGHQUALITY;
+    std::unique_ptr<KIGFX::GAL_PRINT> galPrint = KIGFX::GAL_PRINT::Create( options, &dc );
+
+    if( !galPrint )
+        return wxImage();
+
+    KIGFX::GAL* gal = galPrint->GetGAL();
+    KIGFX::PRINT_CONTEXT* printCtx = galPrint->GetPrintCtx();
+    std::unique_ptr<KIGFX::SCH_PAINTER> painter = std::make_unique<KIGFX::SCH_PAINTER>( gal );
+    std::unique_ptr<KIGFX::VIEW> view = std::make_unique<KIGFX::VIEW>();
+
+    // For symbol editor, we don't have a full schematic context
+    // but SCH_PAINTER can still work for rendering individual items
+    view->SetGAL( gal );
+    view->SetPainter( painter.get() );
+    view->SetScaleLimits( ZOOM_MAX_LIMIT_EESCHEMA, ZOOM_MIN_LIMIT_EESCHEMA );
+    view->SetScale( 1.0 );
+    gal->SetWorldUnitLength( SCH_WORLD_UNIT );
+
+    // Clone items and add to view
+    std::vector<std::unique_ptr<SCH_ITEM>> clonedItems;
+
+    for( SCH_ITEM& item : aSymbol->GetDrawItems() )
+    {
+        if( aUnit && item.GetUnit() && item.GetUnit() != aUnit )
+            continue;
+
+        if( aBodyStyle && item.GetBodyStyle() && item.GetBodyStyle() != aBodyStyle )
+            continue;
+
+        SCH_ITEM* clone = static_cast<SCH_ITEM*>( item.Clone() );
+        clonedItems.emplace_back( clone );
+        view->Add( clone );
+    }
+
+    SCH_RENDER_SETTINGS* dstSettings = painter->GetSettings();
+    dstSettings->LoadColors( aFrame->GetColorSettings() );
+    dstSettings->SetDefaultPenWidth( aFrame->GetRenderSettings()->GetDefaultPenWidth() );
+    dstSettings->SetIsPrinting( true );
+
+    COLOR4D bgColor4D( aBgColor.Red() / 255.0, aBgColor.Green() / 255.0,
+                       aBgColor.Blue() / 255.0, 1.0 );
+    dstSettings->SetBackgroundColor( bgColor4D );
+
+    for( int i = 0; i < KIGFX::VIEW::VIEW_MAX_LAYERS; ++i )
+    {
+        view->SetLayerVisible( i, true );
+        view->SetLayerTarget( i, KIGFX::TARGET_NONCACHED );
+    }
+
+    view->SetLayerVisible( LAYER_DRAWINGSHEET, false );
+
+    // Calculate effective output DPI for the print context.
+    // On GTK, Cairo uses device scale 72/4800 and SetSheetSize doubles internal resolution.
+    // On Windows/macOS, there's no device scale, so effective DPI = native DPI * 2.
+#ifdef __WXGTK__
+    double ppi = 144.0;
+#else
+    double ppi = printCtx->GetNativeDPI() * 2.0;
+#endif
+    double inch2Iu = 1000.0 * schIUScale.IU_PER_MILS;
+    VECTOR2D pageSizeIn( (double) aWidth / ppi, (double) aHeight / ppi );
+
+    galPrint->SetSheetSize( pageSizeIn );
+    galPrint->SetNativePaperSize( pageSizeIn, printCtx->HasNativeLandscapeRotation() );
+
+    // SetSheetSize creates an internal canvas at 2× the nominal page size for quality.
+    // The × 2 multiplier ensures content fills this internal canvas.
+    double zoomFactor = 2.0 * aViewScale * inch2Iu / ppi;
+
+    // Set up both the GAL and VIEW to center on the bbox.
+    view->SetCenter( aBBox.Centre() );
+    view->SetScale( aViewScale * zoomFactor );
+
+    gal->SetLookAtPoint( aBBox.Centre() );
+    gal->SetZoomFactor( zoomFactor );
+    gal->SetClearColor( bgColor4D );
+    gal->ClearScreen();
+
+    view->UseDrawPriority( true );
+
+    {
+        KIGFX::GAL_DRAWING_CONTEXT ctx( gal );
+        view->Redraw();
+    }
+
+    dc.SelectObject( wxNullBitmap );
+    return bitmap.ConvertToImage();
+}
+
+
+wxImage renderSymbolToImageWithAlpha( SYMBOL_EDIT_FRAME* aFrame, LIB_SYMBOL* aSymbol,
+                                      const BOX2I& aBBox, int aUnit, int aBodyStyle )
+{
+    if( !aSymbol )
+        return wxImage();
+
+    VECTOR2I size = aBBox.GetSize();
+
+    if( size.x <= 0 || size.y <= 0 )
+        return wxImage();
+
+    // Use the current view scale to match what the user sees on screen
+    double viewScale = aFrame->GetCanvas()->GetView()->GetScale();
+    int    bitmapWidth = KiROUND( size.x * viewScale );
+    int    bitmapHeight = KiROUND( size.y * viewScale );
+
+    // Clamp to maximum size while preserving aspect ratio
+    if( bitmapWidth > clipboardMaxBitmapSize || bitmapHeight > clipboardMaxBitmapSize )
+    {
+        double scaleDown = (double) clipboardMaxBitmapSize / std::max( bitmapWidth, bitmapHeight );
+        bitmapWidth = KiROUND( bitmapWidth * scaleDown );
+        bitmapHeight = KiROUND( bitmapHeight * scaleDown );
+        viewScale *= scaleDown;
+    }
+
+    if( bitmapWidth <= 0 || bitmapHeight <= 0 )
+        return wxImage();
+
+    // Render twice with different backgrounds for alpha computation
+    wxImage imageOnWhite = renderSymbolToBitmap( aFrame, aSymbol, aBBox, aUnit, aBodyStyle,
+                                                  bitmapWidth, bitmapHeight, viewScale, *wxWHITE );
+    wxImage imageOnBlack = renderSymbolToBitmap( aFrame, aSymbol, aBBox, aUnit, aBodyStyle,
+                                                  bitmapWidth, bitmapHeight, viewScale, *wxBLACK );
+
+    if( !imageOnWhite.IsOk() || !imageOnBlack.IsOk() )
+        return wxImage();
+
+    // Create output image with alpha channel
+    wxImage result( bitmapWidth, bitmapHeight );
+    result.InitAlpha();
+
+    unsigned char* rgbWhite = imageOnWhite.GetData();
+    unsigned char* rgbBlack = imageOnBlack.GetData();
+    unsigned char* rgbResult = result.GetData();
+    unsigned char* alphaResult = result.GetAlpha();
+
+    int pixelCount = bitmapWidth * bitmapHeight;
+
+    for( int i = 0; i < pixelCount; ++i )
+    {
+        int idx = i * 3;
+
+        int rW = rgbWhite[idx], gW = rgbWhite[idx + 1], bW = rgbWhite[idx + 2];
+        int rB = rgbBlack[idx], gB = rgbBlack[idx + 1], bB = rgbBlack[idx + 2];
+
+        // Alpha computation: α = 1 - (white - black) / 255
+        int diffR = rW - rB;
+        int diffG = gW - gB;
+        int diffB = bW - bB;
+        int avgDiff = ( diffR + diffG + diffB ) / 3;
+
+        int alpha = 255 - avgDiff;
+        alpha = std::max( 0, std::min( 255, alpha ) );
+        alphaResult[i] = static_cast<unsigned char>( alpha );
+
+        if( alpha > 0 )
+        {
+            rgbResult[idx] = static_cast<unsigned char>( std::min( 255, rB * 255 / alpha ) );
+            rgbResult[idx + 1] = static_cast<unsigned char>( std::min( 255, gB * 255 / alpha ) );
+            rgbResult[idx + 2] = static_cast<unsigned char>( std::min( 255, bB * 255 / alpha ) );
+        }
+        else
+        {
+            rgbResult[idx] = 0;
+            rgbResult[idx + 1] = 0;
+            rgbResult[idx + 2] = 0;
+        }
+    }
+
+    return result;
+}
+
+}  // namespace
+
 
 SYMBOL_EDITOR_EDIT_TOOL::SYMBOL_EDITOR_EDIT_TOOL() :
-        SCH_TOOL_BASE( "eeschema.SymbolEditTool" ),
-        m_pickerItem( nullptr )
+        SCH_TOOL_BASE( "eeschema.SymbolEditTool" )
 {
 }
+
+
+const std::vector<KICAD_T> SYMBOL_EDITOR_EDIT_TOOL::SwappableItems = {
+    LIB_SYMBOL_T, // Allows swapping the anchor
+    SCH_PIN_T,
+    SCH_SHAPE_T,
+    SCH_TEXT_T,
+    SCH_TEXTBOX_T,
+    SCH_FIELD_T,
+};
 
 
 bool SYMBOL_EDITOR_EDIT_TOOL::Init()
@@ -91,6 +412,9 @@ bool SYMBOL_EDITOR_EDIT_TOOL::Init()
                 return true;
             };
 
+    auto swapSelectionCondition =
+            canEdit && SCH_CONDITIONS::OnlyTypes( SwappableItems ) && SELECTION_CONDITIONS::MoreThan( 1 );
+
     const auto canCopyText = SCH_CONDITIONS::OnlyTypes( {
             SCH_TEXT_T,
             SCH_TEXTBOX_T,
@@ -99,6 +423,70 @@ bool SYMBOL_EDITOR_EDIT_TOOL::Init()
             SCH_TABLE_T,
             SCH_TABLECELL_T,
     } );
+
+    const auto canConvertStackedPins =
+            [&]( const SELECTION& sel )
+            {
+                // If multiple pins are selected, check they are all at same location
+                if( sel.Size() >= 2 )
+                {
+                    std::vector<SCH_PIN*> pins;
+                    for( EDA_ITEM* item : sel )
+                    {
+                        if( item->Type() != SCH_PIN_T )
+                            return false;
+                        pins.push_back( static_cast<SCH_PIN*>( item ) );
+                    }
+
+                    // Check that all pins are at the same location
+                    VECTOR2I pos = pins[0]->GetPosition();
+                    for( size_t i = 1; i < pins.size(); ++i )
+                    {
+                        if( pins[i]->GetPosition() != pos )
+                            return false;
+                    }
+                    return true;
+                }
+
+                // If single pin is selected, check if there are other pins at same location
+                if( sel.Size() == 1 && sel.Front()->Type() == SCH_PIN_T )
+                {
+                    SCH_PIN* selectedPin = static_cast<SCH_PIN*>( sel.Front() );
+                    VECTOR2I pos = selectedPin->GetPosition();
+
+                    // Get the symbol and check for other pins at same location
+                    LIB_SYMBOL* symbol = m_frame->GetCurSymbol();
+                    if( !symbol )
+                        return false;
+
+                    int coLocatedCount = 0;
+
+                    for( SCH_PIN* pin : symbol->GetPins() )
+                    {
+                        if( pin->GetPosition() == pos )
+                        {
+                            coLocatedCount++;
+
+                            if( coLocatedCount >= 2 )
+                                return true;
+                        }
+                    }
+                }
+
+                return false;
+            };
+
+    const auto canExplodeStackedPin =
+            [&]( const SELECTION& sel )
+            {
+                if( sel.Size() != 1 || sel.Front()->Type() != SCH_PIN_T )
+                    return false;
+
+                SCH_PIN* pin = static_cast<SCH_PIN*>( sel.Front() );
+                bool isValid;
+                std::vector<wxString> stackedNumbers = pin->GetStackedPinNumbers( &isValid );
+                return isValid && stackedNumbers.size() > 1;
+            };
 
     // clang-format off
     // Add edit actions to the move tool menu
@@ -112,7 +500,7 @@ bool SYMBOL_EDITOR_EDIT_TOOL::Init()
         moveMenu.AddItem( SCH_ACTIONS::mirrorV,     canEdit && SCH_CONDITIONS::NotEmpty, 200 );
         moveMenu.AddItem( SCH_ACTIONS::mirrorH,     canEdit && SCH_CONDITIONS::NotEmpty, 200 );
 
-        moveMenu.AddItem( SCH_ACTIONS::swap,        canEdit && SELECTION_CONDITIONS::MoreThan( 1 ), 200);
+        moveMenu.AddItem( SCH_ACTIONS::swap,        swapSelectionCondition, 200 );
         moveMenu.AddItem( SCH_ACTIONS::properties,  canEdit && SCH_CONDITIONS::Count( 1 ), 200 );
 
         moveMenu.AddSeparator( 300 );
@@ -146,8 +534,12 @@ bool SYMBOL_EDITOR_EDIT_TOOL::Init()
     selToolMenu.AddItem( SCH_ACTIONS::mirrorV,      canEdit && SCH_CONDITIONS::NotEmpty, 200 );
     selToolMenu.AddItem( SCH_ACTIONS::mirrorH,      canEdit && SCH_CONDITIONS::NotEmpty, 200 );
 
-    selToolMenu.AddItem( SCH_ACTIONS::swap,         canEdit && SELECTION_CONDITIONS::MoreThan( 1 ), 200 );
+    selToolMenu.AddItem( SCH_ACTIONS::swap,         swapSelectionCondition, 200 );
     selToolMenu.AddItem( SCH_ACTIONS::properties,   canEdit && SCH_CONDITIONS::Count( 1 ), 200 );
+
+    selToolMenu.AddSeparator( 250 );
+    selToolMenu.AddItem( SCH_ACTIONS::convertStackedPins, canEdit && canConvertStackedPins, 250 );
+    selToolMenu.AddItem( SCH_ACTIONS::explodeStackedPin,  canEdit && canExplodeStackedPin, 250 );
 
     selToolMenu.AddSeparator( 300 );
     selToolMenu.AddItem( ACTIONS::cut,              SCH_CONDITIONS::IdleSelection, 300 );
@@ -289,21 +681,9 @@ int SYMBOL_EDITOR_EDIT_TOOL::Mirror( const TOOL_EVENT& aEvent )
 
     return 0;
 }
-
-
-const std::vector<KICAD_T> swappableItems = {
-    LIB_SYMBOL_T, // Allows swapping the anchor
-    SCH_PIN_T,
-    SCH_SHAPE_T,
-    SCH_TEXT_T,
-    SCH_TEXTBOX_T,
-    SCH_FIELD_T,
-};
-
-
 int SYMBOL_EDITOR_EDIT_TOOL::Swap( const TOOL_EVENT& aEvent )
 {
-    SCH_SELECTION&         selection = m_selectionTool->RequestSelection( swappableItems );
+    SCH_SELECTION&         selection = m_selectionTool->RequestSelection( SwappableItems );
     std::vector<EDA_ITEM*> sorted = selection.GetItemsSortedBySelectionOrder();
 
     if( selection.Size() < 2 )
@@ -483,92 +863,27 @@ int SYMBOL_EDITOR_EDIT_TOOL::DoDelete( const TOOL_EVENT& aEvent )
 }
 
 
-#define HITTEST_THRESHOLD_PIXELS 5
-
-
-int SYMBOL_EDITOR_EDIT_TOOL::InteractiveDelete( const TOOL_EVENT& aEvent )
-{
-    PICKER_TOOL* picker = m_toolMgr->GetTool<PICKER_TOOL>();
-
-    m_toolMgr->RunAction( ACTIONS::selectionClear );
-    m_pickerItem = nullptr;
-
-    // Deactivate other tools; particularly important if another PICKER is currently running
-    Activate();
-
-    picker->SetCursor( KICURSOR::REMOVE );
-    picker->SetSnapping( false );
-    picker->ClearHandlers();
-
-    picker->SetClickHandler(
-            [this]( const VECTOR2D& aPosition ) -> bool
-            {
-                if( m_pickerItem )
-                {
-                    SCH_SELECTION_TOOL* selectionTool = m_toolMgr->GetTool<SCH_SELECTION_TOOL>();
-                    selectionTool->UnbrightenItem( m_pickerItem );
-                    selectionTool->AddItemToSel( m_pickerItem, true /*quiet mode*/ );
-                    m_toolMgr->RunAction( ACTIONS::doDelete );
-                    m_pickerItem = nullptr;
-                }
-
-                return true;
-            } );
-
-    picker->SetMotionHandler(
-            [this]( const VECTOR2D& aPos )
-            {
-                SCH_SELECTION_TOOL* selectionTool = m_toolMgr->GetTool<SCH_SELECTION_TOOL>();
-                SCH_COLLECTOR       collector;
-
-                selectionTool->CollectHits( collector, aPos, nonFields );
-
-                // Remove unselectable items
-                for( int i = collector.GetCount() - 1; i >= 0; --i )
-                {
-                    if( !selectionTool->Selectable( collector[ i ] ) )
-                        collector.Remove( i );
-                }
-
-                if( collector.GetCount() > 1 )
-                    selectionTool->GuessSelectionCandidates( collector, aPos );
-
-                EDA_ITEM* item = collector.GetCount() == 1 ? collector[ 0 ] : nullptr;
-
-                if( m_pickerItem != item )
-                {
-                    if( m_pickerItem )
-                        selectionTool->UnbrightenItem( m_pickerItem );
-
-                    m_pickerItem = item;
-
-                    if( m_pickerItem )
-                        selectionTool->BrightenItem( m_pickerItem );
-                }
-            } );
-
-    picker->SetFinalizeHandler(
-            [this]( const int& aFinalState )
-            {
-                if( m_pickerItem )
-                    m_toolMgr->GetTool<SCH_SELECTION_TOOL>()->UnbrightenItem( m_pickerItem );
-
-                // Wake the selection tool after exiting to ensure the cursor gets updated
-                m_toolMgr->PostAction( ACTIONS::selectionActivate );
-            } );
-
-    m_toolMgr->RunAction( ACTIONS::pickerTool, &aEvent );
-
-    return 0;
-}
-
-
 int SYMBOL_EDITOR_EDIT_TOOL::Properties( const TOOL_EVENT& aEvent )
 {
     SCH_SELECTION& selection = m_selectionTool->RequestSelection();
 
     if( selection.Empty() || aEvent.IsAction( &SCH_ACTIONS::symbolProperties ) )
     {
+        // If called from tree context menu, edit properties without loading into canvas
+        if( aEvent.IsAction( &SCH_ACTIONS::symbolProperties ) )
+        {
+            LIB_ID treeLibId = m_frame->GetTreeLIBID();
+
+            // Check if the selected symbol in tree is different from the currently loaded one
+            if( treeLibId.IsValid() &&
+                ( !m_frame->GetCurSymbol() || m_frame->GetCurSymbol()->GetLibId() != treeLibId ) )
+            {
+                // Edit properties directly from library buffer without loading to canvas
+                editSymbolPropertiesFromLibrary( treeLibId );
+                return 0;
+            }
+        }
+
         if( m_frame->GetCurSymbol() )
             editSymbolProperties();
     }
@@ -714,6 +1029,45 @@ void SYMBOL_EDITOR_EDIT_TOOL::editFieldProperties( SCH_FIELD* aField )
 }
 
 
+void SYMBOL_EDITOR_EDIT_TOOL::editSymbolPropertiesFromLibrary( const LIB_ID& aLibId )
+{
+    LIB_SYMBOL_LIBRARY_MANAGER& libMgr = m_frame->GetLibManager();
+    wxString libName = aLibId.GetLibNickname();
+    wxString symbolName = aLibId.GetLibItemName();
+
+    // Get the symbol from the library buffer (without loading it into the editor)
+    LIB_SYMBOL* bufferedSymbol = libMgr.GetBufferedSymbol( symbolName, libName );
+
+    if( !bufferedSymbol )
+        return;
+
+    // Create a copy to work with
+    LIB_SYMBOL tempSymbol( *bufferedSymbol );
+
+    m_toolMgr->RunAction( ACTIONS::cancelInteractive );
+    m_toolMgr->RunAction( ACTIONS::selectionClear );
+
+    DIALOG_LIB_SYMBOL_PROPERTIES dlg( m_frame, &tempSymbol );
+
+    // This dialog itself subsequently can invoke a KIWAY_PLAYER as a quasimodal
+    // frame. Therefore this dialog as a modal frame parent, MUST be run under
+    // quasimodal mode for the quasimodal frame support to work.  So don't use
+    // the QUASIMODAL macros here.
+    if( dlg.ShowQuasiModal() != wxID_OK )
+        return;
+
+    // Update the buffered symbol with the changes
+    libMgr.UpdateSymbol( &tempSymbol, libName );
+
+    // Mark the library as modified
+    libMgr.SetSymbolModified( symbolName, libName );
+
+    // Update the tree view
+    wxDataViewItem treeItem = libMgr.GetAdapter()->FindItem( aLibId );
+    m_frame->UpdateLibraryTree( treeItem, &tempSymbol );
+}
+
+
 void SYMBOL_EDITOR_EDIT_TOOL::editSymbolProperties()
 {
     LIB_SYMBOL* symbol = m_frame->GetCurSymbol();
@@ -731,6 +1085,7 @@ void SYMBOL_EDITOR_EDIT_TOOL::editSymbolProperties()
     if( dlg.ShowQuasiModal() != wxID_OK )
         return;
 
+    m_frame->RebuildSymbolUnitAndBodyStyleLists();
     m_frame->OnModify();
 
     // if m_UnitSelectionLocked has changed, set some edit options or defaults
@@ -749,17 +1104,6 @@ void SYMBOL_EDITOR_EDIT_TOOL::editSymbolProperties()
     }
 }
 
-void SYMBOL_EDITOR_EDIT_TOOL::handlePinDuplication( SCH_PIN* aOldPin, SCH_PIN* aNewPin,
-                                                    int& aSymbolLastPinNumber )
-{
-    if( !aNewPin->GetNumber().IsEmpty() )
-    {
-        // when duplicating a pin in symbol editor, assigning identical pin number
-        // to the old one does not makes any sense, so assign the next unassigned number to it
-        aSymbolLastPinNumber++;
-        aNewPin->SetNumber( wxString::Format( wxT( "%i" ), aSymbolLastPinNumber ) );
-    }
-}
 
 int SYMBOL_EDITOR_EDIT_TOOL::PinTable( const TOOL_EVENT& aEvent )
 {
@@ -769,7 +1113,7 @@ int SYMBOL_EDITOR_EDIT_TOOL::PinTable( const TOOL_EVENT& aEvent )
     if( !symbol )
         return 0;
 
-    commit.Modify( symbol );
+    commit.Modify( symbol, m_frame->GetScreen() );
 
     SCH_SELECTION_TOOL* selTool = m_toolMgr->GetTool<SCH_SELECTION_TOOL>();
     wxCHECK( selTool, -1 );
@@ -803,6 +1147,335 @@ int SYMBOL_EDITOR_EDIT_TOOL::PinTable( const TOOL_EVENT& aEvent )
 }
 
 
+int SYMBOL_EDITOR_EDIT_TOOL::ConvertStackedPins( const TOOL_EVENT& aEvent )
+{
+    SCH_COMMIT  commit( m_frame );
+    LIB_SYMBOL* symbol = m_frame->GetCurSymbol();
+
+    if( !symbol )
+        return 0;
+
+    SCH_SELECTION_TOOL* selTool = m_toolMgr->GetTool<SCH_SELECTION_TOOL>();
+    wxCHECK( selTool, -1 );
+
+    SCH_SELECTION& selection = selTool->GetSelection();
+
+    // Collect pins to convert - accept pins with any number format
+    std::vector<SCH_PIN*> pinsToConvert;
+
+    if( selection.Size() == 1 && selection.Front()->Type() == SCH_PIN_T )
+    {
+        // Single pin selected - find all pins at the same location
+        SCH_PIN* selectedPin = static_cast<SCH_PIN*>( selection.Front() );
+        VECTOR2I pos = selectedPin->GetPosition();
+
+        for( SCH_PIN* pin : symbol->GetPins() )
+        {
+            if( pin->GetPosition() == pos )
+                pinsToConvert.push_back( pin );
+        }
+    }
+    else
+    {
+        // Multiple pins selected - use them directly, accepting any pin numbers
+        for( EDA_ITEM* item : selection )
+        {
+            if( item->Type() == SCH_PIN_T )
+                pinsToConvert.push_back( static_cast<SCH_PIN*>( item ) );
+        }
+    }
+
+    if( pinsToConvert.size() < 2 )
+    {
+        m_frame->ShowInfoBarError( _( "At least two pins are needed to convert to stacked pins" ) );
+        return 0;
+    }
+
+    // Check that all pins are at the same location
+    VECTOR2I pos = pinsToConvert[0]->GetPosition();
+    for( size_t i = 1; i < pinsToConvert.size(); ++i )
+    {
+        if( pinsToConvert[i]->GetPosition() != pos )
+        {
+            m_frame->ShowInfoBarError( _( "All pins must be at the same location" ) );
+            return 0;
+        }
+    }
+
+    commit.Modify( symbol, m_frame->GetScreen() );
+
+    // Clear selection before modifying pins, like the Delete command does
+    m_toolMgr->RunAction( ACTIONS::selectionClear );
+
+    // Sort pins for consistent ordering - handle arbitrary pin number formats
+    std::sort( pinsToConvert.begin(), pinsToConvert.end(),
+        []( SCH_PIN* a, SCH_PIN* b )
+        {
+            wxString numA = a->GetNumber();
+            wxString numB = b->GetNumber();
+
+            // Try to convert to integers for proper numeric sorting
+            long longA, longB;
+            bool aIsNumeric = numA.ToLong( &longA );
+            bool bIsNumeric = numB.ToLong( &longB );
+
+            // Both are purely numeric - sort numerically
+            if( aIsNumeric && bIsNumeric )
+                return longA < longB;
+
+            // Mixed numeric/non-numeric - numeric pins come first
+            if( aIsNumeric && !bIsNumeric )
+                return true;
+            if( !aIsNumeric && bIsNumeric )
+                return false;
+
+            // Both non-numeric or mixed alphanumeric - use lexicographic sorting
+            return numA < numB;
+        });
+
+    // Build the stacked notation string with range collapsing
+    wxString stackedNotation = wxT("[");
+
+    // Helper function to collapse consecutive numbers into ranges - handles arbitrary pin formats
+    auto collapseRanges = [&]() -> wxString
+    {
+        if( pinsToConvert.empty() )
+            return wxT("");
+
+        wxString result;
+
+        // Group pins by their alphanumeric prefix for range collapsing
+        std::map<wxString, std::vector<long>> prefixGroups;
+        std::vector<wxString> nonNumericPins;
+
+        // Parse each pin number to separate prefix from numeric suffix
+        for( SCH_PIN* pin : pinsToConvert )
+        {
+            wxString pinNumber = pin->GetNumber();
+
+            // Skip empty pin numbers (shouldn't happen, but be defensive)
+            if( pinNumber.IsEmpty() )
+            {
+                nonNumericPins.push_back( wxT("(empty)") );
+                continue;
+            }
+
+            wxString prefix;
+            wxString numericPart;
+
+            // Find where numeric part starts (scan from end)
+            size_t numStart = pinNumber.length();
+            for( int i = pinNumber.length() - 1; i >= 0; i-- )
+            {
+                if( !wxIsdigit( pinNumber[i] ) )
+                {
+                    numStart = i + 1;
+                    break;
+                }
+                if( i == 0 )  // All digits
+                    numStart = 0;
+            }
+
+            if( numStart < pinNumber.length() )  // Has numeric suffix
+            {
+                prefix = pinNumber.Left( numStart );
+                numericPart = pinNumber.Mid( numStart );
+
+                long numValue;
+                if( numericPart.ToLong( &numValue ) && numValue >= 0 )  // Valid non-negative number
+                {
+                    prefixGroups[prefix].push_back( numValue );
+                }
+                else
+                {
+                    // Numeric part couldn't be parsed or is negative - treat as non-numeric
+                    nonNumericPins.push_back( pinNumber );
+                }
+            }
+            else  // No numeric suffix - consolidate as individual value
+            {
+                nonNumericPins.push_back( pinNumber );
+            }
+        }
+
+        // Process each prefix group
+        for( auto& [prefix, numbers] : prefixGroups )
+        {
+            if( !result.IsEmpty() )
+                result += wxT(",");
+
+            // Sort numeric values for this prefix
+            std::sort( numbers.begin(), numbers.end() );
+
+            // Collapse consecutive ranges within this prefix
+            size_t i = 0;
+            while( i < numbers.size() )
+            {
+                if( i > 0 )  // Not first number in this prefix group
+                    result += wxT(",");
+
+                long start = numbers[i];
+                long end = start;
+
+                // Find the end of consecutive sequence
+                while( i + 1 < numbers.size() && numbers[i + 1] == numbers[i] + 1 )
+                {
+                    i++;
+                    end = numbers[i];
+                }
+
+                // Add range or single number with prefix
+                if( end > start + 1 )  // Range of 3+ numbers
+                    result += wxString::Format( wxT("%s%ld-%s%ld"), prefix, start, prefix, end );
+                else if( end == start + 1 )  // Two consecutive numbers
+                    result += wxString::Format( wxT("%s%ld,%s%ld"), prefix, start, prefix, end );
+                else  // Single number
+                    result += wxString::Format( wxT("%s%ld"), prefix, start );
+
+                i++;
+            }
+        }
+
+        // Add non-numeric pin numbers as individual comma-separated values
+        for( const wxString& nonNum : nonNumericPins )
+        {
+            if( !result.IsEmpty() )
+                result += wxT(",");
+            result += nonNum;
+        }
+
+        return result;
+    };
+
+    stackedNotation += collapseRanges();
+    stackedNotation += wxT("]");
+
+    // Keep the first pin and give it the stacked notation
+    SCH_PIN* masterPin = pinsToConvert[0];
+    masterPin->SetNumber( stackedNotation );
+
+    // Log information about pins being removed before we remove them
+    wxLogTrace( traceStackedPins,
+               wxString::Format( "Converting %zu pins to stacked notation '%s'",
+                               pinsToConvert.size(), stackedNotation ) );
+
+    // Remove all other pins from the symbol that were consolidated into the stacked notation
+    // Collect pins to remove first, then remove them all at once like the Delete command
+    std::vector<SCH_PIN*> pinsToRemove;
+    for( size_t i = 1; i < pinsToConvert.size(); ++i )
+    {
+        SCH_PIN* pinToRemove = pinsToConvert[i];
+
+        // Log the pin before removing it
+    wxLogTrace( traceStackedPins,
+           wxString::Format( "Will remove pin '%s' at position (%d, %d)",
+                   pinToRemove->GetNumber(),
+                   pinToRemove->GetPosition().x,
+                   pinToRemove->GetPosition().y ) );
+
+        pinsToRemove.push_back( pinToRemove );
+    }
+
+    // Remove all pins at once, like the Delete command does
+    for( SCH_PIN* pin : pinsToRemove )
+    {
+        symbol->RemoveDrawItem( pin );
+    }
+
+    commit.Push( wxString::Format( _( "Convert %zu Stacked Pins to '%s'" ),
+                                  pinsToConvert.size(), stackedNotation ) );
+    m_frame->RebuildView();
+    return 0;
+}
+
+
+int SYMBOL_EDITOR_EDIT_TOOL::ExplodeStackedPin( const TOOL_EVENT& aEvent )
+{
+    SCH_COMMIT  commit( m_frame );
+    LIB_SYMBOL* symbol = m_frame->GetCurSymbol();
+
+    if( !symbol )
+        return 0;
+
+    SCH_SELECTION_TOOL* selTool = m_toolMgr->GetTool<SCH_SELECTION_TOOL>();
+    wxCHECK( selTool, -1 );
+
+    SCH_SELECTION& selection = selTool->GetSelection();
+
+    if( selection.GetSize() != 1 || selection.Front()->Type() != SCH_PIN_T )
+    {
+        m_frame->ShowInfoBarError( _( "Select a single pin with stacked notation to explode" ) );
+        return 0;
+    }
+
+    SCH_PIN* pin = static_cast<SCH_PIN*>( selection.Front() );
+
+    // Check if the pin has stacked notation
+    bool isValid;
+    std::vector<wxString> stackedNumbers = pin->GetStackedPinNumbers( &isValid );
+
+    if( !isValid || stackedNumbers.size() <= 1 )
+    {
+        m_frame->ShowInfoBarError( _( "Selected pin does not have valid stacked notation" ) );
+        return 0;
+    }
+
+    commit.Modify( symbol, m_frame->GetScreen() );
+
+    // Clear selection before modifying pins
+    m_toolMgr->RunAction( ACTIONS::selectionClear );
+
+    // Sort the stacked numbers to find the smallest one
+    std::sort( stackedNumbers.begin(), stackedNumbers.end(),
+        []( const wxString& a, const wxString& b )
+        {
+            // Try to convert to integers for proper numeric sorting
+            long numA, numB;
+            if( a.ToLong( &numA ) && b.ToLong( &numB ) )
+                return numA < numB;
+
+            // Fall back to string comparison if not numeric
+            return a < b;
+        });
+
+    // Change the original pin to use the first (smallest) number and make it visible
+    pin->SetNumber( stackedNumbers[0] );
+    pin->SetVisible( true );
+
+    // Create additional pins for the remaining numbers and make them invisible
+    for( size_t i = 1; i < stackedNumbers.size(); ++i )
+    {
+        SCH_PIN* newPin = new SCH_PIN( symbol );
+
+        // Copy all properties from the original pin
+        newPin->SetPosition( pin->GetPosition() );
+        newPin->SetOrientation( pin->GetOrientation() );
+        newPin->SetShape( pin->GetShape() );
+        newPin->SetLength( pin->GetLength() );
+        // Hidden power input pins act as global labels, so demote them to passive
+        if( pin->GetType() == ELECTRICAL_PINTYPE::PT_POWER_IN )
+            newPin->SetType( ELECTRICAL_PINTYPE::PT_PASSIVE );
+        else
+            newPin->SetType( pin->GetType() );
+
+        newPin->SetName( pin->GetName() );
+        newPin->SetNumber( stackedNumbers[i] );
+        newPin->SetNameTextSize( pin->GetNameTextSize() );
+        newPin->SetNumberTextSize( pin->GetNumberTextSize() );
+        newPin->SetUnit( pin->GetUnit() );
+        newPin->SetBodyStyle( pin->GetBodyStyle() );
+        newPin->SetVisible( false );
+
+        // Add the new pin to the symbol
+        symbol->AddDrawItem( newPin );
+    }
+
+    commit.Push( _( "Explode Stacked Pin" ) );
+    m_frame->RebuildView();
+    return 0;
+}
+
+
 int SYMBOL_EDITOR_EDIT_TOOL::UpdateSymbolFields( const TOOL_EVENT& aEvent )
 {
     LIB_SYMBOL* symbol = m_frame->GetCurSymbol();
@@ -820,47 +1493,6 @@ int SYMBOL_EDITOR_EDIT_TOOL::UpdateSymbolFields( const TOOL_EVENT& aEvent )
 
         if( dlg.ShowModal() == wxID_CANCEL )
             return -1;
-    }
-
-    return 0;
-}
-
-
-int SYMBOL_EDITOR_EDIT_TOOL::SetUnitDisplayName( const TOOL_EVENT& aEvent )
-{
-    LIB_SYMBOL* symbol = m_frame->GetCurSymbol();
-
-    if( !symbol )
-        return 0;
-
-    int unitid = m_frame->GetUnit();
-
-    if( unitid == 0 )
-    {
-        return -1;
-    }
-
-    wxString promptText = wxString::Format( _( "Enter display name for unit %s" ),
-                                            symbol->GetUnitReference( unitid ) );
-    wxString currentvalue;
-
-    if( symbol->HasUnitDisplayName( unitid ) )
-    {
-        currentvalue = symbol->GetUnitDisplayName( unitid );
-    }
-
-    wxTextEntryDialog dlg( m_frame, promptText, _( "Set Unit Display Name" ), currentvalue );
-
-    if( dlg.ShowModal() == wxID_OK )
-    {
-        saveCopyInUndoList( symbol, UNDO_REDO::LIBEDIT );
-        symbol->SetUnitDisplayName( unitid, dlg.GetValue() );
-        m_frame->RebuildSymbolUnitsList();
-        m_frame->OnModify();
-    }
-    else
-    {
-        return -1;
     }
 
     return 0;
@@ -940,9 +1572,77 @@ int SYMBOL_EDITOR_EDIT_TOOL::Copy( const TOOL_EVENT& aEvent )
         item.ClearFlags( STRUCT_DELETED );
 
     std::string prettyData = formatter.GetString();
-    KICAD_FORMAT::Prettify( prettyData, true );
+    KICAD_FORMAT::Prettify( prettyData, KICAD_FORMAT::FORMAT_MODE::COMPACT_TEXT_PROPERTIES );
 
-    if( SaveClipboard( prettyData ) )
+    // Generate SVG and PNG for multi-format clipboard
+    std::vector<CLIPBOARD_MIME_DATA> mimeData;
+
+    // Get the bounding box for just the selected items
+    BOX2I bbox;
+
+    for( EDA_ITEM* item : selection )
+    {
+        SCH_ITEM* schItem = static_cast<SCH_ITEM*>( item );
+        if( bbox.GetWidth() == 0 && bbox.GetHeight() == 0 )
+            bbox = schItem->GetBoundingBox();
+        else
+            bbox.Merge( schItem->GetBoundingBox() );
+    }
+
+    if( bbox.GetWidth() > 0 && bbox.GetHeight() > 0 )
+    {
+        bbox.Inflate( bbox.GetWidth() * clipboardBboxInflation,
+                      bbox.GetHeight() * clipboardBboxInflation );
+
+        // Create a temporary symbol with just the selected items for plotting
+        LIB_SYMBOL* plotSymbol = new LIB_SYMBOL( *symbol );
+
+        // Mark unselected items as deleted in the plot copy
+        for( SCH_ITEM& item : plotSymbol->GetDrawItems() )
+        {
+            if( item.Type() == SCH_FIELD_T )
+                continue;
+
+            // Find matching item in selection by position/type
+            bool found = false;
+
+            for( EDA_ITEM* selItem : selection )
+            {
+                SCH_ITEM* selSchItem = static_cast<SCH_ITEM*>( selItem );
+
+                if( selSchItem->Type() == item.Type()
+                    && selSchItem->GetPosition() == item.GetPosition() )
+                {
+                    found = true;
+                    break;
+                }
+            }
+
+            if( !found )
+                item.SetFlags( STRUCT_DELETED );
+        }
+
+        // Now copy only the non-deleted items to a clean symbol for plotting
+        LIB_SYMBOL* cleanSymbol = new LIB_SYMBOL( *plotSymbol );
+        delete plotSymbol;
+
+        int unit = m_frame->GetUnit();
+        int bodyStyle = m_frame->GetBodyStyle();
+
+        wxMemoryBuffer svgBuffer;
+
+        if( plotSymbolToSvg( m_frame, cleanSymbol, bbox, unit, bodyStyle, svgBuffer ) )
+            appendMimeData( mimeData, wxS( "image/svg+xml" ), svgBuffer );
+
+        wxImage pngImage = renderSymbolToImageWithAlpha( m_frame, cleanSymbol, bbox, unit, bodyStyle );
+
+        if( pngImage.IsOk() )
+            appendMimeData( mimeData, wxS( "image/png" ), std::move( pngImage ) );
+
+        delete cleanSymbol;
+    }
+
+    if( SaveClipboard( prettyData, mimeData ) )
         return 0;
     else
         return -1;
@@ -1003,7 +1703,7 @@ int SYMBOL_EDITOR_EDIT_TOOL::Paste( const TOOL_EVENT& aEvent )
 
     SCH_COMMIT commit( m_toolMgr );
 
-    commit.Modify( symbol );
+    commit.Modify( symbol, m_frame->GetScreen() );
     m_selectionTool->ClearSelection();
 
     for( SCH_ITEM& item : symbol->GetDrawItems() )
@@ -1125,117 +1825,6 @@ int SYMBOL_EDITOR_EDIT_TOOL::Duplicate( const TOOL_EVENT& aEvent )
 }
 
 
-int SYMBOL_EDITOR_EDIT_TOOL::Increment( const TOOL_EVENT& aEvent )
-{
-    const ACTIONS::INCREMENT incParam = aEvent.Parameter<ACTIONS::INCREMENT>();
-    SCH_SELECTION& selection = m_selectionTool->RequestSelection( { SCH_PIN_T, SCH_TEXT_T } );
-
-    if( selection.Empty() )
-        return 0;
-
-    KICAD_T type = selection.Front()->Type();
-    bool    allSameType = true;
-    for( EDA_ITEM* item : selection )
-    {
-        if( item->Type() != type )
-        {
-            allSameType = false;
-            break;
-        }
-    }
-
-    // Incrementing multiple types at once seems confusing
-    // though it would work.
-    if( !allSameType )
-        return 0;
-
-    const VECTOR2I mousePosition = getViewControls()->GetMousePosition();
-
-    STRING_INCREMENTER incrementer;
-    incrementer.SetSkipIOSQXZ( true );
-
-    // If we're coming via another action like 'Move', use that commit
-    SCH_COMMIT  localCommit( m_toolMgr );
-    SCH_COMMIT* commit = dynamic_cast<SCH_COMMIT*>( aEvent.Commit() );
-
-    if( !commit )
-        commit = &localCommit;
-
-    const auto modifyItem = [&]( EDA_ITEM& aItem )
-    {
-        if( aItem.IsNew() )
-            m_toolMgr->PostAction( ACTIONS::refreshPreview );
-        else
-            commit->Modify( &aItem, m_frame->GetScreen() );
-    };
-
-    for( EDA_ITEM* item : selection )
-    {
-        switch( item->Type() )
-        {
-        case SCH_PIN_T:
-        {
-            SCH_PIN&          pin = static_cast<SCH_PIN&>( *item );
-            PIN_LAYOUT_CACHE& layout = pin.GetLayoutCache();
-
-            bool      found = false;
-            OPT_BOX2I bbox = layout.GetPinNumberBBox();
-
-            if( bbox && bbox->Contains( mousePosition ) )
-            {
-                std::optional<wxString> nextNumber =
-                        incrementer.Increment( pin.GetNumber(), incParam.Delta, incParam.Index );
-                if( nextNumber )
-                {
-                    modifyItem( pin );
-                    pin.SetNumber( *nextNumber );
-                }
-                found = true;
-            }
-
-            if( !found )
-            {
-                bbox = layout.GetPinNameBBox();
-
-                if( bbox && bbox->Contains( mousePosition ) )
-                {
-                    std::optional<wxString> nextName =
-                            incrementer.Increment( pin.GetName(), incParam.Delta, incParam.Index );
-                    if( nextName )
-                    {
-                        modifyItem( pin );
-                        pin.SetName( *nextName );
-                    }
-                    found = true;
-                }
-            }
-            break;
-        }
-        case SCH_TEXT_T:
-        {
-            SCH_TEXT& label = static_cast<SCH_TEXT&>( *item );
-
-            std::optional<wxString> newLabel =
-                    incrementer.Increment( label.GetText(), incParam.Delta, incParam.Index );
-            if( newLabel )
-            {
-                modifyItem( label );
-                label.SetText( *newLabel );
-            }
-            break;
-        }
-        default:
-            // No increment for other items
-            break;
-        }
-    }
-
-    commit->Push( _( "Increment" ) );
-
-    return 0;
-}
-
-
 void SYMBOL_EDITOR_EDIT_TOOL::setTransitions()
 {
     // clang-format off
@@ -1264,7 +1853,8 @@ void SYMBOL_EDITOR_EDIT_TOOL::setTransitions()
     Go( &SYMBOL_EDITOR_EDIT_TOOL::Properties,         SCH_ACTIONS::properties.MakeEvent() );
     Go( &SYMBOL_EDITOR_EDIT_TOOL::Properties,         SCH_ACTIONS::symbolProperties.MakeEvent() );
     Go( &SYMBOL_EDITOR_EDIT_TOOL::PinTable,           SCH_ACTIONS::pinTable.MakeEvent() );
+    Go( &SYMBOL_EDITOR_EDIT_TOOL::ConvertStackedPins, SCH_ACTIONS::convertStackedPins.MakeEvent() );
+    Go( &SYMBOL_EDITOR_EDIT_TOOL::ExplodeStackedPin,  SCH_ACTIONS::explodeStackedPin.MakeEvent() );
     Go( &SYMBOL_EDITOR_EDIT_TOOL::UpdateSymbolFields, SCH_ACTIONS::updateSymbolFields.MakeEvent() );
-    Go( &SYMBOL_EDITOR_EDIT_TOOL::SetUnitDisplayName, SCH_ACTIONS::setUnitDisplayName.MakeEvent() );
     // clang-format on
 }

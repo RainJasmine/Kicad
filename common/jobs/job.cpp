@@ -97,27 +97,24 @@ void PrependDirectoryToPath( wxFileName& aFileName, const wxString aDirPath )
 }
 
 
-wxString JOB::GetFullOutputPath( PROJECT* aProject ) const
+wxString JOB::ResolveOutputPath( const wxString& aPath, bool aPathIsDirectory, PROJECT* aProject ) const
 {
     std::function<bool( wxString* )> textResolver =
             [&]( wxString* token ) -> bool
             {
                 if( m_titleBlock.TextVarResolver( token, aProject ) )
                     return true;
-
                 if( aProject )
                     return aProject->TextVarResolver( token );
-
                 return false;
             };
 
-    // use the working output path (nonsaved) over the configured path if its not empty
-    wxString outPath = m_workingOutputPath.IsEmpty() ? m_outputPath : m_workingOutputPath;
+    wxString outPath = aPath;
     outPath = ExpandTextVars( outPath, &textResolver );
 
     if( !m_tempOutputDirectory.IsEmpty() )
     {
-        if( m_outputPathIsDirectory )
+        if( aPathIsDirectory )
         {
             wxFileName fn( outPath );
 
@@ -144,15 +141,26 @@ wxString JOB::GetFullOutputPath( PROJECT* aProject ) const
 
             return fn.GetFullPath();
         }
-	}
+    }
 
     return outPath;
+}
+
+
+wxString JOB::GetFullOutputPath( PROJECT* aProject ) const
+{
+    return ResolveOutputPath( m_workingOutputPath.IsEmpty() ? m_outputPath : m_workingOutputPath,
+                              m_outputPathIsDirectory, aProject );
 }
 
 
 void JOB::SetConfiguredOutputPath( const wxString& aPath )
 {
     m_outputPath = aPath;
+
+    // A newly configured path must take precedence over any transient working path left over
+    // from a prior run that fell back to a generated filename.
+    m_workingOutputPath.clear();
 }
 
 

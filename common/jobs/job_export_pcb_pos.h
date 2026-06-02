@@ -61,6 +61,7 @@ public:
     bool     m_smdOnly;
     bool     m_excludeFootprintsWithTh;
     bool     m_excludeDNP;
+    bool     m_excludeBOM;
     bool     m_negateBottomX;
     bool     m_singleFile;
     bool     m_nakedFilename;
@@ -68,6 +69,8 @@ public:
     UNITS    m_units;
     FORMAT   m_format;
     bool     m_gerberBoardEdge;
+
+    wxString m_variant;         ///< Variant name for variant-aware filtering
 };
 
 #endif

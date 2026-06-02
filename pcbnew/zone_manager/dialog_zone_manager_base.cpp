@@ -19,13 +19,17 @@ DIALOG_ZONE_MANAGER_BASE::DIALOG_ZONE_MANAGER_BASE( wxWindow* parent, wxWindowID
 
 	m_sizerTop = new wxBoxSizer( wxHORIZONTAL );
 
-	wxBoxSizer* leftColumn;
-	leftColumn = new wxBoxSizer( wxVERTICAL );
+	m_listPanel = new wxPanel( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL );
+	wxBoxSizer* listPanelSizer;
+	listPanelSizer = new wxBoxSizer( wxVERTICAL );
+
+	wxBoxSizer* m_leftColumn;
+	m_leftColumn = new wxBoxSizer( wxVERTICAL );
 
 	wxBoxSizer* searchSizer;
 	searchSizer = new wxBoxSizer( wxHORIZONTAL );
 
-	m_filterCtrl = new wxSearchCtrl( this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, wxTE_PROCESS_ENTER );
+	m_filterCtrl = new wxSearchCtrl( m_listPanel, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, wxTE_PROCESS_ENTER );
 	#ifndef __WXMAC__
 	m_filterCtrl->ShowSearchButton( true );
 	#endif
@@ -35,47 +39,107 @@ DIALOG_ZONE_MANAGER_BASE::DIALOG_ZONE_MANAGER_BASE( wxWindow* parent, wxWindowID
 
 	searchSizer->Add( 10, 0, 0, wxEXPAND, 5 );
 
-	m_checkName = new wxCheckBox( this, wxID_ANY, _("Name"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_checkName = new wxCheckBox( m_listPanel, wxID_ANY, _("Name"), wxDefaultPosition, wxDefaultSize, 0 );
 	m_checkName->SetValue(true);
 	searchSizer->Add( m_checkName, 0, wxALIGN_CENTER_VERTICAL|wxRIGHT|wxLEFT, 5 );
 
-	m_checkNet = new wxCheckBox( this, wxID_ANY, _("Net"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_checkNet = new wxCheckBox( m_listPanel, wxID_ANY, _("Net"), wxDefaultPosition, wxDefaultSize, 0 );
 	m_checkNet->SetValue(true);
 	searchSizer->Add( m_checkNet, 0, wxALIGN_CENTER_VERTICAL, 5 );
 
 
-	leftColumn->Add( searchSizer, 0, wxBOTTOM|wxEXPAND|wxTOP, 5 );
+	m_leftColumn->Add( searchSizer, 0, wxBOTTOM|wxEXPAND|wxTOP, 5 );
 
-	m_viewZonesOverview = new wxDataViewCtrl( this, wxID_ANY, wxDefaultPosition, wxSize( -1,240 ), wxDV_HORIZ_RULES|wxDV_SINGLE|wxDV_VERT_RULES );
-	m_viewZonesOverview->SetMinSize( wxSize( -1,240 ) );
+	wxBoxSizer* layerFilterSizer;
+	layerFilterSizer = new wxBoxSizer( wxHORIZONTAL );
 
-	leftColumn->Add( m_viewZonesOverview, 1, wxEXPAND, 5 );
+	m_layerFilterLabel = new wxStaticText( m_listPanel, wxID_ANY, _("Layer:"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_layerFilterLabel->Wrap( -1 );
+	layerFilterSizer->Add( m_layerFilterLabel, 0, wxALIGN_CENTER_VERTICAL|wxRIGHT, 5 );
+
+	wxArrayString m_layerFilterChoices;
+	m_layerFilter = new wxChoice( m_listPanel, wxID_ANY, wxDefaultPosition, wxDefaultSize, m_layerFilterChoices, 0 );
+	m_layerFilter->SetSelection( 0 );
+	layerFilterSizer->Add( m_layerFilter, 1, wxALIGN_CENTER_VERTICAL, 0 );
+
+
+	m_leftColumn->Add( layerFilterSizer, 0, wxBOTTOM|wxEXPAND|wxTOP, 5 );
+
+	m_viewZonesOverview = new wxDataViewCtrl( m_listPanel, wxID_ANY, wxDefaultPosition, wxSize( -1,-1 ), wxDV_HORIZ_RULES|wxDV_SINGLE|wxDV_VERT_RULES );
+	m_leftColumn->Add( m_viewZonesOverview, 1, wxEXPAND, 5 );
 
 	m_sizerZoneOP = new wxBoxSizer( wxHORIZONTAL );
 
-	m_btnMoveUp = new STD_BITMAP_BUTTON( this, wxID_ANY, wxNullBitmap, wxDefaultPosition, wxDefaultSize, wxBU_AUTODRAW|0 );
+	m_btnMoveTop = new STD_BITMAP_BUTTON( m_listPanel, wxID_ANY, wxNullBitmap, wxDefaultPosition, wxDefaultSize, wxBU_AUTODRAW|0 );
+	m_btnMoveTop->SetToolTip( _("Top zone has the highest priority. When a zone is inside another zone, if its priority is higher, its outlines are removed from the other zone.") );
+
+	m_sizerZoneOP->Add( m_btnMoveTop, 0, wxALIGN_CENTER_VERTICAL|wxRIGHT, 5 );
+
+	m_btnMoveUp = new STD_BITMAP_BUTTON( m_listPanel, wxID_ANY, wxNullBitmap, wxDefaultPosition, wxDefaultSize, wxBU_AUTODRAW|0 );
 	m_btnMoveUp->SetToolTip( _("Top zone has the highest priority. When a zone is inside another zone, if its priority is higher, its outlines are removed from the other zone.") );
 
 	m_sizerZoneOP->Add( m_btnMoveUp, 0, wxALIGN_CENTER_VERTICAL|wxRIGHT, 5 );
 
-	m_btnMoveDown = new STD_BITMAP_BUTTON( this, wxID_ANY, wxNullBitmap, wxDefaultPosition, wxDefaultSize, wxBU_AUTODRAW|0 );
+	m_btnMoveDown = new STD_BITMAP_BUTTON( m_listPanel, wxID_ANY, wxNullBitmap, wxDefaultPosition, wxDefaultSize, wxBU_AUTODRAW|0 );
 	m_btnMoveDown->SetToolTip( _("Top zone has the highest priority. When a zone is inside another zone, if its priority is higher, its outlines are removed from the other zone.") );
 
 	m_sizerZoneOP->Add( m_btnMoveDown, 0, wxALIGN_CENTER_VERTICAL|wxRIGHT, 5 );
 
+	m_btnMoveBottom = new STD_BITMAP_BUTTON( m_listPanel, wxID_ANY, wxNullBitmap, wxDefaultPosition, wxDefaultSize, wxBU_AUTODRAW|0 );
+	m_btnMoveBottom->SetToolTip( _("Top zone has the highest priority. When a zone is inside another zone, if its priority is higher, its outlines are removed from the other zone.") );
 
-	leftColumn->Add( m_sizerZoneOP, 0, wxEXPAND|wxTOP, 5 );
+	m_sizerZoneOP->Add( m_btnMoveBottom, 0, wxALIGN_CENTER_VERTICAL|wxRIGHT, 5 );
 
 
-	m_sizerTop->Add( leftColumn, 1, wxEXPAND|wxRIGHT|wxLEFT, 10 );
+	m_sizerZoneOP->Add( 10, 0, 0, wxEXPAND, 5 );
+
+	m_btnAutoAssign = new STD_BITMAP_BUTTON( m_listPanel, wxID_ANY, wxNullBitmap, wxDefaultPosition, wxDefaultSize, wxBU_AUTODRAW|0 );
+	m_btnAutoAssign->SetToolTip( _("Automatically assign zone priorities based on connectivity analysis of overlapping regions.") );
+
+	m_sizerZoneOP->Add( m_btnAutoAssign, 0, wxALIGN_CENTER_VERTICAL|wxRIGHT, 5 );
 
 
-	m_MainBoxSizer->Add( m_sizerTop, 1, wxEXPAND|wxRIGHT, 5 );
+	m_leftColumn->Add( m_sizerZoneOP, 0, wxBOTTOM|wxEXPAND|wxTOP, 5 );
+
+
+	listPanelSizer->Add( m_leftColumn, 1, wxEXPAND|wxRIGHT|wxLEFT, 5 );
+
+
+	m_listPanel->SetSizer( listPanelSizer );
+	m_listPanel->Layout();
+	listPanelSizer->Fit( m_listPanel );
+	m_sizerTop->Add( m_listPanel, 1, wxEXPAND, 5 );
+
+	m_zonePanel = new wxPanel( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL );
+	wxBoxSizer* zonePanelSizer;
+	zonePanelSizer = new wxBoxSizer( wxVERTICAL );
+
+	m_rightColumn = new wxBoxSizer( wxVERTICAL );
 
 	m_sizerProperties = new wxBoxSizer( wxVERTICAL );
 
 
-	m_MainBoxSizer->Add( m_sizerProperties, 0, wxEXPAND|wxTOP|wxRIGHT|wxLEFT, 5 );
+	m_rightColumn->Add( m_sizerProperties, 1, wxEXPAND, 5 );
+
+	m_sizerPreview = new wxBoxSizer( wxVERTICAL );
+
+
+	m_rightColumn->Add( m_sizerPreview, 1, wxEXPAND, 5 );
+
+
+	zonePanelSizer->Add( m_rightColumn, 1, wxBOTTOM|wxEXPAND, 5 );
+
+
+	m_zonePanel->SetSizer( zonePanelSizer );
+	m_zonePanel->Layout();
+	zonePanelSizer->Fit( m_zonePanel );
+	m_sizerTop->Add( m_zonePanel, 2, wxEXPAND, 5 );
+
+
+	m_MainBoxSizer->Add( m_sizerTop, 1, wxEXPAND, 5 );
+
+	m_staticline1 = new wxStaticLine( this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxLI_HORIZONTAL );
+	m_MainBoxSizer->Add( m_staticline1, 0, wxEXPAND, 5 );
 
 	m_sizerBottom = new wxBoxSizer( wxHORIZONTAL );
 
@@ -85,7 +149,7 @@ DIALOG_ZONE_MANAGER_BASE::DIALOG_ZONE_MANAGER_BASE( wxWindow* parent, wxWindowID
 	m_sizerBottom->Add( m_checkRepour, 0, wxALIGN_CENTER_VERTICAL|wxLEFT, 5 );
 
 
-	m_sizerBottom->Add( 25, 0, 1, wxEXPAND, 5 );
+	m_sizerBottom->Add( 100, 0, 1, wxEXPAND, 5 );
 
 	m_updateDisplayedZones = new wxButton( this, wxID_ANY, _("Update Displayed Zones"), wxDefaultPosition, wxDefaultSize, 0 );
 	m_updateDisplayedZones->SetToolTip( _("Update filled areas shown in dialog, according to the new current settings") );
@@ -115,13 +179,16 @@ DIALOG_ZONE_MANAGER_BASE::DIALOG_ZONE_MANAGER_BASE( wxWindow* parent, wxWindowID
 	m_filterCtrl->Connect( wxEVT_COMMAND_SEARCHCTRL_SEARCH_BTN, wxCommandEventHandler( DIALOG_ZONE_MANAGER_BASE::OnFilterCtrlSearch ), NULL, this );
 	m_filterCtrl->Connect( wxEVT_COMMAND_TEXT_UPDATED, wxCommandEventHandler( DIALOG_ZONE_MANAGER_BASE::OnFilterCtrlTextChange ), NULL, this );
 	m_filterCtrl->Connect( wxEVT_COMMAND_TEXT_ENTER, wxCommandEventHandler( DIALOG_ZONE_MANAGER_BASE::OnFilterCtrlEnter ), NULL, this );
+	m_layerFilter->Connect( wxEVT_COMMAND_CHOICE_SELECTED, wxCommandEventHandler( DIALOG_ZONE_MANAGER_BASE::OnLayerFilterChanged ), NULL, this );
 	m_viewZonesOverview->Connect( wxEVT_CHAR, wxKeyEventHandler( DIALOG_ZONE_MANAGER_BASE::OnTableChar ), NULL, this );
 	m_viewZonesOverview->Connect( wxEVT_CHAR_HOOK, wxKeyEventHandler( DIALOG_ZONE_MANAGER_BASE::OnTableCharHook ), NULL, this );
 	m_viewZonesOverview->Connect( wxEVT_COMMAND_DATAVIEW_SELECTION_CHANGED, wxDataViewEventHandler( DIALOG_ZONE_MANAGER_BASE::OnDataViewCtrlSelectionChanged ), NULL, this );
 	m_viewZonesOverview->Connect( wxEVT_LEFT_UP, wxMouseEventHandler( DIALOG_ZONE_MANAGER_BASE::OnViewZonesOverviewOnLeftUp ), NULL, this );
+	m_btnMoveTop->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_ZONE_MANAGER_BASE::OnMoveTopClick ), NULL, this );
 	m_btnMoveUp->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_ZONE_MANAGER_BASE::OnMoveUpClick ), NULL, this );
 	m_btnMoveDown->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_ZONE_MANAGER_BASE::OnMoveDownClick ), NULL, this );
-	m_checkRepour->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_ZONE_MANAGER_BASE::OnRepourCheck ), NULL, this );
+	m_btnMoveBottom->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_ZONE_MANAGER_BASE::OnMoveBottomClick ), NULL, this );
+	m_btnAutoAssign->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_ZONE_MANAGER_BASE::OnAutoAssignClick ), NULL, this );
 	m_updateDisplayedZones->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_ZONE_MANAGER_BASE::OnUpdateDisplayedZonesClick ), NULL, this );
 	m_sdbSizerOK->Connect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_ZONE_MANAGER_BASE::OnOk ), NULL, this );
 }
@@ -134,13 +201,16 @@ DIALOG_ZONE_MANAGER_BASE::~DIALOG_ZONE_MANAGER_BASE()
 	m_filterCtrl->Disconnect( wxEVT_COMMAND_SEARCHCTRL_SEARCH_BTN, wxCommandEventHandler( DIALOG_ZONE_MANAGER_BASE::OnFilterCtrlSearch ), NULL, this );
 	m_filterCtrl->Disconnect( wxEVT_COMMAND_TEXT_UPDATED, wxCommandEventHandler( DIALOG_ZONE_MANAGER_BASE::OnFilterCtrlTextChange ), NULL, this );
 	m_filterCtrl->Disconnect( wxEVT_COMMAND_TEXT_ENTER, wxCommandEventHandler( DIALOG_ZONE_MANAGER_BASE::OnFilterCtrlEnter ), NULL, this );
+	m_layerFilter->Disconnect( wxEVT_COMMAND_CHOICE_SELECTED, wxCommandEventHandler( DIALOG_ZONE_MANAGER_BASE::OnLayerFilterChanged ), NULL, this );
 	m_viewZonesOverview->Disconnect( wxEVT_CHAR, wxKeyEventHandler( DIALOG_ZONE_MANAGER_BASE::OnTableChar ), NULL, this );
 	m_viewZonesOverview->Disconnect( wxEVT_CHAR_HOOK, wxKeyEventHandler( DIALOG_ZONE_MANAGER_BASE::OnTableCharHook ), NULL, this );
 	m_viewZonesOverview->Disconnect( wxEVT_COMMAND_DATAVIEW_SELECTION_CHANGED, wxDataViewEventHandler( DIALOG_ZONE_MANAGER_BASE::OnDataViewCtrlSelectionChanged ), NULL, this );
 	m_viewZonesOverview->Disconnect( wxEVT_LEFT_UP, wxMouseEventHandler( DIALOG_ZONE_MANAGER_BASE::OnViewZonesOverviewOnLeftUp ), NULL, this );
+	m_btnMoveTop->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_ZONE_MANAGER_BASE::OnMoveTopClick ), NULL, this );
 	m_btnMoveUp->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_ZONE_MANAGER_BASE::OnMoveUpClick ), NULL, this );
 	m_btnMoveDown->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_ZONE_MANAGER_BASE::OnMoveDownClick ), NULL, this );
-	m_checkRepour->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_ZONE_MANAGER_BASE::OnRepourCheck ), NULL, this );
+	m_btnMoveBottom->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_ZONE_MANAGER_BASE::OnMoveBottomClick ), NULL, this );
+	m_btnAutoAssign->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_ZONE_MANAGER_BASE::OnAutoAssignClick ), NULL, this );
 	m_updateDisplayedZones->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_ZONE_MANAGER_BASE::OnUpdateDisplayedZonesClick ), NULL, this );
 	m_sdbSizerOK->Disconnect( wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler( DIALOG_ZONE_MANAGER_BASE::OnOk ), NULL, this );
 

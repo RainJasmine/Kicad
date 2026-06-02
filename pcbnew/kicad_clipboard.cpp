@@ -28,6 +28,7 @@
 #include <board.h>
 #include <build_version.h>
 #include <core/ignore.h>
+#include <footprint.h>
 #include <font/fontconfig.h>
 #include <pad.h>
 #include <pcb_group.h>
@@ -125,9 +126,6 @@ void CLIPBOARD_IO::SaveSelection( const PCB_SELECTION& aSelected, bool isFootpri
 
     if( aSelected.HasReferencePoint() )
         refPoint = aSelected.GetReferencePoint();
-
-    // Prepare net mapping that assures that net codes saved in a file are consecutive integers
-    m_mapping->SetBoard( m_board );
 
     auto deleteUnselectedCells =
             []( PCB_TABLE* aTable )
@@ -333,7 +331,6 @@ void CLIPBOARD_IO::SaveSelection( const PCB_SELECTION& aSelected, bool isFootpri
                            m_formatter.Quotew( GetMajorMinorVersion() ).c_str() );
 
         formatBoardLayers( m_board );
-        formatNetInformation( m_board );
 
         for( EDA_ITEM* item : aSelected )
         {
@@ -453,7 +450,7 @@ void CLIPBOARD_IO::SaveSelection( const PCB_SELECTION& aSelected, bool isFootpri
     }
 
     std::string prettyData = m_formatter.GetString();
-    KICAD_FORMAT::Prettify( prettyData, true );
+    KICAD_FORMAT::Prettify( prettyData, KICAD_FORMAT::FORMAT_MODE::COMPACT_TEXT_PROPERTIES );
 
     // These are placed at the end to minimize the open time of the clipboard
     m_writer( wxString( prettyData.c_str(), wxConvUTF8 ) );
@@ -485,9 +482,6 @@ void CLIPBOARD_IO::SaveBoard( const wxString& aFileName, BOARD* aBoard,
 
     m_board = aBoard;       // after init()
 
-    // Prepare net mapping that assures that net codes saved in a file are consecutive integers
-    m_mapping->SetBoard( aBoard );
-
     m_formatter.Print( "(kicad_pcb (version %d) (generator \"pcbnew\") (generator_version %s)",
                   SEXPR_BOARD_FILE_VERSION,
                   m_formatter.Quotew( GetMajorMinorVersion() ).c_str() );
@@ -497,7 +491,7 @@ void CLIPBOARD_IO::SaveBoard( const wxString& aFileName, BOARD* aBoard,
     m_formatter.Print( ")" );
 
     std::string prettyData = m_formatter.GetString();
-    KICAD_FORMAT::Prettify( prettyData, true );
+    KICAD_FORMAT::Prettify( prettyData, KICAD_FORMAT::FORMAT_MODE::COMPACT_TEXT_PROPERTIES );
 
     m_writer( wxString( prettyData.c_str(), wxConvUTF8 ) );
 }

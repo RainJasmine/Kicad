@@ -25,18 +25,19 @@
 #include <pcbnew_utils/board_test_utils.h>
 #include <board.h>
 #include <board_design_settings.h>
+#include <drc/drc_engine.h>
 #include <pad.h>
 #include <pcb_track.h>
 #include <pcb_marker.h>
 #include <footprint.h>
+#include <drc/drc_engine.h>
 #include <drc/drc_item.h>
 #include <settings/settings_manager.h>
 
 
 struct DRC_REGRESSION_TEST_FIXTURE
 {
-    DRC_REGRESSION_TEST_FIXTURE() :
-            m_settingsManager( true /* headless */ )
+    DRC_REGRESSION_TEST_FIXTURE()
     { }
 
     SETTINGS_MANAGER       m_settingsManager;
@@ -77,8 +78,8 @@ BOOST_FIXTURE_TEST_CASE( DRCOrientation, DRC_REGRESSION_TEST_FIXTURE )
         bds.m_DRCSeverities[ DRCE_ASSERTION_FAILURE ] = SEVERITY::RPT_SEVERITY_ERROR;
 
         bds.m_DRCEngine->SetViolationHandler(
-                [&]( const std::shared_ptr<DRC_ITEM>& aItem, VECTOR2I aPos, int aLayer,
-                     DRC_CUSTOM_MARKER_HANDLER* aCustomHandler )
+                [&]( const std::shared_ptr<DRC_ITEM>& aItem, const VECTOR2I& aPos, int aLayer,
+                     const std::function<void( PCB_MARKER* )>& aPathGenerator )
                 {
                     if( bds.GetSeverity( aItem->GetErrorCode() ) == SEVERITY::RPT_SEVERITY_ERROR )
                         violations.push_back( *aItem );
@@ -95,17 +96,20 @@ BOOST_FIXTURE_TEST_CASE( DRCOrientation, DRC_REGRESSION_TEST_FIXTURE )
         {
             UNITS_PROVIDER unitsProvider( pcbIUScale, EDA_UNITS::INCH );
 
+            wxString report;
             std::map<KIID, EDA_ITEM*> itemMap;
             m_board->FillItemMap( itemMap );
 
             for( const DRC_ITEM& item : violations )
-            {
-                BOOST_TEST_MESSAGE( item.ShowReport( &unitsProvider, RPT_SEVERITY_ERROR,
-                                                     itemMap ) );
-            }
+                report += item.ShowReport( &unitsProvider, RPT_SEVERITY_ERROR, itemMap );
 
-            BOOST_ERROR( wxString::Format( "DRC orientation: %s, failed (violations found %d expected %d)",
-                                            test.first, (int)violations.size(), test.second ) );
+            BOOST_ERROR( wxString::Format( "DRC orientation: %s\n"
+                                           "%d violations found (expected %d)\n"
+                                           "%s",
+                                           test.first,
+                                           (int) violations.size(),
+                                           test.second,
+                                           report ) );
         }
     }
 }

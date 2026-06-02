@@ -261,21 +261,49 @@ bool SELECTION_TOOL::doSelectionMenu( COLLECTOR* aCollector )
     EDA_ITEM*       current = nullptr;
     SELECTION       highlightGroup;
     bool            selectAll = false;
-    bool            expandSelection = false;
+    bool            showMoreChoices = false;
 
     highlightGroup.SetLayer( LAYER_SELECT_OVERLAY );
     getView()->Add( &highlightGroup );
 
     do
     {
-        /// The user has requested the full, non-limited list of selection items
-        if( expandSelection )
+        /// This must be the second time through the loop, and the user has requested the full,
+        /// non-limited list of selection items
+        if( showMoreChoices )
+        {
             aCollector->Combine();
 
-        expandSelection = false;
+            // prime event loop so we don't have to wait around for a mouse-moved
+            m_toolMgr->PrimeTool( { 0, 0 } );
+
+            showMoreChoices = false;
+        }
 
         int         limit = std::min( 100, aCollector->GetCount() );
         ACTION_MENU menu( true );
+
+        auto getItemDescription =
+                [&]( EDA_ITEM* item, int itemIdx )
+                {
+                    wxString desc = item->GetItemDescription( unitsProvider, false );
+
+                    if( item->Type() == PCB_FOOTPRINT_T )
+                    {
+                        for( int i = 0; i < limit; ++i )
+                        {
+                            if( i == itemIdx )
+                                continue;
+
+                            EDA_ITEM* other = ( *aCollector )[i];
+
+                            if( other->GetItemDescription( unitsProvider, false ) == desc )
+                                return item->DisambiguateItemDescription( unitsProvider, false );
+                        }
+                    }
+
+                    return desc;
+                };
 
         for( int i = 0; i < limit; ++i )
         {
@@ -286,18 +314,18 @@ bool SELECTION_TOOL::doSelectionMenu( COLLECTOR* aCollector )
             {
 #ifdef __WXMAC__
                 menuText = wxString::Format( "%s\t%d",
-                                             item->GetItemDescription( unitsProvider, false ),
+                                             getItemDescription( item, i ),
                                              i + 1 );
 #else
                 menuText = wxString::Format( "&%d  %s\t%d",
                                              i + 1,
-                                             item->GetItemDescription( unitsProvider, false ),
+                                             getItemDescription( item, i ),
                                              i + 1 );
 #endif
             }
             else
             {
-                menuText = item->GetItemDescription( unitsProvider, false );
+                menuText = getItemDescription( item, i );
             }
 
             menu.Add( menuText, i + 1, item->GetMenuImage() );
@@ -306,8 +334,8 @@ bool SELECTION_TOOL::doSelectionMenu( COLLECTOR* aCollector )
         menu.AppendSeparator();
         menu.Add( _( "Select &All\tA" ), limit + 1, BITMAPS::INVALID_BITMAP );
 
-        if( !expandSelection && aCollector->HasAdditionalItems() )
-            menu.Add( _( "&Expand Selection\tE" ), limit + 2, BITMAPS::INVALID_BITMAP );
+        if( !showMoreChoices && aCollector->HasAdditionalItems() )
+            menu.Add( _( "Show &More Choices...\tM" ), limit + 2, BITMAPS::INVALID_BITMAP );
 
         if( aCollector->m_MenuTitle.Length() )
         {
@@ -387,7 +415,7 @@ bool SELECTION_TOOL::doSelectionMenu( COLLECTOR* aCollector )
                 {
                     selectAll       = false;
                     current         = nullptr;
-                    expandSelection = true;
+                    showMoreChoices = true;
                 }
                 // User has selected an item, so this one will be returned
                 else if( id && ( *id > 0 ) && ( *id <= limit ) )
@@ -410,7 +438,8 @@ bool SELECTION_TOOL::doSelectionMenu( COLLECTOR* aCollector )
             getView()->UpdateItems();
             getEditFrame<EDA_DRAW_FRAME>()->GetCanvas()->Refresh();
         }
-    } while( expandSelection );
+    }
+    while( showMoreChoices );
 
     getView()->Remove( &highlightGroup );
 
@@ -427,5 +456,3 @@ bool SELECTION_TOOL::doSelectionMenu( COLLECTOR* aCollector )
 
     return false;
 }
-
-

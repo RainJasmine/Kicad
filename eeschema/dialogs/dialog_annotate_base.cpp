@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////
-// C++ code generated with wxFormBuilder (version 4.0.0-0-g0efcecf-dirty)
+// C++ code generated with wxFormBuilder (version 4.2.1-0-g80c4cb6a-dirty)
 // http://www.wxformbuilder.org/
 //
 // PLEASE DO *NOT* EDIT THIS FILE!
@@ -40,6 +40,7 @@ DIALOG_ANNOTATE_BASE::DIALOG_ANNOTATE_BASE( wxWindow* parent, wxWindowID id, con
 	sbSizer3 = new wxStaticBoxSizer( new wxStaticBox( this, wxID_ANY, _("Scope") ), wxVERTICAL );
 
 	m_rbScope_Schematic = new wxRadioButton( sbSizer3->GetStaticBox(), wxID_ANY, _("Entire schematic"), wxDefaultPosition, wxDefaultSize, wxRB_GROUP );
+	m_rbScope_Schematic->SetValue( true );
 	sbSizer3->Add( m_rbScope_Schematic, 0, wxLEFT|wxRIGHT, 5 );
 
 	m_rbScope_Sheet = new wxRadioButton( sbSizer3->GetStaticBox(), wxID_ANY, _("Current sheet only"), wxDefaultPosition, wxDefaultSize, 0 );
@@ -49,6 +50,7 @@ DIALOG_ANNOTATE_BASE::DIALOG_ANNOTATE_BASE( wxWindow* parent, wxWindowID id, con
 	sbSizer3->Add( m_rbScope_Selection, 0, wxLEFT|wxRIGHT|wxBOTTOM, 5 );
 
 	m_checkRecursive = new wxCheckBox( sbSizer3->GetStaticBox(), wxID_ANY, _("Recurse into subsheets"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_checkRecursive->SetValue(true);
 	sbSizer3->Add( m_checkRecursive, 0, wxALL, 5 );
 
 
@@ -61,6 +63,7 @@ DIALOG_ANNOTATE_BASE::DIALOG_ANNOTATE_BASE( wxWindow* parent, wxWindowID id, con
 	bSizerXpos = new wxBoxSizer( wxHORIZONTAL );
 
 	m_rbSortBy_X_Position = new wxRadioButton( sbSizer1->GetStaticBox(), ID_SORT_BY_X_POSITION, _("Sort symbols by &X position"), wxDefaultPosition, wxDefaultSize, wxRB_GROUP );
+	m_rbSortBy_X_Position->SetValue( true );
 	bSizerXpos->Add( m_rbSortBy_X_Position, 0, wxALIGN_CENTER_VERTICAL|wxALL, 3 );
 
 	annotate_down_right_bitmap = new wxStaticBitmap( sbSizer1->GetStaticBox(), wxID_ANY, wxNullBitmap, wxDefaultPosition, wxDefaultSize, 0 );
@@ -84,11 +87,20 @@ DIALOG_ANNOTATE_BASE::DIALOG_ANNOTATE_BASE( wxWindow* parent, wxWindowID id, con
 
 	fgSizer1->Add( sbSizer1, 0, wxALL|wxEXPAND, 5 );
 
-	wxString m_rbOptionsChoices[] = { _("Keep existing annotations"), _("Reset existing annotations") };
-	int m_rbOptionsNChoices = sizeof( m_rbOptionsChoices ) / sizeof( wxString );
-	m_rbOptions = new wxRadioBox( this, wxID_ANY, _("Options"), wxDefaultPosition, wxDefaultSize, m_rbOptionsNChoices, m_rbOptionsChoices, 1, wxRA_SPECIFY_COLS );
-	m_rbOptions->SetSelection( 0 );
-	fgSizer1->Add( m_rbOptions, 0, wxALL|wxEXPAND, 5 );
+	wxStaticBoxSizer* sbSizer4;
+	sbSizer4 = new wxStaticBoxSizer( new wxStaticBox( this, wxID_ANY, _("Options") ), wxVERTICAL );
+
+	m_rbKeep_Annotations = new wxRadioButton( sbSizer4->GetStaticBox(), wxID_ANY, _("Keep existing annotations"), wxDefaultPosition, wxDefaultSize, wxRB_GROUP );
+	sbSizer4->Add( m_rbKeep_Annotations, 0, wxLEFT|wxRIGHT, 5 );
+
+	m_rbReset_Annotations = new wxRadioButton( sbSizer4->GetStaticBox(), wxID_ANY, _("Reset existing annotations"), wxDefaultPosition, wxDefaultSize, 0 );
+	sbSizer4->Add( m_rbReset_Annotations, 0, wxLEFT|wxRIGHT, 5 );
+
+	m_checkRegroupUnits = new wxCheckBox( sbSizer4->GetStaticBox(), wxID_ANY, _("Regroup symbol units"), wxDefaultPosition, wxDefaultSize, 0 );
+	sbSizer4->Add( m_checkRegroupUnits, 0, wxALL|wxEXPAND, 5 );
+
+
+	fgSizer1->Add( sbSizer4, 0, wxALL|wxEXPAND, 5 );
 
 	wxStaticBoxSizer* sbSizer2;
 	sbSizer2 = new wxStaticBoxSizer( new wxStaticBox( this, wxID_ANY, _("Numbering") ), wxVERTICAL );
@@ -99,6 +111,7 @@ DIALOG_ANNOTATE_BASE::DIALOG_ANNOTATE_BASE( wxWindow* parent, wxWindowID id, con
 	gbSizer1->SetNonFlexibleGrowMode( wxFLEX_GROWMODE_SPECIFIED );
 
 	m_rbFirstFree = new wxRadioButton( sbSizer2->GetStaticBox(), wxID_FIRST_FREE, _("Use first free number after:"), wxDefaultPosition, wxDefaultSize, wxRB_GROUP );
+	m_rbFirstFree->SetValue( true );
 	gbSizer1->Add( m_rbFirstFree, wxGBPosition( 0, 0 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL, 2 );
 
 	m_textNumberAfter = new wxTextCtrl( sbSizer2->GetStaticBox(), wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize( 60,-1 ), 0 );
@@ -157,7 +170,9 @@ DIALOG_ANNOTATE_BASE::DIALOG_ANNOTATE_BASE( wxWindow* parent, wxWindowID id, con
 	this->Connect( wxEVT_CLOSE_WINDOW, wxCloseEventHandler( DIALOG_ANNOTATE_BASE::OnClose ) );
 	m_rbSortBy_X_Position->Connect( wxEVT_COMMAND_RADIOBUTTON_SELECTED, wxCommandEventHandler( DIALOG_ANNOTATE_BASE::OnOptionChanged ), NULL, this );
 	m_rbSortBy_Y_Position->Connect( wxEVT_COMMAND_RADIOBUTTON_SELECTED, wxCommandEventHandler( DIALOG_ANNOTATE_BASE::OnOptionChanged ), NULL, this );
-	m_rbOptions->Connect( wxEVT_COMMAND_RADIOBOX_SELECTED, wxCommandEventHandler( DIALOG_ANNOTATE_BASE::OnOptionChanged ), NULL, this );
+	m_rbKeep_Annotations->Connect( wxEVT_COMMAND_RADIOBUTTON_SELECTED, wxCommandEventHandler( DIALOG_ANNOTATE_BASE::OnOptionChanged ), NULL, this );
+	m_rbReset_Annotations->Connect( wxEVT_COMMAND_RADIOBUTTON_SELECTED, wxCommandEventHandler( DIALOG_ANNOTATE_BASE::OnOptionChanged ), NULL, this );
+	m_checkRegroupUnits->Connect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_ANNOTATE_BASE::OnOptionChanged ), NULL, this );
 	m_rbFirstFree->Connect( wxEVT_COMMAND_RADIOBUTTON_SELECTED, wxCommandEventHandler( DIALOG_ANNOTATE_BASE::OnOptionChanged ), NULL, this );
 	m_textNumberAfter->Connect( wxEVT_COMMAND_TEXT_UPDATED, wxCommandEventHandler( DIALOG_ANNOTATE_BASE::OnOptionChanged ), NULL, this );
 	m_rbSheetX100->Connect( wxEVT_COMMAND_RADIOBUTTON_SELECTED, wxCommandEventHandler( DIALOG_ANNOTATE_BASE::OnOptionChanged ), NULL, this );
@@ -173,7 +188,9 @@ DIALOG_ANNOTATE_BASE::~DIALOG_ANNOTATE_BASE()
 	this->Disconnect( wxEVT_CLOSE_WINDOW, wxCloseEventHandler( DIALOG_ANNOTATE_BASE::OnClose ) );
 	m_rbSortBy_X_Position->Disconnect( wxEVT_COMMAND_RADIOBUTTON_SELECTED, wxCommandEventHandler( DIALOG_ANNOTATE_BASE::OnOptionChanged ), NULL, this );
 	m_rbSortBy_Y_Position->Disconnect( wxEVT_COMMAND_RADIOBUTTON_SELECTED, wxCommandEventHandler( DIALOG_ANNOTATE_BASE::OnOptionChanged ), NULL, this );
-	m_rbOptions->Disconnect( wxEVT_COMMAND_RADIOBOX_SELECTED, wxCommandEventHandler( DIALOG_ANNOTATE_BASE::OnOptionChanged ), NULL, this );
+	m_rbKeep_Annotations->Disconnect( wxEVT_COMMAND_RADIOBUTTON_SELECTED, wxCommandEventHandler( DIALOG_ANNOTATE_BASE::OnOptionChanged ), NULL, this );
+	m_rbReset_Annotations->Disconnect( wxEVT_COMMAND_RADIOBUTTON_SELECTED, wxCommandEventHandler( DIALOG_ANNOTATE_BASE::OnOptionChanged ), NULL, this );
+	m_checkRegroupUnits->Disconnect( wxEVT_COMMAND_CHECKBOX_CLICKED, wxCommandEventHandler( DIALOG_ANNOTATE_BASE::OnOptionChanged ), NULL, this );
 	m_rbFirstFree->Disconnect( wxEVT_COMMAND_RADIOBUTTON_SELECTED, wxCommandEventHandler( DIALOG_ANNOTATE_BASE::OnOptionChanged ), NULL, this );
 	m_textNumberAfter->Disconnect( wxEVT_COMMAND_TEXT_UPDATED, wxCommandEventHandler( DIALOG_ANNOTATE_BASE::OnOptionChanged ), NULL, this );
 	m_rbSheetX100->Disconnect( wxEVT_COMMAND_RADIOBUTTON_SELECTED, wxCommandEventHandler( DIALOG_ANNOTATE_BASE::OnOptionChanged ), NULL, this );

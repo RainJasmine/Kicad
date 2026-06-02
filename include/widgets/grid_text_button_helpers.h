@@ -25,11 +25,16 @@
 #ifndef GRID_TEXT_BUTTON_HELPERS_H
 #define GRID_TEXT_BUTTON_HELPERS_H
 
+#include <widgets/grid_icon_text_helpers.h>
+
 #include <memory>
 
 #include <wx/combo.h>
 #include <wx/generic/gridctrl.h>
 #include <wx/generic/grideditors.h>
+#include <search_stack.h>
+#include <widgets/grid_text_helpers.h>
+#include <kicommon.h>
 
 
 class wxGrid;
@@ -38,39 +43,7 @@ class DIALOG_SHIM;
 class EMBEDDED_FILES;
 
 
-class GRID_CELL_TEXT_BUTTON : public wxGridCellEditor
-{
-public:
-    GRID_CELL_TEXT_BUTTON() {};
-
-    wxString GetValue() const override;
-
-    void SetSize( const wxRect& aRect ) override;
-
-    void StartingKey( wxKeyEvent& event ) override;
-    void BeginEdit( int aRow, int aCol, wxGrid* aGrid ) override;
-    bool EndEdit( int , int , const wxGrid* , const wxString& , wxString *aNewVal ) override;
-    void ApplyEdit( int aRow, int aCol, wxGrid* aGrid ) override;
-    void Reset() override;
-
-#if wxUSE_VALIDATORS
-    void SetValidator( const wxValidator& validator );
-#endif
-
-protected:
-    wxComboCtrl* Combo() const { return static_cast<wxComboCtrl*>( m_control ); }
-
-#if wxUSE_VALIDATORS
-    std::unique_ptr< wxValidator > m_validator;
-#endif
-
-    wxString     m_value;
-
-    wxDECLARE_NO_COPY_CLASS( GRID_CELL_TEXT_BUTTON );
-};
-
-
-class GRID_CELL_SYMBOL_ID_EDITOR : public GRID_CELL_TEXT_BUTTON
+class KICOMMON_API GRID_CELL_SYMBOL_ID_EDITOR : public GRID_CELL_TEXT_BUTTON
 {
 public:
     GRID_CELL_SYMBOL_ID_EDITOR( DIALOG_SHIM* aParent,
@@ -92,7 +65,7 @@ protected:
 };
 
 
-class GRID_CELL_FPID_EDITOR : public GRID_CELL_TEXT_BUTTON
+class KICOMMON_API GRID_CELL_FPID_EDITOR : public GRID_CELL_TEXT_BUTTON
 {
 public:
     GRID_CELL_FPID_EDITOR( DIALOG_SHIM* aParent, const wxString& aSymbolNetlist,
@@ -116,7 +89,7 @@ protected:
 };
 
 
-class GRID_CELL_URL_EDITOR : public GRID_CELL_TEXT_BUTTON
+class KICOMMON_API GRID_CELL_URL_EDITOR : public GRID_CELL_TEXT_BUTTON
 {
 public:
     GRID_CELL_URL_EDITOR( DIALOG_SHIM* aParent, SEARCH_STACK* aSearchStack = nullptr,
@@ -135,15 +108,15 @@ public:
 
 protected:
     DIALOG_SHIM*                 m_dlg;
-    SEARCH_STACK*                m_searchStack;
-    std::vector<EMBEDDED_FILES*> m_filesStack;
+    SEARCH_STACK*                m_searchStack;     // No ownership.
+    std::vector<EMBEDDED_FILES*> m_filesStack;      // No ownership.
 };
 
 
 /**
  *  Editor for wxGrid cells that adds a file/folder browser to the grid input field
  */
-class GRID_CELL_PATH_EDITOR : public GRID_CELL_TEXT_BUTTON
+class KICOMMON_API GRID_CELL_PATH_EDITOR : public GRID_CELL_TEXT_BUTTON
 {
 public:
     /**
@@ -158,13 +131,15 @@ public:
      */
     GRID_CELL_PATH_EDITOR( DIALOG_SHIM* aParentDialog, WX_GRID* aGrid, wxString* aCurrentDir,
                            bool aNormalize, const wxString& aNormalizeBasePath,
-                           std::function<wxString( WX_GRID* grid, int row )> aFileFilterFn ) :
+                           std::function<wxString( WX_GRID* grid, int row )> aFileFilterFn,
+                           std::function<wxString( const wxString& )> aEmbedCallback = nullptr ) :
             m_dlg( aParentDialog ),
             m_grid( aGrid ),
             m_currentDir( aCurrentDir ),
             m_normalize( aNormalize ),
             m_normalizeBasePath( aNormalizeBasePath ),
-            m_fileFilterFn( std::move( aFileFilterFn ) )
+            m_fileFilterFn( std::move( aFileFilterFn ) ),
+            m_embedCallback( std::move( aEmbedCallback ) )
     { }
 
     /**
@@ -180,13 +155,15 @@ public:
      */
     GRID_CELL_PATH_EDITOR( DIALOG_SHIM* aParentDialog, WX_GRID* aGrid, wxString* aCurrentDir,
                            const wxString& aFileFilter, bool aNormalize = false,
-                           const wxString& aNormalizeBasePath = wxEmptyString ) :
+                           const wxString& aNormalizeBasePath = wxEmptyString,
+                           std::function<wxString( const wxString& )> aEmbedCallback = nullptr ) :
             m_dlg( aParentDialog ),
             m_grid( aGrid ),
             m_currentDir( aCurrentDir ),
             m_normalize( aNormalize ),
             m_normalizeBasePath( aNormalizeBasePath ),
-            m_fileFilter( aFileFilter )
+            m_fileFilter( aFileFilter ),
+            m_embedCallback( std::move( aEmbedCallback ) )
     { }
 
     wxGridCellEditor* Clone() const override
@@ -194,12 +171,12 @@ public:
         if( m_fileFilterFn )
         {
             return new GRID_CELL_PATH_EDITOR( m_dlg, m_grid, m_currentDir, m_normalize,
-                                              m_normalizeBasePath, m_fileFilterFn );
+                                              m_normalizeBasePath, m_fileFilterFn, m_embedCallback );
         }
         else
         {
             return new GRID_CELL_PATH_EDITOR( m_dlg, m_grid, m_currentDir, m_fileFilter,
-                                              m_normalize, m_normalizeBasePath );
+                                              m_normalize, m_normalizeBasePath, m_embedCallback );
         }
     }
 
@@ -214,7 +191,43 @@ protected:
 
     wxString                                            m_fileFilter;
     std::function<wxString( WX_GRID* aGrid, int aRow )> m_fileFilterFn;
+    std::function<wxString( const wxString& )>          m_embedCallback;
 };
 
+
+/**
+* A cell editor which runs a provided function when the grid cell button is clicked.
+*
+* The function has the signature (int, int) -> void. The passed parameters are the (row, col) of the
+* clicked grid cell
+*/
+class KICOMMON_API GRID_CELL_RUN_FUNCTION_EDITOR : public GRID_CELL_TEXT_BUTTON, public GRID_CELL_NULLABLE_INTERFACE
+{
+public:
+    GRID_CELL_RUN_FUNCTION_EDITOR( DIALOG_SHIM* aParent, const std::function<void( int, int )> aFunction,
+                                   const bool aIsNullable = false ) :
+            GRID_CELL_NULLABLE_INTERFACE( aIsNullable ),
+            m_dlg( aParent ),
+            m_row( -1 ),
+            m_col( -1 ),
+            m_function( aFunction )
+    {
+    }
+
+    wxGridCellEditor* Clone() const override
+    {
+        return new GRID_CELL_RUN_FUNCTION_EDITOR( m_dlg, m_function, IsNullable() );
+    }
+
+    void Create( wxWindow* aParent, wxWindowID aId, wxEvtHandler* aEventHandler ) override;
+    void BeginEdit( int aRow, int aCol, wxGrid* aGrid ) override;
+
+
+protected:
+    DIALOG_SHIM* m_dlg;
+    int          m_row;
+    int          m_col;
+    std::function<void( int, int )> m_function;
+};
 
 #endif  // GRID_TEXT_BUTTON_HELPERS_H

@@ -35,7 +35,6 @@ class WX_LISTBOX;
 class wxSearchCtrl;
 class SYMBOL_LIBRARY_FILTER;
 class LIB_SYMBOL;
-class SYMBOL_LIB_TABLE_ROW;
 
 
 /**
@@ -90,13 +89,14 @@ public:
     /**
      * Set the selected library in the library window.
      */
-    void SetSelectedLibrary( const wxString& aLibName,
-                             const wxString& aSubLibName = wxEmptyString );
+    void SetSelectedLibrary( const wxString& aLibName, const wxString& aSubLibName = wxEmptyString );
 
     /**
      * Set the selected symbol.
      */
     void SetSelectedSymbol( const wxString& aSymbolName );
+    void SelectNextSymbol();
+    void SelectPreviousSymbol();
 
     // Accessors:
     /**
@@ -115,7 +115,9 @@ public:
 
     SELECTION& GetCurrentSelection() override;
 
-    void KiwayMailIn( KIWAY_EXPRESS& mail ) override;
+    void KiwayMailIn( KIWAY_MAIL_EVENT& mail ) override;
+
+    void ClearToolbarControl( int aId ) override;
 
 protected:
     void configureToolbars() override;
@@ -136,22 +138,23 @@ private:
 
     void DClickOnSymbolList( wxCommandEvent& event );
 
-    void onUpdateUnitChoice( wxUpdateUIEvent& aEvent );
+    // Rebuild the wxChoice m_unitChoice widget. Must be called after changing the selected symbol
+    void updateUnitChoice();
+    // Rebuild the wxChoice m_bodyStyleChoice widget. Must be called after changing the selected symbol
+    void updateBodyStyleChoice();
 
     void OnLibFilter( wxCommandEvent& aEvent );
     void OnSymFilter( wxCommandEvent& aEvent );
     void OnCharHook( wxKeyEvent& aEvent ) override;
 
-    void onSelectNextSymbol( wxCommandEvent& aEvent );
-    void onSelectPreviousSymbol( wxCommandEvent& aEvent );
     void onSelectSymbolUnit( wxCommandEvent& aEvent );
+    void onSelectSymbolBodyStyle( wxCommandEvent& aEvent );
 
     void updatePreviewSymbol();
 
-    void loadAllLibraries();
-
 private:
     wxChoice*           m_unitChoice;
+    wxChoice*           m_bodyStyleChoice;
 
     wxSearchCtrl*       m_libFilter;
     WX_LISTBOX*         m_libList;             // The list of libraries.
@@ -169,7 +172,6 @@ private:
 
     static int          m_unit;
     static int          m_bodyStyle;
-    static bool         m_show_progress;
 
     /**
      * Updated to `true` if a list rewrite on GUI activation resulted in the symbol

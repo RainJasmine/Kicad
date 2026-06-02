@@ -40,6 +40,7 @@
 #include <pcb_text.h>
 #include <pcb_textbox.h>
 #include <pcb_table.h>
+#include <pcb_track.h>
 #include <pcb_painter.h>        // for PCB_RENDER_SETTINGS
 #include <zone.h>
 #include <convert_basic_shapes_to_polygon.h>
@@ -47,6 +48,7 @@
 #include <geometry/shape_segment.h>
 #include <geometry/geometry_utils.h>
 #include <geometry/shape_circle.h>
+#include <geometry/roundrect.h>
 #include <geometry/shape_rect.h>
 #include <geometry/shape_simple.h>
 #include <utility>
@@ -54,6 +56,7 @@
 #include <wx/log.h>
 #include <macros.h>
 #include <callback_gal.h>
+#include <pcb_barcode.h>
 
 
 #define TO_3DU( x ) ( ( x ) * m_biuTo3Dunits )
@@ -106,10 +109,12 @@ void BOARD_ADAPTER::addText( const EDA_TEXT* aText, CONTAINER_2D_BASE* aContaine
 
     if( aOwner && aOwner->IsKnockout() )
     {
-        SHAPE_POLY_SET  finalPoly;
-        const PCB_TEXT* pcbText = static_cast<const PCB_TEXT*>( aOwner );
+        SHAPE_POLY_SET finalPoly;
 
-        pcbText->TransformTextToPolySet( finalPoly, 0, aOwner->GetMaxError(), ERROR_INSIDE );
+        if( const PCB_TEXTBOX* pcbTextBox = dynamic_cast<const PCB_TEXTBOX*>( aOwner ) )
+            pcbTextBox->TransformTextToPolySet( finalPoly, 0, aOwner->GetMaxError(), ERROR_INSIDE );
+        else if( const PCB_TEXT* pcbText = dynamic_cast<const PCB_TEXT*>( aOwner ) )
+            pcbText->TransformTextToPolySet( finalPoly, 0, aOwner->GetMaxError(), ERROR_INSIDE );
 
         // Do not call finalPoly.Fracture() here: ConvertPolygonToTriangles() call it
         // if needed, and Fracture() called twice can create bad results and is useless
@@ -143,6 +148,17 @@ void BOARD_ADAPTER::addText( const EDA_TEXT* aText, CONTAINER_2D_BASE* aContaine
                         aOwner->GetFontMetrics() );
         }
     }
+}
+
+
+void BOARD_ADAPTER::addBarCode( const PCB_BARCODE* aBarCode, CONTAINER_2D_BASE* aDstContainer,
+                                const BOARD_ITEM* aOwner )
+{
+    SHAPE_POLY_SET shape;
+    aBarCode->TransformShapeToPolySet( shape, aBarCode->GetLayer(), 0, 0, ERROR_INSIDE );
+    shape.Simplify();
+
+    ConvertPolygonToTriangles( shape, *aDstContainer, m_biuTo3Dunits, *aOwner );
 }
 
 
@@ -194,6 +210,8 @@ void BOARD_ADAPTER::addFootprintShapes( const FOOTPRINT* aFootprint, CONTAINER_2
     {
         if( !aFlags.test( LAYER_FP_TEXT ) )
             continue;
+
+        wxCHECK2( field, continue );
 
         if( field->IsReference() && !aFlags.test( LAYER_FP_REFERENCES ) )
             continue;
@@ -268,6 +286,16 @@ void BOARD_ADAPTER::addFootprintShapes( const FOOTPRINT* aFootprint, CONTAINER_2
 
             if( shape->IsOnLayer( aLayerId ) )
                 addShape( shape, aContainer, aFootprint, aLayerId );
+
+            break;
+        }
+
+        case PCB_BARCODE_T:
+        {
+            PCB_BARCODE* barcode = static_cast<PCB_BARCODE*>( item );
+
+            if( barcode->GetLayer() == aLayerId )
+                addBarCode( barcode, aContainer, aFootprint );
 
             break;
         }
@@ -473,12 +501,12 @@ void BOARD_ADAPTER::createPadWithMargin( const PAD* aPad, CONTAINER_2D_BASE* aCo
 }
 
 
-void BOARD_ADAPTER::createPadWithHole( const PAD* aPad, CONTAINER_2D_BASE* aDstContainer,
-                                       int aInflateValue )
+void BOARD_ADAPTER::createPadHoleShape( const PAD* aPad, CONTAINER_2D_BASE* aDstContainer,
+                                        int aInflateValue )
 {
     if( !aPad->HasHole() )
     {
-        wxLogTrace( m_logTrace, wxT( "BOARD_ADAPTER::createPadWithHole - found an invalid pad" ) );
+        wxLogTrace( m_logTrace, wxT( "BOARD_ADAPTER::createPadHole pad has no hole" ) );
         return;
     }
 
@@ -612,7 +640,7 @@ void BOARD_ADAPTER::addShape( const PCB_SHAPE* aShape, CONTAINER_2D_BASE* aConta
 
     float linewidth3DU = TO_3DU( linewidth );
 
-    if( lineStyle <= LINE_STYLE::FIRST_TYPE )
+    if( lineStyle <= LINE_STYLE::FIRST_TYPE || isSolidFill )
     {
         switch( aShape->GetShape() )
         {
@@ -623,7 +651,14 @@ void BOARD_ADAPTER::addShape( const PCB_SHAPE* aShape, CONTAINER_2D_BASE* aConta
             float   outerR3DU = TO_3DU( aShape->GetRadius() ) + linewidth3DU / 2.0;
 
             if( isSolidFill || innerR3DU <= 0.0 )
-                addFILLED_CIRCLE_2D( aContainer, center3DU, outerR3DU, *aOwner );
+            {
+                // For a filled circle with a line style not a simple line, ignore line width
+                // the outline will be drawn later
+                if( lineStyle > LINE_STYLE::FIRST_TYPE )
+                    addFILLED_CIRCLE_2D( aContainer, center3DU, TO_3DU( aShape->GetRadius() ), *aOwner );
+                else
+                    addFILLED_CIRCLE_2D( aContainer, center3DU, outerR3DU, *aOwner );
+            }
             else
                 addRING_2D( aContainer, center3DU, innerR3DU, outerR3DU, *aOwner );
 
@@ -635,8 +670,12 @@ void BOARD_ADAPTER::addShape( const PCB_SHAPE* aShape, CONTAINER_2D_BASE* aConta
             {
                 SHAPE_POLY_SET polyList;
 
-                aShape->TransformShapeToPolySet( polyList, UNDEFINED_LAYER, 0, aShape->GetMaxError(),
-                                                 ERROR_INSIDE );
+                // For a filled rect with a line style not a simple line, ignore line width
+                // the outline will be drawn later
+                bool ignoreLineWidth = lineStyle > LINE_STYLE::FIRST_TYPE;
+
+                aShape->TransformShapeToPolygon( polyList, UNDEFINED_LAYER, 0, aShape->GetMaxError(),
+                                                 ERROR_INSIDE, ignoreLineWidth );
 
                 polyList.Simplify();
 
@@ -649,16 +688,40 @@ void BOARD_ADAPTER::addShape( const PCB_SHAPE* aShape, CONTAINER_2D_BASE* aConta
             }
             else
             {
-                std::vector<VECTOR2I> pts = aShape->GetRectCorners();
+                if( aShape->GetCornerRadius() > 0 )
+                {
+                    ROUNDRECT rr( SHAPE_RECT( aShape->GetPosition(),
+                                              aShape->GetRectangleWidth(),
+                                              aShape->GetRectangleHeight() ),
+                                  aShape->GetCornerRadius() );
+                    SHAPE_POLY_SET poly;
+                    rr.TransformToPolygon( poly, aShape->GetMaxError() );
+                    SHAPE_LINE_CHAIN& r_outline = poly.Outline( 0 );
+                    r_outline.SetClosed( true );
 
-                addROUND_SEGMENT_2D( aContainer, TO_SFVEC2F( pts[0] ), TO_SFVEC2F( pts[1] ),
-                                     linewidth3DU, *aOwner );
-                addROUND_SEGMENT_2D( aContainer, TO_SFVEC2F( pts[1] ), TO_SFVEC2F( pts[2] ),
-                                     linewidth3DU, *aOwner );
-                addROUND_SEGMENT_2D( aContainer, TO_SFVEC2F( pts[2] ), TO_SFVEC2F( pts[3] ),
-                                     linewidth3DU, *aOwner );
-                addROUND_SEGMENT_2D( aContainer, TO_SFVEC2F( pts[3] ), TO_SFVEC2F( pts[0] ),
-                                     linewidth3DU, *aOwner );
+                    for( int ii = 0; ii < r_outline.PointCount(); ii++ )
+                    {
+                        addROUND_SEGMENT_2D( aContainer, TO_SFVEC2F( r_outline.CPoint( ii ) ),
+                                             TO_SFVEC2F( r_outline.CPoint( ii+1 ) ),
+                                             linewidth3DU, *aOwner );
+                    }
+
+                    addROUND_SEGMENT_2D( aContainer, TO_SFVEC2F( r_outline.CLastPoint() ),
+                                      TO_SFVEC2F( r_outline.CPoint( 0 ) ), linewidth3DU, *aOwner );
+                }
+                else
+                {
+                    std::vector<VECTOR2I> pts = aShape->GetRectCorners();
+
+                    addROUND_SEGMENT_2D( aContainer, TO_SFVEC2F( pts[0] ), TO_SFVEC2F( pts[1] ),
+                                         linewidth3DU, *aOwner );
+                    addROUND_SEGMENT_2D( aContainer, TO_SFVEC2F( pts[1] ), TO_SFVEC2F( pts[2] ),
+                                         linewidth3DU, *aOwner );
+                    addROUND_SEGMENT_2D( aContainer, TO_SFVEC2F( pts[2] ), TO_SFVEC2F( pts[3] ),
+                                         linewidth3DU, *aOwner );
+                    addROUND_SEGMENT_2D( aContainer, TO_SFVEC2F( pts[3] ), TO_SFVEC2F( pts[0] ),
+                                         linewidth3DU, *aOwner );
+                }
             }
             break;
 
@@ -709,8 +772,12 @@ void BOARD_ADAPTER::addShape( const PCB_SHAPE* aShape, CONTAINER_2D_BASE* aConta
             {
                 SHAPE_POLY_SET polyList;
 
+                // For a filled poly with a line style not a simple line, ignore line width
+                // the outline will be drawn later
+                bool ignoreLineWidth = lineStyle > LINE_STYLE::FIRST_TYPE;
+
                 aShape->TransformShapeToPolygon( polyList, UNDEFINED_LAYER, 0, aShape->GetMaxError(),
-                                                 ERROR_INSIDE );
+                                                 ERROR_INSIDE, ignoreLineWidth );
 
                 // Some polygons can be a bit complex (especially when coming from a
                 // picture of a text converted to a polygon
@@ -752,7 +819,8 @@ void BOARD_ADAPTER::addShape( const PCB_SHAPE* aShape, CONTAINER_2D_BASE* aConta
             break;
         }
     }
-    else
+
+    if( lineStyle > LINE_STYLE::FIRST_TYPE )
     {
         std::vector<SHAPE*> shapes = aShape->MakeEffectiveShapes( true );
         SFVEC2F             a3DU;

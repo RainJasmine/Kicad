@@ -31,12 +31,15 @@
 #include <settings/settings_manager.h>
 #include <wx/print.h>
 #include <wx/printdlg.h>
+#include <wx/filename.h>
 #include "dialog_print.h"
 
 
 #include <dialogs/panel_printer_list.h>
 
 #include <advanced_config.h>
+#include <printing.h>
+#include <sch_plotter.h>
 
 #include "sch_printout.h"
 
@@ -111,6 +114,14 @@ DIALOG_PRINT::DIALOG_PRINT( SCH_EDIT_FRAME* aParent ) :
     // Preview using Cairo does not work on GTK,
     // but this platform provide native print preview
     m_sdbSizerApply->Hide();
+#endif
+
+    // New printing subsystem has print preview on all platforms
+#if defined( _MSC_VER )
+    if( ADVANCED_CFG::GetCfg().m_UsePdfPrint )
+    {
+        m_sdbSizerApply->Hide();
+    }
 #endif
 
     m_sdbSizerOK->SetFocus();
@@ -298,6 +309,51 @@ bool DIALOG_PRINT::TransferDataFromWindow()
 
     SavePrintOptions();
 
+#ifndef __MINGW32__
+    if( ADVANCED_CFG::GetCfg().m_UsePdfPrint )
+    {
+        EESCHEMA_SETTINGS* cfg = m_parent->eeconfig();
+
+        SCH_RENDER_SETTINGS renderSettings( *m_parent->GetRenderSettings() );
+        renderSettings.m_ShowHiddenPins = false;
+        renderSettings.m_ShowHiddenFields = false;
+
+        COLOR_SETTINGS* cs = ::GetColorSettings( cfg->m_Printing.use_theme
+                                                ? cfg->m_Printing.color_theme
+                                                : cfg->m_ColorTheme );
+        renderSettings.LoadColors( cs );
+
+        SCH_PLOT_OPTS plotOpts;
+        plotOpts.m_plotDrawingSheet = cfg->m_Printing.title_block;
+        plotOpts.m_blackAndWhite = cfg->m_Printing.monochrome;
+        plotOpts.m_useBackgroundColor = cfg->m_Printing.background;
+        plotOpts.m_theme = cfg->m_Printing.use_theme ? cfg->m_Printing.color_theme
+                                                     : cfg->m_ColorTheme;
+
+        wxFileName tmp = wxFileName::CreateTempFileName( wxS( "eeschema_print" ) );
+        wxRemoveFile( tmp.GetFullPath() );
+        tmp.SetExt( wxS( "pdf" ) );
+        plotOpts.m_outputFile = tmp.GetFullPath();
+
+        SCH_PLOTTER plotter( m_parent );
+
+        Pgm().m_Printing = true;
+        plotter.Plot( PLOT_FORMAT::PDF, plotOpts, &renderSettings, nullptr );
+        Pgm().m_Printing = false;
+
+        KIPLATFORM::PRINTING::PRINT_RESULT result =
+                KIPLATFORM::PRINTING::PrintPDF( TO_UTF8( plotter.GetLastOutputFilePath() ) );
+
+        if( result != KIPLATFORM::PRINTING::PRINT_RESULT::OK &&
+            result != KIPLATFORM::PRINTING::PRINT_RESULT::CANCELLED )
+        {
+            DisplayError( this, KIPLATFORM::PRINTING::PrintResultToString( result ) );
+        }
+
+        return true;
+    }
+#endif
+
     int sheet_count = m_parent->Schematic().Root().CountSheets();
 
     wxPrintData& data = m_parent->GetPageSetupData().GetPrintData();
@@ -312,8 +368,9 @@ bool DIALOG_PRINT::TransferDataFromWindow()
     // Using custom page size avoids the problematic
     // gtk_page_setup_set_paper_size_and_default_margins call in wxWidgets.
 
-    wxPaperSize   paperId = data.GetPaperId();
-    const wxChar* paperType = nullptr;
+    wxPaperSize     paperId = data.GetPaperId();
+    PAGE_SIZE_TYPE  paperType = PAGE_SIZE_TYPE::A4; // default; overwritten below when matched
+    bool            havePaperType = false;
 
     // clang-format off
     std::set<wxPaperSize> letterSizes = {
@@ -340,13 +397,22 @@ bool DIALOG_PRINT::TransferDataFromWindow()
     // clang-format on
 
     if( letterSizes.count( paperId ) )
-        paperType = PAGE_INFO::USLetter;
+    {
+        paperType = PAGE_SIZE_TYPE::USLetter;
+        havePaperType = true;
+    }
     else if( legalSizes.count( paperId ) )
-        paperType = PAGE_INFO::USLegal;
+    {
+        paperType = PAGE_SIZE_TYPE::USLegal;
+        havePaperType = true;
+    }
     else if( a4Sizes.count( paperId ) )
-        paperType = PAGE_INFO::A4;
+    {
+        paperType = PAGE_SIZE_TYPE::A4;
+        havePaperType = true;
+    }
 
-    if( paperType )
+    if( havePaperType )
     {
         PAGE_INFO pageInfo( paperType, data.GetOrientation() == wxPORTRAIT );
 

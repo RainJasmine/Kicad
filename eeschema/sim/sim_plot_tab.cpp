@@ -25,12 +25,14 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include <wx/tokenzr.h>
 #include "sim_plot_colors.h"
 #include "sim_plot_tab.h"
 #include "simulator_frame.h"
 #include "core/kicad_algo.h"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 
@@ -281,6 +283,55 @@ void CURSOR::SetCoordX( double aValue )
 }
 
 
+void CURSOR::Move( wxPoint aDelta )
+{
+    Update();
+
+    if( m_trace->IsMultiRun() && m_window && m_trace->GetSweepCount() > 1
+            && m_trace->GetSweepSize() != std::numeric_limits<size_t>::max() )
+    {
+        int newY = m_reference.y + aDelta.y;
+
+        double plotY = m_window->p2y( newY );
+        m_snapTargetY = m_trace->s2y( plotY );
+        m_snapToNearest = true;
+    }
+
+    mpInfoLayer::Move( aDelta );
+}
+
+
+bool CURSOR::OnDoubleClick( const wxPoint& aPoint, mpWindow& aWindow )
+{
+    if( !Inside( aPoint ) )
+        return false;
+
+    if( !m_trace->IsMultiRun() )
+        return false;
+
+    int sweepCount = m_trace->GetSweepCount();
+    size_t sweepSize = m_trace->GetSweepSize();
+
+    if( sweepCount <= 1 )
+        return false;
+
+    if( sweepSize == std::numeric_limits<size_t>::max() || sweepSize == 0 )
+        return false;
+
+    if( m_sweepIndex < 0 || m_sweepIndex >= sweepCount )
+        m_sweepIndex = 0;
+
+    m_sweepIndex = ( m_sweepIndex + 1 ) % sweepCount;
+
+    Update();
+    m_updateRef = true;
+    m_window = &aWindow;
+    aWindow.Refresh();
+
+    return true;
+}
+
+
 void CURSOR::doSetCoordX( double aValue )
 {
     m_coords.x = aValue;
@@ -291,13 +342,106 @@ void CURSOR::doSetCoordX( double aValue )
     if( dataX.size() <= 1 )
         return;
 
+    bool   snapToNearest = m_snapToNearest;
+    double snapTargetY = m_snapTargetY;
+    m_snapToNearest = false;
+
+    size_t startIdx = 0;
+    size_t endIdx = dataX.size();
+    int    sweepCount = m_trace->GetSweepCount();
+    size_t sweepSize = m_trace->GetSweepSize();
+
+    if( snapToNearest && m_trace->IsMultiRun() && sweepCount > 1
+            && sweepSize != std::numeric_limits<size_t>::max() && sweepSize > 0
+            && std::isfinite( snapTargetY ) )
+    {
+        double bestDistance = std::numeric_limits<double>::infinity();
+        int    bestSweep = m_sweepIndex;
+        bool   found = false;
+
+        for( int sweepIdx = 0; sweepIdx < sweepCount; ++sweepIdx )
+        {
+            size_t candidateStart = static_cast<size_t>( sweepIdx ) * sweepSize;
+            size_t candidateEnd = std::min( dataX.size(), candidateStart + sweepSize );
+
+            if( candidateStart >= candidateEnd )
+                continue;
+
+            auto candidateBegin = dataX.begin() + candidateStart;
+            auto candidateEndIt = dataX.begin() + candidateEnd;
+            auto candidateMaxIt = std::upper_bound( candidateBegin, candidateEndIt, m_coords.x );
+            int  candidateMaxIdx = candidateMaxIt - dataX.begin();
+            int  candidateMinIdx = candidateMaxIdx - 1;
+
+            if( candidateMinIdx < (int) candidateStart
+                    || candidateMaxIdx >= (int) candidateEnd
+                    || candidateMaxIdx >= (int) dataX.size() )
+            {
+                continue;
+            }
+
+            double leftX = dataX[candidateMinIdx];
+            double rightX = dataX[candidateMaxIdx];
+
+            if( leftX == rightX )
+                continue;
+
+            double leftY = dataY[candidateMinIdx];
+            double rightY = dataY[candidateMaxIdx];
+            double value = leftY + ( rightY - leftY ) / ( rightX - leftX ) * ( m_coords.x - leftX );
+            double distance = std::fabs( value - snapTargetY );
+
+            if( distance < bestDistance )
+            {
+                bestDistance = distance;
+                bestSweep = sweepIdx;
+                found = true;
+            }
+        }
+
+        if( found )
+            m_sweepIndex = bestSweep;
+    }
+
+    if( m_trace->IsMultiRun() && sweepCount > 1
+            && sweepSize != std::numeric_limits<size_t>::max() && sweepSize > 0 )
+    {
+        size_t available = static_cast<size_t>( sweepCount ) * sweepSize;
+
+        if( available <= dataX.size() )
+        {
+            if( m_sweepIndex < 0 || m_sweepIndex >= sweepCount )
+                m_sweepIndex = std::max( sweepCount - 1, 0 );
+
+            startIdx = static_cast<size_t>( m_sweepIndex ) * sweepSize;
+            endIdx = std::min( dataX.size(), startIdx + sweepSize );
+        }
+        else
+        {
+            m_sweepIndex = 0;
+        }
+    }
+    else
+    {
+        m_sweepIndex = 0;
+    }
+
+    if( startIdx >= endIdx )
+    {
+        m_coords.y = NAN;
+        return;
+    }
+
+    auto beginIt = dataX.begin() + startIdx;
+    auto endIt = dataX.begin() + endIdx;
+
     // Find the closest point coordinates
-    auto maxXIt = std::upper_bound( dataX.begin(), dataX.end(), m_coords.x );
+    auto maxXIt = std::upper_bound( beginIt, endIt, m_coords.x );
     int maxIdx = maxXIt - dataX.begin();
     int minIdx = maxIdx - 1;
 
     // Out of bounds checks
-    if( minIdx < 0 || maxIdx >= (int) dataX.size() )
+    if( minIdx < (int) startIdx || maxIdx >= (int) endIdx || maxIdx >= (int) dataX.size() )
     {
         // Simulation may not be complete yet, or we may have a cursor off the beginning or end
         // of the data.  Either way, that's where the user put it.  Don't second guess them; just
@@ -408,6 +552,37 @@ void CURSOR::Plot( wxDC& aDC, mpWindow& aWindow )
 
         aDC.SetTextForeground( textColor.ToColour() );
         aDC.DrawLabel( id, textRect, wxALIGN_CENTER_HORIZONTAL | wxALIGN_CENTER_VERTICAL );
+
+        if( m_trace->IsMultiRun() && m_trace->GetSweepCount() > 1
+                && m_trace->GetSweepSize() != std::numeric_limits<size_t>::max() )
+        {
+            wxString runLabel;
+            const std::vector<wxString>& labels = m_trace->GetMultiRunLabels();
+            
+            if( m_sweepIndex >= 0 && m_sweepIndex < (int) labels.size() )
+            {
+                runLabel = labels[m_sweepIndex];
+            }
+            else
+            {
+                runLabel = wxString::Format( _( "Run %d" ), m_sweepIndex + 1 );
+            }
+            
+            wxSize   runSize = aDC.GetTextExtent( runLabel );
+            int      runX = textRect.GetRight() + 6;
+            wxRect   runRect( wxPoint( runX, textRect.y ), runSize );
+
+            runRect.Inflate( 3, 1 );
+
+            wxBrush labelBrush( aWindow.GetBackgroundColour() );
+            wxPen   labelPen( cursorColor.ToColour() );
+
+            aDC.SetPen( labelPen );
+            aDC.SetBrush( labelBrush );
+            aDC.DrawRectangle( runRect );
+            aDC.SetTextForeground( cursorColor.ToColour() );
+            aDC.DrawLabel( runLabel, runRect, wxALIGN_CENTER_HORIZONTAL | wxALIGN_CENTER_VERTICAL );
+        }
     }
 }
 
@@ -659,15 +834,8 @@ void SIM_PLOT_TAB::updateAxes( int aNewTraceType )
             m_axis_y1->SetName( _( "Voltage" ) );
             m_axis_y2->SetName( _( "Current" ) );
 
-            if( ( aNewTraceType & SPT_POWER ) && !m_axis_y3 )
-            {
-                m_plotWin->SetMargins( 30, 140, 45, 70 );
-
-                m_axis_y3 = new LIN_SCALE<mpScaleY>( wxEmptyString, wxT( "W" ), mpALIGN_FAR_RIGHT );
-                m_axis_y3->SetNameAlign( mpALIGN_FAR_RIGHT );
-                m_axis_y3->SetMasterScale( m_axis_y1 );
-                m_plotWin->AddLayer( m_axis_y3 );
-            }
+            if( aNewTraceType & SPT_POWER )
+                EnsureThirdYAxisExists();
 
             if( m_axis_y3 )
                 m_axis_y3->SetName( _( "Power" ) );
@@ -677,6 +845,27 @@ void SIM_PLOT_TAB::updateAxes( int aNewTraceType )
         default:
             // suppress warnings
             break;
+    }
+
+    if( GetSimType() == ST_TRAN || GetSimType() == ST_DC )
+    {
+        if( m_axis_y3 )
+        {
+            m_plotWin->SetMargins( 30, 160, 45, 70 );
+
+            if( m_axis_y2 )
+                m_axis_y2->SetNameAlign( mpALIGN_BORDER_RIGHT );
+
+            m_axis_y3->SetAlign( mpALIGN_BORDER_RIGHT );
+            m_axis_y3->SetNameAlign( mpALIGN_BORDER_RIGHT );
+        }
+        else
+        {
+            m_plotWin->SetMargins( 30, 70, 45, 70 );
+
+            if( m_axis_y2 )
+                m_axis_y2->SetNameAlign( mpALIGN_RIGHT );
+        }
     }
 
     if( m_axis_x )
@@ -690,6 +879,8 @@ void SIM_PLOT_TAB::updateAxes( int aNewTraceType )
 
     if( m_axis_y3 )
         m_axis_y3->SetFont( KIUI::GetStatusFont( m_plotWin ) );
+
+    UpdateAxisVisibility();
 }
 
 
@@ -792,12 +983,21 @@ void SIM_PLOT_TAB::EnsureThirdYAxisExists()
 {
     if( !m_axis_y3 )
     {
-        m_plotWin->SetMargins( 30, 140, 45, 70 );
-        m_axis_y3 = new LIN_SCALE<mpScaleY>( wxEmptyString, wxT( "W" ), mpALIGN_FAR_RIGHT );
-        m_axis_y3->SetNameAlign( mpALIGN_FAR_RIGHT );
+        m_plotWin->SetMargins( 30, 160, 45, 70 );
+        m_axis_y3 = new LIN_SCALE<mpScaleY>( wxEmptyString, wxT( "W" ), mpALIGN_BORDER_RIGHT );
+        m_axis_y3->SetNameAlign( mpALIGN_BORDER_RIGHT );
         m_axis_y3->SetMasterScale( m_axis_y1 );
         m_plotWin->AddLayer( m_axis_y3 );
     }
+
+    if( m_axis_y3 )
+    {
+        m_axis_y3->SetAlign( mpALIGN_BORDER_RIGHT );
+        m_axis_y3->SetNameAlign( mpALIGN_BORDER_RIGHT );
+    }
+
+    if( m_axis_y2 )
+        m_axis_y2->SetNameAlign( mpALIGN_BORDER_RIGHT );
 }
 
 
@@ -887,7 +1087,8 @@ TRACE* SIM_PLOT_TAB::GetOrAddTrace( const wxString& aVectorName, int aType )
 
 
 void SIM_PLOT_TAB::SetTraceData( TRACE* trace, std::vector<double>& aX, std::vector<double>& aY,
-                                 int aSweepCount, size_t aSweepSize )
+                                 int aSweepCount, size_t aSweepSize, bool aIsMultiRun,
+                                 const std::vector<wxString>& aMultiRunLabels )
 {
     if( dynamic_cast<LOG_SCALE<mpScaleXLog>*>( m_axis_x ) )
     {
@@ -920,6 +1121,8 @@ void SIM_PLOT_TAB::SetTraceData( TRACE* trace, std::vector<double>& aX, std::vec
     trace->SetData( aX, aY );
     trace->SetSweepCount( aSweepCount );
     trace->SetSweepSize( aSweepSize );
+    trace->SetIsMultiRun( aIsMultiRun );
+    trace->SetMultiRunLabels( aMultiRunLabels );
 
     // Phase and currents on second Y axis, except for AC currents, those use the same axis as voltage
     if( ( trace->GetType() & SPT_AC_PHASE )
@@ -941,6 +1144,59 @@ void SIM_PLOT_TAB::SetTraceData( TRACE* trace, std::vector<double>& aX, std::vec
         if( cursor )
             cursor->SetCoordX( cursor->GetCoords().x );
     }
+
+    UpdateAxisVisibility();
+}
+
+
+void SIM_PLOT_TAB::UpdateAxisVisibility()
+{
+    bool hasY1Traces = false;
+    bool hasY2Traces = false;
+    bool hasY3Traces = false;
+
+    for( const auto& [ name, trace ] : m_traces )
+    {
+        if( !trace )
+            continue;
+
+        if( trace->GetType() & SPT_POWER )
+        {
+            hasY3Traces = true;
+        }
+        else if( ( trace->GetType() & SPT_AC_PHASE )
+                 || ( ( GetSimType() != ST_AC ) && ( trace->GetType() & SPT_CURRENT ) ) )
+        {
+            hasY2Traces = true;
+        }
+        else
+        {
+            hasY1Traces = true;
+        }
+    }
+
+    bool visibilityChanged = false;
+
+    if( m_axis_y1 && m_axis_y1->IsVisible() != hasY1Traces )
+    {
+        m_axis_y1->SetVisible( hasY1Traces );
+        visibilityChanged = true;
+    }
+
+    if( m_axis_y2 && m_axis_y2->IsVisible() != hasY2Traces )
+    {
+        m_axis_y2->SetVisible( hasY2Traces );
+        visibilityChanged = true;
+    }
+
+    if( m_axis_y3 && m_axis_y3->IsVisible() != hasY3Traces )
+    {
+        m_axis_y3->SetVisible( hasY3Traces );
+        visibilityChanged = true;
+    }
+
+    if( visibilityChanged )
+        m_plotWin->UpdateAll();
 }
 
 
@@ -963,6 +1219,7 @@ void SIM_PLOT_TAB::DeleteTrace( TRACE* aTrace )
 
     m_plotWin->DelLayer( aTrace, true, true );
     ResetScales( false );
+    UpdateAxisVisibility();
 }
 
 
@@ -1017,7 +1274,7 @@ void SIM_PLOT_TAB::ResetScales( bool aIncludeX )
 
         if( GetSimType() == ST_TRAN )
         {
-            wxStringTokenizer tokenizer( GetSimCommand(), wxS( " \t\n\r" ), wxTOKEN_STRTOK );
+            wxStringTokenizer tokenizer( GetSimCommand(), " \t\r\n", wxTOKEN_STRTOK );
             wxString          cmd = tokenizer.GetNextToken().Lower();
 
             wxASSERT( cmd == wxS( ".tran" ) );

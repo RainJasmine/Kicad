@@ -22,21 +22,19 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#ifndef DIALOG_SYMBOL_FIELDS_TABLE_H
-#define DIALOG_SYMBOL_FIELDS_TABLE_H
+#pragma once
 
+#include <set>
 
 #include <dialog_symbol_fields_table_base.h>
 #include <sch_reference_list.h>
 #include <schematic.h>
+#include <fields_data_model.h>
 
 wxDECLARE_EVENT( EDA_EVT_CLOSE_DIALOG_SYMBOL_FIELDS_TABLE, wxCommandEvent );
 
 class SCHEMATIC_SETTINGS;
-struct BOM_PRESET;
-struct BOM_FMT_PRESET;
 class SCH_EDIT_FRAME;
-class FIELDS_EDITOR_GRID_DATA_MODEL;
 class JOB_EXPORT_SCH_BOM;
 
 
@@ -44,19 +42,23 @@ class DIALOG_SYMBOL_FIELDS_TABLE : public DIALOG_SYMBOL_FIELDS_TABLE_BASE, publi
 {
 public:
     DIALOG_SYMBOL_FIELDS_TABLE( SCH_EDIT_FRAME* parent, JOB_EXPORT_SCH_BOM* aJob = nullptr );
-    virtual ~DIALOG_SYMBOL_FIELDS_TABLE();
+    ~DIALOG_SYMBOL_FIELDS_TABLE() override;
 
     bool TransferDataToWindow() override;
     bool TransferDataFromWindow() override;
 
     void ShowEditTab();
     void ShowExportTab();
+    void ShowHideColumn( int aCol, bool aShow );
 
 private:
     void SetupColumnProperties( int aCol );
     void SetupAllColumnProperties();
     void AddField( const wxString& displayName, const wxString& aCanonicalName, bool show,
                    bool groupBy, bool addedByUser = false );
+    void setScope( FIELDS_EDITOR_GRID_DATA_MODEL::SCOPE aScope );
+    // Set bitmap and tooltip according to left panel visibility
+    void setSideBarButtonLook( bool aIsLeftPanelCollapsed );
 
     /**
      * Construct the rows of m_fieldsCtrl and the columns of m_dataModel from a union of all
@@ -64,33 +66,34 @@ private:
      */
     void LoadFieldNames();
 
-    void OnColSort( wxGridEvent& aEvent );
-    void OnColMove( wxGridEvent& aEvent );
-    void OnColLabelChange( wxDataViewEvent& aEvent );
-    void OnTableRangeSelected( wxGridRangeSelectEvent& aEvent );
-
-    void OnColumnItemToggled( wxDataViewEvent& event ) override;
-    void OnGroupSymbolsToggled( wxCommandEvent& event ) override;
-    void OnExcludeDNPToggled( wxCommandEvent& event ) override;
-    void OnShowExcludedToggled( wxCommandEvent& event ) override;
-    void OnRegroupSymbols( wxCommandEvent& aEvent ) override;
-    void OnScopeChanged( wxCommandEvent& aEvent ) override;
-    void UpdateScope();
-    void OnTableValueChanged( wxGridEvent& event ) override;
-    void OnTableCellClick( wxGridEvent& event ) override;
-    void OnTableItemContextMenu( wxGridEvent& event ) override;
-    void OnTableColSize( wxGridSizeEvent& event ) override;
-    void OnSizeFieldList( wxSizeEvent& event ) override;
+    void OnViewControlsCellChanged( wxGridEvent& aEvent ) override;
+    void OnSizeViewControlsGrid( wxSizeEvent& event ) override;
     void OnAddField( wxCommandEvent& event ) override;
     void OnRemoveField( wxCommandEvent& event ) override;
     void OnRenameField( wxCommandEvent& event ) override;
+
+    void OnColSort( wxGridEvent& aEvent );
+    void OnColMove( wxGridEvent& aEvent );
+    void OnTableRangeSelected( wxGridRangeSelectEvent& aEvent );
+
+    void OnFilterText( wxCommandEvent& aEvent ) override;
+    void OnFilterMouseMoved( wxMouseEvent& event ) override;
+    void OnScope( wxCommandEvent& event ) override;
+    void OnGroupSymbolsToggled( wxCommandEvent& event ) override;
+    void OnRegroupSymbols( wxCommandEvent& aEvent ) override;
+    void OnMenu( wxCommandEvent& event ) override;
+
+    void OnTableValueChanged( wxGridEvent& event ) override;
+    void OnTableCellClick( wxGridEvent& event ) override;
+    void OnGridMouseMove( wxMouseEvent& aEvent );
+    void OnTableColSize( wxGridSizeEvent& event ) override;
+
+    void OnSidebarToggle( wxCommandEvent& event ) override;
     void OnExport( wxCommandEvent& aEvent ) override;
     void OnSaveAndContinue( wxCommandEvent& aEvent ) override;
     void OnCancel( wxCommandEvent& aEvent ) override;
-    void OnClose( wxCloseEvent& aEvent ) override;
     void OnOk( wxCommandEvent& aEvent ) override;
-    void OnFilterText( wxCommandEvent& aEvent ) override;
-    void OnFilterMouseMoved( wxMouseEvent& event ) override;
+    void OnClose( wxCloseEvent& aEvent ) override;
 
     void OnOutputFileBrowseClicked( wxCommandEvent& event ) override;
     void OnPageChanged( wxNotebookEvent& event ) override;
@@ -119,6 +122,16 @@ private:
     void EnableSelectionEvents();
     void DisableSelectionEvents();
 
+    /**
+     * Saves the current grid selection as a set of symbol full paths for later restoration.
+     */
+    std::set<wxString> SaveGridSelection();
+
+    /**
+     * Restores the grid selection from a previously saved set of symbol full paths.
+     */
+    void RestoreGridSelection( const std::set<wxString>& aFullPaths );
+
 private:
     SCH_REFERENCE_LIST getSymbolReferences( SCH_SYMBOL* aSymbol, SCH_REFERENCE_LIST& aCachedRefs );
     SCH_REFERENCE_LIST getSheetSymbolReferences( SCH_SHEET& aSheet );
@@ -139,6 +152,17 @@ private:
 
     void savePresetsToSchematic();
 
+    void onAddVariant( wxCommandEvent& aEvent ) override;
+    void onDeleteVariant( wxCommandEvent& aEvent ) override;
+    void onRenameVariant( wxCommandEvent& aEvent ) override;
+    void onCopyVariant( wxCommandEvent& aEvent ) override;
+    void onEditVariantDescription( wxCommandEvent& aEvent ) override;
+    void onVariantSelectionChange( wxCommandEvent& aEvent ) override;
+
+    void updateVariantButtonStates();
+
+    wxString getSelectedVariant() const;
+
 private:
     std::map<wxString, BOM_PRESET>     m_bomPresets;
     BOM_PRESET*                        m_currentBomPreset;
@@ -155,10 +179,7 @@ private:
     // Index in the fields list control for each MANDATORY_FIELD type
     std::map<FIELD_T, int>             m_mandatoryFieldListIndexes;
 
-    int                                m_fieldNameColWidth;
-    int                                m_labelColWidth;
-    int                                m_showColWidth;
-    int                                m_groupByColWidth;
+    VIEW_CONTROLS_GRID_DATA_MODEL*     m_viewControlsDataModel;
 
     SCH_REFERENCE_LIST                 m_symbolsList;
     FIELDS_EDITOR_GRID_DATA_MODEL*     m_dataModel;
@@ -166,6 +187,9 @@ private:
     SCHEMATIC_SETTINGS&                m_schSettings;
 
     JOB_EXPORT_SCH_BOM* m_job;
-};
 
-#endif /* DIALOG_SYMBOL_FIELDS_TABLE_H */
+    bool m_aborted = false;
+
+public:
+    bool WasAborted() const { return m_aborted; }
+};

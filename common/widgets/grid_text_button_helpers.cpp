@@ -30,16 +30,17 @@
 
 #include <bitmaps.h>
 #include <embedded_files.h>
+#include <kiplatform/ui.h>
 #include <kiway.h>
 #include <kiway_player.h>
-#include <kiway_express.h>
+#include <kiway_mail.h>
 #include <string_utils.h>
 #include <dialog_shim.h>
 #include <common.h>
 #include <env_paths.h>
 #include <pgm_base.h>
 #include <widgets/wx_grid.h>
-#include <widgets/filedlg_open_embed_file.h>
+#include <widgets/filedlg_hook_embed_file.h>
 #include <widgets/grid_text_button_helpers.h>
 #include <eda_doc.h>
 
@@ -47,127 +48,6 @@
 //-------- Renderer ---------------------------------------------------------------------
 // None required; just render as normal text.
 
-
-
-//-------- Editor Base Class ------------------------------------------------------------
-//
-// Note: this implementation is an adaptation of wxGridCellChoiceEditor
-
-
-wxString GRID_CELL_TEXT_BUTTON::GetValue() const
-{
-    return Combo()->GetValue();
-}
-
-
-void GRID_CELL_TEXT_BUTTON::SetSize( const wxRect& aRect )
-{
-    wxRect rect( aRect );
-    WX_GRID::CellEditorTransformSizeRect( rect );
-
-    wxGridCellEditor::SetSize( rect );
-}
-
-
-void GRID_CELL_TEXT_BUTTON::StartingKey( wxKeyEvent& event )
-{
-    // Note: this is a copy of wxGridCellTextEditor's StartingKey()
-
-    // Since this is now happening in the EVT_CHAR event EmulateKeyPress is no
-    // longer an appropriate way to get the character into the text control.
-    // Do it ourselves instead.  We know that if we get this far that we have
-    // a valid character, so not a whole lot of testing needs to be done.
-
-    // wxComboCtrl inherits from wxTextEntry, so can statically cast
-    wxTextEntry* textEntry = static_cast<wxTextEntry*>( Combo() );
-    int ch;
-
-    bool isPrintable;
-
-#if wxUSE_UNICODE
-    ch = event.GetUnicodeKey();
-
-    if( ch != WXK_NONE )
-        isPrintable = true;
-    else
-#endif // wxUSE_UNICODE
-    {
-        ch = event.GetKeyCode();
-        isPrintable = ch >= WXK_SPACE && ch < WXK_START;
-    }
-
-    switch( ch )
-    {
-    case WXK_DELETE:
-        // Delete the initial character when starting to edit with DELETE.
-        textEntry->Remove( 0, 1 );
-        break;
-
-    case WXK_BACK:
-        // Delete the last character when starting to edit with BACKSPACE.
-    {
-        const long pos = textEntry->GetLastPosition();
-        textEntry->Remove( pos - 1, pos );
-    }
-        break;
-
-    default:
-        if( isPrintable )
-            textEntry->WriteText( static_cast<wxChar>( ch ) );
-
-        break;
-    }
-}
-
-
-void GRID_CELL_TEXT_BUTTON::BeginEdit( int aRow, int aCol, wxGrid* aGrid )
-{
-    auto evtHandler = static_cast< wxGridCellEditorEvtHandler* >( m_control->GetEventHandler() );
-
-    // Don't immediately end if we get a kill focus event within BeginEdit
-    evtHandler->SetInSetFocus( true );
-
-    m_value = aGrid->GetTable()->GetValue( aRow, aCol );
-
-    Combo()->SetValue( m_value );
-    Combo()->SetFocus();
-}
-
-
-bool GRID_CELL_TEXT_BUTTON::EndEdit( int, int, const wxGrid*, const wxString&, wxString *aNewVal )
-{
-    const wxString value = Combo()->GetValue();
-
-    if( value == m_value )
-        return false;
-
-    m_value = value;
-
-    if( aNewVal )
-        *aNewVal = value;
-
-    return true;
-}
-
-
-void GRID_CELL_TEXT_BUTTON::ApplyEdit( int aRow, int aCol, wxGrid* aGrid )
-{
-    aGrid->GetTable()->SetValue( aRow, aCol, m_value );
-}
-
-
-void GRID_CELL_TEXT_BUTTON::Reset()
-{
-    Combo()->SetValue( m_value );
-}
-
-
-#if wxUSE_VALIDATORS
-void GRID_CELL_TEXT_BUTTON::SetValidator( const wxValidator& validator )
-{
-    m_validator.reset( static_cast< wxValidator* >( validator.Clone() ) );
-}
-#endif
 
 
 class TEXT_BUTTON_SYMBOL_CHOOSER : public wxComboCtrl
@@ -277,7 +157,7 @@ protected:
         {
             if( !m_symbolNetlist.empty() )
             {
-                KIWAY_EXPRESS event( FRAME_FOOTPRINT_CHOOSER, MAIL_SYMBOL_NETLIST,
+                KIWAY_MAIL_EVENT event( FRAME_FOOTPRINT_CHOOSER, MAIL_SYMBOL_NETLIST,
                                      m_symbolNetlist );
                 frame->KiwayMailIn( event );
             }
@@ -350,7 +230,11 @@ public:
     ~TEXT_BUTTON_URL()
     {
         Unbind( wxEVT_TEXT, &TEXT_BUTTON_URL::OnTextChange, this );
+
+        m_filesStack.clear();   // we don't own pointers
     }
+
+    // We don't own any of our raw pointers, so compiler's copy c'tor an operator= are OK.
 
 protected:
     void DoSetPopupControl( wxComboPopup* popup ) override
@@ -366,13 +250,14 @@ protected:
 
         if( filename.IsEmpty() || filename == wxT( "~" ) )
         {
-            FILEDLG_OPEN_EMBED_FILE customize;
+            FILEDLG_HOOK_EMBED_FILE customize;
 
-            wxFileDialog openFileDialog( this, _( "Open file" ), "", "",
-                                         _( "All Files" ) + wxT( " (*.*)|*.*" ),
+            wxFileDialog openFileDialog( this, _( "Open file" ), "", "", _( "All Files" ) + wxT( " (*.*)|*.*" ),
                                          wxFD_OPEN | wxFD_FILE_MUST_EXIST );
 
             openFileDialog.SetCustomizeHook( customize );
+
+            KIPLATFORM::UI::AllowNetworkFileSystems( &openFileDialog );
 
             if( openFileDialog.ShowModal() == wxID_OK )
             {
@@ -414,8 +299,8 @@ protected:
 
 protected:
     DIALOG_SHIM*                 m_dlg;
-    SEARCH_STACK*                m_searchStack;
-    std::vector<EMBEDDED_FILES*> m_filesStack;
+    SEARCH_STACK*                m_searchStack;     // No ownership of pointer
+    std::vector<EMBEDDED_FILES*> m_filesStack;      // No ownership of pointers
 };
 
 
@@ -440,7 +325,8 @@ public:
     TEXT_BUTTON_FILE_BROWSER( wxWindow* aParent, DIALOG_SHIM* aParentDlg, WX_GRID* aGrid,
                               wxString* aCurrentDir, const wxString& aFileFilter = wxEmptyString,
                               bool aNormalize = false,
-                              const wxString& aNormalizeBasePath = wxEmptyString ) :
+                              const wxString& aNormalizeBasePath = wxEmptyString,
+                              std::function<wxString( const wxString& )> aEmbedCallback = nullptr ) :
             wxComboCtrl( aParent, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize( 0, 0 ),
                          wxTE_PROCESS_ENTER | wxBORDER_NONE ),
             m_dlg( aParentDlg ),
@@ -448,7 +334,8 @@ public:
             m_currentDir( aCurrentDir ),
             m_normalize( aNormalize ),
             m_normalizeBasePath( aNormalizeBasePath ),
-            m_fileFilter( aFileFilter )
+            m_fileFilter( aFileFilter ),
+            m_embedCallback( std::move( aEmbedCallback ) )
     {
         SetButtonBitmaps( KiBitmapBundle( BITMAPS::small_folder ) );
 
@@ -460,7 +347,8 @@ public:
                               wxString* aCurrentDir,
                               std::function<wxString( WX_GRID* grid, int row )> aFileFilterFn,
                               bool aNormalize = false,
-                              const wxString& aNormalizeBasePath = wxEmptyString ) :
+                              const wxString& aNormalizeBasePath = wxEmptyString,
+                              std::function<wxString( const wxString& )> aEmbedCallback = nullptr ) :
             wxComboCtrl( aParent, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize( 0, 0 ),
                          wxTE_PROCESS_ENTER | wxBORDER_NONE ),
             m_dlg( aParentDlg ),
@@ -468,7 +356,8 @@ public:
             m_currentDir( aCurrentDir ),
             m_normalize( aNormalize ),
             m_normalizeBasePath( aNormalizeBasePath ),
-            m_fileFilterFn( std::move( aFileFilterFn ) )
+            m_fileFilterFn( std::move( aFileFilterFn ) ),
+            m_embedCallback( std::move( aEmbedCallback ) )
     {
         SetButtonBitmaps( KiBitmapBundle( BITMAPS::small_folder ) );
 
@@ -499,8 +388,14 @@ protected:
 
         if( !m_fileFilter.IsEmpty() )
         {
+            FILEDLG_HOOK_EMBED_FILE customize( false );
             wxFileDialog dlg( m_dlg, _( "Select a File" ), fn.GetPath(), fn.GetFullName(),
                               m_fileFilter, wxFD_FILE_MUST_EXIST | wxFD_OPEN );
+
+            if( m_embedCallback )
+                dlg.SetCustomizeHook( customize );
+
+            KIPLATFORM::UI::AllowNetworkFileSystems( &dlg );
 
             if( dlg.ShowModal() == wxID_OK )
             {
@@ -508,7 +403,17 @@ protected:
                 wxString lastPath = dlg.GetDirectory();
                 wxString relPath = wxEmptyString;
 
-                if( m_normalize )
+                if( m_embedCallback && customize.GetEmbed() )
+                {
+                    relPath = m_embedCallback( filePath );
+
+                    if( relPath.IsEmpty() )
+                    {
+                        m_dlg->CleanupAfterModalSubDialog();
+                        return;
+                    }
+                }
+                else if( m_normalize )
                 {
                     relPath = NormalizePath( filePath, &Pgm().GetLocalEnvVariables(),
                                              m_normalizeBasePath );
@@ -554,7 +459,8 @@ protected:
                 if( !m_grid->CommitPendingChanges() )
                 {;} // shouldn't happen, but Coverity doesn't know that
 
-                *m_currentDir = relPath;
+                if( m_currentDir )
+                    *m_currentDir = relPath;
             }
         }
 
@@ -570,6 +476,7 @@ protected:
 
     wxString                                            m_fileFilter;
     std::function<wxString( WX_GRID* aGrid, int aRow )> m_fileFilterFn;
+    std::function<wxString( const wxString& )>          m_embedCallback;
 };
 
 
@@ -580,12 +487,13 @@ void GRID_CELL_PATH_EDITOR::Create( wxWindow* aParent, wxWindowID aId,
     {
         m_control = new TEXT_BUTTON_FILE_BROWSER( aParent, m_dlg, m_grid, m_currentDir,
                                                   m_fileFilterFn, m_normalize,
-                                                  m_normalizeBasePath );
+                                                  m_normalizeBasePath, m_embedCallback );
     }
     else
     {
         m_control = new TEXT_BUTTON_FILE_BROWSER( aParent, m_dlg, m_grid, m_currentDir,
-                                                  m_fileFilter, m_normalize, m_normalizeBasePath );
+                                                  m_fileFilter, m_normalize, m_normalizeBasePath,
+                                                  m_embedCallback );
     }
 
     WX_GRID::CellEditorSetMargins( Combo() );
@@ -597,4 +505,59 @@ void GRID_CELL_PATH_EDITOR::Create( wxWindow* aParent, wxWindowID aId,
 #endif
 
     wxGridCellEditor::Create( aParent, aId, aEventHandler );
+}
+
+class TEXT_BUTTON_RUN_FUNCTION final : public wxComboCtrl
+{
+public:
+    TEXT_BUTTON_RUN_FUNCTION( wxWindow* aParent, DIALOG_SHIM* aParentDlg, std::function<void( int, int )>& aFunction,
+                              int& aRow, int& aCol ) :
+            wxComboCtrl( aParent, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize( 0, 0 ),
+                         wxTE_PROCESS_ENTER | wxBORDER_NONE ),
+            m_dlg( aParentDlg ),
+            m_function( aFunction ),
+            m_row( aRow ),
+            m_col( aCol )
+    {
+        SetButtonBitmaps( KiBitmapBundle( BITMAPS::small_refresh ) );
+
+        // win32 fix, avoids drawing the "native dropdown caret"
+        Customize( wxCC_IFLAG_HAS_NONSTANDARD_BUTTON );
+    }
+
+protected:
+    void DoSetPopupControl( wxComboPopup* popup ) override { m_popup = nullptr; }
+
+    void OnButtonClick() override { m_function( m_row, m_col ); }
+
+    DIALOG_SHIM* m_dlg;
+    std::function<void( int, int )>& m_function;
+    int&                             m_row;
+    int&                             m_col;
+};
+
+
+void GRID_CELL_RUN_FUNCTION_EDITOR::Create( wxWindow* aParent, wxWindowID aId, wxEvtHandler* aEventHandler )
+{
+    m_control = new TEXT_BUTTON_RUN_FUNCTION( aParent, m_dlg, m_function, m_row, m_col );
+    WX_GRID::CellEditorSetMargins( Combo() );
+
+#if wxUSE_VALIDATORS
+    // validate text in textctrl, if validator is set
+    if( m_validator )
+    {
+        Combo()->SetValidator( *m_validator );
+    }
+#endif
+
+    wxGridCellEditor::Create( aParent, aId, aEventHandler );
+}
+
+
+void GRID_CELL_RUN_FUNCTION_EDITOR::BeginEdit( int aRow, int aCol, wxGrid* aGrid )
+{
+    m_row = aRow;
+    m_col = aCol;
+
+    GRID_CELL_TEXT_BUTTON::BeginEdit( aRow, aCol, aGrid );
 }

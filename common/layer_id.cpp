@@ -111,8 +111,9 @@ wxString LayerName( int aLayer )
     case LAYER_HOVERED:                 return _( "Hovered items" );
     case LAYER_BRIGHTENED:              return _( "Highlighted items" );
     case LAYER_HIDDEN:                  return _( "Hidden items" );
-    case LAYER_SELECTION_SHADOWS:       return _( "Selection highlight" );
     case LAYER_NET_COLOR_HIGHLIGHT:     return _( "Net color highlight" );
+    case LAYER_DRAG_NET_COLLISION:      return _( "Drag net collisions" );
+    case LAYER_SELECTION_SHADOWS:       return _( "Selection highlight" );
     case LAYER_SCHEMATIC_DRAWINGSHEET:  return _( "Drawing sheet" );
     case LAYER_SCHEMATIC_PAGE_LIMITS:   return _( "Page limits" );
     case LAYER_OP_VOLTAGES:             return _( "Operating point voltages" );
@@ -127,7 +128,8 @@ wxString LayerName( int aLayer )
     case LAYER_FP_TEXT:                 return _( "Footprint text" );
     case LAYER_TRACKS:                  return _( "Tracks" );
     case LAYER_VIA_THROUGH:             return _( "Through vias" );
-    case LAYER_VIA_BBLIND:              return _( "Blind/Buried vias" );
+    case LAYER_VIA_BLIND:               return _( "Blind vias" );
+    case LAYER_VIA_BURIED:              return _( "Buried vias" );
     case LAYER_VIA_MICROVIA:            return _( "Micro-vias" );
     case LAYER_VIA_HOLES:               return _( "Via holes" );
     case LAYER_VIA_HOLEWALLS:           return _( "Via hole walls" );
@@ -137,11 +139,12 @@ wxString LayerName( int aLayer )
     case LAYER_RATSNEST:                return _( "Ratsnest" );
     case LAYER_DRC_WARNING:             return _( "DRC warnings" );
     case LAYER_DRC_ERROR:               return _( "DRC errors" );
-    case LAYER_DRC_SHAPE1:              return _( "DRC shape 1" );
-    case LAYER_DRC_SHAPE2:              return _( "DRC shape 2" );
+    case LAYER_DRC_SHAPES:              return _( "DRC shapes" );
     case LAYER_DRC_EXCLUSION:           return _( "DRC exclusions" );
     case LAYER_MARKER_SHADOWS:          return _( "DRC marker shadows" );
+    case LAYER_DRC_HIGHLIGHTED:          return _( "DRC highlighted" );
     case LAYER_ANCHOR:                  return _( "Anchors" );
+    case LAYER_POINTS:                  return _( "Points" );
     case LAYER_DRAWINGSHEET:            return _( "Drawing sheet" );
     case LAYER_PAGE_LIMITS:             return _( "Page limits" );
     case LAYER_CURSOR:                  return _( "Cursor" );
@@ -195,16 +198,18 @@ PCB_LAYER_ID FlipLayer( PCB_LAYER_ID aLayerId, int aCopperLayersCount )
     default:    // change internal layer if aCopperLayersCount is >= 4
         if( IsCopperLayer( aLayerId ) && aCopperLayersCount >= 4 )
         {
-            // internal copper layers count is aCopperLayersCount-2
-            PCB_LAYER_ID fliplayer = PCB_LAYER_ID(aCopperLayersCount - 2 - ( aLayerId - In1_Cu ) );
-            // Ensure fliplayer has a value which does not crash Pcbnew:
-            if( fliplayer < F_Cu )
-                fliplayer = F_Cu;
+            int innerIndex = ( aLayerId - In1_Cu ) / 2;
+            int flippedIndex = aCopperLayersCount - 3 - innerIndex;
 
-            if( fliplayer > B_Cu )
-                fliplayer = B_Cu;
+            if( flippedIndex < 0 )
+                flippedIndex = 0;
 
-            return fliplayer;
+            int maxIndex = aCopperLayersCount - 3;
+
+            if( flippedIndex > maxIndex )
+                flippedIndex = maxIndex;
+
+            return PCB_LAYER_ID( In1_Cu + flippedIndex * 2 );
         }
 
         // No change for the other layers

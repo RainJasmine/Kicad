@@ -28,6 +28,11 @@
 #include <geometry/shape_simple.h>
 #include <geometry/shape_segment.h>
 #include <geometry/shape_compound.h>
+#include <geometry/geometry_utils.h>
+#include <convert_basic_shapes_to_polygon.h>
+#include <pcb_painter.h>    // for PCB_RENDER_SETTINGS
+#include <properties/property.h>
+#include <properties/property_mgr.h>
 
 
 PCB_TABLE::PCB_TABLE( BOARD_ITEM* aParent, int aLineWidth ) :
@@ -72,8 +77,7 @@ PCB_TABLE::~PCB_TABLE()
 
 void PCB_TABLE::swapData( BOARD_ITEM* aImage )
 {
-    wxCHECK_RET( aImage != nullptr && aImage->Type() == PCB_TABLE_T,
-                 wxT( "Cannot swap data with invalid table." ) );
+    wxCHECK_RET( aImage != nullptr && aImage->Type() == PCB_TABLE_T, wxT( "Cannot swap data with invalid table." ) );
 
     PCB_TABLE* table = static_cast<PCB_TABLE*>( aImage );
 
@@ -101,6 +105,15 @@ void PCB_TABLE::swapData( BOARD_ITEM* aImage )
 }
 
 
+void PCB_TABLE::SetLayer( PCB_LAYER_ID aLayer )
+{
+    m_layer = aLayer;
+
+    for( PCB_TABLECELL* cell : m_cells )
+        cell->SetLayer( aLayer );
+}
+
+
 void PCB_TABLE::SetPosition( const VECTOR2I& aPos )
 {
     Move( aPos - GetPosition() );
@@ -109,6 +122,9 @@ void PCB_TABLE::SetPosition( const VECTOR2I& aPos )
 
 VECTOR2I PCB_TABLE::GetPosition() const
 {
+    if( m_cells.empty() )
+        return VECTOR2I( 0, 0 );  // Return origin if table has no cells
+
     return m_cells[0]->GetPosition();
 }
 
@@ -129,40 +145,76 @@ VECTOR2I PCB_TABLE::GetEnd() const
 
 void PCB_TABLE::Normalize()
 {
-    int y = GetPosition().y;
+    if( m_cells.empty() )
+        return;
+
+    EDA_ANGLE cellAngle = m_cells[0]->GetTextAngle();
+
+    BOX2I    cell0BBox = m_cells[0]->GetBoundingBox();
+    VECTOR2I stableCenter = cell0BBox.GetCenter();
+
+    int cell0Width = m_colWidths[0];
+    int cell0Height = m_rowHeights[0];
+
+    if( m_cells[0]->GetColSpan() > 1 )
+    {
+        for( int ii = 1; ii < m_cells[0]->GetColSpan(); ++ii )
+            cell0Width += m_colWidths[ii];
+    }
+
+    if( m_cells[0]->GetRowSpan() > 1 )
+    {
+        for( int ii = 1; ii < m_cells[0]->GetRowSpan(); ++ii )
+            cell0Height += m_rowHeights[ii];
+    }
+
+    VECTOR2I localCell0Center( cell0Width / 2, cell0Height / 2 );
+    RotatePoint( localCell0Center, cellAngle );
+
+    if( cellAngle != ANGLE_0 )
+    {
+        for( PCB_TABLECELL* cell : m_cells )
+            cell->Rotate( stableCenter, -cellAngle );
+    }
+
+    VECTOR2I unrotatedOrigin = stableCenter - VECTOR2I( cell0Width / 2, cell0Height / 2 );
+
+    int y = unrotatedOrigin.y;
 
     for( int row = 0; row < GetRowCount(); ++row )
     {
-        int x = GetPosition().x;
-        int rowHeight = m_rowHeights[ row ];
+        int x = unrotatedOrigin.x;
+        int rowHeight = m_rowHeights[row];
 
         for( int col = 0; col < GetColCount(); ++col )
         {
-            int colWidth = m_colWidths[ col ];
+            int colWidth = m_colWidths[col];
 
             PCB_TABLECELL* cell = GetCell( row, col );
-            VECTOR2I       pos( x, y );
 
-            RotatePoint( pos, GetPosition(), cell->GetTextAngle() );
+            if( !cell )
+                continue;
+
+            int cellWidth = colWidth;
+            int cellHeight = rowHeight;
+
+            if( cell->GetColSpan() > 1 || cell->GetRowSpan() > 1 )
+            {
+                for( int ii = col + 1; ii < col + cell->GetColSpan(); ++ii )
+                    cellWidth += m_colWidths[ii];
+
+                for( int ii = row + 1; ii < row + cell->GetRowSpan(); ++ii )
+                    cellHeight += m_rowHeights[ii];
+            }
+
+            VECTOR2I pos( x, y );
+            VECTOR2I end( x + cellWidth, y + cellHeight );
 
             if( cell->GetPosition() != pos )
             {
                 cell->SetPosition( pos );
                 cell->ClearRenderCache();
             }
-
-            VECTOR2I end = VECTOR2I( x + colWidth, y + rowHeight );
-
-            if( cell->GetColSpan() > 1 || cell->GetRowSpan() > 1 )
-            {
-                for( int ii = col + 1; ii < col + cell->GetColSpan(); ++ii )
-                    end.x += m_colWidths[ii];
-
-                for( int ii = row + 1; ii < row + cell->GetRowSpan(); ++ii )
-                    end.y += m_rowHeights[ii];
-            }
-
-            RotatePoint( end, GetPosition(), cell->GetTextAngle() );
 
             if( cell->GetEnd() != end )
             {
@@ -174,6 +226,23 @@ void PCB_TABLE::Normalize()
         }
 
         y += rowHeight;
+    }
+
+    if( cellAngle != ANGLE_0 )
+    {
+        for( PCB_TABLECELL* cell : m_cells )
+            cell->Rotate( stableCenter, cellAngle );
+    }
+
+    BOX2I    newCell0BBox = m_cells[0]->GetBoundingBox();
+    VECTOR2I newCenter = newCell0BBox.GetCenter();
+
+    if( newCenter != stableCenter )
+    {
+        VECTOR2I correction = stableCenter - newCenter;
+
+        for( PCB_TABLECELL* cell : m_cells )
+            cell->Move( correction );
     }
 }
 
@@ -247,46 +316,107 @@ void PCB_TABLE::Rotate( const VECTOR2I& aRotCentre, const EDA_ANGLE& aAngle )
 
 void PCB_TABLE::Flip( const VECTOR2I& aCentre, FLIP_DIRECTION aFlipDirection )
 {
+    BOX2I originalBBox = GetBoundingBox();
+
+    VECTOR2I targetPos;
+
+    if( aFlipDirection == FLIP_DIRECTION::LEFT_RIGHT )
+    {
+        targetPos.x = 2 * aCentre.x - originalBBox.GetRight();
+        targetPos.y = originalBBox.GetTop();
+    }
+    else
+    {
+        targetPos.x = originalBBox.GetLeft();
+        targetPos.y = 2 * aCentre.y - originalBBox.GetBottom();
+    }
+
     EDA_ANGLE originalAngle = m_cells[0]->GetTextAngle();
 
-    Rotate( aCentre, -originalAngle );
-    Normalize();
+    if( originalAngle != ANGLE_0 )
+        Rotate( GetPosition(), -originalAngle );
+
+    VECTOR2I tableOrigin = GetPosition();
 
     for( PCB_TABLECELL* cell : m_cells )
-        cell->Flip( aCentre, aFlipDirection );
+        cell->Flip( tableOrigin, aFlipDirection );
 
     std::vector<PCB_TABLECELL*> oldCells = m_cells;
-    int                         rowOffset = 0;
 
-    for( int row = 0; row < GetRowCount(); ++row )
+    if( aFlipDirection == FLIP_DIRECTION::LEFT_RIGHT )
     {
+        int rowOffset = 0;
+
+        for( int row = 0; row < GetRowCount(); ++row )
+        {
+            for( int col = 0; col < GetColCount(); ++col )
+                m_cells[rowOffset + col] = oldCells[rowOffset + GetColCount() - 1 - col];
+
+            rowOffset += GetColCount();
+        }
+
+        std::map<int, int> newColWidths;
+
         for( int col = 0; col < GetColCount(); ++col )
-            m_cells[ rowOffset + col ] = oldCells[ rowOffset + GetColCount() - 1 - col ];
+            newColWidths[col] = m_colWidths[GetColCount() - 1 - col];
 
-        rowOffset += GetColCount();
+        m_colWidths = std::move( newColWidths );
     }
-
-    VECTOR2I currentPos = GetPosition();
-
-    int      firstWidth = m_colWidths.begin()->second;
-    VECTOR2I translationVector = VECTOR2I( firstWidth, 0 );
-
-    VECTOR2I position = currentPos - translationVector;
-    SetPosition( position );
-
-    std::map<int, int> newColWidths;
-    for( int col = 0; col < GetColCount(); ++col )
+    else // TOP_BOTTOM
     {
-        newColWidths[col] = m_colWidths[GetColCount() - 1 - col];
-    }
+        for( int row = 0; row < GetRowCount(); ++row )
+        {
+            for( int col = 0; col < GetColCount(); ++col )
+            {
+                int oldRow = GetRowCount() - 1 - row;
+                m_cells[row * GetColCount() + col] = oldCells[oldRow * GetColCount() + col];
+            }
+        }
 
-    m_colWidths = std::move( newColWidths );
+        std::map<int, int> newRowHeights;
+
+        for( int row = 0; row < GetRowCount(); ++row )
+            newRowHeights[row] = m_rowHeights[GetRowCount() - 1 - row];
+
+        m_rowHeights = std::move( newRowHeights );
+    }
 
     SetLayer( GetBoard()->FlipLayer( GetLayer() ) );
     Normalize();
 
-    Rotate( aCentre, originalAngle );
-    Normalize();
+    if( originalAngle != ANGLE_0 )
+        Rotate( GetPosition(), originalAngle );
+
+    BOX2I newBBox = GetBoundingBox();
+    Move( targetPos - newBBox.GetPosition() );
+
+    int localWidth = 0;
+    for( int col = 0; col < GetColCount(); ++col )
+        localWidth += m_colWidths[col];
+
+    int localHeight = 0;
+    for( int row = 0; row < GetRowCount(); ++row )
+        localHeight += m_rowHeights[row];
+
+    bool isNowOnFrontSide = IsFrontLayer( GetLayer() );
+
+    VECTOR2I translation( 0, 0 );
+
+    if( aFlipDirection == FLIP_DIRECTION::TOP_BOTTOM )
+    {
+        translation.y = -localHeight;
+    }
+    else // LEFT_RIGHT
+    {
+        if( isNowOnFrontSide )
+            translation.x = localWidth;
+        else
+            translation.x = -localWidth;
+    }
+
+    RotatePoint( translation, originalAngle );
+
+    Move( translation );
 }
 
 
@@ -307,7 +437,7 @@ const BOX2I PCB_TABLE::GetBoundingBox() const
     // Note: a table with no cells is not allowed
     BOX2I bbox = m_cells[0]->GetBoundingBox();
 
-    bbox.Merge( m_cells[ m_cells.size() - 1 ]->GetBoundingBox() );
+    bbox.Merge( m_cells[m_cells.size() - 1]->GetBoundingBox() );
 
     return bbox;
 }
@@ -322,17 +452,19 @@ void PCB_TABLE::DrawBorders( const std::function<void( const VECTOR2I& aPt1, con
     std::vector<VECTOR2I> topRight = GetCell( 0, GetColCount() - 1 )->GetCornersInSequence( drawAngle );
     std::vector<VECTOR2I> bottomRight =
             GetCell( GetRowCount() - 1, GetColCount() - 1 )->GetCornersInSequence( drawAngle );
-    STROKE_PARAMS         stroke;
+    STROKE_PARAMS stroke;
 
     for( int col = 0; col < GetColCount() - 1; ++col )
     {
-        if( StrokeColumns() )
-            stroke = GetSeparatorsStroke();
-        else
-            continue;
-
         for( int row = 0; row < GetRowCount(); ++row )
         {
+            if( row == 0 && StrokeHeaderSeparator() )
+                stroke = GetBorderStroke();
+            else if( StrokeColumns() )
+                stroke = GetSeparatorsStroke();
+            else
+                continue;
+
             PCB_TABLECELL* cell = GetCell( row, col );
 
             if( cell->GetColSpan() == 0 )
@@ -386,12 +518,11 @@ void PCB_TABLE::DrawBorders( const std::function<void( const VECTOR2I& aPt1, con
 
 std::shared_ptr<SHAPE> PCB_TABLE::GetEffectiveShape( PCB_LAYER_ID aLayer, FLASHING aFlash ) const
 {
-    EDA_ANGLE             drawAngle = GetCell( 0, 0 )->GetDrawRotation();
-    std::vector<VECTOR2I> topLeft = GetCell( 0, 0 )->GetCornersInSequence( drawAngle );
-    std::vector<VECTOR2I> bottomLeft = GetCell( GetRowCount() - 1, 0 )->GetCornersInSequence( drawAngle );
-    std::vector<VECTOR2I> topRight = GetCell( 0, GetColCount() - 1 )->GetCornersInSequence( drawAngle );
-    std::vector<VECTOR2I> bottomRight =
-            GetCell( GetRowCount() - 1, GetColCount() - 1 )->GetCornersInSequence( drawAngle );
+    EDA_ANGLE             angle = GetCell( 0, 0 )->GetDrawRotation();
+    std::vector<VECTOR2I> topLeft = GetCell( 0, 0 )->GetCornersInSequence( angle );
+    std::vector<VECTOR2I> bottomLeft = GetCell( GetRowCount() - 1, 0 )->GetCornersInSequence( angle );
+    std::vector<VECTOR2I> topRight = GetCell( 0, GetColCount() - 1 )->GetCornersInSequence( angle );
+    std::vector<VECTOR2I> bottomRight = GetCell( GetRowCount() - 1, GetColCount() - 1 )->GetCornersInSequence( angle );
 
     std::shared_ptr<SHAPE_COMPOUND> shape = std::make_shared<SHAPE_COMPOUND>();
 
@@ -414,9 +545,8 @@ std::shared_ptr<SHAPE> PCB_TABLE::GetEffectiveShape( PCB_LAYER_ID aLayer, FLASHI
 }
 
 
-void PCB_TABLE::TransformShapeToPolygon( SHAPE_POLY_SET& aBuffer, PCB_LAYER_ID aLayer,
-                                         int aClearance, int aMaxError, ERROR_LOC aErrorLoc,
-                                         bool aIgnoreLineWidth ) const
+void PCB_TABLE::TransformShapeToPolygon( SHAPE_POLY_SET& aBuffer, PCB_LAYER_ID aLayer, int aClearance, int aMaxError,
+                                         ERROR_LOC aErrorLoc, bool aIgnoreLineWidth ) const
 {
     int gap = aClearance;
 
@@ -431,8 +561,66 @@ void PCB_TABLE::TransformShapeToPolygon( SHAPE_POLY_SET& aBuffer, PCB_LAYER_ID a
 }
 
 
-INSPECT_RESULT PCB_TABLE::Visit( INSPECTOR aInspector, void* aTestData,
-                                 const std::vector<KICAD_T>& aScanTypes )
+void PCB_TABLE::TransformGraphicItemsToPolySet( SHAPE_POLY_SET& aBuffer, int aMaxError, ERROR_LOC aErrorLoc,
+                                                KIGFX::RENDER_SETTINGS* aRenderSettings ) const
+{
+    // Convert graphic items (segments and texts) to a set of polygonal shapes
+    // aRenderSettings is used to draw lines when line style != LINE_STYLE::SOLID, so
+    // if nullptr line style will be ignored
+    DrawBorders(
+            [&aBuffer, aMaxError, aErrorLoc, aRenderSettings]( const VECTOR2I& ptA, const VECTOR2I& ptB,
+                                                               const STROKE_PARAMS& stroke )
+            {
+                int        lineWidth = stroke.GetWidth();
+                LINE_STYLE lineStyle = stroke.GetLineStyle();
+
+                if( lineStyle <= LINE_STYLE::FIRST_TYPE || aRenderSettings == nullptr )
+                    TransformOvalToPolygon( aBuffer, ptA, ptB, lineWidth, aMaxError, aErrorLoc );
+                else
+                {
+                    SHAPE_SEGMENT              seg( ptA, ptB );
+                    KIGFX::PCB_RENDER_SETTINGS defaultRenderSettings;
+
+                    KIGFX::RENDER_SETTINGS* currSettings = aRenderSettings;
+
+                    if( currSettings == nullptr )
+                        currSettings = &defaultRenderSettings;
+
+                    STROKE_PARAMS::Stroke( &seg, lineStyle, lineWidth, currSettings,
+                            [&]( VECTOR2I a, VECTOR2I b )
+                            {
+                                if( a == b )
+                                    TransformCircleToPolygon( aBuffer, a, lineWidth / 2, aMaxError, aErrorLoc );
+                                else
+                                    TransformOvalToPolygon( aBuffer, a + 1, b, lineWidth, aMaxError, aErrorLoc );
+                            } );
+                }
+            } );
+
+    for( PCB_TABLECELL* cell : m_cells )
+    {
+        cell->TransformTextToPolySet( aBuffer, 0, aMaxError, ERROR_INSIDE );
+    }
+}
+
+
+void PCB_TABLE::TransformShapeToPolySet( SHAPE_POLY_SET& aBuffer, PCB_LAYER_ID aLayer,
+                                         int aClearance, int aMaxError, ERROR_LOC aErrorLoc,
+                                         KIGFX::RENDER_SETTINGS* aRenderSettings ) const
+{
+    if( aClearance <= 0 )
+        TransformGraphicItemsToPolySet( aBuffer, aMaxError, aErrorLoc, aRenderSettings );
+    else
+    {
+        SHAPE_POLY_SET tmp;
+        TransformGraphicItemsToPolySet( tmp, aMaxError, aErrorLoc, aRenderSettings );
+        tmp.Inflate( aClearance, CORNER_STRATEGY::CHAMFER_ALL_CORNERS, aMaxError );
+        aBuffer.Append( tmp );
+    }
+}
+
+
+INSPECT_RESULT PCB_TABLE::Visit( INSPECTOR aInspector, void* aTestData, const std::vector<KICAD_T>& aScanTypes )
 {
     for( KICAD_T scanType : aScanTypes )
     {
@@ -458,7 +646,7 @@ INSPECT_RESULT PCB_TABLE::Visit( INSPECTOR aInspector, void* aTestData,
 
 wxString PCB_TABLE::GetItemDescription( UNITS_PROVIDER* aUnitsProvider, bool aFull ) const
 {
-    return wxString::Format( _( "%d Column Table" ), m_colCount );
+    return wxString::Format( _( "%d column table" ), m_colCount );
 }
 
 
@@ -488,6 +676,12 @@ bool PCB_TABLE::HitTest( const BOX2I& aRect, bool aContained, int aAccuracy ) co
         return rect.Contains( GetBoundingBox() );
 
     return rect.Intersects( GetBoundingBox() );
+}
+
+
+bool PCB_TABLE::HitTest( const SHAPE_LINE_CHAIN& aPoly, bool aContained ) const
+{
+    return KIGEOM::ShapeHitTest( aPoly, *GetEffectiveShape(), aContained );
 }
 
 
@@ -640,10 +834,10 @@ static struct PCB_TABLE_DESC
 
         if( lineStyleEnum.Choices().GetCount() == 0 )
         {
-            lineStyleEnum.Map( LINE_STYLE::SOLID, _HKI( "Solid" ) )
-                         .Map( LINE_STYLE::DASH, _HKI( "Dashed" ) )
-                         .Map( LINE_STYLE::DOT, _HKI( "Dotted" ) )
-                         .Map( LINE_STYLE::DASHDOT, _HKI( "Dash-Dot" ) )
+            lineStyleEnum.Map( LINE_STYLE::SOLID,      _HKI( "Solid" ) )
+                         .Map( LINE_STYLE::DASH,       _HKI( "Dashed" ) )
+                         .Map( LINE_STYLE::DOT,        _HKI( "Dotted" ) )
+                         .Map( LINE_STYLE::DASHDOT,    _HKI( "Dash-Dot" ) )
                          .Map( LINE_STYLE::DASHDOTDOT, _HKI( "Dash-Dot-Dot" ) );
         }
 

@@ -25,8 +25,13 @@
 #define PCBNEW_ROUTER_PNS_LINK_HOLDER_H_
 
 #include <core/kicad_algo.h>
+#include <algorithm>
+
+#include <wx/log.h>
+
 #include "pns_item.h"
 #include "pns_linked_item.h"
+
 
 namespace PNS
 {
@@ -40,8 +45,12 @@ public:
     ///< Add a reference to an item registered in a #NODE that is a part of this line.
     void Link( LINKED_ITEM* aLink )
     {
-        wxCHECK_MSG( !alg::contains( m_links, aLink ), /* void */,
-                     "Trying to link an item that is already linked" );
+        if( alg::contains( m_links, aLink ) )
+        {
+            wxLogDebug( wxT( "PNS LINK_HOLDER::Link: item %p already linked to %p" ), aLink, this );
+            return;
+        }
+
         m_links.push_back( aLink );
     }
 
@@ -49,7 +58,7 @@ public:
     {
         wxCHECK_MSG( alg::contains( m_links, aLink ), /* void */,
                      "Trying to unlink an item that is not linked" );
-        alg::delete_matching( m_links, aLink );
+        std::erase( m_links, aLink );
     }
 
     ///< Return the list of links from the owning node that constitute this

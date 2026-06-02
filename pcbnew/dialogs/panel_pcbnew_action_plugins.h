@@ -21,6 +21,7 @@
 #include "panel_pcbnew_action_plugins_base.h"
 
 class PLUGINS_GRID_TRICKS;
+class DIALOG_HTML_REPORTER;
 
 
 class PANEL_PCBNEW_ACTION_PLUGINS : public PANEL_PCBNEW_ACTION_PLUGINS_BASE
@@ -76,8 +77,11 @@ private:
     };
 
     wxBitmapBundle m_genericIcon;
+    DIALOG_HTML_REPORTER* m_errorDialog;
+    bool m_allowErrorDialog;
 
     void SwapRows( int aRowA, int aRowB );
     void SelectRow( int aRow );
+    void onPluginAvailabilityChanged( wxCommandEvent& aEvt );
 };
 

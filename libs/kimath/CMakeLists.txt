@@ -11,6 +11,7 @@ set( KIMATH_SRCS
     src/transform.cpp
     src/trigo.cpp
 
+    src/geometry/arc_chord_params.cpp
     src/geometry/corner_operations.cpp
     src/geometry/distribute.cpp
     src/geometry/eda_angle.cpp
@@ -32,6 +33,7 @@ set( KIMATH_SRCS
     src/geometry/shape_compound.cpp
     src/geometry/shape_file_io.cpp
     src/geometry/shape_line_chain.cpp
+    src/geometry/shape_nearest_points.cpp
     src/geometry/shape_poly_set.cpp
     src/geometry/shape_rect.cpp
     src/geometry/shape_segment.cpp
@@ -52,7 +54,6 @@ add_library( kimath STATIC
 target_link_libraries( kimath
     core
     clipper2
-    othermath
     rtree
     Boost::headers
     ${wxWidgets_LIBRARIES}      # wxLogDebug, wxASSERT

@@ -21,9 +21,8 @@
 #include "panel_display_options_base.h"
 
 class PCBNEW_SETTINGS;
-class FOOTPRINT_EDITOR_SETTINGS;
 class APP_SETTINGS_BASE;
-class GAL_OPTIONS_PANEL;
+class PANEL_GAL_OPTIONS;
 
 
 class PANEL_DISPLAY_OPTIONS : public PANEL_DISPLAY_OPTIONS_BASE
@@ -32,25 +31,16 @@ public:
     PANEL_DISPLAY_OPTIONS( wxWindow* aParent, APP_SETTINGS_BASE* aAppSettings );
     ~PANEL_DISPLAY_OPTIONS() override;
 
-    bool Show( bool aShow ) override;
-
     bool TransferDataFromWindow() override;
     bool TransferDataToWindow() override;
 
     void ResetPanel() override;
 
 private:
-    void OnAddLayerItem( wxCommandEvent& event ) override;
-    void OnDeleteLayerItem( wxCommandEvent& event ) override;
-    void onLayerChange( wxGridEvent& event ) override;
-
     void loadPCBSettings( PCBNEW_SETTINGS* aCfg );
-    void loadFPSettings( const FOOTPRINT_EDITOR_SETTINGS* aCfg );
-
-    int getNextAvailableLayer() const;
 
 private:
     bool               m_isPCBEdit;
-    GAL_OPTIONS_PANEL* m_galOptsPanel;
+    PANEL_GAL_OPTIONS* m_galOptsPanel;
 };
 

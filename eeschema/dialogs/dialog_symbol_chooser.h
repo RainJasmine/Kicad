@@ -77,6 +77,9 @@ public:
      */
     std::vector<std::pair<FIELD_T, wxString>> GetFields() const;
 
+    bool GetKeepSymbol() { return m_keepSymbol->GetValue(); }
+    bool GetPlaceAllUnits() { return m_useUnits->GetValue(); }
+
 public:
     static std::mutex         g_Mutex;
 
@@ -84,6 +87,11 @@ protected:
     PANEL_SYMBOL_CHOOSER*     m_chooserPanel;
     wxCheckBox*               m_keepSymbol;
     wxCheckBox*               m_useUnits;
+
+private:
+    void onLazyLoadUpdate();
+
+    wxString                  m_originalTitle;
 };
 
 #endif /* DIALOG_SYMBOL_CHOOSER_H */

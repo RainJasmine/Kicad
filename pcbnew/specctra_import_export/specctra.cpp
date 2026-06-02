@@ -617,7 +617,7 @@ void SPECCTRA_DB::doSPECCTRA_LAYER_PAIR( SPECCTRA_LAYER_PAIR* growth )
     if( NextTok() != T_NUMBER )
         Expecting( T_NUMBER );
 
-    growth->layer_weight = strtod( CurText(), 0 );
+     growth->layer_weight = parseDouble();
 
     NeedRIGHT();
 }
@@ -1088,7 +1088,7 @@ void SPECCTRA_DB::doPATH( PATH* growth )
     if( NextTok() != T_NUMBER )
         Expecting( "aperture_width" );
 
-    growth->aperture_width = strtod( CurText(), nullptr );
+    growth->aperture_width = parseDouble();
 
     POINT   ptTemp;
 
@@ -1099,12 +1099,12 @@ void SPECCTRA_DB::doPATH( PATH* growth )
         if( tok != T_NUMBER )
             Expecting( T_NUMBER );
 
-        ptTemp.x = strtod( CurText(), nullptr );
+        ptTemp.x = parseDouble();
 
         if( NextTok() != T_NUMBER )
             Expecting( T_NUMBER );
 
-        ptTemp.y = strtod( CurText(), nullptr );
+        ptTemp.y = parseDouble();
 
         growth->points.push_back( ptTemp );
 
@@ -1135,22 +1135,22 @@ void SPECCTRA_DB::doRECTANGLE( RECTANGLE* growth )
     if( NextTok() != T_NUMBER )
         Expecting( T_NUMBER );
 
-    growth->point0.x = strtod( CurText(), nullptr );
+    growth->point0.x = parseDouble();
 
     if( NextTok() != T_NUMBER )
         Expecting( T_NUMBER );
 
-    growth->point0.y = strtod( CurText(), nullptr );
+    growth->point0.y = parseDouble();
 
     if( NextTok() != T_NUMBER )
         Expecting( T_NUMBER );
 
-    growth->point1.x = strtod( CurText(), nullptr );
+    growth->point1.x = parseDouble();
 
     if( NextTok() != T_NUMBER )
         Expecting( T_NUMBER );
 
-    growth->point1.y = strtod( CurText(), nullptr );
+    growth->point1.y = parseDouble();
 
     NeedRIGHT();
 }
@@ -1166,18 +1166,18 @@ void SPECCTRA_DB::doCIRCLE( CIRCLE* growth )
     if( NextTok() != T_NUMBER )
         Expecting( T_NUMBER );
 
-    growth->diameter = strtod( CurText(), 0 );
+    growth->diameter = parseDouble();
 
     tok = NextTok();
 
     if( tok == T_NUMBER )
     {
-        growth->vertex.x = strtod( CurText(), 0 );
+        growth->vertex.x = parseDouble();
 
         if( NextTok() != T_NUMBER )
             Expecting( T_NUMBER );
 
-        growth->vertex.y = strtod( CurText(), 0 );
+        growth->vertex.y = parseDouble();
 
         tok = NextTok();
     }
@@ -1195,19 +1195,19 @@ void SPECCTRA_DB::doQARC( QARC* growth )
     if( NextTok() != T_NUMBER )
         Expecting( T_NUMBER );
 
-    growth->aperture_width = strtod( CurText(), 0 );
+    growth->aperture_width = parseDouble();
 
     for( int i = 0; i < 3; ++i )
     {
         if( NextTok() != T_NUMBER )
             Expecting( T_NUMBER );
 
-        growth->vertex[i].x = strtod( CurText(), 0 );
+        growth->vertex[i].x = parseDouble();
 
         if( NextTok() != T_NUMBER )
             Expecting( T_NUMBER );
 
-        growth->vertex[i].y = strtod( CurText(), 0 );
+        growth->vertex[i].y = parseDouble();
     }
 
     NeedRIGHT();
@@ -1780,7 +1780,7 @@ void SPECCTRA_DB::doGRID( GRID* growth )
         if( NextTok() != T_NUMBER )
             Expecting( T_NUMBER );
 
-        growth->m_dimension = strtod( CurText(), 0 );
+        growth->m_dimension = parseDouble();
         tok = NextTok();
 
         if( tok == T_LEFT )
@@ -1810,7 +1810,7 @@ void SPECCTRA_DB::doGRID( GRID* growth )
                     if( NextTok() != T_NUMBER )
                         Expecting( T_NUMBER );
 
-                    growth->m_offset = strtod( CurText(), 0 );
+                    growth->m_offset = parseDouble();
 
                     if( NextTok() != T_RIGHT )
                         Expecting( T_RIGHT );
@@ -1881,12 +1881,12 @@ void SPECCTRA_DB::doPLACE( PLACE* growth )
     {
         POINT   point;
 
-        point.x = strtod( CurText(), 0 );
+        point.x = parseDouble();
 
         if( NextTok() != T_NUMBER )
             Expecting( T_NUMBER );
 
-        point.y = strtod( CurText(), 0 );
+        point.y = parseDouble();
 
         growth->SetVertex( point );
 
@@ -1900,7 +1900,7 @@ void SPECCTRA_DB::doPLACE( PLACE* growth )
         if( NextTok() != T_NUMBER )
             Expecting( "rotation" );
 
-        growth->SetRotation( strtod( CurText(), 0 ) );
+        growth->SetRotation( parseDouble() );
     }
 
     while( ( tok = NextTok() ) != T_RIGHT )
@@ -2420,7 +2420,7 @@ void SPECCTRA_DB::doPIN( PIN* growth )
             if( NextTok() != T_NUMBER )
                 Expecting( T_NUMBER );
 
-            growth->SetRotation( strtod( CurText(), 0 ) );
+            growth->SetRotation( parseDouble() );
             NeedRIGHT();
         }
         else
@@ -2433,12 +2433,12 @@ void SPECCTRA_DB::doPIN( PIN* growth )
             if( NextTok() != T_NUMBER )
                 Expecting( T_NUMBER );
 
-            growth->m_vertex.x = strtod( CurText(), 0 );
+            growth->m_vertex.x = parseDouble();
 
             if( NextTok() != T_NUMBER )
                 Expecting( T_NUMBER );
 
-            growth->m_vertex.y = strtod( CurText(), 0 );
+            growth->m_vertex.y = parseDouble();
         }
     }
 }
@@ -2502,8 +2502,8 @@ void SPECCTRA_DB::doLIBRARY( LIBRARY* growth )
 
 void SPECCTRA_DB::doNET( NET* growth )
 {
-    T           tok = NextTok();
-    PIN_REFS*   pin_refs;
+    T                     tok = NextTok();
+    std::vector<PIN_REF>* pin_refs;
 
     /*  <net_descriptor >::=
         (net <net_id >
@@ -3115,12 +3115,12 @@ void SPECCTRA_DB::doWIRE_VIA( WIRE_VIA* growth )
 
     while( ( tok = NextTok() ) == T_NUMBER )
     {
-        point.x = strtod( CurText(), 0 );
+        point.x = parseDouble();
 
         if( NextTok() != T_NUMBER )
             Expecting( "vertex.y" );
 
-        point.y = strtod( CurText(), 0 );
+        point.y = parseDouble();
 
         growth->m_vertexes.push_back( point );
     }
@@ -3712,6 +3712,7 @@ void SPECCTRA_DB::ExportPCB( const wxString& aFilename, bool aNameChange )
             m_pcb->m_pcbname = TO_UTF8( aFilename );
 
         m_pcb->Format( &formatter, 0 );
+        formatter.Finish();
     }
 }
 
@@ -3723,6 +3724,7 @@ void SPECCTRA_DB::ExportSESSION( const wxString& aFilename )
         FILE_OUTPUTFORMATTER formatter( aFilename, wxT( "wt" ), m_quote_char[0] );
 
         m_session->Format( &formatter, 0 );
+        formatter.Finish();
     }
 }
 
@@ -3898,7 +3900,7 @@ void PARSER::FormatContents( OUTPUTFORMATTER* out, int nestLevel )
     out->Print( nestLevel, "(host_cad \"%s\")\n", host_cad.c_str() );
     out->Print( nestLevel, "(host_version \"%s\")\n", host_version.c_str() );
 
-    for( STRINGS::iterator i = constants.begin(); i != constants.end(); )
+    for( auto i = constants.begin(); i != constants.end(); )
     {
         const std::string& s1 = *i++;
         const std::string& s2 = *i++;

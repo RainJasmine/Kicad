@@ -29,6 +29,7 @@
 #include <wx/generic/gridctrl.h>
 #include <wx/generic/grideditors.h>
 #include <vector>
+#include <kicommon.h>
 
 class wxGrid;
 enum class BITMAPS : unsigned int;
@@ -36,7 +37,7 @@ enum class BITMAPS : unsigned int;
 
 //---- Grid helpers: custom wxGridCellRenderer that renders icon and a label ------------
 
-class GRID_CELL_ICON_TEXT_RENDERER : public wxGridCellStringRenderer
+class KICOMMON_API GRID_CELL_ICON_TEXT_RENDERER : public wxGridCellStringRenderer
 {
 public:
     /**
@@ -71,10 +72,10 @@ private:
 //
 // Note: use with read only cells
 
-class GRID_CELL_ICON_RENDERER : public wxGridCellRenderer
+class KICOMMON_API GRID_CELL_ICON_RENDERER : public wxGridCellRenderer
 {
 public:
-    GRID_CELL_ICON_RENDERER( const wxBitmap& icon );
+    GRID_CELL_ICON_RENDERER( const wxBitmapBundle& aIcon );
 
     void Draw( wxGrid& aGrid, wxGridCellAttr& aAttr, wxDC& aDC,
                const wxRect& aRect, int aRow, int aCol, bool isSelected ) override;
@@ -83,14 +84,14 @@ public:
     wxGridCellRenderer* Clone() const override;
 
 private:
-    const wxBitmap& m_icon;
+    wxBitmapBundle m_icon;
 };
 
 //---- Grid helpers: custom wxGridCellRenderer that renders just an icon from wxArtprovider -
 //
 // Note: use with read only cells
 
-class GRID_CELL_STATUS_ICON_RENDERER : public wxGridCellRenderer
+class KICOMMON_API GRID_CELL_STATUS_ICON_RENDERER : public wxGridCellRenderer
 {
 public:
     GRID_CELL_STATUS_ICON_RENDERER( int aStatus );
@@ -102,8 +103,8 @@ public:
     wxGridCellRenderer* Clone() const override;
 
 private:
-    int      m_status;
-    wxBitmap m_bitmap;
+    int            m_status;
+    wxBitmapBundle m_bitmap;
 };
 
 
@@ -112,7 +113,7 @@ private:
 //
 // Note: this implementation is an adaptation of wxGridCellChoiceEditor
 
-class GRID_CELL_ICON_TEXT_POPUP : public wxGridCellEditor
+class KICOMMON_API GRID_CELL_ICON_TEXT_POPUP : public wxGridCellEditor
 {
 public:
     GRID_CELL_ICON_TEXT_POPUP( const std::vector<BITMAPS>& icons, const wxArrayString& names );
@@ -137,31 +138,6 @@ protected:
     wxString             m_value;
 
     wxDECLARE_NO_COPY_CLASS( GRID_CELL_ICON_TEXT_POPUP );
-};
-
-
-//---- Grid helpers: custom wxGridCellTextEditor ------------------------------------------
-//
-// Note: This is used to mark WX_GRID cell as nullable
-class GRID_CELL_MARK_AS_NULLABLE : public wxGridCellTextEditor
-{
-public:
-    GRID_CELL_MARK_AS_NULLABLE() : m_isNullable( true ) {}
-    GRID_CELL_MARK_AS_NULLABLE( bool aIsNullable ) : m_isNullable( aIsNullable ) {}
-
-    wxGridCellEditor* Clone() const override
-    {
-        return new GRID_CELL_MARK_AS_NULLABLE( m_isNullable );
-    }
-
-    void Reset() override {}
-
-    bool IsNullable() { return m_isNullable; }
-
-protected:
-    bool m_isNullable;
-
-    wxDECLARE_NO_COPY_CLASS( GRID_CELL_MARK_AS_NULLABLE );
 };
 
 

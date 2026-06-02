@@ -22,19 +22,24 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include "render_3d_raytrace_base.h"
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <thread>
 
-#include "render_3d_raytrace_base.h"
+#include <wx/log.h>
+
 #include "mortoncodes.h"
 #include "../color_rgba.h"
 #include "3d_fastmath.h"
 #include "3d_math.h"
 #include <thread_pool.h>
 #include <core/profile.h>        // To use GetRunningMicroSecs or another profiling utility
-#include <wx/log.h>
+
+#include <pad.h>
+#include <pcb_track.h>
 
 
 #ifdef USE_SRGB_SPACE
@@ -253,31 +258,32 @@ void RENDER_3D_RAYTRACE_BASE::renderTracing( uint8_t* ptrPBO, REPORTER* aStatusR
     thread_pool& tp = GetKiCadThreadPool();
     const int timeLimit = m_blockPositions.size() > 40000 ? 750 : 400;
 
-    auto processBlocks = [&]()
-    {
-        for( size_t iBlock = currentBlock.fetch_add( 1 );
-                    iBlock < m_blockPositions.size();
-                    iBlock = currentBlock.fetch_add( 1 ) )
-        {
-            if( !m_blockPositionsWasProcessed[iBlock] )
+    auto processBlocks =
+            [&]()
             {
-                renderBlockTracing( ptrPBO, iBlock );
-                m_blockPositionsWasProcessed[iBlock] = 1;
-                numBlocksRendered++;
-            }
+                for( size_t iBlock = currentBlock.fetch_add( 1 );
+                            iBlock < m_blockPositions.size();
+                            iBlock = currentBlock.fetch_add( 1 ) )
+                {
+                    if( !m_blockPositionsWasProcessed[iBlock] )
+                    {
+                        renderBlockTracing( ptrPBO, iBlock );
+                        m_blockPositionsWasProcessed[iBlock] = 1;
+                        numBlocksRendered++;
+                    }
 
-            auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - startTime );
+                    auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - startTime );
 
-            if( diff.count() > timeLimit )
-                break;
-        }
-    };
+                    if( diff.count() > timeLimit )
+                        break;
+                }
+            };
 
     BS::multi_future<void> futures;
 
     for( size_t i = 0; i < tp.get_thread_count(); ++i )
-        futures.push_back( tp.submit( processBlocks ) );
+        futures.push_back( tp.submit_task( processBlocks ) );
 
     futures.wait();
 
@@ -395,44 +401,18 @@ void RENDER_3D_RAYTRACE_BASE::renderAntiAliasPackets( const SFVEC4F* aBgColorY,
 
             unsigned int nodex1y1 = 0;
 
-            if( ( x < ( RAYPACKET_DIM - 1 ) ) && ( y < ( RAYPACKET_DIM - 1 ) )
-              && idx1y1 < RAYPACKET_RAYS_PER_PACKET )
-                nodex1y1 = aHitPck_X0Y0[idx1y1].m_HitInfo.m_acc_node_info;
-
-            // If all notes are equal we assume there was no change on the object hits.
-            if( ( ( nodex0y0 == nodex1y0 ) || ( nodex1y0 == 0 ) )
-              && ( ( nodex0y0 == nodex0y1 ) || ( nodex0y1 == 0 ) )
-              && ( ( nodex0y0 == nodex1y1 ) || ( nodex1y1 == 0 ) )
-              && ( nodex0y0 == node_AA_x0y0 ) )
+            if( ( x < ( RAYPACKET_DIM - 1 ) )
+                && ( y < ( RAYPACKET_DIM - 1 ) )
+                && idx1y1 < RAYPACKET_RAYS_PER_PACKET )
             {
-                /// @todo Either get rid of the if statement above or do something with the
-                ///       commented out code below.
-                // Option 1
-                // This option will give a very good quality on reflections (slow)
-                /*
-                if( m_accelerator->Intersect( rayAA, hitAA, nodex0y0 ) )
-                {
-                    aOutHitColor[i] += shadeHit( aBgColorY[y], rayAA, hitAA, false, 0 );
-                }
-                else
-                {
-                    if( m_accelerator->Intersect( rayAA, hitAA ) )
-                        aOutHitColor[i] += shadeHit( aBgColorY[y], rayAA, hitAA, false, 0 );
-                    else
-                        aOutHitColor[i] += hitColor[i];
-                }
-                */
-
-                // Option 2
-                // Trace again with the same node,
-                // then if miss just give the same color as before
-                //if( m_accelerator->Intersect( rayAA, hitAA, nodex0y0 ) )
-                //    aOutHitColor[i] += shadeHit( aBgColorY[y], rayAA, hitAA, false, 0 );
-
-                // Option 3
-                // Use same color
+                nodex1y1 = aHitPck_X0Y0[idx1y1].m_HitInfo.m_acc_node_info;
             }
-            else
+
+            // If all nodes are equal we assume there was no change on the object hits.
+            if(   ( nodex0y0 != nodex1y0 && nodex1y0 != 0 )
+               || ( nodex0y0 != nodex0y1 && nodex0y1 != 0 )
+               || ( nodex0y0 != nodex1y1 && nodex1y1 != 0 )
+               || ( nodex0y0 != node_AA_x0y0 ) )
             {
                 // Try to intersect the different nodes
                 // It tests the possible combination of hitted or not hitted points
@@ -441,26 +421,40 @@ void RENDER_3D_RAYTRACE_BASE::renderAntiAliasPackets( const SFVEC4F* aBgColorY,
                 if( nodex0y0 != 0 )
                     hitted |= m_accelerator->Intersect( rayAA, hitAA, nodex0y0 );
 
-                if( ( nodex1y0 != 0 ) && ( nodex0y0 != nodex1y0 ) )
+                if( nodex1y0 != 0
+                        && nodex0y0 != nodex1y0 )
+                {
                     hitted |= m_accelerator->Intersect( rayAA, hitAA, nodex1y0 );
+                }
 
-                if( ( nodex0y1 != 0 ) && ( nodex0y0 != nodex0y1 ) && ( nodex1y0 != nodex0y1 ) )
+                if( nodex0y1 != 0
+                        && nodex0y0 != nodex0y1
+                        && nodex1y0 != nodex0y1 )
+                {
                     hitted |= m_accelerator->Intersect( rayAA, hitAA, nodex0y1 );
+                }
 
-                if( ( nodex1y1 != 0 ) && ( nodex0y0 != nodex1y1 ) && ( nodex0y1 != nodex1y1 ) &&
-                    ( nodex1y0 != nodex1y1 ) )
+                if( nodex1y1 != 0
+                        && nodex0y0 != nodex1y1
+                        && nodex0y1 != nodex1y1
+                        && nodex1y0 != nodex1y1 )
+                {
                     hitted |= m_accelerator->Intersect( rayAA, hitAA, nodex1y1 );
+                }
 
-                if( (node_AA_x0y0 != 0 ) && ( nodex0y0 != node_AA_x0y0 ) &&
-                    ( nodex0y1 != node_AA_x0y0 ) && ( nodex1y0 != node_AA_x0y0 ) &&
-                    ( nodex1y1 != node_AA_x0y0 ) )
+                if( node_AA_x0y0 != 0
+                        && nodex0y0 != node_AA_x0y0
+                        && nodex0y1 != node_AA_x0y0
+                        && nodex1y0 != node_AA_x0y0
+                        && nodex1y1 != node_AA_x0y0 )
+                {
                     hitted |= m_accelerator->Intersect( rayAA, hitAA, node_AA_x0y0 );
+                }
 
                 if( hitted )
                 {
                     // If we got any result, shade it
-                    aOutHitColor[i] = shadeHit( aBgColorY[y], rayAA, hitAA, false, 0,
-                                                is_testShadow );
+                    aOutHitColor[i] = shadeHit( aBgColorY[y], rayAA, hitAA, false, 0, is_testShadow );
                 }
                 else
                 {
@@ -469,8 +463,7 @@ void RENDER_3D_RAYTRACE_BASE::renderAntiAliasPackets( const SFVEC4F* aBgColorY,
 
                     // It was missed the 'last nodes' so, trace a ray from the beginning
                     if( m_accelerator->Intersect( rayAA, hitAA ) )
-                        aOutHitColor[i] = shadeHit( aBgColorY[y], rayAA, hitAA, false, 0,
-                                                    is_testShadow );
+                        aOutHitColor[i] = shadeHit( aBgColorY[y], rayAA, hitAA, false, 0, is_testShadow );
                 }
             }
         }
@@ -486,9 +479,12 @@ void RENDER_3D_RAYTRACE_BASE::renderBlockTracing( uint8_t* ptrPBO, signed int iB
     // Initialize ray packets
     const SFVEC2UI& blockPos = m_blockPositions[iBlock];
     const SFVEC2I blockPosI = SFVEC2I( blockPos.x + m_xoffset, blockPos.y + m_yoffset );
+    const SFVEC2F randDisp = ( m_camera.GetProjection() == PROJECTION_TYPE::ORTHO ) ?
+                             SFVEC2F( 0.0f, 0.0f ) :
+                             SFVEC2F( DISP_FACTOR, DISP_FACTOR );
 
-    RAYPACKET blockPacket( m_camera, (SFVEC2F) blockPosI + SFVEC2F( DISP_FACTOR, DISP_FACTOR ),
-                           SFVEC2F( DISP_FACTOR, DISP_FACTOR ) /* Displacement random factor */ );
+    RAYPACKET blockPacket( m_camera, (SFVEC2F) blockPosI + randDisp,
+                           randDisp /* Displacement random factor */ );
 
 
     HITINFO_PACKET hitPacket_X0Y0[RAYPACKET_RAYS_PER_PACKET];
@@ -566,7 +562,7 @@ void RENDER_3D_RAYTRACE_BASE::renderBlockTracing( uint8_t* ptrPBO, signed int iB
         HITINFO_PACKET_init( hitPacket_AA_X1Y1 );
 
         RAYPACKET blockPacket_AA_X1Y1( m_camera, (SFVEC2F) blockPosI + SFVEC2F( 0.5f, 0.5f ),
-                                       SFVEC2F( DISP_FACTOR, DISP_FACTOR ) );
+                                       randDisp );
 
         if( !m_accelerator->Intersect( blockPacket_AA_X1Y1, hitPacket_AA_X1Y1 ) )
         {
@@ -603,16 +599,16 @@ void RENDER_3D_RAYTRACE_BASE::renderBlockTracing( uint8_t* ptrPBO, signed int iB
         RAY blockRayPck_AA_X1Y1_half[RAYPACKET_RAYS_PER_PACKET];
 
         RAYPACKET_InitRays_with2DDisplacement(
-                m_camera, (SFVEC2F) blockPosI + SFVEC2F( 0.5f - DISP_FACTOR, DISP_FACTOR ),
-                SFVEC2F( DISP_FACTOR, DISP_FACTOR ), blockRayPck_AA_X1Y0 );
+                m_camera, (SFVEC2F) blockPosI + SFVEC2F( 0.5f - randDisp.x, randDisp.y ),
+                randDisp, blockRayPck_AA_X1Y0 );
 
         RAYPACKET_InitRays_with2DDisplacement(
-                m_camera, (SFVEC2F) blockPosI + SFVEC2F( DISP_FACTOR, 0.5f - DISP_FACTOR ),
-                SFVEC2F( DISP_FACTOR, DISP_FACTOR ), blockRayPck_AA_X0Y1 );
+                m_camera, (SFVEC2F) blockPosI + SFVEC2F( randDisp.x, 0.5f - randDisp.y ),
+                randDisp, blockRayPck_AA_X0Y1 );
 
         RAYPACKET_InitRays_with2DDisplacement(
-                m_camera, (SFVEC2F) blockPosI + SFVEC2F( 0.25f - DISP_FACTOR, 0.25f - DISP_FACTOR ),
-                SFVEC2F( DISP_FACTOR, DISP_FACTOR ), blockRayPck_AA_X1Y1_half );
+                m_camera, (SFVEC2F) blockPosI + SFVEC2F( 0.25f - randDisp.x, 0.25f - randDisp.y ),
+                randDisp, blockRayPck_AA_X1Y1_half );
 
         renderAntiAliasPackets( bgColor, hitPacket_X0Y0, hitPacket_AA_X1Y1, blockRayPck_AA_X1Y0,
                                 hitColor_AA_X1Y0 );
@@ -1429,10 +1425,7 @@ SFVEC4F RENDER_3D_RAYTRACE_BASE::shadeHit( const SFVEC4F& aBgColor, const RAY& a
     const SFVEC4F diffuseColorObj =
             SFVEC4F( aHitInfo.pHitObject->GetDiffuseColor( aHitInfo ), 1.0f );
 
-#if USE_EXPERIMENTAL_SOFT_SHADOWS
-    bool is_aa_enabled = m_boardAdapter.m_Cfg->m_Render.raytrace_anti_aliasing && !m_isPreview;
-#endif
-
+    bool  is_aa_enabled = m_boardAdapter.m_Cfg->m_Render.raytrace_anti_aliasing && !m_isPreview;
     float shadow_att_factor_sum = 0.0f;
 
     unsigned int nr_lights_that_can_cast_shadows = 0;
@@ -1456,11 +1449,10 @@ SFVEC4F RENDER_3D_RAYTRACE_BASE::shadeHit( const SFVEC4F& aBgColor, const RAY& a
             if( is_testShadow && light->GetCastShadows() )
             {
                 nr_lights_that_can_cast_shadows++;
-#if USE_EXPERIMENTAL_SOFT_SHADOWS
+
                 // For rays that are recursive, just calculate one hit shadow
                 if( aRecursiveLevel > 0 )
                 {
-#endif
                     RAY rayToLight;
                     rayToLight.Init( hitPoint, vectorToLight );
 
@@ -1469,7 +1461,6 @@ SFVEC4F RENDER_3D_RAYTRACE_BASE::shadeHit( const SFVEC4F& aBgColor, const RAY& a
                     if( m_accelerator->IntersectP( rayToLight, distToLight ) )
                         shadow_att_factor_light = 0.0f;
 
-#if USE_EXPERIMENTAL_SOFT_SHADOWS
                 }
                 else  // Experimental softshadow calculation
                 {
@@ -1495,16 +1486,11 @@ SFVEC4F RENDER_3D_RAYTRACE_BASE::shadeHit( const SFVEC4F& aBgColor, const RAY& a
                             rayToLight.Init( hitPoint, disturbed_vector_to_light );
                         }
 
-                        // !TODO: there are multiple ways that this tests can be
-                        // optimized. Eg: by packing rays or to test against the
-                        // latest hit object.
                         if( m_accelerator->IntersectP( rayToLight, distToLight ) )
-                        {
                             shadow_att_factor_light -= shadow_inc_factor;
-                        }
                     }
                 }
-#endif
+
                 shadow_att_factor_sum += shadow_att_factor_light;
             }
 
@@ -1734,31 +1720,32 @@ void RENDER_3D_RAYTRACE_BASE::initializeBlockPositions()
     // Hilbert curve position calculation
     // modified from Matters Computational, Springer 2011
     // GPLv3, Copyright Joerg Arndt
-    constexpr auto hilbert_get_pos = []( size_t aT, size_t& aX, size_t& aY )
-    {
-        static const size_t htab[] = { 0b0010, 0b0100, 0b1100, 0b1001, 0b1111, 0b0101,
-                                       0b0001, 0b1000, 0b0000, 0b1010, 0b1110, 0b0111,
-                                       0b1101, 0b1011, 0b0011, 0b0110 };
-        static const size_t size = sizeof( size_t ) * 8;
-        size_t xv = 0;
-        size_t yv = 0;
-        size_t c01 = 0;
+    constexpr auto hilbert_get_pos =
+            []( size_t aT, size_t& aX, size_t& aY )
+            {
+                static const size_t htab[] = { 0b0010, 0b0100, 0b1100, 0b1001, 0b1111, 0b0101,
+                                               0b0001, 0b1000, 0b0000, 0b1010, 0b1110, 0b0111,
+                                               0b1101, 0b1011, 0b0011, 0b0110 };
+                static const size_t size = sizeof( size_t ) * 8;
+                size_t xv = 0;
+                size_t yv = 0;
+                size_t c01 = 0;
 
-        for( size_t i = 0; i < ( size / 2 ); ++i )
-        {
-            size_t abi = aT >> ( size - 2 );
-            aT <<= 2;
+                for( size_t i = 0; i < ( size / 2 ); ++i )
+                {
+                    size_t abi = aT >> ( size - 2 );
+                    aT <<= 2;
 
-            size_t st = htab[( c01 << 2 ) | abi];
-            c01 = st & 3;
+                    size_t st = htab[( c01 << 2 ) | abi];
+                    c01 = st & 3;
 
-            yv = ( yv << 1 ) | ( ( st >> 2 ) & 1 );
-            xv = ( xv << 1 ) | ( st >> 3 );
-        }
+                    yv = ( yv << 1 ) | ( ( st >> 2 ) & 1 );
+                    xv = ( xv << 1 ) | ( st >> 3 );
+                }
 
-        aX = xv;
-        aY = yv;
-    };
+                aX = xv;
+                aY = yv;
+            };
 
     size_t total_blocks = blocks_x * blocks_y;
     size_t pos = 0;

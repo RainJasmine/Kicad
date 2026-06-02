@@ -33,6 +33,7 @@
 class LIB_SYMBOL;
 class SCH_PIN_TABLE_DATA_MODEL;
 class SCH_EDIT_FRAME;
+class PANEL_EMBEDDED_FILES;
 
 
 // The dialog can be closed for several reasons.
@@ -74,12 +75,10 @@ private:
     void OnEditSpiceModel( wxCommandEvent& event ) override;
     void OnPinTableColSort( wxGridEvent& aEvent );
     void OnPinTableCellEdited( wxGridEvent& event ) override;
-    void OnSizeFieldsGrid( wxSizeEvent& event ) override;
     void OnSizePinsGrid( wxSizeEvent& event ) override;
     void OnGridCellChanging( wxGridEvent& event );
     void OnUpdateUI( wxUpdateUIEvent& event ) override;
     void OnCancelButtonClick( wxCommandEvent& event ) override;
-    void OnInitDlg( wxInitDialogEvent& event ) override;
     void OnGridEditorShown( wxGridEvent& event ) override;
     void OnGridEditorHidden( wxGridEvent& event ) override;
     void OnUnitChoice( wxCommandEvent& event ) override;
@@ -91,7 +90,6 @@ private:
     void OnUpdateSymbol( wxCommandEvent&  ) override;
     void OnExchangeSymbol( wxCommandEvent&  ) override;
 
-    void AdjustFieldsGridColumns();
     void AdjustPinsGridColumns();
     void HandleDelayedFocus( wxCommandEvent& event );
     void HandleDelayedSelection( wxCommandEvent& event );
@@ -103,8 +101,6 @@ private:
     SCH_SYMBOL*               m_symbol;
     LIB_SYMBOL*               m_part;
 
-    wxSize                    m_fieldsSize;
-    wxSize                    m_lastRequestedFieldsSize;
     wxSize                    m_pinsSize;
     wxSize                    m_lastRequestedPinsSize;
     bool                      m_editorShown;
@@ -112,6 +108,7 @@ private:
 
     FIELDS_GRID_TABLE*        m_fields;
     SCH_PIN_TABLE_DATA_MODEL* m_dataModel;
+    PANEL_EMBEDDED_FILES*     m_embeddedFiles;
 };
 
 #endif // DIALOG_SYMBOL_PROPERTIES_H

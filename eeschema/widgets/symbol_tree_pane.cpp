@@ -27,7 +27,6 @@
 #include <widgets/lib_tree.h>
 #include <lib_symbol_library_manager.h>
 #include <symbol_edit_frame.h>
-#include <symbol_lib_table.h>
 #include <tool/tool_manager.h>
 #include <tools/sch_actions.h>
 
@@ -40,7 +39,7 @@ SYMBOL_TREE_PANE::SYMBOL_TREE_PANE( SYMBOL_EDIT_FRAME* aParent,
 {
     // Create widgets
     wxBoxSizer* boxSizer = new wxBoxSizer( wxVERTICAL );
-    m_tree = new LIB_TREE( this, wxT( "symbols" ), &SYMBOL_LIB_TABLE::GetGlobalLibTable(),
+    m_tree = new LIB_TREE( this, wxT( "symbols" ),
                            m_libMgr->GetAdapter(), LIB_TREE::SEARCH | LIB_TREE::MULTISELECT );
     boxSizer->Add( m_tree, 1, wxEXPAND, 5 );
 

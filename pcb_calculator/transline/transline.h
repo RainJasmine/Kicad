@@ -74,6 +74,13 @@ enum EXTRA_PRMS_ID
     LOSS_CONDUCTOR_PRM,   // Loss in conductors (dB)
     CUTOFF_FREQUENCY_PRM, // Cutoff frequency for higher order modes
     EPSILON_EFF_PRM,      // Effective dielectric constant
+    DIELECTRIC_MODEL_PRM, // 0 = CONSTANT, 1 = DJORDJEVIC_SARKAR (panel-level selection)
+    EPSILONR_SPEC_FREQ_PRM, // Frequency (Hz) at which EpsilonR/TanD are specified
+    SOLDERMASK_PRESENT_PRM,    // 0 = no mask correction, 1 = apply Wan-Hoorfar 2000 cover.
+    SOLDERMASK_THICKNESS_PRM,  // Cured mask thickness in metres.  Typical LPI is 15 - 30 um.
+    SOLDERMASK_EPSILONR_PRM,   // Mask relative permittivity.  Typical LPI 3.3 - 3.8.
+    SOLDERMASK_TAND_PRM,       // Mask loss tangent.  Typical LPI 0.025 - 0.035.
+    SOLDERMASK_FILLS_GAPS_PRM, // CPW / CBCPW only.  1 = mask fills the coplanar slots.
     EXTRA_PRMS_COUNT,
 };
 
@@ -87,6 +94,9 @@ public:
     void        setProperty( enum PRMS_ID aPrmId, double aValue );
     double      getProperty( enum PRMS_ID aPrmId );
 
+    /// Setter for panel-level parameters that are shared across every calculator type.
+    void SetExtraParameter( enum EXTRA_PRMS_ID aPrmId, double aValue ) { m_parameters[aPrmId] = aValue; }
+
 
     virtual void getProperties();
     void checkProperties();
@@ -96,7 +106,6 @@ public:
 
     void         Init();
     virtual void synthesize();
-    virtual void calc() {}
 
     /**
      * Computation for analysis
@@ -132,14 +141,19 @@ public:
 protected:
     double m_parameters[EXTRA_PRMS_COUNT];
 
-    bool   minimizeZ0Error1D( double* );
     double skin_depth();
-    void   ellipke( double, double&, double& );
-    double ellipk( double );
     void   setErrorLevel( PRMS_ID, char );
 
-    /// Calculates the unit propagation delay (in ps/cm) for the given effective dielectric constant
-    static double calcUnitPropagationDelay( double epsilonEff );
+    /**
+     * Push the mask-eligible subset of soldermask parameters (PRESENT, THICKNESS, EPSILONR,
+     * TAND) into the supplied calculator.  Callers that need the CPW-only FILLS_GAPS flag
+     * pass aIncludeFillsGaps = true.  Mask-ineligible calculators (stripline, coax,
+     * waveguide, twisted pair) do not override GetSoldermaskFillingG so these writes are
+     * harmless no-ops on those backends; this helper is purely a deduplication aid for the
+     * four eligible subclasses (microstrip, c_microstrip, coplanar).
+     */
+    void pushSoldermaskParameters( TRANSLINE_CALCULATION_BASE& aCalc,
+                                   bool aIncludeFillsGaps = false ) const;
 
     /// Converts a TRANSLINE_PARAMETER status to a PCB Calculation status
     static char convertParameterStatusCode( TRANSLINE_STATUS aStatus );

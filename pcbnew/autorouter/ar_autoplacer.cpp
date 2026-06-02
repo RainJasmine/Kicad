@@ -93,7 +93,7 @@ int AR_AUTOPLACER::genPlacementRoutingMatrix()
         return 0;
 
     // Build the board shape
-    m_board->GetBoardPolygonOutlines( m_boardShape );
+    m_board->GetBoardPolygonOutlines( m_boardShape, true );
     m_topFreeArea = m_boardShape;
     m_bottomFreeArea = m_boardShape;
 
@@ -117,8 +117,8 @@ int AR_AUTOPLACER::genPlacementRoutingMatrix()
         case PCB_SHAPE_T:
             if( drawing->GetLayer() != Edge_Cuts )
             {
-                m_matrix.TraceSegmentPcb( (PCB_SHAPE*) drawing, CELL_IS_HOLE | CELL_IS_EDGE,
-                                          m_matrix.m_GridRouting, AR_MATRIX::WRITE_CELL );
+                m_matrix.TracePcbShape( (PCB_SHAPE*) drawing, CELL_IS_HOLE | CELL_IS_EDGE,
+                                        m_matrix.m_GridRouting, AR_MATRIX::WRITE_CELL );
             }
 
             break;
@@ -130,8 +130,10 @@ int AR_AUTOPLACER::genPlacementRoutingMatrix()
 
     // Initialize top layer. to the same value as the bottom layer
     if( m_matrix.m_BoardSide[AR_SIDE_TOP] )
+    {
         memcpy( m_matrix.m_BoardSide[AR_SIDE_TOP], m_matrix.m_BoardSide[AR_SIDE_BOTTOM],
                 nbCells * sizeof(AR_MATRIX::MATRIX_CELL) );
+    }
 
     return 1;
 }

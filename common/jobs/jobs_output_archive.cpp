@@ -24,6 +24,8 @@
 #include <wx/zipstrm.h>
 #include <gestfich.h>
 #include <common.h>
+#include <wildcards_and_files_ext.h>
+#include <kiplatform/io.h>
 
 JOBS_OUTPUT_ARCHIVE::JOBS_OUTPUT_ARCHIVE() :
     JOBS_OUTPUT_HANDLER(),
@@ -41,10 +43,14 @@ bool JOBS_OUTPUT_ARCHIVE::OutputPrecheck()
 }
 
 
-bool JOBS_OUTPUT_ARCHIVE::HandleOutputs( const wxString& baseTempPath, PROJECT* aProject,
-                                         const std::vector<JOB_OUTPUT>& aOutputsToHandle )
+bool JOBS_OUTPUT_ARCHIVE::HandleOutputs( const wxString&                baseTempPath,
+                                         PROJECT*                       aProject,
+                                         const std::vector<wxString>&   aPathsWithOverwriteDisallowed,
+                                         const std::vector<JOB_OUTPUT>& aOutputsToHandle,
+                                         std::optional<wxString>&       aResolvedOutputPath )
 {
     bool success = true;
+    aResolvedOutputPath.reset();
 
     wxString outputPath = ExpandTextVars( m_outputPath, aProject );
     outputPath = ExpandEnvVarSubstitutions( outputPath, aProject );
@@ -52,14 +58,20 @@ bool JOBS_OUTPUT_ARCHIVE::HandleOutputs( const wxString& baseTempPath, PROJECT* 
     if( outputPath.StartsWith( "~" ) )
         outputPath.Replace( "~", wxGetHomeDir(), false );
 
+    outputPath = EnsureFileExtension( outputPath, FILEEXT::ArchiveFileExtension );
+
     wxFFileOutputStream ostream( outputPath );
 
-    if( !ostream.IsOk() ) // issue to create the file. Perhaps not writable dir
+    if( !ostream.IsOk() )
     {
-        //msg.Printf( _( "Failed to create file '%s'." ), aDestFile );
-        //aReporter.Report( msg, RPT_SEVERITY_ERROR );
+        aResolvedOutputPath.reset();
         return false;
     }
+
+    // Use a large I/O buffer to improve compatibility with cloud-synced folders.
+    // See KIPLATFORM::IO::CLOUD_SYNC_BUFFER_SIZE comment for details.
+    if( FILE* fp = ostream.GetFile()->fp() )
+        setvbuf( fp, nullptr, _IOFBF, KIPLATFORM::IO::CLOUD_SYNC_BUFFER_SIZE );
 
     wxZipOutputStream zipstream( ostream, -1, wxConvUTF8 );
     wxString          errors;
@@ -69,6 +81,11 @@ bool JOBS_OUTPUT_ARCHIVE::HandleOutputs( const wxString& baseTempPath, PROJECT* 
 
     if( !zipstream.Close() )
         success = false;
+
+    if( success )
+        aResolvedOutputPath = outputPath;
+    else
+        aResolvedOutputPath.reset();
 
     return success;
 }

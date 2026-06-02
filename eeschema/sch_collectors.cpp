@@ -84,10 +84,39 @@ const std::vector<KICAD_T> SCH_COLLECTOR::MovableItems =
 };
 
 
-const std::vector<KICAD_T> SCH_COLLECTOR::FieldOwners = {
+const std::vector<KICAD_T> SCH_COLLECTOR::FieldOwners =
+{
     SCH_SYMBOL_T,
     SCH_SHEET_T,
     SCH_LABEL_LOCATE_ANY_T
+};
+
+
+const std::vector<KICAD_T> SCH_COLLECTOR::DeletableItems =
+{
+    LIB_SYMBOL_T,
+    SCH_MARKER_T,
+    SCH_JUNCTION_T,
+    SCH_LINE_T,
+    SCH_BUS_BUS_ENTRY_T,
+    SCH_BUS_WIRE_ENTRY_T,
+    SCH_SHAPE_T,
+    SCH_RULE_AREA_T,
+    SCH_TEXT_T,
+    SCH_TEXTBOX_T,
+    SCH_TABLECELL_T,    // Clear contents
+    SCH_TABLE_T,
+    SCH_LABEL_T,
+    SCH_GLOBAL_LABEL_T,
+    SCH_HIER_LABEL_T,
+    SCH_DIRECTIVE_LABEL_T,
+    SCH_NO_CONNECT_T,
+    SCH_SHEET_T,
+    SCH_SHEET_PIN_T,
+    SCH_SYMBOL_T,
+    SCH_FIELD_T,        // Will be hidden
+    SCH_BITMAP_T,
+    SCH_GROUP_T
 };
 
 
@@ -123,13 +152,13 @@ INSPECT_RESULT SCH_COLLECTOR::Inspect( EDA_ITEM* aItem, void* aTestData )
 
 
 void SCH_COLLECTOR::Collect( SCH_SCREEN* aScreen, const std::vector<KICAD_T>& aFilterList,
-                             const VECTOR2I& aPos, int aUnit, int aConvert )
+                             const VECTOR2I& aPos, int aUnit, int aBodyStyle )
 {
     Empty(); // empty the collection just in case
 
     SetScanTypes( aFilterList );
     m_Unit = aUnit;
-    m_BodyStyle = aConvert;
+    m_BodyStyle = aBodyStyle;
 
     // remember where the snapshot was taken from and pass refPos to the Inspect() function.
     SetRefPos( aPos );
@@ -143,13 +172,13 @@ void SCH_COLLECTOR::Collect( SCH_SCREEN* aScreen, const std::vector<KICAD_T>& aF
 
 
 void SCH_COLLECTOR::Collect( LIB_ITEMS_CONTAINER& aItems, const std::vector<KICAD_T>& aFilterList,
-                             const VECTOR2I& aPos, int aUnit, int aConvert )
+                             const VECTOR2I& aPos, int aUnit, int aBodyStyle )
 {
     Empty();        // empty the collection just in case
 
     SetScanTypes( aFilterList );
     m_Unit = aUnit;
-    m_BodyStyle = aConvert;
+    m_BodyStyle = aBodyStyle;
 
     // remember where the snapshot was taken from and pass refPos to the Inspect() function.
     SetRefPos( aPos );
@@ -187,7 +216,7 @@ void CollectOtherUnits( const wxString& aRef, int aUnit, const LIB_ID& aLibId,
                         SCH_SHEET_PATH& aSheet, std::vector<SCH_SYMBOL*>* otherUnits )
 {
     SCH_REFERENCE_LIST symbols;
-    aSheet.GetSymbols( symbols );
+    aSheet.GetSymbols( symbols, SYMBOL_FILTER_ALL );
 
     for( unsigned i = 0; i < symbols.GetCount(); i++ )
     {
@@ -201,5 +230,4 @@ void CollectOtherUnits( const wxString& aRef, int aUnit, const LIB_ID& aLibId,
         }
     }
 }
-
 

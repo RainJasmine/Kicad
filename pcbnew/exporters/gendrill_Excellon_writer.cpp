@@ -37,7 +37,6 @@
 
 #include <plotters/plotter.h>
 #include <string_utils.h>
-#include <locale_io.h>
 #include <macros.h>
 #include <pcb_edit_frame.h>
 #include <build_version.h>
@@ -46,10 +45,12 @@
 
 #include <pcbplot.h>
 #include <board.h>
-#include <gendrill_Excellon_writer.h>
+#include <gendrill_excellon_writer.h>
 #include <wildcards_and_files_ext.h>
 #include <reporter.h>
 #include <gbr_metadata.h>
+
+#include <fmt/format.h>
 
 
 // Oblong holes can be drilled by a "canned slot" command (G85) or a routing command
@@ -70,6 +71,7 @@ EXCELLON_WRITER::EXCELLON_WRITER( BOARD* aPcb )
     m_minimalHeader = false;
     m_drillFileExtension = FILEEXT::DrillFileExtension;
     m_useRouteModeForOval = true;
+    m_mantissaLenght = 3;   // suitable to print coordinates in mm
 }
 
 
@@ -80,29 +82,27 @@ bool EXCELLON_WRITER::CreateDrillandMapFilesSet( const wxString& aPlotDirectory,
     wxFileName  fn;
     wxString    msg;
 
-    std::vector<DRILL_LAYER_PAIR> hole_sets = getUniqueLayerPairs();
+    std::vector<DRILL_SPAN> hole_sets = getUniqueLayerPairs();
 
-    // append a pair representing the NPTH set of holes, for separate drill files.
     if( !m_merge_PTH_NPTH )
-        hole_sets.emplace_back( F_Cu, B_Cu );
+        hole_sets.emplace_back( F_Cu, B_Cu, false, true );
 
-    for( std::vector<DRILL_LAYER_PAIR>::const_iterator it = hole_sets.begin();
+    for( std::vector<DRILL_SPAN>::const_iterator it = hole_sets.begin();
          it != hole_sets.end();  ++it )
     {
-        DRILL_LAYER_PAIR  pair = *it;
-        // For separate drill files, the last layer pair is the NPTH drill file.
-        bool doing_npth = m_merge_PTH_NPTH ? false : ( it == hole_sets.end() - 1 );
+        const DRILL_SPAN& span = *it;
+        bool doing_npth = m_merge_PTH_NPTH ? false : span.m_IsNonPlatedFile;
 
-        buildHolesList( pair, doing_npth );
+        buildHolesList( span, doing_npth );
 
         // The file is created if it has holes, or if it is the non plated drill file to be
         // sure the NPTH file is up to date in separate files mode.
         // Also a PTH drill/map file is always created, to be sure at least one plated hole
         // drill file is created (do not create any PTH drill file can be seen as not working
         // drill generator).
-        if( getHolesCount() > 0 || doing_npth || pair == DRILL_LAYER_PAIR( F_Cu, B_Cu ) )
+        if( getHolesCount() > 0 || doing_npth || span.Pair() == DRILL_LAYER_PAIR( F_Cu, B_Cu ) )
         {
-            fn = getDrillFileName( pair, doing_npth, m_merge_PTH_NPTH );
+            fn = getDrillFileName( span, doing_npth, m_merge_PTH_NPTH );
             fn.SetPath( aPlotDirectory );
 
             if( aGenDrill )
@@ -133,17 +133,41 @@ bool EXCELLON_WRITER::CreateDrillandMapFilesSet( const wxString& aPlotDirectory,
 
                 TYPE_FILE file_type = TYPE_FILE::PTH_FILE;
 
-                // Only external layer pair can have non plated hole
-                // internal layers have only plated via holes
-                if( pair == DRILL_LAYER_PAIR( F_Cu, B_Cu ) )
+                if( span.Pair() == DRILL_LAYER_PAIR( F_Cu, B_Cu ) && !span.m_IsBackdrill )
                 {
                     if( m_merge_PTH_NPTH )
                         file_type = TYPE_FILE::MIXED_FILE;
                     else if( doing_npth )
                         file_type = TYPE_FILE::NPTH_FILE;
                 }
+                else if( span.m_IsBackdrill )
+                {
+                    file_type = TYPE_FILE::NPTH_FILE;
+                }
 
-                createDrillFile( file, pair, file_type );
+                bool wroteDrillFile = false;
+
+                try
+                {
+                    createDrillFile( file, span, file_type );
+                    wroteDrillFile = true;
+                }
+                catch( ... )     // Capture fmt::print exception on write issues
+                {
+                    fclose( file );
+                    msg.Printf( _( "Failed to write file '%s'." ), fullFilename );
+                    aReporter->Report( msg, RPT_SEVERITY_ERROR );
+                    success = false;
+                }
+
+                if( wroteDrillFile && span.m_IsBackdrill && getHolesCount() > 0 )
+                {
+                    if( !writeBackdrillLayerPairFile( aPlotDirectory, aReporter, span ) )
+                    {
+                        success = false;
+                        break;
+                    }
+                }
             }
         }
     }
@@ -168,32 +192,49 @@ void EXCELLON_WRITER::writeHoleAttribute( HOLE_ATTRIBUTE aAttribute )
         switch( aAttribute )
         {
         case HOLE_ATTRIBUTE::HOLE_VIA_THROUGH:
-            fprintf( m_file, "; #@! TA.AperFunction,Plated,PTH,ViaDrill\n" );
+            fmt::print( m_file, "{}", "; #@! TA.AperFunction,Plated,PTH,ViaDrill\n" );
             break;
 
         case HOLE_ATTRIBUTE::HOLE_VIA_BURIED:
-            fprintf( m_file, "; #@! TA.AperFunction,Plated,Buried,ViaDrill\n" );
+            fmt::print( m_file, "{}", "; #@! TA.AperFunction,Plated,Buried,ViaDrill\n" );
+            break;
+
+        case HOLE_ATTRIBUTE::HOLE_VIA_BACKDRILL:
+            fmt::print( m_file, "{}", "; #@! TA.AperFunction,NonPlated,BackDrill\n" );
             break;
 
         case HOLE_ATTRIBUTE::HOLE_PAD:
-            fprintf( m_file, "; #@! TA.AperFunction,Plated,PTH,ComponentDrill\n" );
+        //case HOLE_ATTRIBUTE::HOLE_PAD_CASTELLATED:
+            fmt::print( m_file, "{}", "; #@! TA.AperFunction,Plated,PTH,ComponentDrill\n" );
+            break;
+
+        case HOLE_ATTRIBUTE::HOLE_PAD_CASTELLATED:
+            fmt::print( m_file, "{}", "; #@! TA.AperFunction,Plated,PTH,CastelletedDrill\n" );
+            break;
+
+        case HOLE_ATTRIBUTE::HOLE_PAD_PRESSFIT:
+            fmt::print( m_file, "{}", "; #@! TA.AperFunction,Plated,PTH,ComponentDrill,PressFit\n" );
             break;
 
         case HOLE_ATTRIBUTE::HOLE_MECHANICAL:
-            fprintf( m_file, "; #@! TA.AperFunction,NonPlated,NPTH,ComponentDrill\n" );
+            fmt::print( m_file, "{}", "; #@! TA.AperFunction,NonPlated,NPTH,ComponentDrill\n" );
             break;
 
         case HOLE_ATTRIBUTE::HOLE_UNKNOWN:
-            fprintf( m_file, "; #@! TD\n" );
+            fmt::print( m_file, "{}", "; #@! TD\n" );
             break;
         }
     }
 }
 
 
-int EXCELLON_WRITER::createDrillFile( FILE* aFile, DRILL_LAYER_PAIR aLayerPair,
-                                      TYPE_FILE aHolesType )
+int EXCELLON_WRITER::createDrillFile( FILE* aFile, const DRILL_SPAN& aSpan,
+                                      TYPE_FILE aHolesType, bool aTagBackdrillHit )
 {
+    // if units are mm, the resolution is 0.001 mm (3 digits in mantissa)
+    // if units are inches, the resolution is 0.1 mil (4 digits in mantissa)
+    m_mantissaLenght = m_unitsMetric ? 3 : 4;
+
     m_file = aFile;
 
     int    diam, holes_count;
@@ -201,9 +242,7 @@ int EXCELLON_WRITER::createDrillFile( FILE* aFile, DRILL_LAYER_PAIR aLayerPair,
     double xt, yt;
     char   line[1024];
 
-    LOCALE_IO dummy;    // Use the standard notation for double numbers
-
-    writeEXCELLONHeader( aLayerPair, aHolesType );
+    writeEXCELLONHeader( aSpan, aHolesType );
 
     holes_count = 0;
 
@@ -215,18 +254,51 @@ int EXCELLON_WRITER::createDrillFile( FILE* aFile, DRILL_LAYER_PAIR aLayerPair,
 #if USE_ATTRIB_FOR_HOLES
         writeHoleAttribute( tool_descr.m_HoleAttribute );
 #endif
+        fmt::print( m_file, "T{}C{:.{}f}\n", ii + 1, tool_descr.m_Diameter * m_conversionUnits, m_mantissaLenght );
 
-        // if units are mm, the resolution is 0.001 mm (3 digits in mantissa)
-        // if units are inches, the resolution is 0.1 mil (4 digits in mantissa)
-        if( m_unitsMetric )
-            fprintf( m_file, "T%dC%.3f\n", ii + 1, tool_descr.m_Diameter * m_conversionUnits );
-        else
-            fprintf( m_file, "T%dC%.4f\n", ii + 1, tool_descr.m_Diameter * m_conversionUnits );
+        if( !m_minimalHeader )
+        {
+            if( tool_descr.m_IsBackdrill )
+            {
+                auto formatStub = [&]( int aStubLength )
+                {
+                    double stubMM = pcbIUScale.IUTomm( aStubLength );
+                    double stubInches = stubMM / 25.4;
+                    wxString tmp = fmt::format( "{:.3f}mm ({:.4f}\")", stubMM, stubInches );
+                    return tmp;
+               };
+
+                wxString comment = wxT( "; Backdrill" );
+
+                if( tool_descr.m_MinStubLength.has_value() )
+                {
+                    comment += wxT( " stub " );
+                    comment += formatStub( *tool_descr.m_MinStubLength );;
+
+                    if( tool_descr.m_MaxStubLength.has_value()
+                            && tool_descr.m_MaxStubLength != tool_descr.m_MinStubLength )
+                    {
+                        comment += wxT( " to " );
+                        comment += formatStub( *tool_descr.m_MaxStubLength );;
+                    }
+                }
+
+                if( tool_descr.m_HasPostMachining )
+                    comment += wxT( ", post-machining" );
+
+                comment += wxT( "\n" );
+                fmt::print( m_file, "{}", TO_UTF8( comment ) );
+            }
+            else if( tool_descr.m_HasPostMachining )
+            {
+                fmt::print( m_file, "{}", "; Post-machining\n" );
+            }
+        }
     }
 
-    fputs( "%\n", m_file );                         // End of header info
-    fputs( "G90\n", m_file );                       // Absolute mode
-    fputs( "G05\n", m_file );                       // Drill mode
+    fmt::print( m_file, "{}", "%\n" );              // End of header info
+    fmt::print( m_file, "{}", "G90\n" );            // Absolute mode
+    fmt::print( m_file, "{}", "G05\n" );            // Drill mode
 
     /* Read the hole list and generate data for normal holes (oblong
      * holes will be created later) */
@@ -242,7 +314,7 @@ int EXCELLON_WRITER::createDrillFile( FILE* aFile, DRILL_LAYER_PAIR aLayerPair,
         if( tool_reference != hole_descr.m_Tool_Reference )
         {
             tool_reference = hole_descr.m_Tool_Reference;
-            fprintf( m_file, "T%d\n", tool_reference );
+            fmt::print( m_file, "T{}\n", tool_reference );
         }
 
         x0 = hole_descr.m_Hole_Pos.x - m_offset.x;
@@ -253,9 +325,10 @@ int EXCELLON_WRITER::createDrillFile( FILE* aFile, DRILL_LAYER_PAIR aLayerPair,
 
         xt = x0 * m_conversionUnits;
         yt = y0 * m_conversionUnits;
+        writeHoleComments( hole_descr, aTagBackdrillHit );
         writeCoordinates( line, sizeof( line ), xt, yt );
 
-        fputs( line, m_file );
+        fmt::print( m_file, "{}", line );
         holes_count++;
     }
 
@@ -274,7 +347,7 @@ int EXCELLON_WRITER::createDrillFile( FILE* aFile, DRILL_LAYER_PAIR aLayerPair,
         if( tool_reference != hole_descr.m_Tool_Reference )
         {
             tool_reference = hole_descr.m_Tool_Reference;
-            fprintf( m_file, "T%d\n", tool_reference );
+            fmt::print( m_file, "T{}\n", tool_reference );
         }
 
         diam = std::min( hole_descr.m_Hole_Size.x, hole_descr.m_Hole_Size.y );
@@ -311,9 +384,10 @@ int EXCELLON_WRITER::createDrillFile( FILE* aFile, DRILL_LAYER_PAIR aLayerPair,
 
         xt = x0 * m_conversionUnits;
         yt = y0 * m_conversionUnits;
+        writeHoleComments( hole_descr, aTagBackdrillHit );
 
         if( m_useRouteModeForOval )
-            fputs( "G00", m_file );    // Select the routing mode
+            fmt::print( m_file, "{}", "G00" );    // Select the routing mode
 
         writeCoordinates( line, sizeof( line ), xt, yt );
 
@@ -327,25 +401,25 @@ int EXCELLON_WRITER::createDrillFile( FILE* aFile, DRILL_LAYER_PAIR aLayerPair,
                     line[kk] = 0;
             }
 
-            fputs( line, m_file );
-            fputs( "G85", m_file );         // add the "G85" command
+            fmt::print( m_file, "{}", line );
+            fmt::print( m_file, "{}", "G85" );         // add the "G85" command
         }
         else
         {
-            fputs( line, m_file );
-            fputs( "M15\nG01", m_file );    // tool down and linear routing from last coordinates
+            fmt::print( m_file, "{}", line );
+            fmt::print( m_file, "{}", "M15\nG01" );    // tool down and linear routing from last coordinates
         }
 
         xt = xf * m_conversionUnits;
         yt = yf * m_conversionUnits;
         writeCoordinates( line, sizeof( line ), xt, yt );
 
-        fputs( line, m_file );
+        fmt::print( m_file, "{}",line );
 
         if( m_useRouteModeForOval )
-            fputs( "M16\n", m_file );       // Tool up (end routing)
+            fmt::print( m_file, "{}", "M16\n" );       // Tool up (end routing)
 
-        fputs( "G05\n", m_file );           // Select drill mode
+        fmt::print( m_file, "{}", "G05\n" );           // Select drill mode
         holes_count++;
     }
 
@@ -387,29 +461,23 @@ void EXCELLON_WRITER::writeCoordinates( char* aLine, size_t aLineSize, double aC
     int      xpad = m_precision.m_Lhs + m_precision.m_Rhs;
     int      ypad = xpad;
 
+    // if units are mm, the resolution is 0.001 mm (3 digits in mantissa)
+    // if units are inches, the resolution is 0.1 mil (4 digits in mantissa)
+    // in DECIMAL_FORMAT we could use more digits.
+
     switch( m_zeroFormat )
     {
     default:
     case DECIMAL_FORMAT:
         /* In Excellon files, resolution is 1/1000 mm or 1/10000 inch (0.1 mil)
          * Although in decimal format, Excellon specifications do not specify
-         * clearly the resolution. However it seems to be 1/1000mm or 0.1 mil
-         * like in non decimal formats, so we trunk coordinates to 3 or 4 digits in mantissa
+         * clearly the resolution. However it seems to be usually 1/1000mm or 0.1 mil
+         * like in non decimal formats, so we trunk coordinates to m_mantissaLenght in mantissa
          * Decimal format just prohibit useless leading 0:
          * 0.45 or .45 is right, but 00.54 is incorrect.
          */
-        if( m_unitsMetric )
-        {
-            // resolution is 1/1000 mm
-            xs.Printf( wxT( "%.3f" ), aCoordX );
-            ys.Printf( wxT( "%.3f" ), aCoordY );
-        }
-        else
-        {
-            // resolution is 1/10000 inch
-            xs.Printf( wxT( "%.4f" ), aCoordX );
-            ys.Printf( wxT( "%.4f" ), aCoordY );
-        }
+        xs = fmt::format( "{:.{}f}", aCoordX, m_mantissaLenght );
+        ys = fmt::format( "{:.{}f}", aCoordY, m_mantissaLenght );
 
         //Remove useless trailing 0
         while( xs.Last() == '0' )
@@ -487,9 +555,9 @@ void EXCELLON_WRITER::writeCoordinates( char* aLine, size_t aLineSize, double aC
 }
 
 
-void EXCELLON_WRITER::writeEXCELLONHeader( DRILL_LAYER_PAIR aLayerPair, TYPE_FILE aHolesType )
+void EXCELLON_WRITER::writeEXCELLONHeader( const DRILL_SPAN& aSpan, TYPE_FILE aHolesType )
 {
-    fputs( "M48\n", m_file );    // The beginning of a header
+    fmt::print( m_file, "{}", "M48\n" );    // The beginning of a header
 
     if( !m_minimalHeader )
     {
@@ -497,7 +565,8 @@ void EXCELLON_WRITER::writeEXCELLONHeader( DRILL_LAYER_PAIR aLayerPair, TYPE_FIL
         wxString msg;
         msg << wxT( "KiCad " ) << GetBuildVersion();
 
-        fprintf( m_file, "; DRILL file {%s} date %s\n", TO_UTF8( msg ), TO_UTF8( GetISO8601CurrentDateTime() ) );
+        fmt::print( m_file, "; DRILL file {} date {}\n",
+                            TO_UTF8( msg ), TO_UTF8( GetISO8601CurrentDateTime() ) );
         msg = wxT( "; FORMAT={" );
 
         // Print precision:
@@ -529,45 +598,45 @@ void EXCELLON_WRITER::writeEXCELLONHeader( DRILL_LAYER_PAIR aLayerPair, TYPE_FIL
         };
 
         msg << zero_fmt[m_zeroFormat] << wxT( "}\n" );
-        fputs( TO_UTF8( msg ), m_file );
+        fmt::print( m_file, "{}", TO_UTF8( msg ) );
 
         // add the structured comment TF.CreationDate:
         // The attribute value must conform to the full version of the ISO 8601
         msg = GbrMakeCreationDateAttributeString( GBR_NC_STRING_FORMAT_NCDRILL ) + wxT( "\n" );
-        fputs( TO_UTF8( msg ), m_file );
+        fmt::print( m_file, "{}", TO_UTF8( msg ) );
 
         // Add the application name that created the drill file
         msg = wxT( "; #@! TF.GenerationSoftware,Kicad,Pcbnew," );
         msg << GetBuildVersion() << wxT( "\n" );
-        fputs( TO_UTF8( msg ), m_file );
+        fmt::print( m_file, "{}", TO_UTF8( msg ) );
 
         // Add the standard X2 FileFunction for drill files
         // TF.FileFunction,Plated[NonPlated],layer1num,layer2num,PTH[NPTH]
-        msg = BuildFileFunctionAttributeString( aLayerPair, aHolesType , true ) + wxT( "\n" );
-        fputs( TO_UTF8( msg ), m_file );
+        msg = BuildFileFunctionAttributeString( aSpan, aHolesType , true ) + wxT( "\n" );
+        fmt::print( m_file, "{}", TO_UTF8( msg ) );
 
-        fputs( "FMAT,2\n", m_file );     // Use Format 2 commands (version used since 1979)
+        fmt::print( m_file, "{}",  "FMAT,2\n" );     // Use Format 2 commands (version used since 1979)
     }
 
-    fputs( m_unitsMetric ? "METRIC" : "INCH", m_file );
+    fmt::print( m_file, "{}", m_unitsMetric ? "METRIC" : "INCH" );
 
     switch( m_zeroFormat )
     {
     case DECIMAL_FORMAT:
-        fputs( "\n", m_file );
+        fmt::print( m_file, "{}", "\n" );
         break;
 
     case SUPPRESS_LEADING:
-        fputs( ",TZ\n", m_file );
+        fmt::print( m_file, "{}", ",TZ\n" );
         break;
 
     case SUPPRESS_TRAILING:
-        fputs( ",LZ\n", m_file );
+        fmt::print( m_file, "{}", ",LZ\n" );
         break;
 
     case KEEP_ZEROS:
         // write nothing, but TZ is acceptable when all zeros are kept
-        fputs( "\n", m_file );
+        fmt::print( m_file, "{}", "\n" );
         break;
     }
 }
@@ -576,6 +645,143 @@ void EXCELLON_WRITER::writeEXCELLONHeader( DRILL_LAYER_PAIR aLayerPair, TYPE_FIL
 void EXCELLON_WRITER::writeEXCELLONEndOfFile()
 {
     // add if minimal here
-    fputs( "M30\n", m_file );
+    fmt::print( m_file, "{}", "M30\n" );
     fclose( m_file );
+}
+
+
+wxFileName EXCELLON_WRITER::getBackdrillLayerPairFileName( const DRILL_SPAN& aSpan ) const
+{
+    wxFileName fn = m_pcb->GetFileName();
+    wxString   extend;
+
+    extend << wxT( "-" )
+           << wxString::FromUTF8( layerPairName( aSpan.Pair() ).c_str() )
+           << wxT( "-backdrill" );
+
+    fn.SetName( fn.GetName() + extend );
+    fn.SetExt( m_drillFileExtension );
+
+    return fn;
+}
+
+
+bool EXCELLON_WRITER::writeBackdrillLayerPairFile( const wxString& aPlotDirectory,
+                                                   REPORTER* aReporter, const DRILL_SPAN& aSpan )
+{
+    wxFileName fn = getBackdrillLayerPairFileName( aSpan );
+    fn.SetPath( aPlotDirectory );
+
+    wxString fullFilename = fn.GetFullPath();
+    FILE*    file = wxFopen( fullFilename, wxT( "w" ) );
+
+    if( file == nullptr )
+    {
+        if( aReporter )
+        {
+            wxString msg;
+            msg.Printf( _( "Failed to create file '%s'." ), fullFilename );
+            aReporter->Report( msg, RPT_SEVERITY_ERROR );
+        }
+
+        return false;
+    }
+    else if( aReporter )
+    {
+        wxString msg;
+        msg.Printf( _( "Created file '%s'" ), fullFilename );
+        aReporter->Report( msg, RPT_SEVERITY_ACTION );
+    }
+
+    try
+    {
+        createDrillFile( file, aSpan, TYPE_FILE::NPTH_FILE, true );
+    }
+    catch( ... )
+    {
+        fclose( file );
+
+        if( aReporter )
+        {
+            wxString msg;
+            msg.Printf( _( "Failed to write file '%s'." ), fullFilename );
+            aReporter->Report( msg, RPT_SEVERITY_ERROR );
+        }
+
+        return false;
+    }
+
+    return true;
+}
+
+
+void EXCELLON_WRITER::writeHoleComments( const HOLE_INFO& aHole, bool aTagBackdrillHit )
+{
+    if( aTagBackdrillHit && aHole.m_IsBackdrill )
+        fmt::print( m_file, "{}", "; backdrill\n" );
+
+    writePostMachiningComment( aHole.m_FrontPostMachining, aHole.m_FrontPostMachiningSize,
+                               aHole.m_FrontPostMachiningDepth, aHole.m_FrontPostMachiningAngle,
+                               wxT( "front" ) );
+
+    writePostMachiningComment( aHole.m_BackPostMachining, aHole.m_BackPostMachiningSize,
+                               aHole.m_BackPostMachiningDepth, aHole.m_BackPostMachiningAngle,
+                               wxT( "back" ) );
+}
+
+
+void EXCELLON_WRITER::writePostMachiningComment( PAD_DRILL_POST_MACHINING_MODE aMode,
+                                                 int aSizeIU, int aDepthIU, int aAngleDeciDegree,
+                                                 const wxString& aSideLabel )
+{
+    if( aMode != PAD_DRILL_POST_MACHINING_MODE::COUNTERBORE
+            && aMode != PAD_DRILL_POST_MACHINING_MODE::COUNTERSINK )
+    {
+        return;
+    }
+
+    wxString comment;
+    comment << wxT( "; Post-machining " ) << aSideLabel << wxT( " " )
+            << ( aMode == PAD_DRILL_POST_MACHINING_MODE::COUNTERSINK ? wxT( "countersink" )
+                                                                    : wxT( "counterbore" ) );
+
+    wxString sizeStr = formatLinearValue( aSizeIU );
+
+    if( !sizeStr.IsEmpty() )
+        comment << wxT( " dia " ) << sizeStr;
+
+    wxString depthStr = formatLinearValue( aDepthIU );
+
+    if( !depthStr.IsEmpty() )
+        comment << wxT( " depth " ) << depthStr;
+
+    if( aMode == PAD_DRILL_POST_MACHINING_MODE::COUNTERSINK && aAngleDeciDegree > 0 )
+    {
+        double    angle = aAngleDeciDegree / 10.0;
+        wxString  angleStr;
+
+        if( ( aAngleDeciDegree % 10 ) == 0 )
+            angleStr = fmt::format( "{:.0f}deg", angle );
+        else
+            angleStr = fmt::format( "{:.1f}deg", angle );
+
+        comment << wxT( " angle " ) << angleStr;
+    }
+
+    comment << wxT( "\n" );
+    fmt::print( m_file, "{}", TO_UTF8( comment ) );
+}
+
+
+wxString EXCELLON_WRITER::formatLinearValue( int aValueIU ) const
+{
+    if( aValueIU <= 0 )
+        return wxString();
+
+    double converted = aValueIU * m_conversionUnits;
+    wxString value;
+    value = fmt::format( "{:.{}f}", converted, m_mantissaLenght );
+    value << ( m_unitsMetric ? wxT( "mm" ) : wxT( "in" ) );
+
+    return value;
 }

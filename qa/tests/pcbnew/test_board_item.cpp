@@ -32,6 +32,7 @@
 #include <footprint.h>
 #include <pad.h>
 #include <pcb_shape.h>
+#include <pcb_barcode.h>
 #include <pcb_text.h>
 #include <pcb_textbox.h>
 #include <pcb_table.h>
@@ -41,9 +42,12 @@
 #include <pcb_track.h>
 #include <pcb_marker.h>
 #include <pcb_dimension.h>
+#include <pcb_point.h>
 #include <pcb_target.h>
 #include <pcb_group.h>
 #include <pcb_board_outline.h>
+#include <properties/property.h>
+#include <properties/property_mgr.h>
 
 class TEST_BOARD_ITEM_FIXTURE
 {
@@ -80,9 +84,19 @@ public:
         case PCB_PAD_T:               return new PAD( &m_footprint );
         case PCB_FIELD_T:             return new PCB_FIELD( &m_footprint, FIELD_T::USER );
         case PCB_SHAPE_T:             return new PCB_SHAPE( &m_board );
+
+        case PCB_BARCODE_T:
+        {
+            PCB_BARCODE* barcode = new PCB_BARCODE( &m_board );
+            barcode->SetText( "XXXX" );
+            barcode->AssembleBarcode();
+            return barcode;
+        }
+
         case PCB_TEXT_T:              return new PCB_TEXT( &m_board );
         case PCB_TEXTBOX_T:           return new PCB_TEXTBOX( &m_board );
         case PCB_TABLECELL_T:         return new PCB_TABLECELL( &m_board );
+
         case PCB_TABLE_T:
         {
             PCB_TABLE* table = new PCB_TABLE( &m_board, pcbIUScale.mmToIU( 0.1 ) );
@@ -111,6 +125,7 @@ public:
         case PCB_DIM_RADIAL_T:        return new PCB_DIM_RADIAL( &m_board );
         case PCB_DIM_ORTHOGONAL_T:    return new PCB_DIM_ORTHOGONAL( &m_board );
         case PCB_TARGET_T:            return new PCB_TARGET( &m_board );
+        case PCB_POINT_T:             return new PCB_POINT( &m_board );
 
         case PCB_ZONE_T:
         {
@@ -142,10 +157,9 @@ public:
             return nullptr;
 
         default:
-            BOOST_FAIL( wxString::Format(
-                    "Unhandled type: %d "
-                    "(if you created a new type you need to handle it in this switch statement)",
-                    aType ) );
+            BOOST_FAIL( wxString::Format( "Unhandled type: %d (if you created a new type you need to handle it in "
+                                          "this switch statement)",
+                                          aType ) );
             return nullptr;
         }
     }
@@ -153,19 +167,34 @@ public:
     static void CompareItems( BOARD_ITEM* aItem, BOARD_ITEM* aOriginalItem )
     {
         BOOST_CHECK_EQUAL( aItem->GetPosition(), aOriginalItem->GetPosition() );
-        BOOST_CHECK_EQUAL( aItem->GetBoundingBox().GetTop(),
-                           aOriginalItem->GetBoundingBox().GetTop() );
-        BOOST_CHECK_EQUAL( aItem->GetBoundingBox().GetLeft(),
-                           aOriginalItem->GetBoundingBox().GetLeft() );
-        BOOST_CHECK_EQUAL( aItem->GetBoundingBox().GetBottom(),
-                           aOriginalItem->GetBoundingBox().GetBottom() );
-        BOOST_CHECK_EQUAL( aItem->GetBoundingBox().GetRight(),
-                           aOriginalItem->GetBoundingBox().GetRight() );
+        BOOST_CHECK_EQUAL( aItem->GetBoundingBox().GetTop(), aOriginalItem->GetBoundingBox().GetTop() );
+        BOOST_CHECK_EQUAL( aItem->GetBoundingBox().GetLeft(), aOriginalItem->GetBoundingBox().GetLeft() );
+        BOOST_CHECK_EQUAL( aItem->GetBoundingBox().GetBottom(), aOriginalItem->GetBoundingBox().GetBottom() );
+        BOOST_CHECK_EQUAL( aItem->GetBoundingBox().GetRight(), aOriginalItem->GetBoundingBox().GetRight() );
     }
 };
 
 
 BOOST_FIXTURE_TEST_SUITE( PcbItem, TEST_BOARD_ITEM_FIXTURE )
+
+
+BOOST_AUTO_TEST_CASE( Type )
+{
+   for( int i = 0; i < MAX_STRUCT_TYPE_ID; i++ )
+   {
+       KICAD_T type = static_cast<KICAD_T>( i );
+
+       auto item = std::unique_ptr<BOARD_ITEM>( Instantiate( type ) );
+
+       if( item == nullptr )
+           continue;
+
+       BOOST_TEST_CONTEXT( "Class: " << item->GetClass() )
+       {
+           BOOST_CHECK( !ENUM_MAP<KICAD_T>::Instance().ToString( type ).IsEmpty() );
+       }
+   }
+}
 
 
 BOOST_AUTO_TEST_CASE( Move )
@@ -185,13 +214,9 @@ BOOST_AUTO_TEST_CASE( Move )
                     item.get(),
                     []( BOARD_ITEM* aOriginalItem, VECTOR2I aRef )
                     {
-                        // FIXME: Update() has to be called after SetPosition() to update dimension
-                        // shapes.
-                        PCB_DIMENSION_BASE* originalDimension =
-                                dynamic_cast<PCB_DIMENSION_BASE*>( aOriginalItem );
-
-                        if( originalDimension != nullptr )
-                            originalDimension->Update();
+                        // FIXME: Update() has to be called after SetPosition() to update dimension shapes.
+                        if( PCB_DIMENSION_BASE* dimension = dynamic_cast<PCB_DIMENSION_BASE*>( aOriginalItem ) )
+                            dimension->Update();
 
                         auto     item = std::unique_ptr<BOARD_ITEM>( aOriginalItem->Duplicate( IGNORE_PARENT_GROUP ) );
                         VECTOR2I originalPos = item->GetPosition();
@@ -229,13 +254,11 @@ BOOST_AUTO_TEST_CASE( Rotate )
                     item.get(),
                     []( BOARD_ITEM* aOriginalItem, VECTOR2I aRef )
                     {
-                        // FIXME: Update() has to be called after SetPosition() to update dimension
-                        // shapes.
-                        PCB_DIMENSION_BASE* originalDimension =
-                                dynamic_cast<PCB_DIMENSION_BASE*>( aOriginalItem );
-
-                        if( originalDimension != nullptr )
-                            originalDimension->Update();
+                        // FIXME: Update() has to be called after SetPosition() to update dimension shapes.
+                        if( PCB_DIMENSION_BASE* dimension = dynamic_cast<PCB_DIMENSION_BASE*>( aOriginalItem ) )
+                            dimension->Update();
+                        else if( PCB_BARCODE* barcode = dynamic_cast<PCB_BARCODE*>( aOriginalItem ) )
+                            barcode->AssembleBarcode();
 
                         auto item = std::unique_ptr<BOARD_ITEM>( aOriginalItem->Duplicate( IGNORE_PARENT_GROUP ) );
 
@@ -270,13 +293,9 @@ BOOST_AUTO_TEST_CASE( FlipLeftRight )
                     item.get(),
                     []( BOARD_ITEM* aOriginalItem, VECTOR2I aRef )
                     {
-                        // FIXME: Update() has to be called after SetPosition() to update dimension
-                        // shapes.
-                        PCB_DIMENSION_BASE* originalDimension =
-                                dynamic_cast<PCB_DIMENSION_BASE*>( aOriginalItem );
-
-                        if( originalDimension != nullptr )
-                            originalDimension->Update();
+                        // FIXME: Update() has to be called after SetPosition() to update dimension shapes.
+                        if( PCB_DIMENSION_BASE* dimension = dynamic_cast<PCB_DIMENSION_BASE*>( aOriginalItem ) )
+                            dimension->Update();
 
                         auto item = std::unique_ptr<BOARD_ITEM>( aOriginalItem->Duplicate( IGNORE_PARENT_GROUP ) );
 
@@ -309,13 +328,9 @@ BOOST_AUTO_TEST_CASE( FlipUpDown )
                     item.get(),
                     []( BOARD_ITEM* aOriginalItem, VECTOR2I aRef )
                     {
-                        // FIXME: Update() has to be called after SetPosition() to update dimension
-                        // shapes.
-                        PCB_DIMENSION_BASE* originalDimension =
-                                dynamic_cast<PCB_DIMENSION_BASE*>( aOriginalItem );
-
-                        if( originalDimension != nullptr )
-                            originalDimension->Update();
+                        // FIXME: Update() has to be called after SetPosition() to update dimension shapes.
+                        if( PCB_DIMENSION_BASE* dimension = dynamic_cast<PCB_DIMENSION_BASE*>( aOriginalItem ) )
+                            dimension->Update();
 
                         auto item = std::unique_ptr<BOARD_ITEM>( aOriginalItem->Duplicate( IGNORE_PARENT_GROUP ) );
 
@@ -328,6 +343,47 @@ BOOST_AUTO_TEST_CASE( FlipUpDown )
                     } );
         }
     }
+}
+
+
+/**
+ * Regression test for issue #23234:
+ * Changing padstack mode to Custom on a flipped footprint's pad and pressing OK caused an
+ * "Unhandled exception" (std::out_of_range) because PADSTACK::CopperLayer( F_Cu ) fell through
+ * to m_copperProps.at( ALL_LAYERS ) after FlipLayers() had renamed the F_Cu key to B_Cu.
+ */
+BOOST_AUTO_TEST_CASE( Issue23234_CustomPadstackFlip )
+{
+    // Create a board with two copper layers so Flip works correctly
+    BOARD board;
+    FOOTPRINT footprint( &board );
+    PAD pad( &footprint );
+
+    // Set up a circular SMD pad on F_Cu (NORMAL padstack mode)
+    pad.SetAttribute( PAD_ATTRIB::SMD );
+    pad.SetShape( PADSTACK::ALL_LAYERS, PAD_SHAPE::CIRCLE );
+    pad.SetSize( PADSTACK::ALL_LAYERS, VECTOR2I( 500000, 500000 ) );
+    LSET smd_layers;
+    smd_layers.set( F_Cu );
+    pad.SetLayerSet( smd_layers );
+
+    // Switch padstack to CUSTOM mode (as the dialog does when user selects "Custom")
+    pad.Padstack().SetMode( PADSTACK::MODE::CUSTOM );
+
+    // Now flip the pad (as TransferDataFromWindow does for pads on flipped footprints).
+    // This renames the F_Cu key in m_copperProps to B_Cu.
+    // After this, ALL_LAYERS (= F_Cu) is no longer in m_copperProps.
+    pad.Flip( VECTOR2I( 0, 0 ), FLIP_DIRECTION::TOP_BOTTOM );
+
+    // These calls must NOT throw std::out_of_range.
+    // Before the fix, CopperLayer( ALL_LAYERS ) called m_copperProps.at( F_Cu ) which threw
+    // because F_Cu was not in the map (it had been renamed to B_Cu by FlipLayers).
+    BOOST_CHECK_NO_THROW( pad.GetShape( PADSTACK::ALL_LAYERS ) );
+    BOOST_CHECK_NO_THROW( pad.GetSize( PADSTACK::ALL_LAYERS ) );
+    BOOST_CHECK_NO_THROW( pad.Padstack().EffectiveLayerFor( PADSTACK::ALL_LAYERS ) );
+
+    // Verify the returned shape is sane (the B_Cu props, which were originally F_Cu props)
+    BOOST_CHECK( pad.GetShape( PADSTACK::ALL_LAYERS ) == PAD_SHAPE::CIRCLE );
 }
 
 

@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////
-// C++ code generated with wxFormBuilder (version 3.10.1-0-g8feb16b3)
+// C++ code generated with wxFormBuilder (version 4.2.1-0-g80c4cb6)
 // http://www.wxformbuilder.org/
 //
 // PLEASE DO *NOT* EDIT THIS FILE!
@@ -41,7 +41,9 @@ class DIALOG_UPDATE_FROM_PCB_BASE : public DIALOG_SHIM
 		wxCheckBox* m_cbUpdateValues;
 		wxCheckBox* m_cbUpdateNetNames;
 		wxCheckBox* m_cbUpdateAttributes;
+		wxCheckBox* m_cbPreferUnitSwaps;
 		wxCheckBox* m_cbUpdateOtherFields;
+		wxCheckBox* m_cbPreferPinSwaps;
 		WX_HTML_REPORT_PANEL* m_messagePanel;
 		wxStdDialogButtonSizer* m_sdbSizer;
 		wxButton* m_sdbSizerOK;

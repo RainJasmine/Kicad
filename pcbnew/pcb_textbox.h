@@ -72,12 +72,19 @@ public:
     VECTOR2I GetTopLeft() const override;
     VECTOR2I GetBotRight() const override;
 
+    /**
+     * Return the minimum height needed to contain the textbox's wrapped text content
+     * plus margins. Width is unconstrained (returns 0) so text freely rewraps.
+     * The constrained axis depends on rotation: y-axis for 0/180, x-axis for 90/270.
+     */
+    VECTOR2I GetMinSize() const;
+
     void SetTop( int aVal ) override;
     void SetLeft( int aVal ) override;
     void SetRight( int aVal ) override;
     void SetBottom( int aVal ) override;
 
-    void StyleFromSettings( const BOARD_DESIGN_SETTINGS& settings ) override;
+    void StyleFromSettings( const BOARD_DESIGN_SETTINGS& settings, bool aCheckSide ) override;
 
     int GetLegacyTextMargin() const;
 
@@ -113,6 +120,8 @@ public:
     bool HitTest( const VECTOR2I& aPosition, int aAccuracy ) const override;
 
     bool HitTest( const BOX2I& aRect, bool aContained, int aAccuracy = 0 ) const override;
+
+    bool HitTest( const SHAPE_LINE_CHAIN& aPoly, bool aContained ) const override;
 
     wxString GetClass() const override
     {

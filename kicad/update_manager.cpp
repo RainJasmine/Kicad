@@ -144,6 +144,7 @@ int UPDATE_MANAGER::PostRequest( const wxString& aUrl, std::string aRequestBody,
     curl.SetPostFields( aRequestBody );
     curl.SetFollowRedirects( true );
     curl.SetTransferCallback( callback, 250000L );
+    curl.SetTimeout( 30L );
 
     int code = curl.Perform();
 
@@ -228,7 +229,7 @@ void UPDATE_MANAGER::CheckForUpdate( wxWindow* aNoticeParent )
 
         // Check that the response is 200 (content provided)
         // We can also return 204 for no update
-        if( responseCode == 200 )
+        if( responseCode == 200 && !Pgm().m_Quitting )
         {
             nlohmann::json  update_json;
             UPDATE_RESPONSE response;
@@ -238,11 +239,14 @@ void UPDATE_MANAGER::CheckForUpdate( wxWindow* aNoticeParent )
                 update_json_stream >> update_json;
                 response = update_json.get<UPDATE_RESPONSE>();
 
-                if( response.version != settings->m_lastReceivedUpdate )
+                if( response.version != settings->m_lastReceivedUpdate && !Pgm().m_Quitting )
                 {
                     aNoticeParent->CallAfter(
                             [aNoticeParent, response]()
                             {
+                                if( Pgm().m_Quitting )
+                                    return;
+
                                 auto notice = new DIALOG_UPDATE_NOTICE( aNoticeParent,
                                                                         response.version,
                                                                         response.details_url,
@@ -274,5 +278,5 @@ void UPDATE_MANAGER::CheckForUpdate( wxWindow* aNoticeParent )
     };
 
     thread_pool& tp = GetKiCadThreadPool();
-    m_updateTask = tp.submit( update_check );
+    m_updateTask = tp.submit_task( update_check );
 }

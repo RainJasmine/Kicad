@@ -128,6 +128,10 @@ public:
     /// Swapping of selected items
     static TOOL_ACTION swap;
 
+    /// Swap nets between selected pads/gates (and connected copper)
+    static TOOL_ACTION swapPadNets;
+    static TOOL_ACTION swapGateNets;
+
     /// Pack and start moving selected footprints
     static TOOL_ACTION packAndMoveFootprints;
 
@@ -154,6 +158,8 @@ public:
     static TOOL_ACTION extendLines;
     /// Simplify polygon outlines
     static TOOL_ACTION simplifyPolygons;
+    /// Edit polygon vertices in a table
+    static TOOL_ACTION editVertices;
     /// Create outset items from selection
     static TOOL_ACTION outsetItems;
 
@@ -192,6 +198,7 @@ public:
     static TOOL_ACTION drawCircle;
     static TOOL_ACTION drawArc;
     static TOOL_ACTION drawBezier;
+    static TOOL_ACTION placePoint;
     static TOOL_ACTION placeReferenceImage;
     static TOOL_ACTION placeText;
     static TOOL_ACTION drawTextBox;
@@ -206,6 +213,7 @@ public:
     static TOOL_ACTION drawRadialDimension;
     static TOOL_ACTION drawOrthogonalDimension;
     static TOOL_ACTION drawLeader;
+    static TOOL_ACTION placeBarcode;
     static TOOL_ACTION drawZone;
     static TOOL_ACTION drawVia;
     static TOOL_ACTION drawRuleArea;
@@ -217,6 +225,13 @@ public:
     static TOOL_ACTION placeImportedGraphics;
     static TOOL_ACTION setAnchor;
     static TOOL_ACTION deleteLastPoint;
+
+    // Line mode grouping and events
+    static TOOL_ACTION lineModeFree;         ///< Unconstrained angle mode (icon lines_any)
+    static TOOL_ACTION lineMode90;           ///< 90-degree-only mode (icon lines90)
+    static TOOL_ACTION lineMode45;           ///< 45-degree-or-orthogonal mode (icon hv45mode)
+    static TOOL_ACTION lineModeNext;         ///< Cycle through angle modes
+    static TOOL_ACTION angleSnapModeChanged; ///< Notification event when angle mode changes
     static TOOL_ACTION closeOutline;
 
     /// Increase width of currently drawn line
@@ -255,6 +270,7 @@ public:
     static TOOL_ACTION routerRouteSelected;
     static TOOL_ACTION routerRouteSelectedFromEnd;
     static TOOL_ACTION routerAutorouteSelected;
+    static TOOL_ACTION cancelCurrentItem;
 
     /// Activation of the Push and Shove settings dialogs
     static TOOL_ACTION routerSettingsDialog;
@@ -276,8 +292,8 @@ public:
     static TOOL_ACTION regenerateItem;
     static TOOL_ACTION genStartEdit;
     static TOOL_ACTION genUpdateEdit;
-    static TOOL_ACTION genPushEdit;
-    static TOOL_ACTION genRevertEdit;
+    static TOOL_ACTION genFinishEdit;
+    static TOOL_ACTION genCancelEdit;
     static TOOL_ACTION genRemove;
 
     static TOOL_ACTION generatorsShowManager;
@@ -304,7 +320,7 @@ public:
 
     // Position Relative Tool
     static TOOL_ACTION positionRelative;
-    static TOOL_ACTION positionRelativeInteractively;
+    static TOOL_ACTION interactiveOffsetTool;
 
     /// Selection of reference points/items
     static TOOL_ACTION selectItemInteractively;
@@ -398,6 +414,12 @@ public:
     /// Duplicate zone onto another layer
     static TOOL_ACTION zoneDuplicate;
 
+    // Zone priority actions
+    static TOOL_ACTION zonePriorityMoveToTop;
+    static TOOL_ACTION zonePriorityRaise;
+    static TOOL_ACTION zonePriorityLower;
+    static TOOL_ACTION zonePriorityMoveToBottom;
+
     /// Scripting Actions
     static TOOL_ACTION pluginsShowFolder;
 
@@ -406,7 +428,6 @@ public:
     static TOOL_ACTION rescueAutosave;
     static TOOL_ACTION openNonKicadBoard;
     static TOOL_ACTION exportFootprints;
-    static TOOL_ACTION exportFootprintsAs;
     static TOOL_ACTION boardSetup;
 
     static TOOL_ACTION importNetlist;
@@ -439,30 +460,32 @@ public:
     static TOOL_ACTION cleanupGraphics;
     static TOOL_ACTION updateFootprint;
     static TOOL_ACTION updateFootprints;
+    static TOOL_ACTION migrate3DModels;
     static TOOL_ACTION changeFootprint;
     static TOOL_ACTION changeFootprints;
     static TOOL_ACTION swapLayers;
     static TOOL_ACTION removeUnusedPads;
 
     static TOOL_ACTION runDRC;
+    static TOOL_ACTION drcRuleEditor;
 
     static TOOL_ACTION editFpInFpEditor;
     static TOOL_ACTION editLibFpInFpEditor;
 
     static TOOL_ACTION showLayersManager;
     static TOOL_ACTION showNetInspector;
-    static TOOL_ACTION showPythonConsole;
     static TOOL_ACTION zonesManager;
 
     // Design Block management
     static TOOL_ACTION placeDesignBlock;
     static TOOL_ACTION placeLinkedDesignBlock;
+    static TOOL_ACTION applyDesignBlockLayout;
     static TOOL_ACTION saveToLinkedDesignBlock;
     static TOOL_ACTION showDesignBlockPanel;
     static TOOL_ACTION saveBoardAsDesignBlock;
     static TOOL_ACTION saveSelectionAsDesignBlock;
-    static TOOL_ACTION saveBoardToDesignBlock;
-    static TOOL_ACTION saveSelectionToDesignBlock;
+    static TOOL_ACTION updateDesignBlockFromBoard;
+    static TOOL_ACTION updateDesignBlockFromSelection;
     static TOOL_ACTION deleteDesignBlock;
     static TOOL_ACTION editDesignBlockProperties;
 
@@ -487,6 +510,7 @@ public:
 
     static TOOL_ACTION footprintProperties;
     static TOOL_ACTION defaultPadProperties;
+    static TOOL_ACTION padTable;
 
     static TOOL_ACTION checkFootprint;
 
@@ -536,9 +560,6 @@ public:
 
     static TOOL_ACTION microwaveCreateLine;
 
-    // Constrained drawing
-    static TOOL_ACTION toggleHV45Mode;
-
     // Locking
     static TOOL_ACTION toggleLock;
     static TOOL_ACTION lock;
@@ -560,6 +581,7 @@ public:
     static TOOL_ACTION inspectConstraints;
     static TOOL_ACTION diffFootprint;
     static TOOL_ACTION showFootprintAssociations;
+    static TOOL_ACTION collect3DModels;
 
     // Appearance controls
     static TOOL_ACTION clearHighlight;          // Turns off highlight and resets previous highlight
@@ -579,6 +601,9 @@ public:
     /// Find an item
     static TOOL_ACTION find;
 
+    /// Find items by property criteria or expression
+    static TOOL_ACTION findByProperties;
+
     /// Find an item and start moving
     static TOOL_ACTION getAndPlace;
 
@@ -596,6 +621,7 @@ public:
     /// Drag and drop
     static TOOL_ACTION ddAppendBoard;
     static TOOL_ACTION ddImportFootprint;
+    static TOOL_ACTION ddImportGraphics;
 
     static TOOL_ACTION repeatLayout;
     static TOOL_ACTION generatePlacementRuleAreas;
@@ -603,8 +629,6 @@ public:
     /// Footprint wizard frame actions:
     static TOOL_ACTION showWizards;
     static TOOL_ACTION resetWizardPrms;
-    static TOOL_ACTION selectPreviousWizardPage;
-    static TOOL_ACTION selectNextWizardPage;
     static TOOL_ACTION exportFpToEditor;
 };
 

@@ -44,10 +44,10 @@ public:
 
     static TOOL_ACTION reloadBoard;
     static TOOL_ACTION toggleRaytacing;
+    static TOOL_ACTION toggleShowMissingModels;
 
     static TOOL_ACTION copyToClipboard;
-    static TOOL_ACTION exportAsPNG;
-    static TOOL_ACTION exportAsJPEG;
+    static TOOL_ACTION exportImage;
 
     static TOOL_ACTION pivotCenter;
     static TOOL_ACTION rotateXCW;

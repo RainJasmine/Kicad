@@ -53,7 +53,8 @@ std::set<int> g_excludedLayers =
         {
             LAYER_NOTES_BACKGROUND,
             LAYER_DANGLING,
-            LAYER_NET_COLOR_HIGHLIGHT
+            LAYER_NET_COLOR_HIGHLIGHT,
+            LAYER_GROUP
         };
 
 
@@ -94,7 +95,7 @@ PANEL_EESCHEMA_COLOR_SETTINGS::PANEL_EESCHEMA_COLOR_SETTINGS( wxWindow* aParent 
     m_galDisplayOptions.ReadConfig( *common_settings, app_settings->m_Window, this );
     m_galDisplayOptions.m_forceDisplayCursor = false;
 
-    m_galType = static_cast<EDA_DRAW_PANEL_GAL::GAL_TYPE>( app_settings->m_Graphics.canvas_type );
+    m_galType = static_cast<EDA_DRAW_PANEL_GAL::GAL_TYPE>( common_settings->m_Graphics.canvas_type );
 }
 
 
@@ -247,7 +248,7 @@ void PANEL_EESCHEMA_COLOR_SETTINGS::createPreviewItems()
 
     std::vector<DANGLING_END_ITEM> endPointsByType;
 
-    m_page       = new PAGE_INFO( PAGE_INFO::Custom );
+    m_page       = new PAGE_INFO( PAGE_SIZE_TYPE::User );
     m_titleBlock = new TITLE_BLOCK;
     m_titleBlock->SetTitle( _( "Color Preview" ) );
     m_titleBlock->SetDate( wxDateTime::Now().FormatDate() );

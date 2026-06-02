@@ -74,6 +74,7 @@ public:
 #else
     static constexpr GAL_TYPE GAL_FALLBACK = GAL_TYPE_CAIRO;
 #endif
+    static constexpr bool GAL_FALLBACK_AVAILABLE = GAL_FALLBACK != GAL_TYPE_OPENGL;
 
     /**
      * Create a drawing panel that is contained inside \p aParentWindow.
@@ -233,7 +234,7 @@ public:
      *
      * @return true if the repaint attempt was successful.
      */
-    bool DoRePaint();
+    bool DoRePaint( bool aAllowSkip = true );
 
     /**
      * Create an overlay for rendering debug graphics.
@@ -270,6 +271,8 @@ protected:
     void onRefreshTimer( wxTimerEvent& aEvent );
     void onShowEvent( wxShowEvent& aEvent );
 
+    bool recoverFromGalError( const std::exception& aErr );
+
     wxWindow*                m_parent;           ///< Pointer to the parent window
     EDA_DRAW_FRAME*          m_edaFrame;         ///< Parent EDA_DRAW_FRAME (if available)
 
@@ -287,6 +290,9 @@ protected:
 
     /// True when canvas needs to be refreshed from idle handler
     bool                     m_needIdleRefresh;
+
+    /// Last cursor position sent to GAL for drawing
+    VECTOR2D                 m_lastCursorPosition;
 
     /// Interface for drawing objects on a 2D-surface
     KIGFX::GAL*              m_gal;
@@ -310,6 +316,9 @@ protected:
     /// Flag to indicate that focus should be regained on the next mouse event. It is a workaround
     /// for cases when the panel loses keyboard focus, so it does not react to hotkeys anymore.
     bool                     m_lostFocus;
+
+    /// Set after an OpenGL recovery attempt to prevent infinite retry loops
+    bool                     m_glRecoveryAttempted;
 
     /// Flag to indicate whether the panel should take focus at certain times (when moused over,
     /// and on various mouse/key events)

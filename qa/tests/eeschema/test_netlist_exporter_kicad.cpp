@@ -33,6 +33,7 @@ public:
             std::unique_ptr<NETLIST_READER> netlistReader( NETLIST_READER::GetNetlistReader(
                                                 &golden, GetNetlistPath(), wxEmptyString ) );
 
+            BOOST_ASSERT( netlistReader );
             BOOST_REQUIRE_NO_THROW( netlistReader->LoadNetlist() );
         }
 
@@ -40,6 +41,7 @@ public:
             std::unique_ptr<NETLIST_READER> netlistReader( NETLIST_READER::GetNetlistReader(
                                                 &test, GetNetlistPath( true ), wxEmptyString ) );
 
+            BOOST_ASSERT( netlistReader );
             BOOST_REQUIRE_NO_THROW( netlistReader->LoadNetlist() );
         }
 
@@ -88,7 +90,7 @@ public:
                 BOOST_REQUIRE_EQUAL( goldenNet.GetPinType(), testNet.GetPinType() );
             }
 
-            // And the the resolved component class is the same
+            // And the resolved component class is the same
             BOOST_REQUIRE( goldenComp->GetComponentClassNames()
                            == refComp->GetComponentClassNames() );
         }
@@ -216,6 +218,11 @@ BOOST_AUTO_TEST_CASE( Issue16439 )
 BOOST_AUTO_TEST_CASE( ComponentClasses )
 {
     TestNetlist( "component_classes" );
+}
+
+BOOST_AUTO_TEST_CASE( HierarchicalComponentClasses )
+{
+    TestNetlist( "hierarchical_component_classes" );
 }
 
 

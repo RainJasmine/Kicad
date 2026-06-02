@@ -50,18 +50,11 @@ namespace KIGFX
         SMALL_CROSS ///< Use small cross instead of dots for the grid
     };
 
-    enum class OPENGL_ANTIALIASING_MODE
+    enum class GAL_ANTIALIASING_MODE
     {
-        NONE,
-        SMAA,
-        SUPERSAMPLING,
-    };
-
-    enum class CAIRO_ANTIALIASING_MODE
-    {
-        NONE,
-        FAST,
-        GOOD,
+        AA_NONE,
+        AA_FAST,
+        AA_HIGHQUALITY,
     };
 
     enum class GRID_SNAPPING
@@ -69,6 +62,13 @@ namespace KIGFX
         ALWAYS,
         WITH_GRID,
         NEVER
+    };
+
+    enum class CROSS_HAIR_MODE : int
+    {
+        SMALL_CROSS,
+        FULLSCREEN_CROSS,
+        FULLSCREEN_DIAGONAL
     };
 
     class GAL_DISPLAY_OPTIONS;
@@ -91,9 +91,7 @@ namespace KIGFX
         virtual ~GAL_DISPLAY_OPTIONS()
         {}
 
-        OPENGL_ANTIALIASING_MODE gl_antialiasing_mode;
-
-        CAIRO_ANTIALIASING_MODE cairo_antialiasing_mode;
+        GAL_ANTIALIASING_MODE antialiasing_mode;
 
         ///< The grid style to draw the grid in
         KIGFX::GRID_STYLE m_gridStyle;
@@ -110,14 +108,18 @@ namespace KIGFX
         ///< Whether or not to draw the coordinate system axes
         bool m_axesEnabled;
 
-        ///< Fullscreen crosshair or small cross
-        bool m_fullscreenCursor;
+        ///< Crosshair drawing mode
+        CROSS_HAIR_MODE m_crossHairMode;
 
         ///< Force cursor display
         bool m_forceDisplayCursor;
 
         ///< The pixel scale factor (>1 for hi-DPI scaled displays)
         double m_scaleFactor;
+
+        void SetCursorMode( CROSS_HAIR_MODE aMode ) { m_crossHairMode = aMode; }
+
+        CROSS_HAIR_MODE GetCursorMode() const { return m_crossHairMode; }
 
         void NotifyChanged();
     };

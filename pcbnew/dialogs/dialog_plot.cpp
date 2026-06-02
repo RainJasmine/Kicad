@@ -21,8 +21,12 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include "dialog_plot.h"
+
 #include <wx/bmpbuttn.h>
 #include <wx/clntdata.h>
+#include <wx/dirdlg.h>
+#include <wx/msgdlg.h>
 #include <wx/rearrangectrl.h>
 
 #include <plotters/plotter.h>
@@ -35,10 +39,9 @@
 #include <reporter.h>
 #include <wildcards_and_files_ext.h>
 #include <layer_ids.h>
-#include <locale_io.h>
 #include <bitmaps.h>
-#include <dialog_plot.h>
 #include <dialog_gendrill.h>
+#include <string_utils.h>
 #include <widgets/wx_html_report_panel.h>
 #include <widgets/std_bitmap_button.h>
 #include <widgets/color_swatch.h>
@@ -51,13 +54,11 @@
 #include <jobs/job_export_pcb_hpgl.h>
 #include <jobs/job_export_pcb_dxf.h>
 #include <jobs/job_export_pcb_pdf.h>
+#include <jobs/job_export_pcb_png.h>
 #include <jobs/job_export_pcb_ps.h>
 #include <jobs/job_export_pcb_svg.h>
 #include <plotters/plotters_pslike.h>
 #include <pcb_plotter.h>
-
-#include <wx/dirdlg.h>
-#include <wx/msgdlg.h>
 
 
 LSEQ DIALOG_PLOT::s_lastAllLayersOrder;
@@ -110,12 +111,11 @@ DIALOG_PLOT::DIALOG_PLOT( PCB_EDIT_FRAME* aEditFrame )
 }
 
 
-DIALOG_PLOT::DIALOG_PLOT( PCB_EDIT_FRAME* aEditFrame, wxWindow* aParent,
-                          JOB_EXPORT_PCB_PLOT* aJob ) :
-    DIALOG_PLOT_BASE( aParent ),
-    m_editFrame( aEditFrame ),
-    m_trackWidthCorrection( m_editFrame, m_widthAdjustLabel, m_widthAdjustCtrl, m_widthAdjustUnits ),
-    m_job( aJob )
+DIALOG_PLOT::DIALOG_PLOT( PCB_EDIT_FRAME* aEditFrame, wxWindow* aParent, JOB_EXPORT_PCB_PLOT* aJob ) :
+        DIALOG_PLOT_BASE( aParent ),
+        m_editFrame( aEditFrame ),
+        m_trackWidthCorrection( m_editFrame, m_widthAdjustLabel, m_widthAdjustCtrl, m_widthAdjustUnits ),
+        m_job( aJob )
 {
     BOARD* board = m_editFrame->GetBoard();
 
@@ -138,6 +138,7 @@ DIALOG_PLOT::DIALOG_PLOT( PCB_EDIT_FRAME* aEditFrame, wxWindow* aParent,
         m_buttonDRC->Hide();
         m_DRCExclusionsWarning->Hide();
         m_sdbSizer1Apply->Hide();
+        m_zoneFillCheck->SetLabel( _( "Refill zones before plotting" ) );
     }
     else
     {
@@ -146,8 +147,11 @@ DIALOG_PLOT::DIALOG_PLOT( PCB_EDIT_FRAME* aEditFrame, wxWindow* aParent,
     }
 
     // DIALOG_SHIM needs a unique hash_key because classname will be the same for both job and
-    // non-job versions (which have different sizes).
+    // non-job versions.
     m_hash_key = TO_UTF8( GetTitle() );
+
+    m_variantChoiceCtrl->Append( board->GetVariantNamesForUI() );
+    m_variantChoiceCtrl->SetSelection( 0 );
 
     int                       order = 0;
     wxArrayInt                plotAllLayersOrder;
@@ -208,30 +212,31 @@ DIALOG_PLOT::DIALOG_PLOT( PCB_EDIT_FRAME* aEditFrame, wxWindow* aParent,
         m_plotAllLayersList->SetClientObject( list_idx, new PCB_LAYER_ID_CLIENT_DATA( layer_id ) );
     }
 
-	sbSizer->Add( m_plotAllLayersList, 1, wxALL | wxEXPAND | wxFIXED_MINSIZE, 3 );
+    sbSizer->Add( m_plotAllLayersList, 1, wxALL | wxEXPAND | wxFIXED_MINSIZE, 3 );
 
-	wxBoxSizer* bButtonSizer;
-	bButtonSizer = new wxBoxSizer( wxHORIZONTAL );
+    wxBoxSizer* bButtonSizer;
+    bButtonSizer = new wxBoxSizer( wxHORIZONTAL );
 
-	m_bpMoveUp = new STD_BITMAP_BUTTON( sbSizer->GetStaticBox(), wxID_ANY, wxNullBitmap,
+    m_bpMoveUp = new STD_BITMAP_BUTTON( sbSizer->GetStaticBox(), wxID_ANY, wxNullBitmap,
                                         wxDefaultPosition, wxDefaultSize, wxBU_AUTODRAW | 0 );
-	m_bpMoveUp->SetToolTip( _( "Move current selection up" ) );
+    m_bpMoveUp->SetToolTip( _( "Move current selection up" ) );
     m_bpMoveUp->SetBitmap( KiBitmapBundle( BITMAPS::small_up ) );
 
-	bButtonSizer->Add( m_bpMoveUp, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 3 );
+    bButtonSizer->Add( m_bpMoveUp, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 3 );
 
-	m_bpMoveDown = new STD_BITMAP_BUTTON( sbSizer->GetStaticBox(), wxID_ANY, wxNullBitmap,
+    m_bpMoveDown = new STD_BITMAP_BUTTON( sbSizer->GetStaticBox(), wxID_ANY, wxNullBitmap,
                                           wxDefaultPosition, wxDefaultSize, wxBU_AUTODRAW | 0 );
-	m_bpMoveDown->SetToolTip( _( "Move current selection down" ) );
+    m_bpMoveDown->SetToolTip( _( "Move current selection down" ) );
     m_bpMoveDown->SetBitmap( KiBitmapBundle( BITMAPS::small_down ) );
 
-	bButtonSizer->Add( m_bpMoveDown, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
+    bButtonSizer->Add( m_bpMoveDown, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
 
     sbSizer->Add( bButtonSizer, 0, wxALL | wxEXPAND, 3 );
 
-	bmiddleSizer->Insert( 1, sbSizer, 1, wxALL | wxEXPAND, 5 );
+    bmiddleSizer->Insert( 1, sbSizer, 1, wxALL | wxEXPAND, 5 );
 
-    init_Dialog();
+    m_browseButton->SetBitmap( KiBitmapBundle( BITMAPS::small_folder ) );
+    m_openDirButton->SetBitmap( KiBitmapBundle( BITMAPS::small_new_window ) );
 
     if( m_job )
     {
@@ -250,13 +255,11 @@ DIALOG_PLOT::DIALOG_PLOT( PCB_EDIT_FRAME* aEditFrame, wxWindow* aParent,
     m_bpMoveUp->Bind( wxEVT_COMMAND_BUTTON_CLICKED, &DIALOG_PLOT::onPlotAllListMoveUp, this );
     m_bpMoveDown->Bind( wxEVT_COMMAND_BUTTON_CLICKED, &DIALOG_PLOT::onPlotAllListMoveDown, this );
 
-    m_layerCheckListBox->Connect( wxEVT_RIGHT_DOWN,
-                                  wxMouseEventHandler( DIALOG_PLOT::OnRightClickLayers ), nullptr,
-                                  this );
+    m_layerCheckListBox->Connect( wxEVT_RIGHT_DOWN, wxMouseEventHandler( DIALOG_PLOT::OnRightClickLayers ),
+                                  nullptr, this );
 
-    m_plotAllLayersList->Connect( wxEVT_RIGHT_DOWN,
-                                  wxMouseEventHandler( DIALOG_PLOT::OnRightClickAllLayers ), nullptr,
-                                  this );
+    m_plotAllLayersList->Connect( wxEVT_RIGHT_DOWN, wxMouseEventHandler( DIALOG_PLOT::OnRightClickAllLayers ),
+                                  nullptr, this );
 }
 
 
@@ -272,7 +275,7 @@ DIALOG_PLOT::~DIALOG_PLOT()
 }
 
 
-void DIALOG_PLOT::init_Dialog()
+bool DIALOG_PLOT::TransferDataToWindow()
 {
     BOARD*      board = m_editFrame->GetBoard();
     wxFileName  fileName;
@@ -282,7 +285,29 @@ void DIALOG_PLOT::init_Dialog()
     // Could devote a PlotOrder() function in place of UIOrder().
     m_layerList = board->GetEnabledLayers().UIOrder();
 
-    PCBNEW_SETTINGS* cfg = m_editFrame->GetPcbNewSettings();
+    // Select the current board variant in the variant choice
+    if( m_job )
+    {
+        if( !m_job->m_variant.IsEmpty() )
+        {
+            int idx = m_variantChoiceCtrl->FindString( m_job->m_variant );
+
+            if( idx != wxNOT_FOUND )
+                m_variantChoiceCtrl->SetSelection( idx );
+        }
+    }
+    else
+    {
+        wxString currentVariant = board->GetCurrentVariant();
+
+        if( !currentVariant.IsEmpty() )
+        {
+            int idx = m_variantChoiceCtrl->FindString( currentVariant );
+
+            if( idx != wxNOT_FOUND )
+                m_variantChoiceCtrl->SetSelection( idx );
+        }
+    }
 
     if( !m_job && !projectFile.m_PcbLastPath[ LAST_PATH_PLOT ].IsEmpty() )
         m_plotOpts.SetOutputDirectory( projectFile.m_PcbLastPath[ LAST_PATH_PLOT ] );
@@ -293,24 +318,14 @@ void DIALOG_PLOT::init_Dialog()
     {
         // When we are using a job we get the PS adjust values from the plot options
         // The exception is when this is a fresh job and we want to get the global values as defaults
-        m_XScaleAdjust = m_plotOpts.GetFineScaleAdjustX();
-        m_YScaleAdjust = m_plotOpts.GetFineScaleAdjustY();
-        m_PSWidthAdjust = m_plotOpts.GetWidthAdjust();
+        m_fineAdjustXCtrl->SetValue( EDA_UNIT_UTILS::UI::StringFromValue( unityScale, EDA_UNITS::UNSCALED,
+                                                                          m_plotOpts.GetFineScaleAdjustX() ) );
+
+        m_fineAdjustYCtrl->SetValue( EDA_UNIT_UTILS::UI::StringFromValue( unityScale, EDA_UNITS::UNSCALED,
+                                                                          m_plotOpts.GetFineScaleAdjustY() ) );
+        m_trackWidthCorrection.SetValue( m_plotOpts.GetWidthAdjust() );
+        m_zoneFillCheck->SetValue( m_job->m_checkZonesBeforePlot );
     }
-    else
-    {
-        // The default is to use the global adjusts from the pcbnew settings
-        m_XScaleAdjust = cfg->m_Plot.fine_scale_x;
-        m_YScaleAdjust = cfg->m_Plot.fine_scale_y;
-        // m_PSWidthAdjust is stored in mm in user config
-        m_PSWidthAdjust = KiROUND( cfg->m_Plot.ps_fine_width_adjust * pcbIUScale.IU_PER_MM );
-    }
-
-    m_zoneFillCheck->SetValue( cfg->m_Plot.check_zones_before_plotting );
-
-    m_browseButton->SetBitmap( KiBitmapBundle( BITMAPS::small_folder ) );
-    m_openDirButton->SetBitmap( KiBitmapBundle( BITMAPS::small_new_window ) );
-
 
     // The reasonable width correction value must be in a range of
     // [-(MinTrackWidth-1), +(MinClearanceValue-1)] decimils.
@@ -326,26 +341,8 @@ void DIALOG_PLOT::init_Dialog()
     case PLOT_FORMAT::DXF:    m_plotFormatOpt->SetSelection( 3 ); break;
     case PLOT_FORMAT::HPGL:   /* no longer supported */           break;
     case PLOT_FORMAT::PDF:    m_plotFormatOpt->SetSelection( 4 ); break;
+    case PLOT_FORMAT::PNG:    m_plotFormatOpt->SetSelection( 5 ); break;
     }
-
-    // Test for a reasonable scale value. Set to 1 if problem
-    if( m_XScaleAdjust < PLOT_MIN_SCALE || m_YScaleAdjust < PLOT_MIN_SCALE
-        || m_XScaleAdjust > PLOT_MAX_SCALE || m_YScaleAdjust > PLOT_MAX_SCALE )
-    {
-        m_XScaleAdjust = m_YScaleAdjust = 1.0;
-    }
-
-    m_fineAdjustXCtrl->SetValue( EDA_UNIT_UTILS::UI::StringFromValue(
-            unityScale, EDA_UNITS::UNSCALED, m_XScaleAdjust ) );
-
-    m_fineAdjustYCtrl->SetValue( EDA_UNIT_UTILS::UI::StringFromValue(
-            unityScale, EDA_UNITS::UNSCALED, m_YScaleAdjust ) );
-
-    // Test for a reasonable PS width correction value. Set to 0 if problem.
-    if( m_PSWidthAdjust < m_widthAdjustMinValue || m_PSWidthAdjust > m_widthAdjustMaxValue )
-        m_PSWidthAdjust = 0.;
-
-    m_trackWidthCorrection.SetValue( m_PSWidthAdjust );
 
     m_plotPSNegativeOpt->SetValue( m_plotOpts.GetNegative() );
     m_forcePSA4OutputOpt->SetValue( m_plotOpts.GetA4Output() );
@@ -385,6 +382,10 @@ void DIALOG_PLOT::init_Dialog()
     m_svgPrecsision->SetValue( m_plotOpts.GetSvgPrecision() );
     m_SVG_fitPageToBoard->SetValue( m_plotOpts.GetSvgFitPagetoBoard() );
 
+    // PNG options
+    m_pngDPI->SetValue( m_plotOpts.GetPngDPI() );
+    m_pngAntialias->SetValue( m_plotOpts.GetPngAntialias() );
+
     m_sketchPadsOnFabLayers->SetValue( m_plotOpts.GetSketchPadsOnFabLayers() );
     m_plotPadNumbers->SetValue( m_plotOpts.GetPlotPadNumbers() );
     m_plotPadNumbers->Enable( m_plotOpts.GetSketchPadsOnFabLayers() );
@@ -420,8 +421,7 @@ void DIALOG_PLOT::init_Dialog()
     m_DXF_plotModeOpt->SetValue( m_plotOpts.GetDXFPlotPolygonMode() );
 
     // DXF text mode
-    m_DXF_plotTextStrokeFontOpt->SetValue( m_plotOpts.GetTextMode()
-                                            == PLOT_TEXT_MODE::DEFAULT );
+    m_DXF_plotTextStrokeFontOpt->SetValue( m_plotOpts.GetTextMode() == PLOT_TEXT_MODE::DEFAULT );
 
     // DXF units selection
     m_DXF_plotUnits->SetSelection( m_plotOpts.GetDXFPlotUnits() == DXF_UNITS::INCH ? 0 : 1 );
@@ -446,6 +446,8 @@ void DIALOG_PLOT::init_Dialog()
     // Update options values:
     wxCommandEvent cmd_event;
     SetPlotFormat( cmd_event );
+
+    return true;
 }
 
 
@@ -482,7 +484,8 @@ void DIALOG_PLOT::transferPlotParamsToJob()
                                                                              : JOB_EXPORT_PCB_DXF::DXF_UNITS::MM;
         dxfJob->m_plotGraphicItemsUsingContours = m_plotOpts.GetDXFPlotMode() == DXF_OUTLINE_MODE::SKETCH;
         dxfJob->m_polygonMode = m_plotOpts.GetDXFPlotPolygonMode();
-        dxfJob->m_genMode = JOB_EXPORT_PCB_DXF::GEN_MODE::MULTI;
+        dxfJob->m_genMode = m_plotOpts.GetDXFMultiLayeredExportOption() ? JOB_EXPORT_PCB_DXF::GEN_MODE::SINGLE
+                                                                        : JOB_EXPORT_PCB_DXF::GEN_MODE::MULTI;
     }
 
     if( m_job->m_plotFormat == JOB_EXPORT_PCB_PLOT::PLOT_FORMAT::POST )
@@ -518,6 +521,13 @@ void DIALOG_PLOT::transferPlotParamsToJob()
         }
     }
 
+    if( m_job->m_plotFormat == JOB_EXPORT_PCB_PLOT::PLOT_FORMAT::PNG )
+    {
+        JOB_EXPORT_PCB_PNG* pngJob = static_cast<JOB_EXPORT_PCB_PNG*>( m_job );
+        pngJob->m_dpi = m_plotOpts.GetPngDPI();
+        pngJob->m_antialias = m_plotOpts.GetPngAntialias();
+    }
+
     m_job->m_subtractSolderMaskFromSilk = m_plotOpts.GetSubtractMaskFromSilk();
     m_job->m_useDrillOrigin = m_plotOpts.GetUseAuxOrigin();
     m_job->m_crossoutDNPFPsOnFabLayers = m_plotOpts.GetCrossoutDNPFPsOnFabLayers();
@@ -547,6 +557,11 @@ void DIALOG_PLOT::transferPlotParamsToJob()
     }
 
     m_job->SetConfiguredOutputPath( m_plotOpts.GetOutputDirectory() );
+
+    // this exists outside plot opts because its usually globally saved
+    m_job->m_checkZonesBeforePlot = m_zoneFillCheck->GetValue();
+
+    m_job->m_variant = getSelectedVariant();
 }
 
 
@@ -594,6 +609,18 @@ void DIALOG_PLOT::reInitDialog()
     {
         m_PlotOptionsSizer->Hide( m_SizerSolderMaskAlert );
     }
+}
+
+
+wxString DIALOG_PLOT::getSelectedVariant() const
+{
+    wxString variant;
+    int      selection = m_variantChoiceCtrl->GetSelection();
+
+    if( ( selection != 0 ) && ( selection != wxNOT_FOUND ) )
+        variant = m_variantChoiceCtrl->GetString( selection );
+
+    return variant;
 }
 
 
@@ -806,7 +833,6 @@ void DIALOG_PLOT::onOutputDirectoryBrowseClicked( wxCommandEvent& event )
 
     wxFileName fn( Prj().AbsolutePath( m_editFrame->GetBoard()->GetFileName() ) );
     wxString   defaultPath = fn.GetPathWithSep();
-    wxString   msg;
     wxFileName relPathTest; // Used to test if we can make the path relative
 
     relPathTest.Assign( dirDialog.GetPath() );
@@ -814,12 +840,7 @@ void DIALOG_PLOT::onOutputDirectoryBrowseClicked( wxCommandEvent& event )
     // Test if making the path relative is possible before asking the user if they want to do it
     if( relPathTest.MakeRelativeTo( defaultPath ) )
     {
-        msg.Printf( _( "Do you want to use a path relative to\n'%s'?" ), defaultPath );
-
-        wxMessageDialog dialog( this, msg, _( "Plot Output Directory" ),
-                                wxYES_NO | wxICON_QUESTION | wxYES_DEFAULT );
-
-        if( dialog.ShowModal() == wxID_YES )
+        if( IsOK( this, wxString::Format( _( "Do you want to use a path relative to\n'%s'?" ), defaultPath ) ) )
             dirName.MakeRelativeTo( defaultPath );
     }
 
@@ -835,7 +856,8 @@ PLOT_FORMAT DIALOG_PLOT::getPlotFormat()
             PLOT_FORMAT::POST,
             PLOT_FORMAT::SVG,
             PLOT_FORMAT::DXF,
-            PLOT_FORMAT::PDF };
+            PLOT_FORMAT::PDF,
+            PLOT_FORMAT::PNG };
 
     return plotFmt[m_plotFormatOpt->GetSelection()];
 }
@@ -861,6 +883,8 @@ void DIALOG_PLOT::SetPlotFormat( wxCommandEvent& event )
         m_PlotOptionsSizer->Hide( m_SizerSolderMaskAlert );
     }
 
+    wxSizer* shownFormatSizer = nullptr;
+
     switch( getPlotFormat() )
     {
     case PLOT_FORMAT::SVG:
@@ -876,20 +900,7 @@ void DIALOG_PLOT::SetPlotFormat( wxCommandEvent& event )
         m_forcePSA4OutputOpt->Enable( false );
         m_forcePSA4OutputOpt->SetValue( false );
 
-        if( getPlotFormat() == PLOT_FORMAT::SVG )
-        {
-            m_PlotOptionsSizer->Show( m_svgOptionsSizer );
-            m_PlotOptionsSizer->Hide( m_PDFOptionsSizer );
-        }
-        else
-        {
-            m_PlotOptionsSizer->Hide( m_svgOptionsSizer );
-            m_PlotOptionsSizer->Show( m_PDFOptionsSizer );
-        }
-
-        m_PlotOptionsSizer->Hide( m_GerberOptionsSizer );
-        m_PlotOptionsSizer->Hide( m_PSOptionsSizer );
-        m_PlotOptionsSizer->Hide( m_SizerDXF_options );
+        shownFormatSizer = ( getPlotFormat() == PLOT_FORMAT::SVG ) ? m_svgOptionsSizer : m_PDFOptionsSizer;
         break;
 
     case PLOT_FORMAT::POST:
@@ -904,11 +915,7 @@ void DIALOG_PLOT::SetPlotFormat( wxCommandEvent& event )
         m_plotPSNegativeOpt->Enable( true );
         m_forcePSA4OutputOpt->Enable( true );
 
-        m_PlotOptionsSizer->Hide( m_GerberOptionsSizer );
-        m_PlotOptionsSizer->Show( m_PSOptionsSizer );
-        m_PlotOptionsSizer->Hide( m_SizerDXF_options );
-        m_PlotOptionsSizer->Hide( m_svgOptionsSizer );
-        m_PlotOptionsSizer->Hide( m_PDFOptionsSizer );
+        shownFormatSizer = m_PSOptionsSizer;
         break;
 
     case PLOT_FORMAT::GERBER:
@@ -927,11 +934,7 @@ void DIALOG_PLOT::SetPlotFormat( wxCommandEvent& event )
         m_forcePSA4OutputOpt->Enable( false );
         m_forcePSA4OutputOpt->SetValue( false );
 
-        m_PlotOptionsSizer->Show( m_GerberOptionsSizer );
-        m_PlotOptionsSizer->Hide( m_PSOptionsSizer );
-        m_PlotOptionsSizer->Hide( m_SizerDXF_options );
-        m_PlotOptionsSizer->Hide( m_svgOptionsSizer );
-        m_PlotOptionsSizer->Hide( m_PDFOptionsSizer );
+        shownFormatSizer = m_GerberOptionsSizer;
         break;
 
     case PLOT_FORMAT::DXF:
@@ -948,19 +951,35 @@ void DIALOG_PLOT::SetPlotFormat( wxCommandEvent& event )
         m_forcePSA4OutputOpt->Enable( false );
         m_forcePSA4OutputOpt->SetValue( false );
 
-        m_PlotOptionsSizer->Hide( m_GerberOptionsSizer );
-        m_PlotOptionsSizer->Hide( m_PSOptionsSizer );
-        m_PlotOptionsSizer->Show( m_SizerDXF_options );
-        m_PlotOptionsSizer->Hide( m_svgOptionsSizer );
-        m_PlotOptionsSizer->Hide( m_PDFOptionsSizer );
-
+        shownFormatSizer = m_SizerDXF_options;
         OnChangeDXFPlotMode( event );
+        break;
+
+    case PLOT_FORMAT::PNG:
+        m_drillShapeOpt->Enable( true );
+        m_plotMirrorOpt->Enable( true );
+        m_useAuxOriginCheckBox->Enable( true );
+        m_scaleOpt->Enable( true );
+        m_fineAdjustXCtrl->Enable( false );
+        m_fineAdjustYCtrl->Enable( false );
+        m_trackWidthCorrection.Enable( false );
+        m_plotPSNegativeOpt->Enable( true );
+        m_forcePSA4OutputOpt->Enable( false );
+        m_forcePSA4OutputOpt->SetValue( false );
+
+        shownFormatSizer = m_pngOptionsSizer;
         break;
 
     default:
     case PLOT_FORMAT::HPGL:
     case PLOT_FORMAT::UNDEFINED:
         break;
+    }
+
+    for( wxSizer* formatSizer : { m_GerberOptionsSizer, m_PSOptionsSizer, m_SizerDXF_options,
+                                  m_svgOptionsSizer, m_PDFOptionsSizer, m_pngOptionsSizer } )
+    {
+        m_PlotOptionsSizer->Show( formatSizer, formatSizer == shownFormatSizer );
     }
 
     Layout();
@@ -1039,6 +1058,8 @@ void DIALOG_PLOT::applyPlotSettings()
         tempOptions.SetTextMode( m_DXF_plotTextStrokeFontOpt->GetValue() ? PLOT_TEXT_MODE::DEFAULT :
                                                                            PLOT_TEXT_MODE::NATIVE );
 
+    tempOptions.SetDXFMultiLayeredExportOption( m_DXF_exportAsMultiLayeredFile->GetValue() );
+
     if( getPlotFormat() == PLOT_FORMAT::SVG )
     {
         tempOptions.SetBlackAndWhite( m_SVGColorChoice->GetSelection() == 1 );
@@ -1051,6 +1072,11 @@ void DIALOG_PLOT::applyPlotSettings()
         tempOptions.m_PDFMetadata = m_pdfMetadata->GetValue();
         tempOptions.m_PDFSingle = m_pdfSingle->GetValue();
         tempOptions.m_PDFBackgroundColor = m_pdfBackgroundColorSwatch->GetSwatchColor();
+    }
+    else if( getPlotFormat() == PLOT_FORMAT::PNG )
+    {
+        // Match the CLI default; a dedicated UI control will be added with the next .fbp regen.
+        tempOptions.SetBlackAndWhite( false );
     }
     else
     {
@@ -1085,25 +1111,8 @@ void DIALOG_PLOT::applyPlotSettings()
         reporter.Report( msg, RPT_SEVERITY_INFO );
     }
 
-    auto cfg = m_editFrame->GetPcbNewSettings();
-
-    if( m_job )
-    {
-        // When using a job we store the adjusts in the plot options
-        tempOptions.SetFineScaleAdjustX( m_XScaleAdjust );
-        tempOptions.SetFineScaleAdjustY( m_YScaleAdjust );
-    }
-    else
-    {
-        // The default is to use the pcbnew settings, so here we modify them
-        cfg->m_Plot.fine_scale_x = m_XScaleAdjust;
-        cfg->m_Plot.fine_scale_y = m_YScaleAdjust;
-    }
-
-    cfg->m_Plot.check_zones_before_plotting = m_zoneFillCheck->GetValue();
-
     // PS Width correction
-    if( !setInt( &m_PSWidthAdjust, m_trackWidthCorrection.GetValue(), m_widthAdjustMinValue,
+    if( !setInt( &m_PSWidthAdjust, m_trackWidthCorrection.GetIntValue(), m_widthAdjustMinValue,
                  m_widthAdjustMaxValue ) )
     {
         m_trackWidthCorrection.SetValue( m_PSWidthAdjust );
@@ -1117,13 +1126,9 @@ void DIALOG_PLOT::applyPlotSettings()
     if( m_job )
     {
         // When using a job we store the adjusts in the plot options
+        tempOptions.SetFineScaleAdjustX( m_XScaleAdjust );
+        tempOptions.SetFineScaleAdjustY( m_YScaleAdjust );
         tempOptions.SetWidthAdjust( m_PSWidthAdjust );
-    }
-    else
-    {
-        // The default is to use the pcbnew settings, so here we modify them
-        // Store m_PSWidthAdjust in mm in user config
-        cfg->m_Plot.ps_fine_width_adjust = pcbIUScale.IUTomm( m_PSWidthAdjust );
     }
 
     tempOptions.SetFormat( getPlotFormat() );
@@ -1137,6 +1142,8 @@ void DIALOG_PLOT::applyPlotSettings()
     tempOptions.SetGerberPrecision( m_coordFormatCtrl->GetSelection() == 0 ? 5 : 6 );
     tempOptions.SetSvgPrecision( m_svgPrecsision->GetValue() );
     tempOptions.SetSvgFitPageToBoard( m_SVG_fitPageToBoard->GetValue() );
+    tempOptions.SetPngDPI( m_pngDPI->GetValue() );
+    tempOptions.SetPngAntialias( m_pngAntialias->GetValue() );
 
     LSET selectedLayers;
 
@@ -1298,7 +1305,9 @@ void DIALOG_PLOT::Plot( wxCommandEvent& event )
         // Save the current plot options in the board
         m_editFrame->SetPlotSettings( m_plotOpts );
 
-        LOCALE_IO dummy;    // Ensure the "C3 locale is used by the plotter
+        wxString oldVariant = board->GetCurrentVariant();
+        board->SetCurrentVariant( getSelectedVariant() );
+
         PCB_PLOTTER pcbPlotter( m_editFrame->GetBoard(), &reporter, m_plotOpts );
 
         LSEQ layersToPlot = m_plotOpts.GetLayerSelection().UIOrder();
@@ -1319,8 +1328,9 @@ void DIALOG_PLOT::Plot( wxCommandEvent& event )
             }
         }
 
-        pcbPlotter.Plot( outputDir.GetPath(), layersToPlot, commonLayers,
-                         m_useGerberExtensions->GetValue() );
+        pcbPlotter.Plot( outputDir.GetPath(), layersToPlot, commonLayers, m_useGerberExtensions->GetValue() );
+
+        board->SetCurrentVariant( oldVariant );
     }
 }
 

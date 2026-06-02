@@ -21,6 +21,8 @@
 #define SEARCH_PANE_TAB_H
 
 #include <vector>
+#include <memory>
+#include <wx/event.h>
 #include <wx/listctrl.h>
 #include <wx/sizer.h>
 #include <wx/panel.h>
@@ -31,9 +33,8 @@ class SEARCH_HANDLER;
 class SEARCH_PANE_LISTVIEW : public wxListView
 {
 public:
-    SEARCH_PANE_LISTVIEW( SEARCH_HANDLER* handler,
-                          wxWindow* parent, wxWindowID winid = wxID_ANY,
-                          const wxPoint& pos = wxDefaultPosition,
+    SEARCH_PANE_LISTVIEW( const std::shared_ptr<SEARCH_HANDLER>& aHandler, wxWindow* parent,
+                          wxWindowID winid = wxID_ANY, const wxPoint& pos = wxDefaultPosition,
                           const wxSize& size = wxDefaultSize );
 
     virtual ~SEARCH_PANE_LISTVIEW();
@@ -50,33 +51,35 @@ protected:
     void     OnColClicked( wxListEvent& aEvent );
     void     OnUpdateUI( wxUpdateUIEvent& aEvent );
     void     OnChar( wxKeyEvent& aEvent );
+    void     OnContextMenu( wxContextMenuEvent& aEvent );
+    void     OnCopyMenu( wxCommandEvent& aEvent );
 
     void GetSelectRowsList( std::vector<long>& aSelectedList );
+    void CopySelectionToClipboard();
 
 private:
-    SEARCH_HANDLER*       m_handler;
-    int                   m_sortCol;
-    bool                  m_sortAscending;
-    bool                  m_selectionDirty;
+    std::shared_ptr<SEARCH_HANDLER> m_handler;
+    int                             m_sortCol;
+    bool                            m_sortAscending;
+    bool                            m_selectionDirty;
 };
 
 
 class SEARCH_PANE_TAB : public wxPanel
 {
 public:
-    SEARCH_PANE_TAB( SEARCH_HANDLER* handler, wxWindow* parent, wxWindowID aId = wxID_ANY,
-                     const wxPoint& aLocation = wxDefaultPosition,
-                     const wxSize&  aSize = wxDefaultSize );
+    SEARCH_PANE_TAB( const std::shared_ptr<SEARCH_HANDLER>& aHandler, wxWindow* parent, wxWindowID aId = wxID_ANY,
+                     const wxPoint& aLocation = wxDefaultPosition, const wxSize&  aSize = wxDefaultSize );
 
     void Search( wxString& query );
     void Clear();
     void RefreshColumnNames();
 
-    SEARCH_HANDLER* GetSearchHandler() const { return m_handler; }
+    std::shared_ptr<SEARCH_HANDLER> GetSearchHandler() const { return m_handler; }
 
 private:
-    SEARCH_PANE_LISTVIEW* m_listView;
-    SEARCH_HANDLER*       m_handler;
+    SEARCH_PANE_LISTVIEW*           m_listView;
+    std::shared_ptr<SEARCH_HANDLER> m_handler;
 };
 
 #endif

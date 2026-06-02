@@ -21,6 +21,7 @@
 #include <kiplatform/ui.h>
 
 #include <wx/choice.h>
+#include <wx/dialog.h>
 #include <wx/nonownedwnd.h>
 #include <wx/settings.h>
 #include <wx/window.h>
@@ -124,6 +125,22 @@ void KIPLATFORM::UI::GetInfoBarColours( wxColour& aFgColour, wxColour& aBgColour
 void KIPLATFORM::UI::ForceFocus( wxWindow* aWindow )
 {
     aWindow->SetFocus();
+
+    // On GTK, SetFocus() on a dialog may not be sufficient to receive keyboard events
+    // (like ESC for closing). We need to ensure the window is presented and active.
+    // Find the top-level window and present it to ensure keyboard focus.
+    wxWindow* tlw = aWindow;
+
+    while( tlw && !tlw->IsTopLevel() )
+        tlw = tlw->GetParent();
+
+    if( tlw )
+    {
+        GtkWidget* widget = static_cast<GtkWidget*>( tlw->GetHandle() );
+
+        if( widget && GTK_IS_WINDOW( widget ) )
+            gtk_window_present( GTK_WINDOW( widget ) );
+    }
 }
 
 
@@ -142,9 +159,21 @@ bool KIPLATFORM::UI::IsWindowActive( wxWindow* aWindow )
 }
 
 
+void KIPLATFORM::UI::EnsureVisible( wxWindow* aWindow )
+{
+    // Not needed on this platform
+}
+
+
 void KIPLATFORM::UI::ReparentModal( wxNonOwnedWindow* aWindow )
 {
     // Not needed on this platform
+}
+
+
+void KIPLATFORM::UI::ReparentWindow( wxNonOwnedWindow* aWindow, wxTopLevelWindow* aParent )
+{
+    // Not needed on this platform (only relevant for macOS child window ordering)
 }
 
 
@@ -394,6 +423,21 @@ void KIPLATFORM::UI::ImeNotifyCancelComposition( wxWindow* aWindow )
 
 void KIPLATFORM::UI::SetFloatLevel( wxWindow* aWindow )
 {
+}
+
+
+void KIPLATFORM::UI::ReleaseChildWindow( wxNonOwnedWindow* aWindow )
+{
+    // Not needed on this platform
+}
+
+
+void KIPLATFORM::UI::AllowNetworkFileSystems( wxDialog* aDialog )
+{
+    GtkWidget* widget = static_cast<GtkWidget*>( aDialog->GetHandle() );
+
+    if( widget && GTK_IS_FILE_CHOOSER( widget ) )
+        gtk_file_chooser_set_local_only( GTK_FILE_CHOOSER( widget ), FALSE );
 }
 
 //
@@ -678,4 +722,6 @@ wxPoint KIPLATFORM::UI::GetMousePosition()
 {
     return wxGetMousePosition();
 }
+
+
 #endif

@@ -25,6 +25,7 @@
 #include <dialogs/dialog_configure_paths.h>
 
 #include <algorithm>
+#include <set>
 
 #include <bitmaps.h>
 #include <confirm.h>
@@ -35,14 +36,15 @@
 #include <filename_resolver.h>
 #include <env_vars.h>
 #include <grid_tricks.h>
+#include <libraries/library_manager.h>
 #include <pgm_base.h>
 #include <widgets/grid_text_button_helpers.h>
 #include <widgets/grid_text_helpers.h>
 #include <widgets/std_bitmap_button.h>
 #include <widgets/wx_grid.h>
-#include <widgets/wx_grid_autosizer.h>
 
 #include <wx/dirdlg.h>
+#include <wx/regex.h>
 
 
 enum TEXT_VAR_GRID_COLUMNS
@@ -98,12 +100,7 @@ DIALOG_CONFIGURE_PATHS::DIALOG_CONFIGURE_PATHS( wxWindow* aParent ) :
                         wxGridEventHandler( DIALOG_CONFIGURE_PATHS::OnGridCellChanging ),
                         nullptr, this );
 
-    m_gridAutosizer = std::make_unique<WX_GRID_AUTOSIZER>( *m_EnvVars,
-                                                           WX_GRID_AUTOSIZER::COL_MIN_WIDTHS{
-                                                                   { TV_NAME_COL, 72 },
-                                                                   { TV_VALUE_COL, 120 },
-                                                           },
-                                                           TV_VALUE_COL );
+    m_EnvVars->SetupColumnAutosizer( TV_VALUE_COL );
 
     GetSizer()->SetSizeHints( this );
     Centre();
@@ -135,6 +132,54 @@ bool DIALOG_CONFIGURE_PATHS::TransferDataToWindow()
 
         if( m_curdir.IsEmpty() && !path.StartsWith( "${" ) && !path.StartsWith( "$(" ) )
             m_curdir = path;
+    }
+
+    // Scan library tables for environment variables that are used but not in envVars.
+    // This allows users to see and manage obsolete versioned variables (e.g., KICAD8_FOOTPRINT_DIR)
+    // that may still be referenced in library tables from older KiCad versions.
+    wxRegEx envVarRegex( wxS( ".*?(\\$\\{(.+?)\\})|(\\$\\((.+?)\\)).*?" ), wxRE_ADVANCED );
+    std::set<wxString> foundEnvVars;
+
+    LIBRARY_MANAGER& libMgr = Pgm().GetLibraryManager();
+
+    for( LIBRARY_TABLE_TYPE tableType : { LIBRARY_TABLE_TYPE::SYMBOL,
+                                          LIBRARY_TABLE_TYPE::FOOTPRINT,
+                                          LIBRARY_TABLE_TYPE::DESIGN_BLOCK } )
+    {
+        for( LIBRARY_TABLE_SCOPE scope : { LIBRARY_TABLE_SCOPE::GLOBAL,
+                                           LIBRARY_TABLE_SCOPE::PROJECT } )
+        {
+            std::vector<LIBRARY_TABLE_ROW*> rows = libMgr.Rows( tableType, scope, true );
+
+            for( const LIBRARY_TABLE_ROW* row : rows )
+            {
+                wxString uri = row->URI();
+
+                while( envVarRegex.Matches( uri ) )
+                {
+                    wxString envvar = envVarRegex.GetMatch( uri, 2 );
+
+                    if( envvar.IsEmpty() )
+                        envvar = envVarRegex.GetMatch( uri, 4 );
+
+                    if( !envvar.IsEmpty() )
+                        foundEnvVars.insert( envvar );
+
+                    uri.Replace( envVarRegex.GetMatch( uri, 0 ), wxEmptyString );
+                }
+            }
+        }
+    }
+
+    for( const wxString& envvar : foundEnvVars )
+    {
+        if( envVars.count( envvar ) == 0 && envvar != PROJECT_VAR_NAME )
+        {
+            wxString value;
+            bool isExternal = wxGetEnv( envvar, &value );
+
+            AppendEnvVar( envvar, value, isExternal );
+        }
     }
 
     return true;
@@ -248,9 +293,18 @@ bool DIALOG_CONFIGURE_PATHS::TransferDataFromWindow()
 void DIALOG_CONFIGURE_PATHS::OnGridCellChanging( wxGridEvent& event )
 {
     wxGrid*  grid = dynamic_cast<wxGrid*>( event.GetEventObject() );
+
+    // Mid-edit notifications from text-button editors fire while the user is still typing.
+    // Only validate when the edit is being committed (cell edit control already disabled).
+    if( grid && grid->IsCellEditControlEnabled() )
+        return;
+
     int      row = event.GetRow();
     int      col = event.GetCol();
     wxString text = event.GetString();
+
+    text.Trim( true ).Trim( false ); // Trim from both sides
+    grid->SetCellValue( row, col, text ); // Update the grid with trimmed value
 
     if( text.IsEmpty() )
     {
@@ -316,38 +370,32 @@ void DIALOG_CONFIGURE_PATHS::OnGridCellChanging( wxGridEvent& event )
 
 void DIALOG_CONFIGURE_PATHS::OnAddEnvVar( wxCommandEvent& event )
 {
-    if( !m_EnvVars->CommitPendingChanges() )
-        return;
-
-    AppendEnvVar( wxEmptyString, wxEmptyString, false );
-
-    m_EnvVars->MakeCellVisible( m_EnvVars->GetNumberRows() - 1, TV_NAME_COL );
-    m_EnvVars->SetGridCursor( m_EnvVars->GetNumberRows() - 1, TV_NAME_COL );
-
-    m_EnvVars->EnableCellEditControl( true );
-    m_EnvVars->ShowCellEditControl();
+    m_EnvVars->OnAddRow(
+            [&]() -> std::pair<int, int>
+            {
+                AppendEnvVar( wxEmptyString, wxEmptyString, false );
+                return { m_EnvVars->GetNumberRows() - 1, TV_NAME_COL };
+            } );
 }
 
 
 void DIALOG_CONFIGURE_PATHS::OnRemoveEnvVar( wxCommandEvent& event )
 {
-    int curRow = m_EnvVars->GetGridCursorRow();
+    m_EnvVars->OnDeleteRows(
+            [&]( int row )
+            {
+                if( ENV_VAR::IsEnvVarImmutable( m_EnvVars->GetCellValue( row, TV_NAME_COL ) ) )
+                {
+                    wxBell();
+                    return false;
+                }
 
-    if( curRow < 0 || m_EnvVars->GetNumberRows() <= curRow )
-    {
-        return;
-    }
-    else if( ENV_VAR::IsEnvVarImmutable( m_EnvVars->GetCellValue( curRow, TV_NAME_COL ) ) )
-    {
-        wxBell();
-        return;
-    }
-
-    m_EnvVars->CommitPendingChanges( true /* silent mode; we don't care if it's valid */ );
-    m_EnvVars->DeleteRows( curRow, 1 );
-
-    m_EnvVars->MakeCellVisible( std::max( 0, curRow-1 ), m_EnvVars->GetGridCursorCol() );
-    m_EnvVars->SetGridCursor( std::max( 0, curRow-1 ), m_EnvVars->GetGridCursorCol() );
+                return true;
+            },
+            [&]( int row )
+            {
+                m_EnvVars->DeleteRows( row, 1 );
+            } );
 }
 
 

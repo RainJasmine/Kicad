@@ -30,6 +30,7 @@
 #include <stack>
 #include <optional>
 #include <tool/tool_menu.h>
+#include <tools/pcb_selection.h>
 #include <tools/pcb_tool_base.h>
 #include <tools/pcb_actions.h>
 
@@ -75,13 +76,16 @@ public:
         IMAGE,
         TEXT,
         ANCHOR,
+        MD_POINT, // Do not use POINT: it collide with a Windows header define
         DXF,
         DIMENSION,
         KEEPOUT,
         ZONE,
         GRAPHIC_POLYGON,
         VIA,
-        TUNING
+        TUNING,
+        TABLE,
+        BARCODE
     };
 
     /**
@@ -151,6 +155,11 @@ public:
     int PlaceReferenceImage( const TOOL_EVENT& aEvent );
 
     /**
+     * Place a reference 0D point
+     */
+    int PlacePoint( const TOOL_EVENT& aEvent );
+
+    /**
      * Display a dialog that allows one to input text and its settings and then lets the user
      * decide where to place the text in editor.
      */
@@ -160,6 +169,13 @@ public:
      * Start interactively drawing a table (rows & columns of TEXTBOXes).
      */
     int DrawTable( const TOOL_EVENT& aEvent );
+
+    /**
+     * Starts interactively drawing a barcode. After invoking the function it expects the user
+     * to first click on a point that is going to be used as the origin of the barcode.
+     * The second click determines the the size
+     */
+    int DrawBarcode( const TOOL_EVENT& aEvent );
 
     /**
      * Start interactively drawing a dimension.
@@ -188,7 +204,7 @@ public:
     int DrawVia( const TOOL_EVENT& aEvent );
 
     /**
-     * Place a drawing imported from a DXF or SVG file in footprint editor.
+     * Place a drawing imported from a DXF or SVG file.
      */
     int PlaceImportedGraphics( const TOOL_EVENT& aEvent );
 
@@ -214,10 +230,6 @@ public:
      */
     int SetAnchor( const TOOL_EVENT& aEvent );
 
-    /**
-     * Toggle the horizontal/vertical/45-degree constraint for drawing tools.
-     */
-    int ToggleHV45Mode( const TOOL_EVENT& toolEvent );
 
     ///< Set up handlers for various events.
     void setTransitions() override;

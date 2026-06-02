@@ -22,6 +22,7 @@
 */
 
 #include <gerbview_settings.h>
+#include <settings/color_settings.h>
 #include <layer_ids.h>
 #include <pgm_base.h>
 #include <settings/common_settings.h>
@@ -59,12 +60,15 @@ GERBVIEW_SETTINGS::GERBVIEW_SETTINGS() :
     m_params.emplace_back( new PARAM<double>( "appearance.mode_opacity_value",
             &m_Display.m_OpacityModeAlphaValue, 0.6 ) );
 
+    // WARNING: any change to this key MUST be reflected in GetFileHistories()
     m_params.emplace_back( new PARAM_LIST<wxString>( "system.drill_file_history",
             &m_DrillFileHistory, {} ) );
 
+    // WARNING: any change to this key MUST be reflected in GetFileHistories()
     m_params.emplace_back( new PARAM_LIST<wxString>( "system.zip_file_history",
             &m_ZipFileHistory, {} ) );
 
+    // WARNING: any change to this key MUST be reflected in GetFileHistories()
     m_params.emplace_back( new PARAM_LIST<wxString>( "system.job_file_history",
             &m_JobFileHistory, {} ) );
 
@@ -176,3 +180,20 @@ bool GERBVIEW_SETTINGS::MigrateFromLegacy( wxConfigBase* aCfg )
 
     return ret;
 }
+
+
+std::map<std::string, nlohmann::json> GERBVIEW_SETTINGS::GetFileHistories()
+{
+    std::map<std::string, nlohmann::json> histories = JSON_SETTINGS::GetFileHistories();
+
+    for( const std::string& candidate : { std::string("system.drill_file_history"),
+                                          std::string("system.zip_file_history"),
+                                          std::string("system.job_file_history") } )
+    {
+        if( Contains( candidate ) )
+            histories[candidate] = GetJson( candidate ).value();
+    }
+
+    return histories;
+}
+

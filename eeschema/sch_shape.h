@@ -41,6 +41,9 @@ public:
 
     virtual ~SCH_SHAPE() override {}
 
+    void Serialize( google::protobuf::Any& aContainer ) const override;
+    bool Deserialize( const google::protobuf::Any& aContainer ) override;
+
     wxString GetClass() const override
     {
         return wxT( "SCH_SHAPE" );
@@ -48,6 +51,7 @@ public:
 
     bool HitTest( const VECTOR2I& aPosition, int aAccuracy = 0 ) const override;
     bool HitTest( const BOX2I& aRect, bool aContained, int aAccuracy = 0 ) const override;
+    bool HitTest( const SHAPE_LINE_CHAIN& aPoly, bool aContained ) const override;
 
     bool IsEndPoint( const VECTOR2I& aPoint ) const override;
 
@@ -144,13 +148,7 @@ protected:
 
     bool isMoving() const override { return IsMoving(); }
 
-    int getMaxError() const override
-    {
-        if( SCHEMATIC* schematic = Schematic() )
-            return schematic->Settings().m_MaxError;
-        else
-            return schIUScale.mmToIU( ARC_LOW_DEF_MM );
-    }
+    int getMaxError() const override { return GetMaxError(); }
 
     /**
      * @copydoc SCH_ITEM::compare()

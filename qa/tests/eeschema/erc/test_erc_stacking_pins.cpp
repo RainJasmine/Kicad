@@ -32,8 +32,7 @@
 
 struct ERC_REGRESSION_TEST_FIXTURE
 {
-    ERC_REGRESSION_TEST_FIXTURE() :
-            m_settingsManager( true /* headless */ )
+    ERC_REGRESSION_TEST_FIXTURE()
     { }
 
     SETTINGS_MANAGER           m_settingsManager;
@@ -63,7 +62,6 @@ BOOST_FIXTURE_TEST_CASE( ERCStackingPins, ERC_REGRESSION_TEST_FIXTURE )
         m_schematic->ConnectionGraph()->RunERC();
 
         ERC_TESTER tester( m_schematic.get() );
-        tester.TestConflictingBusAliases();
         tester.TestMultUnitPinConflicts();
         tester.TestMultiunitFootprints();
         tester.TestNoConnectPins();

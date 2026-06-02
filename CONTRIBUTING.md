@@ -7,6 +7,10 @@ New developers are encouraged to start small with their contribution, and gradua
 
 Developing any larger change, such as a new feature, should be discussed on the developers mailing list before substantial work is done. This allows for input from the lead development team to ensure the feature is aligned with the current development goals, and to prevent duplication of work by contributors.
 
+### Tool-Generated Content / Code assistants / AI Agents
+
+Before attempting to contribute, please review the [KiCad development policy on tool-generated contributions](https://dev-docs.kicad.org/en/rules-guidelines/tool-generated-content/index.html) if any tools such as AI agents are to be used.
+
 
 ## Submitting merge requests
 KiCad welcomes contributions via merge requests on GitLab. Here are some tips to help make sure your contribution can be accepted quickly:
@@ -37,3 +41,7 @@ Please configure your personal fork of the KiCad project with the following sett
 1. Settings->General->Visibility->CI/CD should be enabled and set to "Everyone with access".
 2. Settings->CI/CD->General pipelines Timeout should be set to 3 hours or longer.
 3. The "Allow commits from members who can merge to the target branch." option check box at the bottom of your merge request must be checked.
+
+
+
+

@@ -38,6 +38,20 @@
 #include <sch_screen.h>
 #include <sch_sheet_path.h>
 #include <geometry/shape_rect.h>
+#include <properties/property.h>
+#include <properties/property_mgr.h>
+
+
+SCH_RULE_AREA::~SCH_RULE_AREA()
+{
+    // Break bidirectional references so that items destroyed after this rule area
+    // don't try to call RemoveItem() on freed memory.
+    for( SCH_ITEM* item : m_items )
+        item->RemoveRuleAreaFromCache( this );
+
+    for( SCH_DIRECTIVE_LABEL* label : m_directives )
+        label->RemoveConnectedRuleArea( this );
+}
 
 
 wxString SCH_RULE_AREA::GetClass() const
@@ -72,7 +86,6 @@ std::vector<SHAPE*> SCH_RULE_AREA::MakeEffectiveShapes( bool aEdgeOnly ) const
     switch( m_shape )
     {
     case SHAPE_T::POLY:
-    {
         if( GetPolyShape().OutlineCount() == 0 ) // malformed/empty polygon
             break;
 
@@ -91,8 +104,8 @@ std::vector<SHAPE*> SCH_RULE_AREA::MakeEffectiveShapes( bool aEdgeOnly ) const
                     effectiveShapes.emplace_back( new SHAPE_SEGMENT( l.CSegment( jj ), width ) );
             }
         }
-    }
-    break;
+
+        break;
 
     default:
         return SCH_SHAPE::MakeEffectiveShapes( aEdgeOnly );
@@ -118,12 +131,10 @@ void SCH_RULE_AREA::Plot( PLOTTER* aPlotter, bool aBackground, const SCH_PLOT_OP
 
     ptList.clear();
 
-    const std::vector<VECTOR2I>& polyPoints = m_poly.Outline( 0 ).CPoints();
+    const std::vector<VECTOR2I>& polyPoints = GetPolyShape().Outline( 0 ).CPoints();
 
     for( const VECTOR2I& pt : polyPoints )
-    {
         ptList.push_back( pt );
-    }
 
     ptList.push_back( polyPoints[0] );
 
@@ -175,6 +186,9 @@ void SCH_RULE_AREA::Plot( PLOTTER* aPlotter, bool aBackground, const SCH_PLOT_OP
 
     if( bg == COLOR4D::UNSPECIFIED || !aPlotter->GetColorMode() )
         bg = COLOR4D::WHITE;
+
+    if( color.m_text && Schematic() )
+        color = COLOR4D( ResolveText( *color.m_text, &Schematic()->CurrentSheet() ) );
 
     if( aDimmed )
     {
@@ -246,11 +260,10 @@ void SCH_RULE_AREA::RefreshContainedItemsAndDirectives( SCH_SCREEN* screen )
             if( GetPolyShape().Collide( &lineSeg ) )
                 addContainedItem( areaItem );
         }
-        else if( areaItem->IsType(
-                         { SCH_PIN_T, SCH_LABEL_T, SCH_GLOBAL_LABEL_T, SCH_HIER_LABEL_T } ) )
+        else if( areaItem->IsType( { SCH_PIN_T, SCH_LABEL_T, SCH_GLOBAL_LABEL_T, SCH_HIER_LABEL_T } ) )
         {
             std::vector<VECTOR2I> connectionPoints = areaItem->GetConnectionPoints();
-            assert( connectionPoints.size() == 1 );
+            wxASSERT( connectionPoints.size() == 1 );
 
             if( GetPolyShape().Collide( connectionPoints[0] ) )
                 addContainedItem( areaItem );
@@ -273,13 +286,22 @@ void SCH_RULE_AREA::RefreshContainedItemsAndDirectives( SCH_SCREEN* screen )
                 }
             }
         }
+        else if( areaItem->IsType( { SCH_SHEET_T } ) )
+        {
+            const BOX2I      sheetBb = areaItem->GetBoundingBox();
+            const SHAPE_RECT rect( sheetBb );
+
+            if( GetPolyShape().Collide( &rect ) )
+            {
+                addContainedItem( areaItem );
+            }
+        }
     }
 }
 
 
 std::vector<std::pair<SCH_RULE_AREA*, SCH_SCREEN*>>
-SCH_RULE_AREA::UpdateRuleAreasInScreens( std::unordered_set<SCH_SCREEN*>& screens,
-                                         KIGFX::SCH_VIEW*                 view )
+SCH_RULE_AREA::UpdateRuleAreasInScreens( std::unordered_set<SCH_SCREEN*>& screens, KIGFX::SCH_VIEW* view )
 {
     std::vector<std::pair<SCH_RULE_AREA*, SCH_SCREEN*>> forceUpdateRuleAreas;
 
@@ -332,7 +354,8 @@ const std::unordered_set<KIID>& SCH_RULE_AREA::GetPastContainedItems() const
 }
 
 
-const std::vector<std::pair<wxString, SCH_ITEM*>> SCH_RULE_AREA::GetResolvedNetclasses() const
+const std::vector<std::pair<wxString, SCH_ITEM*>>
+SCH_RULE_AREA::GetResolvedNetclasses( const SCH_SHEET_PATH* aSheetPath ) const
 {
     std::vector<std::pair<wxString, SCH_ITEM*>> resolvedNetclasses;
 
@@ -347,7 +370,7 @@ const std::vector<std::pair<wxString, SCH_ITEM*>> SCH_RULE_AREA::GetResolvedNetc
 
                         if( field->GetCanonicalName() == wxT( "Netclass" ) )
                         {
-                            wxString netclass = field->GetText();
+                            wxString netclass = field->GetShownText( aSheetPath, false );
 
                             if( netclass != wxEmptyString )
                                 resolvedNetclasses.push_back( { netclass, directive } );
@@ -373,8 +396,7 @@ void SCH_RULE_AREA::GetMsgPanelInfo( EDA_DRAW_FRAME* aFrame, std::vector<MSG_PAN
 
     m_stroke.GetMsgPanelInfo( aFrame, aList );
 
-    const std::vector<std::pair<wxString, SCH_ITEM*>> netclasses =
-            SCH_RULE_AREA::GetResolvedNetclasses();
+    const std::vector<std::pair<wxString, SCH_ITEM*>> netclasses = SCH_RULE_AREA::GetResolvedNetclasses( nullptr );
     wxString resolvedNetclass = _( "<None>" );
 
     if( netclasses.size() > 0 )
@@ -400,6 +422,20 @@ void SCH_RULE_AREA::addContainedItem( SCH_ITEM* item )
 }
 
 
+void SCH_RULE_AREA::RemoveItem( SCH_ITEM* aItem )
+{
+    m_items.erase( aItem );
+    m_prev_items.erase( aItem->m_Uuid );
+}
+
+
+void SCH_RULE_AREA::RemoveDirective( SCH_DIRECTIVE_LABEL* aLabel )
+{
+    m_directives.erase( aLabel );
+    m_prev_directives.erase( aLabel->m_Uuid );
+}
+
+
 static struct SCH_RULE_AREA_DESC
 {
     SCH_RULE_AREA_DESC()
@@ -412,5 +448,26 @@ static struct SCH_RULE_AREA_DESC
         propMgr.InheritsAfter( TYPE_HASH( SCH_RULE_AREA ), TYPE_HASH( SCH_SHAPE ) );
         propMgr.InheritsAfter( TYPE_HASH( SCH_RULE_AREA ), TYPE_HASH( SCH_ITEM ) );
         propMgr.InheritsAfter( TYPE_HASH( SCH_RULE_AREA ), TYPE_HASH( EDA_SHAPE ) );
+
+        const wxString groupAttributes = _HKI( "Attributes" );
+
+        propMgr.AddProperty( new PROPERTY<SCH_RULE_AREA, bool>( _HKI( "Exclude From Board" ),
+                                                                &SCH_RULE_AREA::SetExcludedFromBoardProp,
+                                                                &SCH_RULE_AREA::GetExcludedFromBoardProp ),
+                             groupAttributes );
+
+        propMgr.AddProperty( new PROPERTY<SCH_RULE_AREA, bool>( _HKI( "Exclude From Simulation" ),
+                                                                &SCH_RULE_AREA::SetExcludedFromSimProp,
+                                                                &SCH_RULE_AREA::GetExcludedFromSimProp ),
+                             groupAttributes );
+
+        propMgr.AddProperty( new PROPERTY<SCH_RULE_AREA, bool>( _HKI( "Exclude From Bill of Materials" ),
+                                                                &SCH_RULE_AREA::SetExcludedFromBOMProp,
+                                                                &SCH_RULE_AREA::GetExcludedFromBOMProp ),
+                             groupAttributes );
+
+        propMgr.AddProperty( new PROPERTY<SCH_RULE_AREA, bool>( _HKI( "Do not Populate" ), &SCH_RULE_AREA::SetDNPProp,
+                                                                &SCH_RULE_AREA::GetDNPProp ),
+                             groupAttributes );
     }
 } _SCH_RULE_AREA_DESC;

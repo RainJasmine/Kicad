@@ -24,15 +24,19 @@
 
 
 #include <cstdarg>
+#include <exception>
 #include <config.h> // HAVE_FGETC_NOLOCK
 
 #include <kiplatform/io.h>
 #include <core/ignore.h>
 #include <richio.h>
 #include <errno.h>
+#include <string.h>
 #include <advanced_config.h>
 #include <io/kicad/kicad_io_utils.h>
 
+#include <wx/filename.h>
+#include <wx/log.h>
 #include <wx/translation.h>
 #include <wx/ffile.h>
 
@@ -48,49 +52,6 @@
 #define getc_unlocked getc
 #endif
 #endif
-
-
-static int vprint( std::string* result, const char* format, va_list ap )
-{
-    va_list tmp;
-    va_copy( tmp, ap );
-    size_t  len = vsnprintf( nullptr, 0, format, tmp );
-    va_end( tmp );
-
-    // Resize the output to hold the required data
-    size_t  size = result->size();
-    result->resize( size + len );
-
-    // Now do the actual printing
-    len = vsnprintf( result->data() + size, len + 1, format, ap );
-
-    return len;
-}
-
-
-int StrPrintf( std::string* result, const char* format, ... )
-{
-    va_list     args;
-
-    va_start( args, format );
-    int ret = vprint( result, format, args );
-    va_end( args );
-
-    return ret;
-}
-
-
-std::string StrPrintf( const char* format, ... )
-{
-    std::string ret;
-    va_list     args;
-
-    va_start( args, format );
-    ignore_unused( vprint( &ret, format, args ) );
-    va_end( args );
-
-    return ret;
-}
 
 
 wxString SafeReadFile( const wxString& aFilePath, const wxString& aReadType )
@@ -114,12 +75,14 @@ wxString SafeReadFile( const wxString& aFilePath, const wxString& aReadType )
 
     ff.Seek( 0 );
 
-    if( utf16le )
-        ff.ReadAll( &contents, wxMBConvUTF16LE() );
-    else
-        ff.ReadAll( &contents, wxMBConvUTF8() );
+    bool readOk = false;
 
-    if( contents.empty() )
+    if( utf16le )
+        readOk = ff.ReadAll( &contents, wxMBConvUTF16LE() );
+    else
+        readOk = ff.ReadAll( &contents, wxMBConvUTF8() );
+
+    if( !readOk || contents.empty() )
     {
         ff.Seek( 0 );
         ff.ReadAll( &contents, wxConvAuto( wxFONTENCODING_CP1252 ) );
@@ -580,22 +543,122 @@ void STRING_FORMATTER::StripUseless()
 }
 
 
+// Both file-output formatters below write to a sibling temp file and atomically rename
+// over the target on Finish(). A crash, throw, or power loss before commit leaves the
+// final target byte-identical to its prior contents.
+
+namespace
+{
+void atomicCommit( FILE*& aFp, const wxString& aTempPath, const wxString& aFinalPath )
+{
+    if( !KIPLATFORM::IO::FlushToDisk( aFp ) )
+    {
+        int err = errno;
+        fclose( aFp );
+        aFp = nullptr;
+        wxRemoveFile( aTempPath );
+        THROW_IO_ERROR( wxString::Format( _( "Cannot flush '%s' to disk: %s" ), aTempPath,
+                                          wxString::FromUTF8( strerror( err ) ) ) );
+    }
+
+    fclose( aFp );
+    aFp = nullptr;
+
+    wxString commitError;
+
+    if( !KIPLATFORM::IO::CommitTempFile( aTempPath, aFinalPath, &commitError ) )
+    {
+        wxRemoveFile( aTempPath );
+        THROW_IO_ERROR( commitError );
+    }
+}
+
+
+void discardTempFile( FILE*& aFp, const wxString& aTempPath )
+{
+    if( aFp )
+    {
+        fclose( aFp );
+        aFp = nullptr;
+    }
+
+    if( !aTempPath.IsEmpty() )
+        wxRemoveFile( aTempPath );
+}
+
+
+// Shared destructor body for the atomic-commit formatters. Throwing from a destructor
+// while another exception is in flight calls std::terminate, so during stack unwinding
+// we discard the temp and let the original exception propagate. When no exception is in
+// flight we fall back to a best-effort commit for callers that have not been migrated to
+// explicit Finish() yet. Explicit Finish() is the contract for anything that cares about
+// data-loss detection; destructor-path failures are surfaced as wxLogError because we
+// cannot throw safely from here.
+template <typename FinishFn>
+void finalizeFormatter( FILE*& aFp, const wxString& aTempPath, const wxString& aFilename,
+                        bool aCommitted, FinishFn aFinish )
+{
+    if( aCommitted )
+        return;
+
+    if( std::uncaught_exceptions() > 0 )
+    {
+        discardTempFile( aFp, aTempPath );
+        return;
+    }
+
+    try
+    {
+        aFinish();
+    }
+    catch( const std::exception& e )
+    {
+        wxLogError( _( "Failed to commit save of '%s': %s. "
+                       "The file on disk has not been modified." ),
+                    aFilename, wxString::FromUTF8( e.what() ) );
+        discardTempFile( aFp, aTempPath );
+    }
+}
+} // anonymous namespace
+
+
 FILE_OUTPUTFORMATTER::FILE_OUTPUTFORMATTER( const wxString& aFileName, const wxChar* aMode,
                                             char aQuoteChar ):
     OUTPUTFORMATTER( OUTPUTFMTBUFZ, aQuoteChar ),
-    m_filename( aFileName )
+    m_fp( nullptr ),
+    m_filename( KIPLATFORM::IO::ResolveSymlinkTarget( aFileName ) ),
+    m_committed( false )
 {
-    m_fp = wxFopen( aFileName, aMode );
+    wxString err;
+    m_fp = KIPLATFORM::IO::OpenUniqueSiblingTempFile( m_filename, aMode, &m_tempPath, &err );
 
     if( !m_fp )
-        THROW_IO_ERROR( strerror( errno ) );
+        THROW_IO_ERROR( err );
 }
 
 
 FILE_OUTPUTFORMATTER::~FILE_OUTPUTFORMATTER()
 {
-    if( m_fp )
-        fclose( m_fp );
+    finalizeFormatter( m_fp, m_tempPath, m_filename, m_committed, [this] { Finish(); } );
+}
+
+
+bool FILE_OUTPUTFORMATTER::Finish()
+{
+    if( m_committed )
+        return true;
+
+    if( !m_fp )
+    {
+        if( !m_tempPath.IsEmpty() )
+            wxRemoveFile( m_tempPath );
+
+        return false;
+    }
+
+    atomicCommit( m_fp, m_tempPath, m_filename );
+    m_committed = true;
+    return true;
 }
 
 
@@ -607,41 +670,60 @@ void FILE_OUTPUTFORMATTER::write( const char* aOutBuf, int aCount )
 
 
 PRETTIFIED_FILE_OUTPUTFORMATTER::PRETTIFIED_FILE_OUTPUTFORMATTER( const wxString& aFileName,
+                                                                  KICAD_FORMAT::FORMAT_MODE aFormatMode,
                                                                   const wxChar* aMode,
                                                                   char aQuoteChar ) :
-        OUTPUTFORMATTER( OUTPUTFMTBUFZ, aQuoteChar )
+        OUTPUTFORMATTER( OUTPUTFMTBUFZ, aQuoteChar ),
+        m_fp( nullptr ),
+        m_filename( KIPLATFORM::IO::ResolveSymlinkTarget( aFileName ) ),
+        m_committed( false ),
+        m_mode( aFormatMode )
 {
-    m_fp = wxFopen( aFileName, aMode );
+    if( ADVANCED_CFG::GetCfg().m_CompactSave && m_mode == KICAD_FORMAT::FORMAT_MODE::NORMAL )
+        m_mode = KICAD_FORMAT::FORMAT_MODE::COMPACT_TEXT_PROPERTIES;
+
+    wxString err;
+    m_fp = KIPLATFORM::IO::OpenUniqueSiblingTempFile( m_filename, aMode, &m_tempPath, &err );
 
     if( !m_fp )
-        THROW_IO_ERROR( strerror( errno ) );
+        THROW_IO_ERROR( err );
 }
 
 
 PRETTIFIED_FILE_OUTPUTFORMATTER::~PRETTIFIED_FILE_OUTPUTFORMATTER()
 {
-    try
-    {
-        PRETTIFIED_FILE_OUTPUTFORMATTER::Finish();
-    }
-    catch( ... )
-    {}
+    finalizeFormatter( m_fp, m_tempPath, m_filename, m_committed,
+                       [this] { PRETTIFIED_FILE_OUTPUTFORMATTER::Finish(); } );
 }
 
 
 bool PRETTIFIED_FILE_OUTPUTFORMATTER::Finish()
 {
+    if( m_committed )
+        return true;
+
     if( !m_fp )
+    {
+        if( !m_tempPath.IsEmpty() )
+            wxRemoveFile( m_tempPath );
+
         return false;
+    }
 
-    KICAD_FORMAT::Prettify( m_buf, ADVANCED_CFG::GetCfg().m_CompactSave );
+    KICAD_FORMAT::Prettify( m_buf, m_mode );
 
-    if( fwrite( m_buf.c_str(), m_buf.length(), 1, m_fp ) != 1 )
-        THROW_IO_ERROR( strerror( errno ) );
+    if( !m_buf.empty() && fwrite( m_buf.c_str(), m_buf.length(), 1, m_fp ) != 1 )
+    {
+        int err = errno;
+        fclose( m_fp );
+        m_fp = nullptr;
+        wxRemoveFile( m_tempPath );
+        THROW_IO_ERROR( wxString::Format( _( "Write failed to '%s': %s" ), m_tempPath,
+                                          wxString::FromUTF8( strerror( err ) ) ) );
+    }
 
-    fclose( m_fp );
-    m_fp = nullptr;
-
+    atomicCommit( m_fp, m_tempPath, m_filename );
+    m_committed = true;
     return true;
 }
 

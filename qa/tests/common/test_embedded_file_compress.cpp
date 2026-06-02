@@ -23,6 +23,8 @@
 #include <mmh3_hash.h>
 #include <embedded_files.h>
 
+#include <wx/wfstream.h>
+
 #include <random>
 using magic_enum::iostream_operators::operator<<;
 
@@ -136,5 +138,144 @@ BOOST_AUTO_TEST_CASE( DecompressAndDecode_ChecksumError )
     result = EMBEDDED_FILES::DecompressAndDecode(file);
     BOOST_CHECK_EQUAL(result, EMBEDDED_FILES::RETURN_CODE::CHECKSUM_ERROR);
 }
+
+
+BOOST_AUTO_TEST_CASE( ComputeFileHash_MatchesEmbeddedHash )
+{
+    // Create a temp file with known content
+    wxFileName tempFile = wxFileName::CreateTempFileName( wxS( "kicad_embed_test" ) );
+    std::string data = "Test file content for hash computation";
+
+    {
+        wxFFileOutputStream out( tempFile.GetFullPath() );
+        BOOST_REQUIRE( out.IsOk() );
+        out.Write( data.data(), data.size() );
+    }
+
+    // Compute hash via ComputeFileHash
+    std::string computedHash;
+    EMBEDDED_FILES::RETURN_CODE result = EMBEDDED_FILES::ComputeFileHash( tempFile, computedHash );
+    BOOST_CHECK_EQUAL( result, EMBEDDED_FILES::RETURN_CODE::OK );
+    BOOST_CHECK( !computedHash.empty() );
+
+    // Embed the same file and verify hashes match
+    EMBEDDED_FILES files;
+    EMBEDDED_FILES::EMBEDDED_FILE* embedded = files.AddFile( tempFile, false );
+    BOOST_REQUIRE( embedded != nullptr );
+    BOOST_CHECK_EQUAL( computedHash, embedded->data_hash );
+
+    // Clean up
+    wxRemoveFile( tempFile.GetFullPath() );
+}
+
+
+BOOST_AUTO_TEST_CASE( ComputeFileHash_DifferentContent )
+{
+    // Create two temp files with different content
+    wxFileName tempFile1 = wxFileName::CreateTempFileName( wxS( "kicad_embed_test1" ) );
+    wxFileName tempFile2 = wxFileName::CreateTempFileName( wxS( "kicad_embed_test2" ) );
+    std::string data1 = "Content version 1";
+    std::string data2 = "Content version 2";
+
+    {
+        wxFFileOutputStream out1( tempFile1.GetFullPath() );
+        BOOST_REQUIRE( out1.IsOk() );
+        out1.Write( data1.data(), data1.size() );
+    }
+
+    {
+        wxFFileOutputStream out2( tempFile2.GetFullPath() );
+        BOOST_REQUIRE( out2.IsOk() );
+        out2.Write( data2.data(), data2.size() );
+    }
+
+    // Compute hashes for both files
+    std::string hash1, hash2;
+    BOOST_CHECK_EQUAL( EMBEDDED_FILES::ComputeFileHash( tempFile1, hash1 ),
+                       EMBEDDED_FILES::RETURN_CODE::OK );
+    BOOST_CHECK_EQUAL( EMBEDDED_FILES::ComputeFileHash( tempFile2, hash2 ),
+                       EMBEDDED_FILES::RETURN_CODE::OK );
+
+    // Hashes should be different
+    BOOST_CHECK_NE( hash1, hash2 );
+
+    // Clean up
+    wxRemoveFile( tempFile1.GetFullPath() );
+    wxRemoveFile( tempFile2.GetFullPath() );
+}
+
+
+BOOST_AUTO_TEST_CASE( ComputeFileHash_NonExistentFile )
+{
+    wxFileName nonExistent( wxS( "/nonexistent/path/file.txt" ) );
+    std::string hash;
+
+    EMBEDDED_FILES::RETURN_CODE result = EMBEDDED_FILES::ComputeFileHash( nonExistent, hash );
+    BOOST_CHECK_EQUAL( result, EMBEDDED_FILES::RETURN_CODE::FILE_NOT_FOUND );
+    BOOST_CHECK( hash.empty() );
+}
+
+
+BOOST_AUTO_TEST_CASE( DecompressAndDecode_V1HashFallback )
+{
+    // Verify that files hashed with the old (V1) MMH3 algorithm can still be
+    // decoded. The V1 algorithm had a tail-byte padding bug that inflated len
+    // and changed the hash for data sizes not a multiple of 16.
+    auto testV1Fallback = []( const std::string& aData )
+    {
+        EMBEDDED_FILES::EMBEDDED_FILE file;
+        file.name = "v1_hash_test";
+        file.decompressedData.assign( aData.begin(), aData.end() );
+
+        // Hash with V1 algorithm
+        MMH3_HASH v1hash( EMBEDDED_FILES::Seed() );
+        v1hash.addDataV1( reinterpret_cast<const uint8_t*>( aData.data() ), aData.size() );
+        file.data_hash = v1hash.digest().ToString();
+
+        // Verify V1 and current hashes differ for non-aligned data
+        MMH3_HASH curHash( EMBEDDED_FILES::Seed() );
+        curHash.add( file.decompressedData );
+        std::string currentHash = curHash.digest().ToString();
+
+        if( aData.size() % 16 != 0 )
+            BOOST_CHECK_NE( file.data_hash, currentHash );
+
+        EMBEDDED_FILES::RETURN_CODE rc = EMBEDDED_FILES::CompressAndEncode( file );
+        BOOST_CHECK_EQUAL( rc, EMBEDDED_FILES::RETURN_CODE::OK );
+
+        // DecompressAndDecode should succeed via V1 fallback
+        rc = EMBEDDED_FILES::DecompressAndDecode( file );
+        BOOST_CHECK_EQUAL( rc, EMBEDDED_FILES::RETURN_CODE::OK );
+
+        // After successful decode, hash should be migrated to current format
+        BOOST_CHECK_EQUAL( file.data_hash, currentHash );
+    };
+
+    // 13 bytes (remaining=13, old padding rounds to 16, hashTail sees 0 tail bytes)
+    testV1Fallback( "Hello, World!" );
+
+    // 17 bytes (remaining=1, old padding rounds to 4)
+    testV1Fallback( "12345678901234567" );
+
+    // 31 bytes (remaining=15, old padding rounds to 16)
+    testV1Fallback( "1234567890123456789012345678901" );
+
+    // 100000 bytes (remaining=16 mod 16 = 0, no tail, hashes should match)
+    std::string aligned( 100000UL * 16, 'x' );
+    EMBEDDED_FILES::EMBEDDED_FILE alignedFile;
+    alignedFile.name = "aligned_test";
+    alignedFile.decompressedData.assign( aligned.begin(), aligned.end() );
+
+    MMH3_HASH v1h( EMBEDDED_FILES::Seed() );
+    v1h.addDataV1( reinterpret_cast<const uint8_t*>( aligned.data() ), aligned.size() );
+    std::string v1Hash = v1h.digest().ToString();
+
+    MMH3_HASH curH( EMBEDDED_FILES::Seed() );
+    curH.add( alignedFile.decompressedData );
+    std::string curHash = curH.digest().ToString();
+
+    BOOST_CHECK_EQUAL( v1Hash, curHash );
+}
+
 
 BOOST_AUTO_TEST_SUITE_END()

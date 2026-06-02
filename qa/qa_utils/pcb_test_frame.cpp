@@ -86,8 +86,8 @@ void PCB_TEST_FRAME_BASE::SetBoard( std::shared_ptr<BOARD> b )
 
     m_galPanel->UpdateColors();
 
-    KI_TRACE( traceGalProfile, "%s\n", cntConnectivity.to_string() );
-    KI_TRACE( traceGalProfile, "%s\n", cntView.to_string() );
+    wxLogTrace( traceGalProfile, "%s", cntConnectivity.to_string() );
+    wxLogTrace( traceGalProfile, "%s", cntView.to_string() );
 
 #ifdef USE_TOOL_MANAGER
     SETTINGS_MANAGER& mgr = Pgm().GetSettingsManager();
@@ -153,7 +153,7 @@ void PCB_TEST_FRAME_BASE::SetSelectableItemTypes( const std::vector<KICAD_T> aTy
 void PCB_TEST_FRAME_BASE::createView( wxWindow *aParent, PCB_DRAW_PANEL_GAL::GAL_TYPE aGalType )
 {
     // SUPERSAMPLING_X4;
-    m_displayOptions.gl_antialiasing_mode = KIGFX::OPENGL_ANTIALIASING_MODE::NONE;
+    m_displayOptions.antialiasing_mode = KIGFX::GAL_ANTIALIASING_MODE::AA_NONE;
 
     DPI_SCALING_COMMON dpi( Pgm().GetCommonSettings(), aParent );
     m_displayOptions.m_scaleFactor = dpi.GetScaleFactor();

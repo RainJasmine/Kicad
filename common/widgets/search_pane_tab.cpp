@@ -22,14 +22,14 @@
 #include <vector>
 #include <string_utils.h>
 #include <wx/clipbrd.h>
+#include <wx/menu.h>
 #include <wx/wupdlock.h>
 #include <core/kicad_algo.h>
 
-SEARCH_PANE_LISTVIEW::SEARCH_PANE_LISTVIEW( SEARCH_HANDLER* handler, wxWindow* parent,
-                                            wxWindowID winid, const wxPoint& pos,
-                                            const wxSize& size ) :
+SEARCH_PANE_LISTVIEW::SEARCH_PANE_LISTVIEW( const std::shared_ptr<SEARCH_HANDLER>& aHandler, wxWindow* parent,
+                                            wxWindowID winid, const wxPoint& pos, const wxSize& size ) :
         wxListView( parent, winid, pos, size, wxLC_REPORT | wxLC_VIRTUAL ),
-        m_handler( handler ),
+        m_handler( aHandler ),
         m_sortCol( -1 ),
         m_sortAscending( true ),
         m_selectionDirty( false )
@@ -45,6 +45,8 @@ SEARCH_PANE_LISTVIEW::SEARCH_PANE_LISTVIEW( SEARCH_HANDLER* handler, wxWindow* p
     Bind( wxEVT_LIST_COL_CLICK, &SEARCH_PANE_LISTVIEW::OnColClicked, this );
     Bind( wxEVT_UPDATE_UI, &SEARCH_PANE_LISTVIEW::OnUpdateUI, this );
     Bind( wxEVT_CHAR, &SEARCH_PANE_LISTVIEW::OnChar, this );
+    Bind( wxEVT_CONTEXT_MENU, &SEARCH_PANE_LISTVIEW::OnContextMenu, this );
+    Bind( wxEVT_MENU, &SEARCH_PANE_LISTVIEW::OnCopyMenu, this, wxID_COPY );
 }
 
 
@@ -57,6 +59,8 @@ SEARCH_PANE_LISTVIEW::~SEARCH_PANE_LISTVIEW()
     Unbind( wxEVT_LIST_COL_CLICK, &SEARCH_PANE_LISTVIEW::OnColClicked, this );
     Unbind( wxEVT_UPDATE_UI, &SEARCH_PANE_LISTVIEW::OnUpdateUI, this );
     Unbind( wxEVT_CHAR, &SEARCH_PANE_LISTVIEW::OnChar, this );
+    Unbind( wxEVT_CONTEXT_MENU, &SEARCH_PANE_LISTVIEW::OnContextMenu, this );
+    Unbind( wxEVT_MENU, &SEARCH_PANE_LISTVIEW::OnCopyMenu, this, wxID_COPY );
 }
 
 
@@ -151,42 +155,133 @@ void SEARCH_PANE_LISTVIEW::OnColClicked( wxListEvent& aEvent )
 
 void SEARCH_PANE_LISTVIEW::OnChar( wxKeyEvent& aEvent )
 {
-    if( aEvent.GetKeyCode() == WXK_CONTROL_A )
+    bool handled = false;
+
+    switch( aEvent.GetKeyCode() )
     {
-        // Select All
-        for( int row = 0; row < GetItemCount(); row++ )
-            SetItemState( row, wxLIST_STATE_SELECTED, wxLIST_STATE_SELECTED );
-    }
-    else if( aEvent.GetKeyCode() == WXK_CONTROL_C )
-    {
-        // Copy to clipboard the selected rows
-        if( wxTheClipboard->Open() )
+        case WXK_CONTROL_A:
         {
-            wxString txt;
-
+            // Select All
             for( int row = 0; row < GetItemCount(); row++ )
+                SetItemState( row, wxLIST_STATE_SELECTED, wxLIST_STATE_SELECTED );
+
+            handled = true;
+            break;
+        }
+
+        case WXK_CONTROL_C:
+        {
+            CopySelectionToClipboard();
+
+            handled = true;
+            break;
+        }
+
+        case WXK_DOWN:
+        case WXK_NUMPAD_DOWN:
+        {
+            // Move selection down
+            long focused = GetFocusedItem();
+            if( focused < 0 )
+                focused = 0;
+
+            if( focused < GetItemCount() - 1 )
             {
-                if( GetItemState( row, wxLIST_STATE_SELECTED ) == wxLIST_STATE_SELECTED )
+                if( !(aEvent.GetModifiers() & wxMOD_SHIFT) )
                 {
-                    for( int col = 0; col < GetColumnCount(); col++ )
-                    {
-                        if( GetColumnWidth( col ) > 0 )
-                        {
-                            txt += GetItemText( row, col );
+                    int next = -1;
 
-                            if( row <= GetItemCount() - 1 )
-                                txt += wxT( "\t" );
-                        }
-                    }
-
-                    txt += wxT( "\n" );
+                    while( ( next = GetNextSelected( next ) ) != wxNOT_FOUND )
+                        Select( next, false );
                 }
+
+                ++focused;
+                Focus( focused );
+                Select( focused );
             }
 
-            wxTheClipboard->SetData( new wxTextDataObject( txt ) );
-            wxTheClipboard->Close();
+            handled = true;
+            break;
+        }
+        case WXK_UP:
+        case WXK_NUMPAD_UP:
+        {
+            // Move selection up
+            long focused = GetFocusedItem();
+
+            if( focused < 0 )
+                focused = 0;
+
+            if( focused > 0 )
+            {
+                if( !(aEvent.GetModifiers() & wxMOD_SHIFT) )
+                {
+                    int next = -1;
+
+                    while( ( next = GetNextSelected( next ) ) != wxNOT_FOUND )
+                        Select( next, false );
+                }
+
+                --focused;
+                Focus( focused );
+                Select( focused );
+            }
+
+            handled = true;
+            break;
         }
     }
+
+    if( !handled )
+        aEvent.Skip();
+}
+
+
+void SEARCH_PANE_LISTVIEW::OnContextMenu( wxContextMenuEvent& aEvent )
+{
+    wxMenu menu;
+    menu.Append( wxID_COPY, _( "Copy" ) );
+    PopupMenu( &menu );
+}
+
+
+void SEARCH_PANE_LISTVIEW::OnCopyMenu( wxCommandEvent& aEvent )
+{
+    CopySelectionToClipboard();
+}
+
+
+void SEARCH_PANE_LISTVIEW::CopySelectionToClipboard()
+{
+    if( !wxTheClipboard->Open() )
+        return;
+
+    wxString txt;
+
+    for( int row = 0; row < GetItemCount(); row++ )
+    {
+        if( GetItemState( row, wxLIST_STATE_SELECTED ) != wxLIST_STATE_SELECTED )
+            continue;
+
+        bool firstCol = true;
+
+        for( int col = 0; col < GetColumnCount(); col++ )
+        {
+            if( GetColumnWidth( col ) <= 0 )
+                continue;
+
+            if( !firstCol )
+                txt += wxT( "\t" );
+
+            txt += GetItemText( row, col );
+            firstCol = false;
+        }
+
+        txt += wxT( "\n" );
+    }
+
+    wxTheClipboard->SetData( new wxTextDataObject( txt ) );
+    wxTheClipboard->Close();
 }
 
 
@@ -225,14 +320,14 @@ wxString SEARCH_PANE_LISTVIEW::OnGetItemText( long item, long column ) const
 }
 
 
-SEARCH_PANE_TAB::SEARCH_PANE_TAB( SEARCH_HANDLER* handler, wxWindow* parent, wxWindowID aId,
+SEARCH_PANE_TAB::SEARCH_PANE_TAB( const std::shared_ptr<SEARCH_HANDLER>& aHandler, wxWindow* parent, wxWindowID aId,
                                   const wxPoint& aLocation, const wxSize& aSize ) :
         wxPanel( parent, aId, aLocation, aSize ),
-        m_handler( handler )
+        m_handler( aHandler )
 {
     wxBoxSizer* sizer = new wxBoxSizer( wxVERTICAL );
 
-    m_listView = new SEARCH_PANE_LISTVIEW( handler, this );
+    m_listView = new SEARCH_PANE_LISTVIEW( aHandler, this );
     sizer->Add( m_listView, 5, wxRIGHT | wxBOTTOM | wxEXPAND, 1 );
 
     SetSizer( sizer );

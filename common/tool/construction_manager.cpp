@@ -23,12 +23,21 @@
 
 #include "tool/construction_manager.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <limits>
+#include <numeric>
+#include <utility>
 
 #include <wx/timer.h>
+#include <wx/debug.h>
+#include <wx/log.h>
 
 #include <advanced_config.h>
+#include <math/util.h>
 #include <hash.h>
+#include <trace_helpers.h>
 
 
 /**
@@ -333,9 +342,9 @@ void CONSTRUCTION_MANAGER::acceptConstructionItems( std::unique_ptr<PENDING_BATC
         {
             for( const CONSTRUCTION_ITEM& item : batch )
             {
-                for( const KIGFX::CONSTRUCTION_GEOM::DRAWABLE& drawable : item.Constructions )
+                for( const CONSTRUCTION_ITEM::DRAWABLE_ENTRY& drawable : item.Constructions )
                 {
-                    geom.AddDrawable( drawable, aIsPersistent );
+                    geom.AddDrawable( drawable.Drawable, aIsPersistent, drawable.LineWidth );
                 }
             }
         }
@@ -387,16 +396,111 @@ bool CONSTRUCTION_MANAGER::HasActiveConstruction() const
 
 
 SNAP_LINE_MANAGER::SNAP_LINE_MANAGER( CONSTRUCTION_VIEW_HANDLER& aViewHandler ) :
-        m_viewHandler( aViewHandler )
+        m_viewHandler( aViewHandler ), m_snapManager( static_cast<SNAP_MANAGER*>( &aViewHandler ) )
 {
+    wxASSERT( m_snapManager );
+    SetDirections( { VECTOR2I( 1, 0 ), VECTOR2I( 0, 1 ) } );
+}
+
+
+static VECTOR2I normalizeDirection( const VECTOR2I& aDir )
+{
+    if( aDir.x == 0 && aDir.y == 0 )
+        return VECTOR2I( 0, 0 );
+
+    int dx = aDir.x;
+    int dy = aDir.y;
+
+    int gcd = std::gcd( std::abs( dx ), std::abs( dy ) );
+
+    if( gcd > 0 )
+    {
+        dx /= gcd;
+        dy /= gcd;
+    }
+
+    if( dx < 0 || ( dx == 0 && dy < 0 ) )
+    {
+        dx = -dx;
+        dy = -dy;
+    }
+
+    return VECTOR2I( dx, dy );
+}
+
+
+static std::optional<int> findDirectionIndex( const std::vector<VECTOR2I>& aDirections,
+                                              const VECTOR2I&               aDelta )
+{
+    VECTOR2I normalized = normalizeDirection( aDelta );
+
+    if( normalized.x == 0 && normalized.y == 0 )
+        return std::nullopt;
+
+    for( size_t i = 0; i < aDirections.size(); ++i )
+    {
+        if( aDirections[i] == normalized )
+            return static_cast<int>( i );
+    }
+
+    return std::nullopt;
+}
+
+
+void SNAP_LINE_MANAGER::SetDirections( const std::vector<VECTOR2I>& aDirections )
+{
+    std::vector<VECTOR2I> uniqueDirections;
+    uniqueDirections.reserve( aDirections.size() );
+
+    for( const VECTOR2I& direction : aDirections )
+    {
+        VECTOR2I normalized = normalizeDirection( direction );
+
+        if( normalized.x == 0 && normalized.y == 0 )
+            continue;
+
+        if( std::find( uniqueDirections.begin(), uniqueDirections.end(), normalized )
+                == uniqueDirections.end() )
+        {
+            uniqueDirections.push_back( normalized );
+        }
+    }
+
+    if( uniqueDirections != m_directions )
+    {
+        m_directions = std::move( uniqueDirections );
+        m_activeDirection.reset();
+
+        if( m_snapLineOrigin && m_snapLineEnd )
+        {
+            if( !findDirectionIndex( m_directions, *m_snapLineEnd - *m_snapLineOrigin ) )
+                m_snapLineEnd.reset();
+        }
+
+        if( m_directions.empty() )
+        {
+            ClearSnapLine();
+            return;
+        }
+
+        notifyGuideChange();
+    }
 }
 
 
 void SNAP_LINE_MANAGER::SetSnapLineOrigin( const VECTOR2I& aOrigin )
 {
-    // Setting the origin clears the snap line as the end point is no longer valid
-    ClearSnapLine();
+    if( m_snapLineOrigin && *m_snapLineOrigin == aOrigin && !m_snapLineEnd )
+    {
+        notifyGuideChange();
+        return;
+    }
+
     m_snapLineOrigin = aOrigin;
+    m_snapLineEnd.reset();
+    m_activeDirection.reset();
+    m_viewHandler.GetViewItem().ClearSnapLine();
+    notifyGuideChange();
 }
 
 
@@ -407,11 +511,16 @@ void SNAP_LINE_MANAGER::SetSnapLineEnd( const OPT_VECTOR2I& aSnapEnd )
         m_snapLineEnd = aSnapEnd;
 
         if( m_snapLineEnd )
+            m_activeDirection = findDirectionIndex( m_directions, *m_snapLineEnd - *m_snapLineOrigin );
+        else
+            m_activeDirection.reset();
+
+        if( m_snapLineEnd )
             m_viewHandler.GetViewItem().SetSnapLine( SEG{ *m_snapLineOrigin, *m_snapLineEnd } );
         else
             m_viewHandler.GetViewItem().ClearSnapLine();
 
-        m_viewHandler.updateView();
+        notifyGuideChange();
     }
 }
 
@@ -420,8 +529,9 @@ void SNAP_LINE_MANAGER::ClearSnapLine()
 {
     m_snapLineOrigin.reset();
     m_snapLineEnd.reset();
+    m_activeDirection.reset();
     m_viewHandler.GetViewItem().ClearSnapLine();
-    m_viewHandler.updateView();
+    notifyGuideChange();
 }
 
 
@@ -429,7 +539,7 @@ void SNAP_LINE_MANAGER::SetSnappedAnchor( const VECTOR2I& aAnchorPos )
 {
     if( m_snapLineOrigin.has_value() )
     {
-        if( aAnchorPos.x == m_snapLineOrigin->x || aAnchorPos.y == m_snapLineOrigin->y )
+        if( findDirectionIndex( m_directions, aAnchorPos - *m_snapLineOrigin ) )
         {
             SetSnapLineEnd( aAnchorPos );
         }
@@ -448,93 +558,199 @@ void SNAP_LINE_MANAGER::SetSnappedAnchor( const VECTOR2I& aAnchorPos )
 }
 
 
-/**
- * Check if the cursor has moved far enough away from the snap line origin to escape snapping
- * in the X direction.
- *
- * This is defined as within aEscapeRange of the snap line origin, and within aLongRangeEscapeAngle
- * of the vertical line passing through the snap line origin.
- */
-static bool pointHasEscapedSnapLineX( const VECTOR2I& aCursor, const VECTOR2I& aSnapLineOrigin,
-                                      int aEscapeRange, EDA_ANGLE aLongRangeEscapeAngle )
-{
-    if( std::abs( aCursor.x - aSnapLineOrigin.x ) < aEscapeRange )
-    {
-        return false;
-    }
-    EDA_ANGLE angle = EDA_ANGLE( aCursor - aSnapLineOrigin ) + EDA_ANGLE( 90, DEGREES_T );
-    return std::abs( angle.Normalize90() ) > aLongRangeEscapeAngle;
-}
-
-
-/**
- * As above, but for the Y direction.
- */
-static bool pointHasEscapedSnapLineY( const VECTOR2I& aCursor, const VECTOR2I& aSnapLineOrigin,
-                                      int aEscapeRange, EDA_ANGLE aLongRangeEscapeAngle )
-{
-    if( std::abs( aCursor.y - aSnapLineOrigin.y ) < aEscapeRange )
-    {
-        return false;
-    }
-    EDA_ANGLE angle = EDA_ANGLE( aCursor - aSnapLineOrigin );
-    return std::abs( angle.Normalize90() ) > aLongRangeEscapeAngle;
-}
-
-
 OPT_VECTOR2I SNAP_LINE_MANAGER::GetNearestSnapLinePoint( const VECTOR2I&    aCursor,
-                                                         const VECTOR2I&    aNearestGrid,
-                                                         std::optional<int> aDistToNearest,
-                                                         int                aSnapRange ) const
+                                                        const VECTOR2I&    aNearestGrid,
+                                                        std::optional<int> aDistToNearest,
+                                                        int                aSnapRange,
+                                                        const VECTOR2D&    aGridSize,
+                                                        const VECTOR2I&    aGridOrigin ) const
 {
-    // return std::nullopt;
-    if( m_snapLineOrigin )
+    wxLogTrace( traceSnap, "GetNearestSnapLinePoint: cursor=(%d, %d), nearestGrid=(%d, %d), distToNearest=%s, snapRange=%d",
+                aCursor.x, aCursor.y, aNearestGrid.x, aNearestGrid.y,
+                aDistToNearest ? wxString::Format( "%d", *aDistToNearest ) : wxString( "none" ), aSnapRange );
+
+    if( !m_snapLineOrigin || m_directions.empty() )
     {
-        bool     snapLine = false;
-        VECTOR2I bestSnapPoint = aNearestGrid;
+        wxLogTrace( traceSnap, "  No snap line origin or no directions, returning nullopt" );
+        return std::nullopt;
+    }
 
-        // If there's no snap anchor, or it's too far away, prefer the grid
-        const bool gridBetterThanNearest = !aDistToNearest || *aDistToNearest > aSnapRange;
+    const bool gridBetterThanNearest = !aDistToNearest || *aDistToNearest > aSnapRange;
+    const bool gridActive = aGridSize.x > 0 && aGridSize.y > 0;
 
-        // The escape range is how far you go before the snap line is de-activated.
-        // Make this a bit more forgiving than the snap range, as you can easily cancel
-        // deliberately with a mouse move.
-        // These are both a bit arbitrary, and can be adjusted as preferred
-        const int       escapeRange = 2 * aSnapRange;
-        const EDA_ANGLE longRangeEscapeAngle( 4, DEGREES_T );
+    wxLogTrace( traceSnap, "  snapLineOrigin=(%d, %d), directions count=%zu, gridBetterThanNearest=%d, gridActive=%d",
+                m_snapLineOrigin->x, m_snapLineOrigin->y, m_directions.size(), gridBetterThanNearest, gridActive );
 
-        const bool escapedX = pointHasEscapedSnapLineX( aCursor, *m_snapLineOrigin, escapeRange,
-                                                        longRangeEscapeAngle );
-        const bool escapedY = pointHasEscapedSnapLineY( aCursor, *m_snapLineOrigin, escapeRange,
-                                                        longRangeEscapeAngle );
+    if( !gridBetterThanNearest )
+    {
+        wxLogTrace( traceSnap, "  Grid not better than nearest, returning nullopt" );
+        return std::nullopt;
+    }
 
-        /// Allows de-snapping from the line if you are closer to another snap point
-        /// Or if you have moved far enough away from the line
-        if( !escapedX && gridBetterThanNearest )
+    const int       escapeRange = 2 * aSnapRange;
+    const EDA_ANGLE longRangeEscapeAngle( 4, DEGREES_T );
+
+    wxLogTrace( traceSnap, "  escapeRange=%d, longRangeEscapeAngle=%.1f deg",
+                escapeRange, longRangeEscapeAngle.AsDegrees() );
+
+    const VECTOR2D origin( *m_snapLineOrigin );
+    const VECTOR2D cursor( aCursor );
+    const VECTOR2D delta = cursor - origin;
+
+    double                        bestPerpDistance = std::numeric_limits<double>::max();
+    std::optional<VECTOR2I>       bestSnapPoint;
+
+    for( size_t ii = 0; ii < m_directions.size(); ++ii )
+    {
+        const VECTOR2I& direction = m_directions[ii];
+        VECTOR2D dirVector( direction );
+        double   dirLength = dirVector.EuclideanNorm();
+
+        if( dirLength == 0.0 )
         {
-            bestSnapPoint.x = m_snapLineOrigin->x;
-            snapLine = true;
+            wxLogTrace( traceSnap, "    Direction %zu: zero length, skipping", ii );
+            continue;
         }
 
-        if( !escapedY && gridBetterThanNearest )
+        VECTOR2D dirUnit = dirVector / dirLength;
+
+        double    distanceAlong = delta.Dot( dirUnit );
+        VECTOR2D  projection = origin + dirUnit * distanceAlong;
+        VECTOR2D  offset = delta - dirUnit * distanceAlong;
+        double    perpDistance = offset.EuclideanNorm();
+
+        wxLogTrace( traceSnap, "    Direction %zu: dir=(%d, %d), perpDist=%.1f, distAlong=%.1f",
+                    ii, direction.x, direction.y, perpDistance, distanceAlong );
+
+        if( perpDistance > aSnapRange )
         {
-            bestSnapPoint.y = m_snapLineOrigin->y;
-            snapLine = true;
+            wxLogTrace( traceSnap, "      perpDistance > snapRange, skipping" );
+            continue;
         }
 
-        if( snapLine )
+        bool escaped = false;
+
+        if( perpDistance >= escapeRange )
         {
-            return bestSnapPoint;
+            EDA_ANGLE deltaAngle( delta );
+            EDA_ANGLE directionAngle( dirVector );
+            double    angleDiff = ( deltaAngle - directionAngle ).Normalize180().AsDegrees();
+
+            wxLogTrace( traceSnap, "      In escape range: deltaAngle=%.1f, dirAngle=%.1f, angleDiff=%.1f",
+                        deltaAngle.AsDegrees(), directionAngle.AsDegrees(), angleDiff );
+
+            if( std::abs( angleDiff ) > longRangeEscapeAngle.AsDegrees() )
+            {
+                escaped = true;
+                wxLogTrace( traceSnap, "      ESCAPED (angle diff too large)" );
+            }
+        }
+
+        if( escaped )
+        {
+            wxLogTrace( traceSnap, "      Not updating (escaped)" );
+            continue;
+        }
+
+        // Now snap the projection to the grid if the grid is active
+        VECTOR2D snapPoint = projection;
+
+        if( gridActive )
+        {
+            // For horizontal/vertical lines, snap to grid intersections
+            if( direction.x == 0 && direction.y != 0 )
+            {
+                // Vertical line: keep origin X, snap Y to grid
+                snapPoint.x = origin.x;
+                snapPoint.y = aNearestGrid.y;
+                wxLogTrace( traceSnap, "      Vertical line: snapping to grid Y, snapPoint=(%.1f, %.1f)",
+                            snapPoint.x, snapPoint.y );
+            }
+            else if( direction.y == 0 && direction.x != 0 )
+            {
+                // Horizontal line: snap X to grid, keep origin Y
+                snapPoint.x = aNearestGrid.x;
+                snapPoint.y = origin.y;
+                wxLogTrace( traceSnap, "      Horizontal line: snapping to grid X, snapPoint=(%.1f, %.1f)",
+                            snapPoint.x, snapPoint.y );
+            }
+            else
+            {
+                // Diagonal line: find nearest grid intersection along the line
+                VECTOR2D gridOriginD( aGridOrigin );
+                VECTOR2D relProjection = projection - gridOriginD;
+
+                // Find nearby grid points (check 3x3 grid around projection)
+                double   bestGridScore = std::numeric_limits<double>::max();
+                VECTOR2D bestGridPoint = projection;
+
+                for( int dx = -1; dx <= 1; ++dx )
+                {
+                    for( int dy = -1; dy <= 1; ++dy )
+                    {
+                        double gridX = std::round( relProjection.x / aGridSize.x ) * aGridSize.x + dx * aGridSize.x;
+                        double gridY = std::round( relProjection.y / aGridSize.y ) * aGridSize.y + dy * aGridSize.y;
+                        VECTOR2D gridPt( gridX + gridOriginD.x, gridY + gridOriginD.y );
+
+                        // Calculate perpendicular distance from grid point to construction line
+                        VECTOR2D gridDelta = gridPt - origin;
+                        double   gridDistAlong = gridDelta.Dot( dirUnit );
+                        VECTOR2D gridProjection = origin + dirUnit * gridDistAlong;
+                        double   gridPerpDist = ( gridPt - gridProjection ).EuclideanNorm();
+
+                        // Also consider distance from cursor
+                        double distFromCursor = ( gridPt - cursor ).EuclideanNorm();
+
+                        // Prefer grid points that are close to the line and close to cursor
+                        double score = gridPerpDist + distFromCursor * 0.1;
+
+                        if( score < bestGridScore )
+                        {
+                        bestGridScore = score;
+                            bestGridPoint = gridPt;
+                        }
+                    }
+                }
+
+                snapPoint = bestGridPoint;
+                wxLogTrace( traceSnap, "      Diagonal line: snapping to grid intersection, snapPoint=(%.1f, %.1f)",
+                            snapPoint.x, snapPoint.y );
+            }
+        }
+        else
+        {
+            wxLogTrace( traceSnap, "      Grid not active, using projection" );
+        }
+
+        if( perpDistance < bestPerpDistance )
+        {
+            bestPerpDistance = perpDistance;
+            bestSnapPoint = KiROUND( snapPoint );
+            wxLogTrace( traceSnap, "      NEW BEST: perpDist=%.1f, snapPoint=(%d, %d)",
+                        bestPerpDistance, bestSnapPoint->x, bestSnapPoint->y );
+        }
+        else
+        {
+            wxLogTrace( traceSnap, "      Not updating (perpDist=%.1f >= bestPerp=%.1f)",
+                        perpDistance, bestPerpDistance );
         }
     }
 
+    if( bestSnapPoint )
+    {
+        wxLogTrace( traceSnap, "  RETURNING bestSnapPoint=(%d, %d)", bestSnapPoint->x, bestSnapPoint->y );
+        return *bestSnapPoint;
+    }
+
+    wxLogTrace( traceSnap, "  RETURNING nullopt (no valid snap found)" );
     return std::nullopt;
 }
 
 
 SNAP_MANAGER::SNAP_MANAGER( KIGFX::CONSTRUCTION_GEOM& aHelper ) :
         CONSTRUCTION_VIEW_HANDLER( aHelper ), m_snapLineManager( *this ),
-        m_constructionManager( *this )
+        m_constructionManager( *this ), m_snapGuideColor( KIGFX::COLOR4D::WHITE ),
+        m_snapGuideHighlightColor( KIGFX::COLOR4D::WHITE )
 {
 }
 
@@ -544,10 +760,71 @@ void SNAP_MANAGER::updateView()
     if( m_updateCallback )
     {
         bool showAnything = m_constructionManager.HasActiveConstruction()
-                            || m_snapLineManager.HasCompleteSnapLine();
+                            || m_snapLineManager.HasCompleteSnapLine()
+                            || ( m_snapLineManager.GetSnapLineOrigin()
+                                 && !m_snapLineManager.GetDirections().empty() );
 
         m_updateCallback( showAnything );
     }
+}
+
+
+void SNAP_MANAGER::SetSnapGuideColors( const KIGFX::COLOR4D& aBase, const KIGFX::COLOR4D& aHighlight )
+{
+    m_snapGuideColor = aBase;
+    m_snapGuideHighlightColor = aHighlight;
+    UpdateSnapGuides();
+}
+
+
+void SNAP_MANAGER::UpdateSnapGuides()
+{
+    std::vector<KIGFX::CONSTRUCTION_GEOM::SNAP_GUIDE> guides;
+
+    const OPT_VECTOR2I& origin = m_snapLineManager.GetSnapLineOrigin();
+    const std::vector<VECTOR2I>& directions = m_snapLineManager.GetDirections();
+
+    if( origin && !directions.empty() )
+    {
+        const std::optional<int> activeDirection = m_snapLineManager.GetActiveDirection();
+        const int                 guideLength = 500000;
+
+        for( size_t ii = 0; ii < directions.size(); ++ii )
+        {
+            const VECTOR2I& direction = directions[ii];
+
+            if( direction.x == 0 && direction.y == 0 )
+                continue;
+
+            VECTOR2I scaled = direction * guideLength;
+
+            KIGFX::CONSTRUCTION_GEOM::SNAP_GUIDE guide;
+            guide.Segment = SEG( *origin - scaled, *origin + scaled );
+
+            if( activeDirection && *activeDirection == static_cast<int>( ii ) )
+            {
+                guide.LineWidth = 5;
+                guide.Color = m_snapGuideHighlightColor;
+            }
+            else
+            {
+                guide.LineWidth = 1;
+                guide.Color = m_snapGuideColor;
+            }
+
+            guides.push_back( guide );
+        }
+    }
+
+    GetViewItem().SetSnapGuides( std::move( guides ) );
+    updateView();
+}
+
+
+void SNAP_LINE_MANAGER::notifyGuideChange()
+{
+    if( m_snapManager )
+        m_snapManager->UpdateSnapGuides();
 }
 
 
@@ -570,14 +847,44 @@ SNAP_MANAGER::GetConstructionItems() const
                         {},
                 } );
 
-        // One horizontal and one vertical infinite line from the snap point
-        snapPointItem.Constructions.push_back(
-                LINE{ *snapLineOrigin, *snapLineOrigin + VECTOR2I( 100000, 0 ) } );
-        snapPointItem.Constructions.push_back(
-                LINE{ *snapLineOrigin, *snapLineOrigin + VECTOR2I( 0, 100000 ) } );
+        const std::vector<VECTOR2I>& directions = m_snapLineManager.GetDirections();
+        const std::optional<int>     activeDirection = m_snapLineManager.GetActiveDirection();
 
-        batches.push_back( std::move( batch ) );
+        for( size_t ii = 0; ii < directions.size(); ++ii )
+        {
+            const VECTOR2I& direction = directions[ii];
+
+            VECTOR2I scaledDirection = direction * 100000;
+
+            CONSTRUCTION_MANAGER::CONSTRUCTION_ITEM::DRAWABLE_ENTRY entry;
+            entry.Drawable = LINE{ *snapLineOrigin, *snapLineOrigin + scaledDirection };
+            entry.LineWidth = ( activeDirection && *activeDirection == static_cast<int>( ii ) ) ? 2 : 1;
+
+            snapPointItem.Constructions.push_back( entry );
+        }
+
+        if( !snapPointItem.Constructions.empty() )
+            batches.push_back( std::move( batch ) );
     }
 
     return batches;
+}
+
+
+void CONSTRUCTION_MANAGER::Clear()
+{
+    std::lock_guard<std::mutex> lock( m_batchesMutex );
+
+    m_persistentConstructionBatch.reset();
+    m_temporaryConstructionBatches.clear();
+    m_involvedItems.clear();
+    CancelProposal();
+}
+
+
+void SNAP_MANAGER::Clear()
+{
+    m_snapLineManager.ClearSnapLine();
+    m_constructionManager.Clear();
+    UpdateSnapGuides();
 }

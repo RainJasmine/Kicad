@@ -25,25 +25,24 @@
 #include <project/project_file.h>
 #include <wx/tokenzr.h>
 #include <string_utils.h>
-#include <fp_lib_table.h>
-#include <footprint_info.h>
-#include <footprint_info_impl.h>
+#include <footprint_library_adapter.h>
+#include <footprint.h>
 #include <generate_footprint_info.h>
 
 #include "fp_tree_model_adapter.h"
 
 wxObjectDataPtr<LIB_TREE_MODEL_ADAPTER>
-FP_TREE_MODEL_ADAPTER::Create( PCB_BASE_FRAME* aParent, LIB_TABLE* aLibs )
+FP_TREE_MODEL_ADAPTER::Create( PCB_BASE_FRAME* aParent, FOOTPRINT_LIBRARY_ADAPTER* aLibs )
 {
     auto* adapter = new FP_TREE_MODEL_ADAPTER( aParent, aLibs );
     return wxObjectDataPtr<LIB_TREE_MODEL_ADAPTER>( adapter );
 }
 
 
-FP_TREE_MODEL_ADAPTER::FP_TREE_MODEL_ADAPTER( PCB_BASE_FRAME* aParent, LIB_TABLE* aLibs ) :
+FP_TREE_MODEL_ADAPTER::FP_TREE_MODEL_ADAPTER( PCB_BASE_FRAME* aParent, FOOTPRINT_LIBRARY_ADAPTER* aLibs ) :
         LIB_TREE_MODEL_ADAPTER( aParent, wxT( "pinned_footprint_libs" ),
                                 aParent->GetViewerSettingsBase()->m_LibTree ),
-        m_libs( (FP_LIB_TABLE*) aLibs )
+        m_libs( aLibs )
 {}
 
 
@@ -51,50 +50,27 @@ void FP_TREE_MODEL_ADAPTER::AddLibraries( EDA_BASE_FRAME* aParent )
 {
     COMMON_SETTINGS* cfg = Pgm().GetCommonSettings();
     PROJECT_FILE&    project = aParent->Prj().GetProjectFile();
+    std::vector<wxString> libNames = m_libs->GetLibraryNames();
 
-    for( const wxString& libName : m_libs->GetLogicalLibs() )
+    for( const wxString& libName : libNames )
     {
-        const FP_LIB_TABLE_ROW* library = nullptr;
-
-        try
-        {
-            library = m_libs->FindRow( libName, true );
-        }
-        catch( ... )
-        {
-            // Skip loading this library, if not exists/ not found
+        if( !m_libs->HasLibrary( libName, true ) )
             continue;
-        }
+
         bool pinned = alg::contains( cfg->m_Session.pinned_fp_libs, libName )
                         || alg::contains( project.m_PinnedFootprintLibs, libName );
 
-        DoAddLibrary( libName, library->GetDescr(), getFootprints( libName ), pinned, true );
+        std::vector<FOOTPRINT*> footprints = m_libs->GetFootprints( libName, true );
+        std::vector<LIB_TREE_ITEM*> treeItems;
+        treeItems.reserve( footprints.size() );
+
+        for( FOOTPRINT* fp : footprints )
+            treeItems.push_back( fp );
+
+        DoAddLibrary( libName, *m_libs->GetLibraryDescription( libName ), treeItems, pinned, true );
     }
 
-    m_tree.AssignIntrinsicRanks();
-}
-
-
-std::vector<LIB_TREE_ITEM*> FP_TREE_MODEL_ADAPTER::getFootprints( const wxString& aLibName )
-{
-    std::vector<LIB_TREE_ITEM*> libList;
-
-    auto fullListStart = GFootprintList.GetList().begin();
-    auto fullListEnd = GFootprintList.GetList().end();
-    std::unique_ptr<FOOTPRINT_INFO> dummy = std::make_unique<FOOTPRINT_INFO_IMPL>( aLibName, wxEmptyString );
-
-    // List is sorted, so use a binary search to find the range of footnotes for our library
-    auto libBounds = std::equal_range( fullListStart, fullListEnd, dummy,
-            []( const std::unique_ptr<FOOTPRINT_INFO>& a,
-                const std::unique_ptr<FOOTPRINT_INFO>& b )
-            {
-                return StrNumCmp( a->GetLibNickname(), b->GetLibNickname(), false ) < 0;
-            } );
-
-    for( auto i = libBounds.first; i != libBounds.second; ++i )
-        libList.push_back( i->get() );
-
-    return libList;
+    m_tree.AssignIntrinsicRanks( m_shownColumns );
 }
 
 

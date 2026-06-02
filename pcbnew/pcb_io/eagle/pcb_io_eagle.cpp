@@ -69,6 +69,7 @@ Load() TODO's
 #include <project.h>
 #include <board.h>
 #include <board_design_settings.h>
+#include <project/net_settings.h>
 #include <footprint.h>
 #include <pad.h>
 #include <pcb_track.h>
@@ -325,7 +326,8 @@ BOARD* PCB_IO_EAGLE::LoadBoard( const wxString& aFileName, BOARD* aAppendToMe,
 {
     wxXmlNode*      doc;
 
-    fontconfig::FONTCONFIG::SetReporter( &WXLOG_REPORTER::GetInstance() );
+    // Collect the font substitution warnings (RAII - automatically reset on scope exit)
+    FONTCONFIG_REPORTER_SCOPE fontconfigScope( &LOAD_INFO_REPORTER::GetInstance() );
 
     init( aProperties );
 
@@ -392,8 +394,11 @@ BOARD* PCB_IO_EAGLE::LoadBoard( const wxString& aFileName, BOARD* aAppendToMe,
                 [&]( const std::shared_ptr<NETCLASS>& netclass )
                 {
                     // If Eagle has a clearance matrix then we'll build custom rules from that.
-                    // Netclasses should just be the board minimum clearance.
-                    netclass->SetClearance( KiROUND( bds.m_MinClearance ) );
+                    // For classes with a clearance-to-default, use that; otherwise use board minimum.
+                    if( !netclass->HasClearance() )
+                    {
+                        netclass->SetClearance( KiROUND( bds.m_MinClearance ) );
+                    }
 
                     if( netclass->GetTrackWidth() == INT_MAX )
                         netclass->SetTrackWidth( defaults.GetTrackWidth() );
@@ -439,7 +444,10 @@ BOARD* PCB_IO_EAGLE::LoadBoard( const wxString& aFileName, BOARD* aAppendToMe,
     LSET enabledLayers = m_board->GetDesignSettings().GetEnabledLayers();
 
     for( const auto& [eagleLayerName, layer] : m_layer_map )
-        enabledLayers.set( layer );
+    {
+        if( layer >= 0 && layer < PCB_LAYER_ID_COUNT )
+            enabledLayers.set( layer );
+    }
 
     m_board->GetDesignSettings().SetEnabledLayers( enabledLayers );
 
@@ -739,7 +747,7 @@ void PCB_IO_EAGLE::loadPlain( wxXmlNode* aGraphics )
                 pcbtxt->SetText( kicadText );
 
                 double ratio = t.ratio ? *t.ratio : 8;     // DTD says 8 is default
-                int textThickness = KiROUND( t.size.ToPcbUnits() * ratio / 100 );
+                int textThickness = KiROUND( t.size.ToPcbUnits() * ratio / 100.0 );
                 pcbtxt->SetTextThickness( textThickness );
                 pcbtxt->SetTextSize( kicad_fontsize( t.size, textThickness ) );
                 pcbtxt->SetKeepUpright( false );
@@ -1033,7 +1041,7 @@ void PCB_IO_EAGLE::loadPlain( wxXmlNode* aGraphics )
             if( d.textsize )
             {
                 double ratio = 8;     // DTD says 8 is default
-                textThickness = KiROUND( d.textsize->ToPcbUnits() * ratio / 100 );
+                textThickness = KiROUND( d.textsize->ToPcbUnits() * ratio / 100.0 );
                 textSize = kicad_fontsize( *d.textsize, textThickness );
             }
 
@@ -1559,6 +1567,14 @@ ZONE* PCB_IO_EAGLE::loadPolygon( wxXmlNode* aPolyNode )
     else
         zone->SetIslandRemovalMode( ISLAND_REMOVAL_MODE::NEVER );
 
+    if( vertices.size() < 3 )
+    {
+        wxLogMessage( wxString::Format( _( "Skipping a polygon on layer '%s' (%d): less than 3 vertices" ),
+                                        eagle_layer_name( p.layer ),
+                                        p.layer ) );
+        return nullptr;
+    }
+
     vertices.push_back( vertices[0] );
 
     SHAPE_POLY_SET polygon;
@@ -1710,7 +1726,7 @@ void PCB_IO_EAGLE::orientFPText( FOOTPRINT* aFootprint, const EELEMENT& e, PCB_T
             ratio = *a.ratio;
 
         VECTOR2I fontz = aFPText->GetTextSize();
-        int      textThickness = KiROUND( fontz.y * ratio / 100 );
+        int      textThickness = KiROUND( fontz.y * ratio / 100.0 );
 
         aFPText->SetTextThickness( textThickness );
 
@@ -1839,7 +1855,7 @@ void PCB_IO_EAGLE::orientFPText( FOOTPRINT* aFootprint, const EELEMENT& e, PCB_T
         aFPText->SetHorizJustify( GR_TEXT_H_ALIGN_LEFT );
         aFPText->SetVertJustify( GR_TEXT_V_ALIGN_BOTTOM );
 
-        if( !aFPText->IsMirrored() && abs( degrees ) <= -180 )
+        if( !aFPText->IsMirrored() && abs( degrees ) >= 180 )
         {
             aFPText->SetHorizJustify( GR_TEXT_H_ALIGN_RIGHT );
             aFPText->SetVertJustify( GR_TEXT_V_ALIGN_TOP );
@@ -2043,7 +2059,7 @@ void PCB_IO_EAGLE::packagePad( FOOTPRINT* aFootprint, wxXmlNode* aTree )
         double annulus = drillz * m_rules->rvPadTop;   // copper annulus, eagle "restring"
         annulus = eagleClamp( m_rules->rlMinPadTop, annulus, m_rules->rlMaxPadTop );
         int diameter = KiROUND( drillz + 2 * annulus );
-        pad->SetSize( PADSTACK::ALL_LAYERS, VECTOR2I( KiROUND( diameter ), KiROUND( diameter ) ) );
+        pad->SetSize( PADSTACK::ALL_LAYERS, VECTOR2I( diameter, diameter ) );
     }
 
     if( pad->GetShape( PADSTACK::ALL_LAYERS ) == PAD_SHAPE::OVAL )
@@ -2123,7 +2139,7 @@ void PCB_IO_EAGLE::packageText( FOOTPRINT* aFootprint, wxXmlNode* aTree ) const
     textItem->SetLayer( layer );
 
     double ratio = t.ratio ? *t.ratio : 8;  // DTD says 8 is default
-    int    textThickness = KiROUND( t.size.ToPcbUnits() * ratio / 100 );
+    int    textThickness = KiROUND( t.size.ToPcbUnits() * ratio / 100.0 );
 
     textItem->SetTextThickness( textThickness );
     textItem->SetTextSize( kicad_fontsize( t.size, textThickness ) );
@@ -2644,6 +2660,14 @@ void PCB_IO_EAGLE::loadClasses( wxXmlNode* aClasses )
         eClasses.emplace_back( eClass );
         m_classMap[ eClass.number ] = netclass;
 
+        // Set netclass clearance to the clearance-to-default-class value
+        auto clearanceToDefaultIt = eClass.clearanceMap.find( wxT( "0" ) );
+
+        if( clearanceToDefaultIt != eClass.clearanceMap.end() )
+        {
+            netclass->SetClearance( clearanceToDefaultIt->second.ToPcbUnits() );
+        }
+
         // Get next class
         classNode = classNode->GetNext();
     }
@@ -2654,6 +2678,10 @@ void PCB_IO_EAGLE::loadClasses( wxXmlNode* aClasses )
     {
         for( const auto& [className, pt] : eClass.clearanceMap )
         {
+            // Skip clearances to default class (class "0") - these are handled via netclass clearances
+            if( className == wxT( "0" ) )
+                continue;
+
             if( m_classMap[className] != nullptr )
             {
                 wxString rule;
@@ -2858,16 +2886,13 @@ void PCB_IO_EAGLE::loadSignals( wxXmlNode* aSignals )
                     {
                         via->SetViaType( VIATYPE::THROUGH );
                     }
-                    /// This is, at best, a guess.  Eagle doesn't seem to differentiate
-                    /// between blind/buried vias that only go one layer and micro vias
-                    /// so the user will need to clean up a bit
-                    else if( v.layer_back_most - v.layer_front_most == 1 )
+                    else if( layer_front_most == F_Cu || layer_back_most == B_Cu )
                     {
-                        via->SetViaType( VIATYPE::MICROVIA );
+                        via->SetViaType( VIATYPE::BLIND );
                     }
                     else
                     {
-                        via->SetViaType( VIATYPE::BLIND_BURIED );
+                        via->SetViaType( VIATYPE::BURIED );
                     }
 
                     VECTOR2I pos( kicad_x( v.x ), kicad_y( v.y ) );
@@ -2926,10 +2951,9 @@ void PCB_IO_EAGLE::loadSignals( wxXmlNode* aSignals )
 
             // therefore omit this signal/net.
         }
-        else
-        {
-            netCode++;
-        }
+
+        //Next signal needs a new netCode
+        netCode++;
 
         // Get next signal
         net = net->GetNext();
@@ -3187,7 +3211,8 @@ long long PCB_IO_EAGLE::GetLibraryTimestamp( const wxString& aPath ) const
 
 void PCB_IO_EAGLE::cacheLib( const wxString& aLibPath )
 {
-    fontconfig::FONTCONFIG::SetReporter( nullptr );
+    // Suppress font substitution warnings (RAII - automatically restored on scope exit)
+    FONTCONFIG_REPORTER_SCOPE fontconfigScope( nullptr );
 
     try
     {

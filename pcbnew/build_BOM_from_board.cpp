@@ -34,8 +34,9 @@
 #include <wildcards_and_files_ext.h>
 #include <footprint.h>
 #include <tools/board_editor_control.h>
-#include <wx/listimpl.cpp>
 #include <wx/filedlg.h>
+#include <vector>
+#include <kiplatform/ui.h>
 
 
 /* creates a BOM list from board
@@ -58,16 +59,11 @@
 class BOM_ENTRY
 {
 public:
-    wxString m_Ref;
-    wxString m_Val;
-    LIB_ID   m_FPID;
-    int      m_Id;
-    int      m_Count;
+    std::vector<wxString> m_Refs;
+    wxString              m_Val;
+    LIB_ID                m_FPID;
+    int                   m_Count;
 };
-
-WX_DECLARE_LIST( BOM_ENTRY, BOM_ENTRY_LIST );
-
-WX_DEFINE_LIST( BOM_ENTRY_LIST )
 
 
 int BOARD_EDITOR_CONTROL::GenBOMFileFromBoard( const TOOL_EVENT& aEvent )
@@ -90,6 +86,8 @@ int BOARD_EDITOR_CONTROL::GenBOMFileFromBoard( const TOOL_EVENT& aEvent )
 
     wxFileDialog dlg( m_frame, _( "Save Bill of Materials" ), pro_dir, fn.GetFullName(),
                       FILEEXT::CsvFileWildcard(), wxFD_SAVE | wxFD_OVERWRITE_PROMPT );
+
+    KIPLATFORM::UI::AllowNetworkFileSystems( &dlg );
 
     if( dlg.ShowModal() == wxID_CANCEL )
         return 0;
@@ -115,8 +113,7 @@ int BOARD_EDITOR_CONTROL::GenBOMFileFromBoard( const TOOL_EVENT& aEvent )
     fprintf( fp_bom, "%s", TO_UTF8( msg ) );
 
     // Build list
-    BOM_ENTRY_LIST list;
-    int            i = 1;
+    std::vector<BOM_ENTRY> list;
 
     for( FOOTPRINT* footprint : board->Footprints() )
     {
@@ -126,15 +123,12 @@ int BOARD_EDITOR_CONTROL::GenBOMFileFromBoard( const TOOL_EVENT& aEvent )
         bool valExist = false;
 
         // try to find component in existing list
-        for( auto iter = list.begin(); iter != list.end(); ++iter )
+        for( BOM_ENTRY& curEntry : list )
         {
-            BOM_ENTRY* curEntry = *iter;
-
-            if( curEntry->m_Val == footprint->GetValue() && curEntry->m_FPID == footprint->GetFPID() )
+            if( curEntry.m_Val == footprint->GetValue() && curEntry.m_FPID == footprint->GetFPID() )
             {
-                curEntry->m_Ref.Append( wxT( ", " ), 1 );
-                curEntry->m_Ref.Append( footprint->Reference().GetShownText( false ) );
-                curEntry->m_Count++;
+                curEntry.m_Refs.emplace_back( footprint->Reference().GetShownText( false ) );
+                curEntry.m_Count++;
 
                 valExist = true;
                 break;
@@ -142,35 +136,52 @@ int BOARD_EDITOR_CONTROL::GenBOMFileFromBoard( const TOOL_EVENT& aEvent )
         }
 
         // If component does not exist yet, create new one and append it to the list.
-        if( valExist == false )
+        if( !valExist )
         {
-            BOM_ENTRY* newEntry = new BOM_ENTRY();
-            newEntry->m_Id  = i++;
-            newEntry->m_Val = footprint->Value().GetShownText( false );
-            newEntry->m_Ref = footprint->Reference().GetShownText( false );
-            newEntry->m_FPID = footprint->GetFPID();
-            newEntry->m_Count = 1;
-            list.Append( newEntry );
+            list.emplace_back();
+            BOM_ENTRY& newEntry = list.back();
+            newEntry.m_Val = footprint->Value().GetShownText( false );
+            newEntry.m_Refs.emplace_back( footprint->Reference().GetShownText( false ) );
+            newEntry.m_FPID = footprint->GetFPID();
+            newEntry.m_Count = 1;
         }
     }
 
-    // Print list. Also delete temporary created objects.
-    for( size_t ii = list.GetCount(); ii > 0; ii-- )
+    for( BOM_ENTRY& curEntry : list )
     {
-        BOM_ENTRY* curEntry = *list.begin();   // Because the first object will be removed
-                                               // from list, all objects will be get here
+        std::sort( curEntry.m_Refs.begin(), curEntry.m_Refs.end(),
+                []( const wxString& lhs, const wxString& rhs )
+                {
+                    return StrNumCmp( lhs, rhs, true /* ignore case */ ) < 0;
+                } );
+    }
+
+    std::sort( list.begin(), list.end(),
+            []( const BOM_ENTRY& lhs, const BOM_ENTRY& rhs )
+            {
+                return StrNumCmp( lhs.m_Refs[0], rhs.m_Refs[0], true /* ignore case */ ) < 0;
+            } );
+
+    // Print list.
+    int id = 1;
+
+    for( const BOM_ENTRY& curEntry : list )
+    {
         msg.Empty();
 
-        msg << curEntry->m_Id << wxT( ";\"" );
-        msg << curEntry->m_Ref << wxT( "\";\"" );
-        msg << From_UTF8( curEntry->m_FPID.GetLibItemName().c_str() ) << wxT( "\";" );
-        msg << curEntry->m_Count << wxT( ";\"" );
-        msg << curEntry->m_Val << wxT( "\";;;\n" );
-        fprintf( fp_bom, "%s", TO_UTF8( msg ) );
+        msg << id++ << wxT( ";\"" );
 
-        // We do not need this object, now: remove it from list and delete it
-        list.DeleteObject( curEntry );
-        delete curEntry;
+        msg << curEntry.m_Refs[0];
+
+        for( int ii = 1; ii < (int) curEntry.m_Refs.size(); ++ii )
+            msg << wxT( ", " ) << curEntry.m_Refs[ii];
+
+        msg << wxT( "\";\"" );
+
+        msg << From_UTF8( curEntry.m_FPID.GetLibItemName().c_str() ) << wxT( "\";" );
+        msg << curEntry.m_Count << wxT( ";\"" );
+        msg << curEntry.m_Val << wxT( "\";;;\n" );
+        fprintf( fp_bom, "%s", TO_UTF8( msg ) );
     }
 
     fclose( fp_bom );

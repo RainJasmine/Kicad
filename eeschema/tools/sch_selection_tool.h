@@ -44,6 +44,11 @@ class SCH_TABLECELL;
 namespace KIGFX
 {
 class GAL;
+
+namespace PREVIEW
+{
+class SELECTION_AREA;
+}
 }
 
 
@@ -52,13 +57,15 @@ class SCH_CONDITIONS : public SELECTION_CONDITIONS
 public:
     static SELECTION_CONDITION SingleSymbol;
     static SELECTION_CONDITION SingleSymbolOrPower;
-    static SELECTION_CONDITION SingleDeMorganSymbol;
+    static SELECTION_CONDITION SingleMultiBodyStyleSymbol;
     static SELECTION_CONDITION SingleMultiUnitSymbol;
     static SELECTION_CONDITION SingleMultiFunctionPin;
     static SELECTION_CONDITION SingleNonExcludedMarker;
     static SELECTION_CONDITION MultipleSymbolsOrPower;
     static SELECTION_CONDITION AllPins;
     static SELECTION_CONDITION AllPinsOrSheetPins;
+    static SELECTION_CONDITION HasLockedItems;
+    static SELECTION_CONDITION HasUnlockedItems;
 };
 
 
@@ -221,11 +228,28 @@ public:
 
     SCH_SELECTION_FILTER_OPTIONS& GetFilter() { return m_filter; }
 
+    /**
+     * Remove locked items from the current selection.
+     * Used by tools that should not operate on locked items (move, rotate, delete, etc.)
+     */
+    void FilterSelectionForLockedItems();
+
 protected:
     SELECTION& selection() override { return m_selection; }
 
 private:
     OPT_TOOL_EVENT autostartEvent( TOOL_EVENT* aEvent, EE_GRID_HELPER& aGrid, SCH_ITEM* aItem );
+
+    enum class STOP_CONDITION
+    {
+        STOP_AT_JUNCTION,   ///< Stop at the first junction, label, or pin reached
+        STOP_AT_PIN,        ///< Walk through junctions and labels but stop at pins
+        STOP_NEVER          ///< Walk the entire connected sub-net
+    };
+
+    std::set<SCH_ITEM*> expandConnectionWithGraph( const SCH_SELECTION& aItems,
+                                                   STOP_CONDITION aStopCondition );
+    std::set<SCH_ITEM*> expandConnectionGraphically( const SCH_SELECTION& aItems );
 
     /**
      * Apply rules to narrow the collection down to selectable objects, and then heuristics
@@ -237,7 +261,8 @@ private:
      * @param aSelectedOnly If true, remove non-selected items from #collector
      */
     void narrowSelection( SCH_COLLECTOR& collector, const VECTOR2I& aWhere, bool aCheckLocked,
-                          bool aSelectedOnly = false );
+                          bool aSelectedOnly = false,
+                          SCH_SELECTION_FILTER_OPTIONS* aRejected = nullptr );
 
     /**
      * Perform a click-type selection at a point (usually the cursor position).
@@ -264,6 +289,14 @@ private:
      * @return true if the function was canceled (i.e. CancelEvent was received).
      */
     bool selectMultiple();
+
+    bool selectLasso();
+
+    int SetSelectRect( const TOOL_EVENT& aEvent );
+    int SetSelectPoly( const TOOL_EVENT& aEvent );
+
+    void SelectMultiple( KIGFX::PREVIEW::SELECTION_AREA& aArea, bool aSubtractive = false,
+                         bool aExclusiveOr = false );
 
     /**
      * Handle a table cell drag selection within a table.
@@ -341,7 +374,7 @@ private:
     /**
      * Return true if the given item passes the stateful selection filter
      */
-    bool itemPassesFilter( EDA_ITEM* aItem );
+    bool itemPassesFilter( EDA_ITEM* aItem, SCH_SELECTION_FILTER_OPTIONS* aRejected = nullptr );
 
     /**
      * In general we don't want to select both a parent and any of it's children.  This includes
@@ -369,6 +402,8 @@ private:
     KIGFX::VIEW_GROUP m_enteredGroupOverlay;  // Overlay for the entered group's frame.
 
     SCH_SELECTION_FILTER_OPTIONS m_filter;
+
+    SELECTION_MODE m_selectionMode; // Current selection mode
 
     SCH_TABLECELL* m_previous_first_cell; // First selected cell for shift+click selection range
 };

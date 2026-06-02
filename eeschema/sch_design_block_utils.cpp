@@ -24,7 +24,7 @@
 #include <pgm_base.h>
 #include <kiway.h>
 #include <design_block.h>
-#include <design_block_lib_table.h>
+#include <design_block_library_adapter.h>
 #include <sch_design_block_pane.h>
 #include <sch_edit_frame.h>
 #include <sch_group.h>
@@ -37,6 +37,7 @@
 #include <common.h>
 #include <kidialog.h>
 #include <confirm.h>
+#include <tool/actions.h>
 #include <tool/tool_manager.h>
 #include <sch_selection_tool.h>
 #include <dialogs/dialog_design_block_properties.h>
@@ -98,18 +99,13 @@ bool SCH_EDIT_FRAME::SaveSheetAsDesignBlock( const wxString& aLibraryName, SCH_S
     blk.SetLibId( LIB_ID( aLibraryName, fn.GetName() ) );
 
     // Copy all fields from the sheet to the design block
-    std::vector<SCH_FIELD>&                   shFields = aSheetPath.Last()->GetFields();
-    nlohmann::ordered_map<wxString, wxString> dbFields;
-
-    for( SCH_FIELD& f : shFields )
+    for( SCH_FIELD& field : aSheetPath.Last()->GetFields() )
     {
-        if( f.GetId() == FIELD_T::SHEET_NAME || f.GetId() == FIELD_T::SHEET_FILENAME )
+        if( field.GetId() == FIELD_T::SHEET_NAME || field.GetId() == FIELD_T::SHEET_FILENAME )
             continue;
 
-        dbFields[f.GetCanonicalName()] = f.GetText();
+        blk.GetFields()[field.GetCanonicalName()] = field.GetText();
     }
-
-    blk.SetFields( dbFields );
 
     DIALOG_DESIGN_BLOCK_PROPERTIES dlg( this, &blk );
 
@@ -124,6 +120,7 @@ bool SCH_EDIT_FRAME::SaveSheetAsDesignBlock( const wxString& aLibraryName, SCH_S
 
     // Save a temporary copy of the schematic file, as the plugin is just going to move it
     wxString tempFile = wxFileName::CreateTempFileName( "design_block" );
+
     if( !saveSchematicFile( aSheetPath.Last(), tempFile ) )
     {
         DisplayErrorMessage( this, _( "Error saving temporary schematic file to create design block." ) );
@@ -137,7 +134,8 @@ bool SCH_EDIT_FRAME::SaveSheetAsDesignBlock( const wxString& aLibraryName, SCH_S
 
     try
     {
-        success = Prj().DesignBlockLibs()->DesignBlockSave( aLibraryName, &blk ) == DESIGN_BLOCK_LIB_TABLE::SAVE_OK;
+        success = Prj().DesignBlockLibs()->SaveDesignBlock( aLibraryName, &blk )
+                  == DESIGN_BLOCK_LIBRARY_ADAPTER::SAVE_OK;
     }
     catch( const IO_ERROR& ioe )
     {
@@ -154,7 +152,7 @@ bool SCH_EDIT_FRAME::SaveSheetAsDesignBlock( const wxString& aLibraryName, SCH_S
 }
 
 
-bool SCH_EDIT_FRAME::SaveSheetToDesignBlock( const LIB_ID& aLibId, SCH_SHEET_PATH& aSheetPath )
+bool SCH_EDIT_FRAME::UpdateDesignBlockFromSheet( const LIB_ID& aLibId, SCH_SHEET_PATH& aSheetPath )
 {
     // Make sure the user has selected a library to save into
     if( !Prj().DesignBlockLibs()->DesignBlockExists( aLibId.GetLibNickname(), aLibId.GetLibItemName() ) )
@@ -177,11 +175,18 @@ bool SCH_EDIT_FRAME::SaveSheetToDesignBlock( const LIB_ID& aLibId, SCH_SHEET_PAT
 
     try
     {
-        blk.reset( Prj().DesignBlockLibs()->DesignBlockLoad( aLibId.GetLibNickname(), aLibId.GetLibItemName() ) );
+        blk.reset( Prj().DesignBlockLibs()->LoadDesignBlock( aLibId.GetLibNickname(), aLibId.GetLibItemName() ) );
     }
     catch( const IO_ERROR& ioe )
     {
         DisplayError( this, ioe.What() );
+        return false;
+    }
+
+    if( !blk )
+    {
+        DisplayErrorMessage(
+                this, wxString::Format( _( "Design block '%s' does not exist." ), aLibId.GetUniStringLibItemName() ) );
         return false;
     }
 
@@ -191,18 +196,13 @@ bool SCH_EDIT_FRAME::SaveSheetToDesignBlock( const LIB_ID& aLibId, SCH_SHEET_PAT
     // Copy all fields from the sheet to the design block.
     // Note: this will overwrite any existing fields in the design block, but
     // will leave extra fields not in this source sheet alone.
-    std::vector<SCH_FIELD>&                   shFields = aSheetPath.Last()->GetFields();
-    nlohmann::ordered_map<wxString, wxString> dbFields = blk->GetFields();
-
-    for( SCH_FIELD& f : shFields )
+    for( SCH_FIELD& field : aSheetPath.Last()->GetFields() )
     {
-        if( f.GetId() == FIELD_T::SHEET_NAME || f.GetId() == FIELD_T::SHEET_FILENAME )
+        if( field.GetId() == FIELD_T::SHEET_NAME || field.GetId() == FIELD_T::SHEET_FILENAME )
             continue;
 
-        dbFields[f.GetCanonicalName()] = f.GetText();
+        blk->GetFields()[field.GetCanonicalName()] = field.GetText();
     }
-
-    blk->SetFields( dbFields );
 
     DIALOG_DESIGN_BLOCK_PROPERTIES dlg( this, blk.get(), true );
 
@@ -224,8 +224,8 @@ bool SCH_EDIT_FRAME::SaveSheetToDesignBlock( const LIB_ID& aLibId, SCH_SHEET_PAT
 
     try
     {
-        success = Prj().DesignBlockLibs()->DesignBlockSave( aLibId.GetLibNickname(), blk.get() )
-                  == DESIGN_BLOCK_LIB_TABLE::SAVE_OK;
+        success = Prj().DesignBlockLibs()->SaveDesignBlock( aLibId.GetLibNickname(), blk.get() )
+                  == DESIGN_BLOCK_LIBRARY_ADAPTER::SAVE_OK;
     }
     catch( const IO_ERROR& ioe )
     {
@@ -280,9 +280,20 @@ bool SCH_EDIT_FRAME::SaveSelectionAsDesignBlock( const wxString& aLibraryName )
     }
 
     DESIGN_BLOCK blk;
-    wxFileName   fn = wxFileNameFromPath( GetScreen()->GetFileName() );
+    SCH_GROUP*   group = nullptr;
 
-    blk.SetLibId( LIB_ID( aLibraryName, fn.GetName() ) );
+    if( selection.Size() == 1 && selection.HasType( SCH_GROUP_T ) )
+        group = static_cast<SCH_GROUP*>( selection.Front() );
+
+    if( group && !group->GetName().IsEmpty() )
+        // If the user has selected a single group, they probably want the design block named after the group
+        blk.SetLibId( LIB_ID( aLibraryName, group->GetName() ) );
+    else
+    {
+        // Otherwise, use the current screen name
+        wxFileName fn = wxFileNameFromPath( GetScreen()->GetFileName() );
+        blk.SetLibId( LIB_ID( aLibraryName, fn.GetName() ) );
+    }
 
     DIALOG_DESIGN_BLOCK_PROPERTIES dlg( this, &blk );
 
@@ -298,11 +309,52 @@ bool SCH_EDIT_FRAME::SaveSelectionAsDesignBlock( const wxString& aLibraryName )
     // Create a temporary screen
     SCH_SCREEN* tempScreen = new SCH_SCREEN( m_schematic );
 
+    // If we have a single group, we want to strip the group and select the children
+    if( group )
+    {
+        selection.Remove( group );
+
+        // Don't recurse; if we have a group of groups the user probably intends the inner groups to be saved
+        group->RunOnChildren(
+                [&]( EDA_ITEM* aItem )
+                {
+                    selection.Add( aItem );
+                },
+                RECURSE_MODE::NO_RECURSE );
+    }
+
     // Copy the selected items to the temporary screen
     for( EDA_ITEM* item : selection )
     {
-        EDA_ITEM* copy = item->Clone();
-        tempScreen->Append( static_cast<SCH_ITEM*>( copy ) );
+        // We need to deep copy since selections of groups will not have the children
+        if( item->Type() == SCH_GROUP_T )
+        {
+            SCH_GROUP* clonedGroup = static_cast<SCH_GROUP*>( item )->DeepClone();
+
+            tempScreen->Append( clonedGroup );
+
+            clonedGroup->RunOnChildren(
+                                        [&]( EDA_ITEM* aItem )
+                                        {
+                                            tempScreen->Append( static_cast<SCH_ITEM*>( aItem ) );
+                                        },
+                                        RECURSE_MODE::RECURSE );
+        }
+        else if( item->Type() == SCH_SYMBOL_T )
+        {
+            SCH_SYMBOL* clonedSymbol = static_cast<SCH_SYMBOL*>( item->Clone() );
+            tempScreen->Append( clonedSymbol );
+        }
+        else if( item->Type() == SCH_PIN_T || item->Type() == SCH_FIELD_T )
+        {
+            // Handled as symbol children
+            continue;
+        }
+        else
+        {
+            EDA_ITEM* copy = item->Clone();
+            tempScreen->Append( static_cast<SCH_ITEM*>( copy ) );
+        }
     }
 
     // Create a sheet for the temporary screen
@@ -324,11 +376,69 @@ bool SCH_EDIT_FRAME::SaveSelectionAsDesignBlock( const wxString& aLibraryName )
 
     try
     {
-        success = Prj().DesignBlockLibs()->DesignBlockSave( aLibraryName, &blk ) == DESIGN_BLOCK_LIB_TABLE::SAVE_OK;
+        success = Prj().DesignBlockLibs()->SaveDesignBlock( aLibraryName, &blk )
+                  == DESIGN_BLOCK_LIBRARY_ADAPTER::SAVE_OK;
     }
     catch( const IO_ERROR& ioe )
     {
         DisplayError( this, ioe.What() );
+    }
+
+    if( success && !group )
+    {
+        SCH_COMMIT  commit( m_toolManager );
+        SCH_SCREEN* screen = GetScreen();
+
+        SCH_GROUP* newGroup = new SCH_GROUP;
+        newGroup->SetParent( screen );
+        newGroup->SetName( blk.GetLibId().GetUniStringLibItemName() );
+        newGroup->SetDesignBlockLibId( blk.GetLibId() );
+
+        int addedCount = 0;
+
+        for( EDA_ITEM* edaItem : selection )
+        {
+            if( !edaItem->IsSCH_ITEM() )
+                continue;
+
+            SCH_ITEM* item = static_cast<SCH_ITEM*>( edaItem );
+
+            if( item->GetParentSymbol() )
+                continue;
+
+            if( !item->IsGroupableType() )
+                continue;
+
+            if( EDA_GROUP* existingGroup = item->GetParentGroup() )
+                commit.Modify( existingGroup->AsEdaItem(), screen, RECURSE_MODE::NO_RECURSE );
+
+            commit.Modify( item, screen, RECURSE_MODE::NO_RECURSE );
+            newGroup->AddItem( item );
+            addedCount++;
+        }
+
+        if( addedCount > 0 )
+        {
+            commit.Add( newGroup, screen );
+            commit.Push( _( "Group Items" ) );
+
+            m_toolManager->RunAction( ACTIONS::selectionClear );
+            m_toolManager->RunAction( ACTIONS::selectItem, newGroup->AsEdaItem() );
+        }
+        else
+        {
+            newGroup->RemoveAll();
+            delete newGroup;
+        }
+    }
+    else if( success && group && !group->HasDesignBlockLink() )
+    {
+        SCH_COMMIT commit( m_toolManager );
+
+        commit.Modify( group, GetScreen() );
+        group->SetDesignBlockLibId( blk.GetLibId() );
+
+        commit.Push( _( "Set Group Design Block Link" ) );
     }
 
     // Clean up the temporaries
@@ -343,7 +453,7 @@ bool SCH_EDIT_FRAME::SaveSelectionAsDesignBlock( const wxString& aLibraryName )
 }
 
 
-bool SCH_EDIT_FRAME::SaveSelectionToDesignBlock( const LIB_ID& aLibId )
+bool SCH_EDIT_FRAME::UpdateDesignBlockFromSelection( const LIB_ID& aLibId )
 {
     // Get all selected items
     SCH_SELECTION selection = m_toolManager->GetTool<SCH_SELECTION_TOOL>()->GetSelection();
@@ -370,7 +480,7 @@ bool SCH_EDIT_FRAME::SaveSelectionToDesignBlock( const LIB_ID& aLibId )
             SCH_SHEET_PATH curPath = GetCurrentSheet();
 
             curPath.push_back( sheet );
-            SaveSheetToDesignBlock( aLibId, curPath );
+            UpdateDesignBlockFromSheet( aLibId, curPath );
         }
         else
         {
@@ -406,11 +516,18 @@ bool SCH_EDIT_FRAME::SaveSelectionToDesignBlock( const LIB_ID& aLibId )
 
     try
     {
-        blk.reset( Prj().DesignBlockLibs()->DesignBlockLoad( aLibId.GetLibNickname(), aLibId.GetLibItemName() ) );
+        blk.reset( Prj().DesignBlockLibs()->LoadDesignBlock( aLibId.GetLibNickname(), aLibId.GetLibItemName() ) );
     }
     catch( const IO_ERROR& ioe )
     {
         DisplayError( this, ioe.What() );
+        return false;
+    }
+
+    if( !blk )
+    {
+        DisplayErrorMessage(
+                this, wxString::Format( _( "Design block '%s' does not exist." ), aLibId.GetUniStringLibItemName() ) );
         return false;
     }
 
@@ -467,8 +584,8 @@ bool SCH_EDIT_FRAME::SaveSelectionToDesignBlock( const LIB_ID& aLibId )
 
     try
     {
-        success = Prj().DesignBlockLibs()->DesignBlockSave( aLibId.GetLibNickname(), blk.get() )
-                  == DESIGN_BLOCK_LIB_TABLE::SAVE_OK;
+        success = Prj().DesignBlockLibs()->SaveDesignBlock( aLibId.GetLibNickname(), blk.get() )
+                  == DESIGN_BLOCK_LIBRARY_ADAPTER::SAVE_OK;
 
         // If we had a group, we need to reselect it
         if( group )
@@ -481,16 +598,64 @@ bool SCH_EDIT_FRAME::SaveSelectionToDesignBlock( const LIB_ID& aLibId )
             {
                 SCH_COMMIT commit( m_toolManager );
 
-                commit.Modify( group );
+                commit.Modify( group, GetScreen() );
                 group->SetDesignBlockLibId( aLibId );
 
-                commit.Push( "Set Group Design Block Link" );
+                commit.Push( _( "Set Group Design Block Link" ) );
             }
         }
     }
     catch( const IO_ERROR& ioe )
     {
         DisplayError( this, ioe.What() );
+    }
+
+    if( success && !group )
+    {
+        SCH_COMMIT  commit( m_toolManager );
+        SCH_SCREEN* screen = GetScreen();
+
+        SCH_GROUP* newGroup = new SCH_GROUP;
+        newGroup->SetParent( screen );
+        newGroup->SetName( aLibId.GetUniStringLibItemName() );
+        newGroup->SetDesignBlockLibId( aLibId );
+
+        int addedCount = 0;
+
+        for( EDA_ITEM* edaItem : selection )
+        {
+            if( !edaItem->IsSCH_ITEM() )
+                continue;
+
+            SCH_ITEM* item = static_cast<SCH_ITEM*>( edaItem );
+
+            if( item->GetParentSymbol() )
+                continue;
+
+            if( !item->IsGroupableType() )
+                continue;
+
+            if( EDA_GROUP* existingGroup = item->GetParentGroup() )
+                commit.Modify( existingGroup->AsEdaItem(), screen, RECURSE_MODE::NO_RECURSE );
+
+            commit.Modify( item, screen, RECURSE_MODE::NO_RECURSE );
+            newGroup->AddItem( item );
+            addedCount++;
+        }
+
+        if( addedCount > 0 )
+        {
+            commit.Add( newGroup, screen );
+            commit.Push( _( "Group Items" ) );
+
+            m_toolManager->RunAction( ACTIONS::selectionClear );
+            m_toolManager->RunAction( ACTIONS::selectItem, newGroup->AsEdaItem() );
+        }
+        else
+        {
+            newGroup->RemoveAll();
+            delete newGroup;
+        }
     }
 
     // Clean up the temporaries

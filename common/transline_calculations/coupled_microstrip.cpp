@@ -31,6 +31,17 @@ using TCP = TRANSLINE_PARAMETERS;
 
 void COUPLED_MICROSTRIP::Analyse()
 {
+    UpdateDielectricModel();
+
+    const double f = GetParameter( TCP::FREQUENCY );
+    const double rawEpsR = GetParameter( TCP::EPSILONR );
+    const double rawTanD = GetParameter( TCP::TAND );
+
+    // Overlay dispersed values so helpers reading EPSILONR / TAND via GetParameter
+    // pick them up.  Raw inputs are restored before return.
+    SetParameter( TCP::EPSILONR, GetDispersedEpsilonR( f ) );
+    SetParameter( TCP::TAND, GetDispersedTanDelta( f ) );
+
     // Compute thickness corrections
     delta_u_thickness();
 
@@ -40,11 +51,43 @@ void COUPLED_MICROSTRIP::Analyse()
     // Impedances for even- and odd-mode
     Z0_even_odd();
 
+    // Apply the soldermask cover correction to both modes before dispersion and loss
+    // consume the static quantities.  Same Wan-Hoorfar 2000 Delta q factor as microstrip;
+    // the even/odd split is preserved because each mode's static eps_eff picks up its own
+    // correction.  Z0 for each mode scales by sqrt(uncoated/coated) so the homogeneous
+    // reference impedance remains consistent with the new eps_eff.
+    const double dispersedEpsR = GetParameter( TCP::EPSILONR );
+    const double dispersedTanD = GetParameter( TCP::TAND );
+    const double uOverH = GetParameter( TCP::PHYS_WIDTH ) / GetParameter( TCP::H );
+
+    const auto [ erEvenCoated, tanDEvenCoated ] =
+            ApplySoldermaskCorrection( er_eff_e_0, dispersedTanD, dispersedEpsR, uOverH, f );
+    const auto [ erOddCoated, tanDOddCoated ] =
+            ApplySoldermaskCorrection( er_eff_o_0, dispersedTanD, dispersedEpsR, uOverH, f );
+
+    if( erEvenCoated != er_eff_e_0 )
+    {
+        Z0_e_0 *= std::sqrt( er_eff_e_0 / erEvenCoated );
+        er_eff_e_0 = erEvenCoated;
+    }
+
+    if( erOddCoated != er_eff_o_0 )
+    {
+        Z0_o_0 *= std::sqrt( er_eff_o_0 / erOddCoated );
+        er_eff_o_0 = erOddCoated;
+    }
+
     // Calculate freq dependence of er_eff_e, er_eff_o
     er_eff_freq();
 
     // Calculate frequency  dependence of Z0e, Z0o */
     Z0_dispersion();
+
+    // Swap in the mask-blended tan delta for losses.  Even and odd modes differ only by
+    // eps_eff, which has already been corrected, so using the odd-mode blended value for
+    // both is a second-order refinement; average them to avoid biasing either mode.
+    const double tanDBlended = 0.5 * ( tanDEvenCoated + tanDOddCoated );
+    SetParameter( TCP::TAND, tanDBlended );
 
     // Calculate losses
     attenuation();
@@ -54,16 +97,19 @@ void COUPLED_MICROSTRIP::Analyse()
 
     // Calculate diff impedance
     diff_impedance();
+
+    SetParameter( TCP::EPSILONR, rawEpsR );
+    SetParameter( TCP::TAND, rawTanD );
 }
 
 
 bool COUPLED_MICROSTRIP::Synthesize( const SYNTHESIZE_OPTS aOpts )
 {
     if( aOpts == SYNTHESIZE_OPTS::FIX_WIDTH )
-        return MinimiseZ0Error1D( TCP::PHYS_S, TCP::Z0_O );
+        return MinimiseZ0Error1D( TCP::PHYS_S, TCP::Z0_O, false );
 
     if( aOpts == SYNTHESIZE_OPTS::FIX_SPACING )
-        return MinimiseZ0Error1D( TCP::PHYS_WIDTH, TCP::Z0_O );
+        return MinimiseZ0Error1D( TCP::PHYS_WIDTH, TCP::Z0_O, false );
 
     double Z0_e, Z0_o, ang_l_dest;
     double f1, f2, ft1, ft2, j11, j12, j21, j22, d_s_h, d_w_h, err;
@@ -173,16 +219,16 @@ void COUPLED_MICROSTRIP::SetAnalysisResults()
 
 void COUPLED_MICROSTRIP::SetSynthesisResults()
 {
-    SetAnalysisResult( TCP::EPSILON_EFF_EVEN, er_eff_e );
-    SetAnalysisResult( TCP::EPSILON_EFF_ODD, er_eff_o );
-    SetAnalysisResult( TCP::UNIT_PROP_DELAY_EVEN, prop_delay_e );
-    SetAnalysisResult( TCP::UNIT_PROP_DELAY_ODD, prop_delay_o );
-    SetAnalysisResult( TCP::ATTEN_COND_EVEN, atten_cond_e );
-    SetAnalysisResult( TCP::ATTEN_COND_ODD, atten_cond_o );
-    SetAnalysisResult( TCP::ATTEN_DILECTRIC_EVEN, atten_dielectric_e );
-    SetAnalysisResult( TCP::ATTEN_DILECTRIC_ODD, atten_dielectric_o );
-    SetAnalysisResult( TCP::SKIN_DEPTH, GetParameter( TCP::SKIN_DEPTH ) );
-    SetAnalysisResult( TCP::Z_DIFF, Zdiff );
+    SetSynthesisResult( TCP::EPSILON_EFF_EVEN, er_eff_e );
+    SetSynthesisResult( TCP::EPSILON_EFF_ODD, er_eff_o );
+    SetSynthesisResult( TCP::UNIT_PROP_DELAY_EVEN, prop_delay_e );
+    SetSynthesisResult( TCP::UNIT_PROP_DELAY_ODD, prop_delay_o );
+    SetSynthesisResult( TCP::ATTEN_COND_EVEN, atten_cond_e );
+    SetSynthesisResult( TCP::ATTEN_COND_ODD, atten_cond_o );
+    SetSynthesisResult( TCP::ATTEN_DILECTRIC_EVEN, atten_dielectric_e );
+    SetSynthesisResult( TCP::ATTEN_DILECTRIC_ODD, atten_dielectric_o );
+    SetSynthesisResult( TCP::SKIN_DEPTH, GetParameter( TCP::SKIN_DEPTH ) );
+    SetSynthesisResult( TCP::Z_DIFF, Zdiff );
 
     const double Z0_E = GetParameter( TCP::Z0_E );
     const double Z0_O = GetParameter( TCP::Z0_O );
@@ -198,12 +244,12 @@ void COUPLED_MICROSTRIP::SetSynthesisResults()
     const bool L_invalid = !std::isfinite( L ) || L < 0;
     const bool S_invalid = !std::isfinite( S ) || S <= 0;
 
-    SetAnalysisResult( TCP::Z0_E, Z0_E, Z0_E_invalid ? TRANSLINE_STATUS::WARNING : TRANSLINE_STATUS::OK );
-    SetAnalysisResult( TCP::Z0_O, Z0_O, Z0_O_invalid ? TRANSLINE_STATUS::WARNING : TRANSLINE_STATUS::OK );
-    SetAnalysisResult( TCP::ANG_L, ANG_L, ANG_L_invalid ? TRANSLINE_STATUS::WARNING : TRANSLINE_STATUS::OK );
-    SetAnalysisResult( TCP::PHYS_WIDTH, W, W_invalid ? TRANSLINE_STATUS::TS_ERROR : TRANSLINE_STATUS::OK );
-    SetAnalysisResult( TCP::PHYS_LEN, L, L_invalid ? TRANSLINE_STATUS::TS_ERROR : TRANSLINE_STATUS::OK );
-    SetAnalysisResult( TCP::PHYS_S, S, S_invalid ? TRANSLINE_STATUS::TS_ERROR : TRANSLINE_STATUS::OK );
+    SetSynthesisResult( TCP::Z0_E, Z0_E, Z0_E_invalid ? TRANSLINE_STATUS::WARNING : TRANSLINE_STATUS::OK );
+    SetSynthesisResult( TCP::Z0_O, Z0_O, Z0_O_invalid ? TRANSLINE_STATUS::WARNING : TRANSLINE_STATUS::OK );
+    SetSynthesisResult( TCP::ANG_L, ANG_L, ANG_L_invalid ? TRANSLINE_STATUS::WARNING : TRANSLINE_STATUS::OK );
+    SetSynthesisResult( TCP::PHYS_WIDTH, W, W_invalid ? TRANSLINE_STATUS::TS_ERROR : TRANSLINE_STATUS::OK );
+    SetSynthesisResult( TCP::PHYS_LEN, L, L_invalid ? TRANSLINE_STATUS::TS_ERROR : TRANSLINE_STATUS::OK );
+    SetSynthesisResult( TCP::PHYS_S, S, S_invalid ? TRANSLINE_STATUS::TS_ERROR : TRANSLINE_STATUS::OK );
 }
 
 
@@ -624,17 +670,26 @@ void COUPLED_MICROSTRIP::line_angle()
 
 void COUPLED_MICROSTRIP::diff_impedance()
 {
-    // Note that differential impedance is exactly twice the odd mode impedance.
+    // Differential impedance of a coupled pair driven in odd mode is exactly twice the
+    // odd-mode characteristic impedance (Pozar, "Microwave Engineering" 4th ed., §7.6).
     // Odd mode is not the same as single-ended impedance, so avoid approximations found
-    // on websites that use static single ended impedance as the starting point
+    // on websites that use static single ended impedance as the starting point.
+    // Read the dispersed Z0_O left by Z0_dispersion() rather than the static Z0_o_0 so
+    // Zdiff tracks frequency above a few GHz where Kirschning-Jansen raises the odd-mode
+    // impedance by several percent.
 
-    Zdiff = 2 * Z0_o_0;
+    Zdiff = 2.0 * GetParameter( TCP::Z0_O );
 }
 
 
 /*
- * Z0_dispersion() - calculate frequency dependency of characteristic
- * impedances
+ * Z0_dispersion() - calculate frequency dependency of characteristic impedances.
+ *
+ * Kirschning & Jansen, "Accurate Wide-Range Design Equations for the Frequency-Dependent
+ * Characteristic of Parallel Coupled Microstrip Lines", IEEE Trans. MTT 32(1):83-90,
+ * Jan. 1984 (errata: MTT 33(3):288, Mar. 1985).  The Q_0..Q_29 closed-form chain below
+ * implements the dispersive even- and odd-mode impedance correction tables from that
+ * paper.
  */
 void COUPLED_MICROSTRIP::Z0_dispersion()
 {

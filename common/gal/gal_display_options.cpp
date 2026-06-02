@@ -44,14 +44,13 @@ static const wxChar* traceGalDispOpts = wxT( "KICAD_GAL_DISPLAY_OPTIONS" );
 
 
 GAL_DISPLAY_OPTIONS::GAL_DISPLAY_OPTIONS()
-    : gl_antialiasing_mode( OPENGL_ANTIALIASING_MODE::NONE ),
-      cairo_antialiasing_mode( CAIRO_ANTIALIASING_MODE::NONE ),
+    : antialiasing_mode( GAL_ANTIALIASING_MODE::AA_NONE ),
       m_gridStyle( GRID_STYLE::DOTS ),
       m_gridSnapping( GRID_SNAPPING::ALWAYS ),
       m_gridLineWidth( 1.0 ),
       m_gridMinSpacing( 10.0 ),
       m_axesEnabled( false ),
-      m_fullscreenCursor( false ),
+      m_crossHairMode( CROSS_HAIR_MODE::SMALL_CROSS ),
       m_forceDisplayCursor( false ),
       m_scaleFactor( DPI_SCALING::GetDefaultScaleFactor() )
 {

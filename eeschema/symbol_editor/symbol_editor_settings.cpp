@@ -38,10 +38,9 @@ SYMBOL_EDITOR_SETTINGS::SYMBOL_EDITOR_SETTINGS() :
         APP_SETTINGS_BASE( "symbol_editor", libeditSchemaVersion ),
         m_Defaults(),
         m_Repeat(),
-        m_ImportGraphics(),
         m_ShowPinElectricalType( true ),
         m_LibWidth(),
-        m_EditSymbolVisibleColumns()
+        m_ArcEditMode( ARC_EDIT_MODE::KEEP_CENTER_ADJUST_ANGLE_RADIUS )
 {
     // Make Coverity happy
     m_UseEeschemaColorSettings = true;;
@@ -59,76 +58,65 @@ SYMBOL_EDITOR_SETTINGS::SYMBOL_EDITOR_SETTINGS() :
             &m_AuiPanels.properties_splitter, 0.5f ) );
 
     m_params.emplace_back( new PARAM<int>( "defaults.line_width",
-                                           &m_Defaults.line_width, 0 ) );
+            &m_Defaults.line_width, 0 ) );
 
     m_params.emplace_back( new PARAM<int>( "defaults.text_size",
-                                           &m_Defaults.text_size, DEFAULT_TEXT_SIZE ) );
+            &m_Defaults.text_size, DEFAULT_TEXT_SIZE ) );
 
     m_params.emplace_back( new PARAM<int>( "defaults.pin_length",
-                                           &m_Defaults.pin_length, DEFAULT_PIN_LENGTH ) );
+            &m_Defaults.pin_length, DEFAULT_PIN_LENGTH ) );
 
     m_params.emplace_back( new PARAM<int>( "defaults.pin_name_size",
-                                           &m_Defaults.pin_name_size, DEFAULT_PINNAME_SIZE ) );
+            &m_Defaults.pin_name_size, DEFAULT_PINNAME_SIZE ) );
 
     m_params.emplace_back( new PARAM<int>( "defaults.pin_num_size",
-                                           &m_Defaults.pin_num_size, DEFAULT_PINNUM_SIZE ) );
+            &m_Defaults.pin_num_size, DEFAULT_PINNUM_SIZE ) );
 
     m_params.emplace_back( new PARAM<int>( "repeat.label_delta",
-                                           &m_Repeat.label_delta, 1 ) );
+            &m_Repeat.label_delta, 1 ) );
 
     m_params.emplace_back( new PARAM<int>( "repeat.pin_step",
-                                           &m_Repeat.pin_step, 100 ) );
-
-    m_params.emplace_back( new PARAM<bool>( "import_graphics.interactive_placement",
-            &m_ImportGraphics.interactive_placement, true ) );
-
-    m_params.emplace_back( new PARAM<int>( "import_graphics.line_width_units",
-            &m_ImportGraphics.dxf_line_width_units, 0 ) );
-
-    m_params.emplace_back( new PARAM<double>( "import_graphics.line_width",
-            &m_ImportGraphics.dxf_line_width, 0.2 ) );
-
-    m_params.emplace_back( new PARAM<int>( "import_graphics.origin_units",
-            &m_ImportGraphics.origin_units, 0 ) );
-
-    m_params.emplace_back( new PARAM<double>( "import_graphics.origin_x",
-            &m_ImportGraphics.origin_x, 0 ) );
-
-    m_params.emplace_back( new PARAM<double>( "import_graphics.origin_y",
-            &m_ImportGraphics.origin_y, 0 ) );
-
-    m_params.emplace_back( new PARAM<int>( "import_graphics.dxf_units",
-            &m_ImportGraphics.dxf_units, 0 ) );
+            &m_Repeat.pin_step, 100 ) );
 
     m_params.emplace_back( new PARAM<bool>( "show_pin_electrical_type",
-                                            &m_ShowPinElectricalType, true ) );
+            &m_ShowPinElectricalType, true ) );
 
     m_params.emplace_back( new PARAM<bool>( "show_pin_alt_icons",
-                                            &m_ShowPinAltIcons, true ) );
+            &m_ShowPinAltIcons, true ) );
 
     m_params.emplace_back( new PARAM<bool>( "show_hidden_lib_fields",
-                                            &m_ShowHiddenFields, true ) );
+            &m_ShowHiddenFields, true ) );
 
     m_params.emplace_back( new PARAM<bool>( "show_hidden_lib_pins",
-                                            &m_ShowHiddenPins, true ) );
+            &m_ShowHiddenPins, true ) );
 
     m_params.emplace_back( new PARAM<bool>( "drag_pins_along_with_edges",
-                                            &m_dragPinsAlongWithEdges, true ) );
+            &m_dragPinsAlongWithEdges, true ) );
 
     m_params.emplace_back( new PARAM<int>( "lib_table_width",
-                                           &m_LibWidth, 250 ) );
+            &m_LibWidth, 250 ) );
 
     m_params.emplace_back( new PARAM<int>( "library.sort_mode",
-                                           &m_LibrarySortMode, 0 ) );
-
-    m_params.emplace_back( new PARAM<wxString>( "edit_symbol_visible_columns",
-                                                &m_EditSymbolVisibleColumns, "0 1 2 3 4 5 6 7" ) );
-
-    m_params.emplace_back( new PARAM<wxString>( "pin_table_visible_columns",
-                                                &m_PinTableVisibleColumns, "0 1 2 3 4 5 9 10" ) );
+            &m_LibrarySortMode, 0 ) );
 
     m_params.emplace_back( new PARAM<bool>( "use_eeschema_color_settings",
-                                            &m_UseEeschemaColorSettings, true ) );
+            &m_UseEeschemaColorSettings, true ) );
+
+    m_params.emplace_back( new PARAM<int>( "editing.arc_edit_mode",
+            reinterpret_cast<int*>( &m_ArcEditMode ),
+            static_cast<int>( ARC_EDIT_MODE::KEEP_CENTER_ADJUST_ANGLE_RADIUS ) ) );
+
+    m_params.emplace_back( new PARAM_MAP<int>( "lib_field_editor.field_widths",
+            &m_LibFieldEditor.field_widths, {} ) );
+
+    m_params.emplace_back( new PARAM<int>( "lib_field_editor.sash_pos",
+            &m_LibFieldEditor.sash_pos, 400 ) );
+
+    m_params.emplace_back( new PARAM<bool>( "lib_field_editor.sidebar_collapsed",
+            &m_LibFieldEditor.sidebar_collapsed, false ) );
+
+    m_params.emplace_back( new PARAM<bool>( "pin_table.crossprobe_on_selection",
+            &m_PinTable.crossprobe_on_selection, true ) );
 
     m_params.emplace_back( new PARAM_LAMBDA<nlohmann::json>( "selection_filter",
             [&]() -> nlohmann::json
@@ -214,10 +202,6 @@ bool SYMBOL_EDITOR_SETTINGS::MigrateFromLegacy( wxConfigBase* aCfg )
 
     ret &= fromLegacy<int>(  aCfg, "LibeditLibWidth",              "lib_table_width" );
     ret &= fromLegacy<bool>( aCfg, "LibeditShowPinElectricalType", "show_pin_electrical_type" );
-
-    ret &= fromLegacyString( aCfg, "LibEditFieldsShownColumns",    "edit_symbol_visible_columns" );
-
-    ret &= fromLegacyString( aCfg, "PinTableShownColumns",         "pin_table_visible_columns" );
 
     return ret;
 }

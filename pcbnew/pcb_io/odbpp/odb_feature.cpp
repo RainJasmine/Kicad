@@ -19,20 +19,27 @@
  */
 
 #include "odb_feature.h"
+
 #include <sstream>
+#include <map>
+
+#include <wx/log.h>
+
+#include "footprint.h"
+#include "pad.h"
 #include "pcb_shape.h"
 #include "odb_defines.h"
 #include "pcb_track.h"
 #include "pcb_textbox.h"
+#include "pcb_table.h"
 #include "zone.h"
 #include "board.h"
 #include "board_design_settings.h"
 #include "geometry/eda_angle.h"
 #include "odb_eda_data.h"
 #include "pcb_io_odbpp.h"
-#include <map>
-#include "wx/log.h"
 #include <callback_gal.h>
+#include <string_utils.h>
 
 
 void FEATURES_MANAGER::AddFeatureLine( const VECTOR2I& aStart, const VECTOR2I& aEnd,
@@ -99,24 +106,27 @@ void FEATURES_MANAGER::AddShape( const PCB_SHAPE& aShape, PCB_LAYER_ID aLayer )
 
     case SHAPE_T::RECTANGLE:
     {
-        int      width = std::abs( aShape.GetRectangleWidth() ) + stroke_width;
-        int      height = std::abs( aShape.GetRectangleHeight() ) + stroke_width;
-        wxString rad = ODB::SymDouble2String( ( stroke_width / 2.0 ) );
-        VECTOR2I center = ODB::GetShapePosition( aShape );
-
+        // ODB++ donut_rc symbols degenerate when the corner radius is smaller than half the
+        // line width, and some viewers drop the feature entirely.  Emit the rectangle as a
+        // filled pad for the fill (if any) plus four line segments for the stroke, matching
+        // how a rectangle drawn with the line tool is exported.
         if( aShape.IsSolidFill() )
         {
+            int      width = std::abs( aShape.GetRectangleWidth() );
+            int      height = std::abs( aShape.GetRectangleHeight() );
+            VECTOR2I center = ODB::GetShapePosition( aShape );
+
             AddFeature<ODB_PAD>( ODB::AddXY( center ),
-                                 AddRoundRectSymbol( ODB::SymDouble2String( width ),
-                                                     ODB::SymDouble2String( height ), rad ) );
+                                 AddRectSymbol( ODB::SymDouble2String( width ),
+                                                ODB::SymDouble2String( height ) ) );
         }
-        else
+
+        if( stroke_width > 0 )
         {
-            AddFeature<ODB_PAD>( ODB::AddXY( center ),
-                                 AddRoundRectDonutSymbol( ODB::SymDouble2String( width ),
-                                                          ODB::SymDouble2String( height ),
-                                                          ODB::SymDouble2String( stroke_width ),
-                                                          rad ) );
+            std::vector<VECTOR2I> corners = aShape.GetRectCorners();
+
+            for( size_t ii = 0; ii < corners.size(); ++ii )
+                AddFeatureLine( corners[ii], corners[( ii + 1 ) % corners.size()], stroke_width );
         }
 
         break;
@@ -483,8 +493,8 @@ void FEATURES_MANAGER::InitFeatureList( PCB_LAYER_ID aLayer, std::vector<BOARD_I
 
         if( PCB_TEXT* tmp_text = dynamic_cast<PCB_TEXT*>( item ) )
             text_item = static_cast<EDA_TEXT*>( tmp_text );
-        else if( PCB_TEXTBOX* tmp_text = dynamic_cast<PCB_TEXTBOX*>( item ) )
-            text_item = static_cast<EDA_TEXT*>( tmp_text );
+        else if( PCB_TEXTBOX* tmp_textbox = dynamic_cast<PCB_TEXTBOX*>( item ) )
+            text_item = static_cast<EDA_TEXT*>( tmp_textbox );
 
         if( !text_item || !text_item->IsVisible() || text_item->GetShownText( false ).empty() )
             return;
@@ -613,17 +623,8 @@ void FEATURES_MANAGER::InitFeatureList( PCB_LAYER_ID aLayer, std::vector<BOARD_I
             isKnockout = static_cast<PCB_TEXTBOX*>( item )->IsKnockout();
 
         const KIFONT::METRICS& fontMetrics = item->GetFontMetrics();
-
-        KIFONT::FONT* font = text_item->GetFont();
-
-        if( !font )
-        {
-            wxString defaultFontName; // empty string is the KiCad stroke font
-
-            font = KIFONT::FONT::GetFont( defaultFontName, text_item->IsBold(), text_item->IsItalic() );
-        }
-
-        wxString shownText( text_item->GetShownText( true ) );
+        KIFONT::FONT*          font = text_item->GetDrawFont( nullptr );
+        wxString               shownText( text_item->GetShownText( true ) );
 
         if( shownText.IsEmpty() )
             return;
@@ -662,7 +663,7 @@ void FEATURES_MANAGER::InitFeatureList( PCB_LAYER_ID aLayer, std::vector<BOARD_I
             wxStringSplit( shownText, strings_list, '\n' );
             positions.reserve( strings_list.Count() );
 
-            text_item->GetLinePositions( positions, strings_list.Count() );
+            text_item->GetLinePositions( nullptr, positions, strings_list.Count() );
 
             for( unsigned ii = 0; ii < strings_list.Count(); ii++ )
             {
@@ -782,6 +783,25 @@ void FEATURES_MANAGER::InitFeatureList( PCB_LAYER_ID aLayer, std::vector<BOARD_I
 
             break;
 
+        case PCB_TABLE_T:
+        {
+            PCB_TABLE* table = static_cast<PCB_TABLE*>( item );
+
+            for( PCB_TABLECELL* cell : table->GetCells() )
+                add_text( cell );
+
+            table->DrawBorders(
+                    [&]( const VECTOR2I& aPt1, const VECTOR2I& aPt2, const STROKE_PARAMS& aStroke )
+                    {
+                        int lineWidth = aStroke.GetWidth();
+
+                        if( lineWidth > 0 )
+                            AddFeatureLine( aPt1, aPt2, lineWidth );
+                    } );
+
+            break;
+        }
+
         case PCB_DIMENSION_T:
         case PCB_TARGET_T:
         case PCB_DIM_ALIGNED_T:
@@ -792,7 +812,12 @@ void FEATURES_MANAGER::InitFeatureList( PCB_LAYER_ID aLayer, std::vector<BOARD_I
             //TODO: Add support for dimensions
             break;
 
-        default: break;
+        case PCB_BARCODE_T:
+            //TODO: Add support for barcodes
+            break;
+
+        default:
+            break;
         }
     }
 }

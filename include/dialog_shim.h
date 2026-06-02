@@ -30,19 +30,35 @@
 #include <kiway_holder.h>
 #include <wx/dialog.h>
 #include <map>
+#include <vector>
+#include <wx/variant.h>
 #include <core/raii.h>
 
 class EDA_BASE_FRAME;
+class UNIT_BINDER;
 
 class wxGridEvent;
 class wxGUIEventLoop;
+class wxInitDialogEvent;
+class wxSpinEvent;
+class wxSpinDoubleEvent;
+class wxStyledTextEvent;
+class wxPropertyGridEvent;
+class wxDataViewEvent;
 
 
 /**
  * Dialog helper object to sit in the inheritance tree between wxDialog and any class written
  * by wxFormBuilder.
  *
- * To put it there, use wxFormBuilder tool and set:
+ * In addition to common dialog utilities, DIALOG_SHIM will persist the state of
+ * all child controls and the dialog geometry in the current project's local
+ * settings.  The dialog's type name is used as the default key, but dialogs may
+ * override @ref m_hash_key to store settings under a custom name.  Any control
+ * can opt out of persistence by setting the boolean window property "persist" to
+ * false.  Geometry is stored under the special key "__geometry".
+ *
+ * To use it in wxFormBuilder set:
  * <br> subclass name = DIALOG_SHIM
  * <br> subclass header = dialog_shim.h
  * <br>
@@ -120,6 +136,32 @@ public:
                 e.ShiftDown() && !e.MetaDown();
     }
 
+    /**
+     * Load persisted control values from the current project's local settings.
+     * Controls may opt out by setting the boolean window property "persist" to
+     * false.  Dialog geometry is stored under the special key "__geometry".
+     */
+    void LoadControlState();
+
+    /**
+     * Save control values and geometry to the current project's local settings.
+     */
+    void SaveControlState();
+
+    /**
+     * Opt out of control state saving.
+     * @param aWindow can be either a specific control, or the whole dialog
+     */
+    void OptOut( wxWindow* aWindow );
+
+    /**
+     * Register a UNIT_BINDER so that it can handle units in control-state save/restore
+     *
+     * @param aUnitBinder
+     * @param aWindow the control window
+     */
+    void RegisterUnitBinder( UNIT_BINDER* aUnitBinder, wxWindow* aWindow );
+
 protected:
     /**
      * In all dialogs, we must call the same functions to fix minimal dlg size, the default
@@ -172,12 +214,34 @@ protected:
      */
     virtual void TearDownQuasiModal() {}
 
+    /**                                                                                                               
+     * Reset undo/redo tracking after dynamically replacing child panels.
+     *                                                                                                                
+     * Clears the undo/redo stacks and current value baselines, then registers
+     * undo/redo event handlers on the new children.
+     *
+     * @param aChildren The child window list of the newly created panel.
+     */
+    void resetUndoRedoForNewContent( wxWindowList& aChildren ); 
+
+    /**                                                                                                                   
+     * Remove UNIT_BINDER registrations for a window and all its descendants.
+     *
+     * Call before destroying a panel whose children have registered unit binders.
+     *
+     * @param aWindow The root window whose subtree should be unregistered.
+     */
+    void unregisterUnitBinders( wxWindow* aWindow );
+
 private:
     /**
      * Properly handle the wxCloseEvent when in the quasimodal mode when not calling
      * EndQuasiModal which is possible with any dialog derived from #DIALOG_SHIM.
      */
     void OnCloseWindow( wxCloseEvent& aEvent );
+
+    void OnSize( wxSizeEvent& aEvent );
+    void OnMove( wxMoveEvent& aEvent );
 
     /**
      * Properly handle the default button events when in the quasimodal mode when not
@@ -187,11 +251,36 @@ private:
 
     void onChildSetFocus( wxFocusEvent& aEvent );
 
+    void onInitDialog( wxInitDialogEvent& aEvent );
+
+    /**
+     * Set focus back to the parent frame's tool canvas if available, otherwise to the
+     * parent window. Prevents focus from landing on auxiliary panels like the properties
+     * panel when the mouse happens to hover over them at dialog close time.
+     */
+    void focusParentCanvas();
+
+    std::string generateKey( const wxWindow* aWin ) const;
+
+    void registerUndoRedoHandlers( wxWindowList& aChildren );
+    void recordControlChange( wxWindow* aCtrl );
+    void onCommandEvent( wxCommandEvent& aEvent );
+    void onSpinEvent( wxSpinEvent& aEvent );
+    void onSpinDoubleEvent( wxSpinDoubleEvent& aEvent );
+    void onStyledTextChanged( wxStyledTextEvent& aEvent );
+    void onGridCellChanged( wxGridEvent& aEvent );
+    void onPropertyGridChanged( wxPropertyGridEvent& aEvent );
+    void onDataViewListChanged( wxDataViewEvent& aEvent );
+    void doUndo();
+    void doRedo();
+    wxVariant getControlValue( wxWindow* aCtrl );
+    void setControlValue( wxWindow* aCtrl, const wxVariant& aValue );
+
     DECLARE_EVENT_TABLE();
 
 protected:
     EDA_UNITS              m_units;    // userUnits for display and parsing
-    std::string            m_hash_key; // alternate for class_map when classname re-used
+    std::string            m_hash_key; // optional custom key for persistence
 
     // The following disables the storing of a user size.  It is used primarily for dialogs
     // with conditional content which don't need user sizing.
@@ -215,9 +304,25 @@ protected:
 
     // The size asked by the caller, used the first time the dialog is created
     wxSize                 m_initialSize;
+    bool                   m_userPositioned;
+    bool                   m_userResized;
 
     // Used to support first-esc-cancels-edit logic
-    std::map<wxWindow*, wxString> m_beforeEditValues;
+    std::map<wxWindow*, wxString>     m_beforeEditValues;
+    std::map<wxWindow*, UNIT_BINDER*> m_unitBinders;
+
+    struct UNDO_STEP
+    {
+        wxWindow* ctrl;
+        wxVariant before;
+        wxVariant after;
+    };
+
+    std::vector<UNDO_STEP>            m_undoStack;
+    std::vector<UNDO_STEP>            m_redoStack;
+    std::map<wxWindow*, wxVariant>    m_currentValues;
+    bool                              m_handlingUndoRedo;
+    bool                              m_childReleased;
 };
 
 #endif  // DIALOG_SHIM_

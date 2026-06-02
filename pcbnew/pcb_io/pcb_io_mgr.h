@@ -57,6 +57,7 @@ public:
         PCB_FILE_UNKNOWN = 0,   ///< 0 is not a legal menu id on Mac
         KICAD_SEXP,             ///< S-expression Pcbnew file format.
         LEGACY,                 ///< Legacy Pcbnew file formats prior to s-expression.
+        ALLEGRO,
         ALTIUM_CIRCUIT_MAKER,
         ALTIUM_CIRCUIT_STUDIO,
         ALTIUM_DESIGNER,
@@ -70,11 +71,14 @@ public:
         SOLIDWORKS_PCB,
         IPC2581,
         ODBPP,
+        PADS,
+        SPRINT_LAYOUT,
         // add your type here.
 
         // etc.
 
-        FILE_TYPE_NONE
+        FILE_TYPE_NONE,
+        NESTED_TABLE
     };
 
     /**
@@ -162,7 +166,7 @@ public:
      * @param aFileType is from #PCB_FILE_T and tells which plugin to find.
      * @return the plug in corresponding to \a aFileType or NULL if not found.
      */
-    static PCB_IO* PluginFind( PCB_FILE_T aFileType );
+    static PCB_IO* FindPlugin( PCB_FILE_T aFileType );
 
     /**
      * Return a brief name for a plugin given \a aFileType enum.
@@ -233,7 +237,8 @@ public:
     /**
      * Convert a schematic symbol library to the latest KiCad format
      */
-    static bool ConvertLibrary( std::map<std::string, UTF8>* aOldFileProps, const wxString& aOldFilePath,
+    static bool ConvertLibrary( const std::map<std::string, UTF8>& aOldFileProps,
+                                const wxString& aOldFilePath,
                                 const wxString& aNewFilePath, REPORTER* aReporter );
 };
 

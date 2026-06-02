@@ -24,9 +24,10 @@
 #include <settings/nested_settings.h>
 #include <settings/bom_settings.h>
 #include <template_fieldnames.h>
-#include <font/font.h>
+#include <font/font_metrics.h>
 
 class NGSPICE_SETTINGS;
+class REFDES_TRACKER;
 
 
 // The minimal grid size allowed to place a pin is 25 mils.  Tthe best grid size is 50 mils,
@@ -50,6 +51,16 @@ public:
 
     wxString SubReference( int aUnit, bool aAddSeparator = true ) const;
 
+    /**
+     * Accessor that computes the current junction size
+     */
+    int GetJunctionSize();
+
+    /**
+     * Accessor that computes the current hop-over size
+     */
+    double GetHopOverScale();
+
 public:
     // Default sizes are all stored in IU here, and in mils in the JSON file
 
@@ -60,14 +71,14 @@ public:
     int       m_PinSymbolSize;
 
     int       m_JunctionSizeChoice;     // none = 0, smallest = 1, small = 2, etc.
-    int       m_JunctionSize;           // a runtime cache of the calculated size
-
     int       m_HopOverSizeChoice;      // none = 0, smallest = 1, etc.
-    double    m_HopOverScale;           // a runtime cache of the calculated lineWidth multiplier
 
     int       m_ConnectionGridSize;     // usually 50mils (IU internally; mils in the JSON file)
 
     int       m_AnnotateStartNum;       // Starting value for annotation
+    int       m_AnnotateSortOrder;      // Annotation sort order
+    int       m_AnnotateMethod;         // Annotation numbering method (linear, sheet * 100, etc)
+
     int       m_SubpartIdSeparator;     // the separator char between the subpart id and the
                                         //   reference like U1A, U1.A or U1-A
     int       m_SubpartFirstId;         // the ASCII char value to calculate the subpart symbol
@@ -91,18 +102,6 @@ public:
     wxString  m_SchDrawingSheetFileName;
     wxString  m_PlotDirectoryName;
 
-    wxString  m_NetFormatName;
-
-    ///< @todo These should probably be moved to the "schematic.simulator" path.
-    bool      m_SpiceCurSheetAsRoot;
-    bool      m_SpiceSaveAllVoltages;
-    bool      m_SpiceSaveAllCurrents;
-    bool      m_SpiceSaveAllDissipations;
-    bool      m_SpiceSaveAllEvents;
-    wxString  m_SpiceCommandString;      // A command string to run external spice
-
-    bool      m_SpiceModelCurSheetAsRoot;
-
     TEMPLATES m_TemplateFieldNames;
 
     wxString  m_BomExportFileName;
@@ -124,6 +123,18 @@ public:
      * Ngspice simulator settings.
      */
     std::shared_ptr<NGSPICE_SETTINGS> m_NgspiceSettings;
+
+    /**
+     * A list of previously used schematic reference designators.
+     * This is used to avoid reusing designators in the same project.
+     */
+    std::shared_ptr<REFDES_TRACKER> m_refDesTracker;
+
+    /**
+     * A map of variant names to their descriptions.
+     * This is stored in the project file and is the authoritative source for variant metadata.
+     */
+    std::map<wxString, wxString> m_VariantDescriptions;
 };
 
 #endif

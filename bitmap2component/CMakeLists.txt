@@ -63,7 +63,7 @@ if( APPLE )
         )
 
     set_target_properties( bitmap2component PROPERTIES INSTALL_RPATH
-            "@executable_path/../Frameworks;@executable_path/../Frameworks/Python.framework" )
+            "@executable_path/../Frameworks" )
 
     # put individual bundle outside of main bundle as a first step
     # will be pulled into the main bundle when creating main bundle

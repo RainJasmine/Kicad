@@ -26,7 +26,6 @@
 
 
 #include <board.h>
-#include <footprint.h>
 
 /**
  * The ASCII format of the kicad place file is:
@@ -59,6 +58,7 @@ public:
      * @param aExcludeAllTH true to include only footprints with no TH pads no matter
      *                      the footprint flag
      * @param aExcludeDNP true to exclude footprints flagged DNP
+     * @param aExcludeBOM true to exclude footprints flagged exclude from BOM
      * @param aTopSide true to generate top side info
      * @param aBottomSide true to generate bottom side info
      * @param aFormatCSV true to generate a csv format info, false to generate a ascii info
@@ -66,8 +66,8 @@ public:
      * @param aUseAuxOrigin true to use auxiliary axis as an origin for the position data
      */
     PLACE_FILE_EXPORTER( BOARD* aBoard, bool aUnitsMM, bool aOnlySMD, bool aExcludeAllTH,
-                         bool aExcludeDNP, bool aTopSide, bool aBottomSide, bool aFormatCSV,
-                         bool aUseAuxOrigin, bool aNegateBottomX );
+                         bool aExcludeDNP, bool aExcludeBOM, bool aTopSide, bool aBottomSide,
+                         bool aFormatCSV, bool aUseAuxOrigin, bool aNegateBottomX );
 
     /**
      * build a string filled with the position data
@@ -87,6 +87,13 @@ public:
      */
     int GetFootprintCount() { return m_fpCount; }
 
+    /**
+     * Set the variant name for variant-aware export.
+     * When set, field values (e.g. Value) and DNP/BOM/pos-file exclusion flags
+     * will use variant-specific overrides instead of the footprint defaults.
+     */
+    void SetVariant( const wxString& aVariant ) { m_variant = aVariant; }
+
     // Use standard board side name. do not translate them,
     // they are keywords in place file
     static std::string GetFrontSideName() { return std::string( "top" ); }
@@ -99,12 +106,14 @@ private:
     bool     m_unitsMM;         // true for mm, false for inches
     bool     m_onlySMD;         // Include only SMD components
     bool     m_excludeDNP;      // Exclude DNP components
+    bool     m_excludeBOM;      // Exclude components flagged exclude from BOM
     bool     m_excludeAllTH;    // Exclude any footprints with through-hole pads
     int      m_side;            // PCB_BACK_SIDE, PCB_FRONT_SIDE, PCB_BOTH_SIDES
     bool     m_formatCSV;       // true for csv format, false for ascii (utf8) format
     bool     m_negateBottomX;   // true to negate X coordinate on bottom side
     int      m_fpCount;         // Number of footprints in list, for info
     VECTOR2I m_place_Offset;    // Offset for coordinates in generated data.
+    wxString m_variant;         // Variant name for variant-aware field values and filtering
 };
 
 #endif      // #ifndef EXPORT_FOOTPRINTS_PLACEFILE_H

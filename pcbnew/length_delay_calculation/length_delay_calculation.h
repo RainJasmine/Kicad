@@ -24,8 +24,8 @@
 #ifndef PCBNEW_LENGTH_DELAY_CALCULATION_H
 #define PCBNEW_LENGTH_DELAY_CALCULATION_H
 
-#include "time_domain_parameters_iface.h"
-#include "time_domain_parameters_user_defined.h"
+#include "tuning_profile_parameters_iface.h"
+#include "tuning_profile_parameters_user_defined.h"
 
 #include <board_design_settings.h>
 #include <connectivity/connectivity_data.h>
@@ -33,6 +33,7 @@
 #include <unordered_set>
 
 class BOARD;
+class PCB_VIA;
 
 /**
 * Holds length measurement result details and statistics
@@ -70,9 +71,9 @@ struct LENGTH_DELAY_STATS
  */
 struct PATH_OPTIMISATIONS
 {
-    /// Optimise via layers for height calculations, ensuring only the distance
-    /// between routed segments is considered
-    bool OptimiseViaLayers = false;
+    /// Optimise vias for electrical length calculations, including effective
+    /// via span and trace clipping inside via pads
+    bool OptimiseVias = false;
 
     /// Merges all contiguous (end-to-end, same layer) tracks
     bool MergeTracks = false;
@@ -128,7 +129,7 @@ public:
      */
     explicit LENGTH_DELAY_CALCULATION( BOARD* aBoard ) :
             m_board( aBoard ),
-            m_timeDomainParameters( std::make_unique<TIME_DOMAIN_PARAMETERS_USER_DEFINED>( aBoard, this ) )
+            m_tuningProfileParameters( std::make_unique<TUNING_PROFILE_PARAMETERS_USER_DEFINED>( aBoard, this ) )
     {
     }
 
@@ -176,8 +177,8 @@ public:
   * @param aShape is the shape to calculate delay for
   * @param aCtx is the geometry context for which to query to propagation delay
   */
-    int64_t CalculatePropagationDelayForShapeLineChain( const SHAPE_LINE_CHAIN&             aShape,
-                                                        const TIME_DOMAIN_GEOMETRY_CONTEXT& aCtx ) const;
+    int64_t CalculatePropagationDelayForShapeLineChain( const SHAPE_LINE_CHAIN&                aShape,
+                                                        const TUNING_PROFILE_GEOMETRY_CONTEXT& aCtx ) const;
 
     /**
      * @brief Calculates the length of track required for the given delay in a specific geometry context
@@ -185,19 +186,26 @@ public:
      * @param aDesiredDelay is the desired track delay (in IU)
      * @param aCtx is the track geometry context to calculate propagation velocitiy against
      */
-    int64_t CalculateLengthForDelay( int64_t aDesiredDelay, const TIME_DOMAIN_GEOMETRY_CONTEXT& aCtx ) const;
+    int64_t CalculateLengthForDelay( int64_t aDesiredDelay, const TUNING_PROFILE_GEOMETRY_CONTEXT& aCtx ) const;
 
     /// Optimises the given trace / line to minimise the electrical path length within the given pad
     static void OptimiseTraceInPad( SHAPE_LINE_CHAIN& aLine, const PAD* aPad, PCB_LAYER_ID aPcbLayer );
 
+    /// Returns true if the given point falls inside VIA pad shape on the given layer
+    static bool IsPointInsideViaPad( const PCB_VIA* aVia, const VECTOR2I& aPoint, PCB_LAYER_ID aLayer );
+
+    /// Clips trace portions inside a VIA pad and replaces them with a straight-line segment
+    /// from the VIA edge intersection to the VIA centre, analogous to OptimiseTraceInPad.
+    static void OptimiseTraceInVia( SHAPE_LINE_CHAIN& aLine, const PCB_VIA* aVia, PCB_LAYER_ID aLayer );
+
     /// Return a LENGTH_CALCULATION_ITEM constructed from the given BOARD_CONNECTED_ITEM
     LENGTH_DELAY_CALCULATION_ITEM GetLengthCalculationItem( const BOARD_CONNECTED_ITEM* aBoardItem ) const;
 
-    /// Sets the provider for time domain parameter resolution
-    void SetTimeDomainParametersProvider( std::unique_ptr<TIME_DOMAIN_PARAMETERS_IFACE>&& aProvider );
+    /// Sets the provider for tuning profile parameter resolution
+    void SetTuningProfileParametersProvider( std::unique_ptr<TUNING_PROFILE_PARAMETERS_IFACE>&& aProvider );
 
     /// Ensure time domain properties provider is synced with board / project settings if required
-    void SynchronizeTimeDomainProperties() const;
+    void SynchronizeTuningProfileProperties() const;
 
     /**
      * Returns the stackup distance between the two given layers.
@@ -210,8 +218,8 @@ protected:
     /// The parent board for all items
     BOARD* m_board;
 
-    /// The active provider of time domain parameters
-    std::unique_ptr<TIME_DOMAIN_PARAMETERS_IFACE> m_timeDomainParameters;
+    /// The active provider of tuning profile parameters
+    std::unique_ptr<TUNING_PROFILE_PARAMETERS_IFACE> m_tuningProfileParameters;
 
     /// Enum to describe whether track merging is attempted from the start or end of a track segment
     enum class MERGE_POINT
@@ -232,15 +240,18 @@ protected:
     /// Clips the given line to the minimal direct electrical length within the pad
     static void clipLineToPad( SHAPE_LINE_CHAIN& aLine, const PAD* aPad, PCB_LAYER_ID aLayer, bool aForward = true );
 
+    /// Clips the given line to the minimal direct electrical length within the via
+    static void clipLineToVia( SHAPE_LINE_CHAIN& aLine, const PCB_VIA* aVia, PCB_LAYER_ID aLayer, bool aForward );
+
     /**
      * Optimises the via layers. Ensures that vias that are routed through only on one layer do not count towards total
      * length calculations.
      */
-    static void
-    optimiseViaLayers( const std::vector<LENGTH_DELAY_CALCULATION_ITEM*>&                            aVias,
-                       std::vector<LENGTH_DELAY_CALCULATION_ITEM*>&                                  aLines,
-                       std::map<VECTOR2I, std::unordered_set<LENGTH_DELAY_CALCULATION_ITEM*>>&       aLinesPositionMap,
-                       const std::map<VECTOR2I, std::unordered_set<LENGTH_DELAY_CALCULATION_ITEM*>>& aPadsPositionMap );
+    void optimiseVias(
+            const std::vector<LENGTH_DELAY_CALCULATION_ITEM*>&                            aVias,
+            std::vector<LENGTH_DELAY_CALCULATION_ITEM*>&                                  aLines,
+            std::map<VECTOR2I, std::unordered_set<LENGTH_DELAY_CALCULATION_ITEM*>>&       aLinesPositionMap,
+            const std::map<VECTOR2I, std::unordered_set<LENGTH_DELAY_CALCULATION_ITEM*>>& aPadsPositionMap ) const;
 
     /**
      * Merges any lines (traces) that are contiguous, on one layer, and with no junctions
@@ -261,6 +272,12 @@ protected:
      */
     void inferViaInPad( const PAD* aPad, const LENGTH_DELAY_CALCULATION_ITEM& aItem,
                         LENGTH_DELAY_STATS& aDetails ) const;
+
+    /**
+     * Finds the intersection point between an arc and a pad shape.
+     */
+    static bool findArcPadIntersection( const SHAPE_ARC& aArc, const std::shared_ptr<SHAPE_POLY_SET>& aPadShape,
+                                        const VECTOR2I& aInsidePoint, VECTOR2I& aIntersection );
 };
 
 #endif //PCBNEW_LENGTH_DELAY_CALCULATION_H

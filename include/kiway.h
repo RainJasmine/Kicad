@@ -95,6 +95,7 @@
  */
 
 
+#include <array>
 #include <atomic>
 #include <wx/defs.h>
 #include <wx/event.h>
@@ -105,6 +106,8 @@
 #include <mail_type.h>
 #include <ki_exception.h>
 
+class KICAD_API_SERVER;
+
 
 #define KIFACE_VERSION      1
 #define KIFACE_GETTER       KIFACE_1
@@ -113,7 +116,6 @@
 // be mangled.
 #define KIFACE_INSTANCE_NAME_AND_VERSION   "KIFACE_1"
 
-#ifndef SWIG
 #if defined(__linux__) || defined(__FreeBSD__)
  #define LIB_ENV_VAR    wxT( "LD_LIBRARY_PATH" )
 #elif defined(__WXMAC__)
@@ -123,7 +125,6 @@
 #else
  #error Platform support missing
 #endif
-#endif  // SWIG
 
 class wxConfigBase;
 class wxWindow;
@@ -135,6 +136,8 @@ class TOOL_ACTION;
 class JOB;
 class REPORTER;
 class PROGRESS_REPORTER;
+class STARTWIZARD_PROVIDER;
+class LOCAL_HISTORY;
 
 
 /**
@@ -252,6 +255,32 @@ struct KIFACE
     {
         return 0;
     }
+
+    virtual bool HandleApiOpenDocument( const wxString& aPath,
+                                        KICAD_API_SERVER* aServer,
+                                        wxString* aError )
+    {
+        if( aError )
+            *aError = wxS( "OpenDocument is not implemented for this face" );
+
+        return false;
+    }
+
+    virtual bool HandleApiCloseDocument( const wxString& aBoardFileName,
+                                         KICAD_API_SERVER* aServer,
+                                         wxString* aError )
+    {
+        if( aError )
+            *aError = wxS( "CloseDocument is not implemented for this face" );
+
+        return false;
+    }
+
+    virtual void PreloadLibraries( KIWAY* aKiway ) {}
+
+    virtual void CancelPreload( bool aBlock = true ) {}
+
+    virtual void ProjectChanged() {}
 };
 
 
@@ -297,12 +326,11 @@ public:
         FACE_PL_EDITOR,
         FACE_PCB_CALCULATOR,
         FACE_BMP2CMP,
-        FACE_PYTHON,
 
         KIWAY_FACE_COUNT
     };
 
-    ~KIWAY() throw () {}
+    ~KIWAY();
 
     /**
      * A simple mapping function which returns the FACE_T which is known to implement
@@ -377,7 +405,7 @@ public:
      * efficiently switch() based on @a aCommand in there.
      */
     virtual void ExpressMail( FRAME_T aDestination, MAIL_T aCommand, std::string& aPayload,
-                              wxWindow* aSource = nullptr );
+                              wxWindow* aSource = nullptr, bool aFromOtherThread = false );
 
     /**
      * Append all registered actions to the given list.
@@ -393,6 +421,11 @@ public:
     virtual PROJECT& Prj() const;
 
     /**
+     * Return the LOCAL_HISTORY associated with this KIWAY.
+     */
+    LOCAL_HISTORY& LocalHistory() { return *m_local_history; }
+
+    /**
      * Change the language and then calls ShowChangedLanguage() on all #KIWAY_PLAYERs.
      */
     virtual void SetLanguage( int aLanguage );
@@ -403,6 +436,12 @@ public:
      * Use after changing suite-wide options such as panning, autosave interval, etc.
      */
     virtual void CommonSettingsChanged( int aFlags = 0 );
+
+    /**
+     * Clear the wxWidgets file history on each open frame.  Preference records are handled
+     * by SETTINGS_MANAGER (as not all frames might be open).
+     */
+    void ClearFileHistory();
 
     /**
      * Calls ProjectChanged() on all KIWAY_PLAYERs.
@@ -433,9 +472,19 @@ public:
 
     bool ProcessEvent( wxEvent& aEvent ) override;
 
+    void QueueEvent( wxEvent* aEvent ) override;
+
     int  ProcessJob( KIWAY::FACE_T aFace, JOB* aJob, REPORTER* aReporter = nullptr,
                      PROGRESS_REPORTER* aProgressReporter = nullptr );
     bool ProcessJobConfigDialog( KIWAY::FACE_T aFace, JOB* aJob, wxWindow* aWindow );
+
+    bool ProcessApiOpenDocument( KIWAY::FACE_T aFace, const wxString& aPath,
+                                 KICAD_API_SERVER* aServer,
+                                 wxString* aError = nullptr );
+
+    bool ProcessApiCloseDocument( KIWAY::FACE_T aFace, const wxString& aPath,
+                                  KICAD_API_SERVER* aServer,
+                                  wxString* aError = nullptr );
 
     /**
      * Gets the window pointer to the blocking dialog (to send it signals)
@@ -465,8 +514,8 @@ private:
      */
     KIWAY_PLAYER* GetPlayerFrame( FRAME_T aFrameType );
 
-    static KIFACE*  m_kiface[KIWAY_FACE_COUNT];
-    static int      m_kiface_version[KIWAY_FACE_COUNT];
+    static std::array<KIFACE*,KIWAY_FACE_COUNT>  m_kiface;
+    static std::array<int,KIWAY_FACE_COUNT>      m_kiface_version;
 
     int             m_ctl;
 
@@ -481,14 +530,12 @@ private:
     // Call: wxWindow::FindWindowById( m_playerFrameId[aFrameType] )
     // to know if still exists (or GetPlayerFrame( FRAME_T aFrameType )
     std::atomic<wxWindowID> m_playerFrameId[KIWAY_PLAYER_COUNT];
+
+    LOCAL_HISTORY*  m_local_history;
 };
 
 
-#ifndef SWIG
-// provided by single_top.cpp and kicad.cpp;
 extern KIWAY Kiway;
-// whereas python launchers: single_top.py and project manager instantiate as a python object
-#endif
 
 
 /**
@@ -506,8 +553,6 @@ extern KIWAY Kiway;
 typedef KIFACE* KIFACE_GETTER_FUNC( int* aKIFACEversion, int aKIWAYversion, PGM_BASE* aProgram );
 
 
-#ifndef SWIG
-
 /// No name mangling.  Each KIFACE (DSO/DLL) will implement this once.
 extern "C" {
 #if defined(BUILD_KIWAY_DLL)
@@ -516,7 +561,5 @@ extern "C" {
     KIFACE* KIFACE_GETTER(  int* aKIFACEversion, int aKIWAYversion, PGM_BASE* aProgram );
 #endif
 }
-
-#endif  // SWIG
 
 #endif  // KIWAY_H_

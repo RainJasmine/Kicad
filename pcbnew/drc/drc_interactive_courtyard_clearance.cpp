@@ -29,6 +29,7 @@
 #include <zone.h>
 #include <geometry/shape_segment.h>
 #include <footprint.h>
+#include <view/view.h>
 
 void DRC_INTERACTIVE_COURTYARD_CLEARANCE::testCourtyardClearances()
 {
@@ -252,7 +253,7 @@ void DRC_INTERACTIVE_COURTYARD_CLEARANCE::UpdateConflicts( KIGFX::VIEW* aView,
     for( BOARD_ITEM* item: m_lastItemsInConflict )
     {
         item->ClearFlags(COURTYARD_CONFLICT );
-        aView->Update( item );
+        aView->Update( item, KIGFX::APPEARANCE );
         aView->MarkTargetDirty( KIGFX::TARGET_OVERLAY );
     }
 
@@ -265,7 +266,7 @@ void DRC_INTERACTIVE_COURTYARD_CLEARANCE::UpdateConflicts( KIGFX::VIEW* aView,
             if( !item->HasFlag( COURTYARD_CONFLICT ) )
             {
                 item->SetFlags( COURTYARD_CONFLICT );
-                aView->Update( item );
+                aView->Update( item, KIGFX::APPEARANCE );
                 aView->MarkTargetDirty( KIGFX::TARGET_OVERLAY );
             }
 

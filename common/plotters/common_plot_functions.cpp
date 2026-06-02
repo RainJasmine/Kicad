@@ -27,8 +27,10 @@
 #include <plotters/plotter_dxf.h>
 #include <plotters/plotters_pslike.h>
 #include <plotters/plotter_gerber.h>
+#include <plotters/plotter_png.h>
 #include <drawing_sheet/ds_data_item.h>
 #include <drawing_sheet/ds_draw_item.h>
+#include <string_utils.h>
 #include <title_block.h>
 #include <wx/filename.h>
 
@@ -42,6 +44,7 @@ wxString GetDefaultPlotExtension( PLOT_FORMAT aFormat )
     case PLOT_FORMAT::PDF:    return PDF_PLOTTER::GetDefaultFileExtension();
     case PLOT_FORMAT::GERBER: return GERBER_PLOTTER::GetDefaultFileExtension();
     case PLOT_FORMAT::SVG:    return SVG_PLOTTER::GetDefaultFileExtension();
+    case PLOT_FORMAT::PNG:    return PNG_PLOTTER::GetDefaultFileExtension();
     default:    wxFAIL;       return wxEmptyString;
     }
 }
@@ -50,8 +53,8 @@ wxString GetDefaultPlotExtension( PLOT_FORMAT aFormat )
 void PlotDrawingSheet( PLOTTER* plotter, const PROJECT* aProject, const TITLE_BLOCK& aTitleBlock,
                        const PAGE_INFO& aPageInfo, const std::map<wxString, wxString>* aProperties,
                        const wxString& aSheetNumber, int aSheetCount, const wxString& aSheetName,
-                       const wxString& aSheetPath, const wxString& aFilename, COLOR4D aColor,
-                       bool aIsFirstPage )
+                       const wxString& aSheetPath, const wxString& aFilename, COLOR4D aColor, bool aIsFirstPage,
+                       const wxString& aVariantName, const wxString& aVariantDesc )
 {
     /* Note: Page sizes values are given in mils
      */
@@ -80,6 +83,8 @@ void PlotDrawingSheet( PLOTTER* plotter, const PROJECT* aProject, const TITLE_BL
     drawList.SetProject( aProject );
     drawList.SetIsFirstPage( aIsFirstPage );
     drawList.SetProperties( aProperties );
+    drawList.SetVariantName( aVariantName );
+    drawList.SetVariantDesc( aVariantDesc );
 
     drawList.BuildDrawItemsList( aPageInfo, aTitleBlock );
 
@@ -135,24 +140,41 @@ void PlotDrawingSheet( PLOTTER* plotter, const PROJECT* aProject, const TITLE_BL
             case WSG_TEXT_T:
             {
                 DS_DRAW_ITEM_TEXT* text = (DS_DRAW_ITEM_TEXT*) item;
-                KIFONT::FONT*      font = text->GetFont();
+                KIFONT::FONT*      font = text->GetDrawFont( settings );
                 COLOR4D            color = plotColor;
-
-                if( !font )
-                {
-                    font = KIFONT::FONT::GetFont( settings->GetDefaultFont(), text->IsBold(),
-                                                  text->IsItalic() );
-                }
+                wxString           shownText( text->GetShownText( true ) );
 
                 if( plotter->GetColorMode() && text->GetTextColor() != COLOR4D::UNSPECIFIED )
                     color = text->GetTextColor();
 
                 int penWidth = std::max( text->GetEffectiveTextPenWidth(), defaultPenWidth );
 
-                plotter->Text( text->GetTextPos(), color, text->GetShownText( true ),
-                               text->GetTextAngle(), text->GetTextSize(), text->GetHorizJustify(),
-                               text->GetVertJustify(), penWidth, text->IsItalic(), text->IsBold(),
-                               text->IsMultilineAllowed(), font, text->GetFontMetrics() );
+                // Some plotters (PDF plotter) do not handle multiline very well. So handle them here
+                if( text->IsMultilineAllowed() && shownText.Find( '\n' ) != wxNOT_FOUND )
+                {
+                    std::vector<VECTOR2I> positions;
+                    wxArrayString strings_list;
+                    wxStringSplit( shownText, strings_list, '\n' );
+                    positions.reserve( strings_list.Count() );
+
+                    text->GetLinePositions( plotter->RenderSettings(), positions, (int) strings_list.Count() );
+
+                    for( unsigned ii = 0; ii < strings_list.Count(); ii++ )
+                    {
+                        wxString& txt =  strings_list.Item( ii );
+                        plotter->Text( positions[ii], color, txt,
+                                       text->GetTextAngle(), text->GetTextSize(), text->GetHorizJustify(),
+                                       text->GetVertJustify(), penWidth, text->IsItalic(), text->IsBold(),
+                                       false, font, text->GetFontMetrics() );
+                    }
+                }
+                else
+                {
+                    plotter->Text( text->GetTextPos(), color, shownText,
+                                   text->GetTextAngle(), text->GetTextSize(), text->GetHorizJustify(),
+                                   text->GetVertJustify(), penWidth, text->IsItalic(), text->IsBold(),
+                                   text->IsMultilineAllowed(), font, text->GetFontMetrics() );
+                }
                 break;
             }
 

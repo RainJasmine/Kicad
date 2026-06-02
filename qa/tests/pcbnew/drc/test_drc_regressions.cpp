@@ -25,10 +25,12 @@
 #include <pcbnew_utils/board_test_utils.h>
 #include <board.h>
 #include <board_design_settings.h>
+#include <drc/drc_engine.h>
 #include <pad.h>
 #include <pcb_track.h>
 #include <pcb_marker.h>
 #include <footprint.h>
+#include <drc/drc_engine.h>
 #include <drc/drc_item.h>
 #include <settings/settings_manager.h>
 #include <widgets/report_severity.h>
@@ -36,8 +38,7 @@
 
 struct DRC_REGRESSION_TEST_FIXTURE
 {
-    DRC_REGRESSION_TEST_FIXTURE() :
-            m_settingsManager( true /* headless */ )
+    DRC_REGRESSION_TEST_FIXTURE()
     { }
 
     SETTINGS_MANAGER       m_settingsManager;
@@ -60,14 +61,15 @@ BOOST_FIXTURE_TEST_CASE( DRCFalsePositiveRegressions, DRC_REGRESSION_TEST_FIXTUR
         "issue7975",    // Differential pair gap out of range fault by DRC
         "issue8407",    // PCBNEW: Arc for diff pair has clearance DRC error
         "issue10906",   // Soldermask bridge for only one object
-        "issue11814",   // Bad cache hit in isInsideArea
         "issue12609",   // Arc collison edge case
         "issue14412",   // Solder mask bridge between pads in a net-tie pad group
         "issue15280",   // Very wide spokes mis-counted as being single spoke
         "issue14008",   // Net-tie clearance error
         "issue17967/issue17967",   // Arc dp coupling
         "issue18203",   // DRC error due to colliding arc and circle
+        "issue18839",   // False positive board edge clearance between concentric arcs
         "unconnected-netnames/unconnected-netnames", // Raised false schematic partity error
+        "net_tie_drc"   // Net tie bridging soldermask DRC test
     };
 
     for( const wxString& relPath : tests )
@@ -89,8 +91,8 @@ BOOST_FIXTURE_TEST_CASE( DRCFalsePositiveRegressions, DRC_REGRESSION_TEST_FIXTUR
         bds.m_DRCSeverities[ DRCE_LIB_FOOTPRINT_MISMATCH ] = SEVERITY::RPT_SEVERITY_IGNORE;
 
         bds.m_DRCEngine->SetViolationHandler(
-                [&]( const std::shared_ptr<DRC_ITEM>& aItem, VECTOR2I aPos, int aLayer,
-                     DRC_CUSTOM_MARKER_HANDLER* aCustomHandler )
+                [&]( const std::shared_ptr<DRC_ITEM>& aItem, const VECTOR2I& aPos, int aLayer,
+                     const std::function<void( PCB_MARKER* )>& aPathGenerator )
                 {
                     if( bds.GetSeverity( aItem->GetErrorCode() ) == SEVERITY::RPT_SEVERITY_ERROR )
                         violations.push_back( *aItem );
@@ -107,17 +109,19 @@ BOOST_FIXTURE_TEST_CASE( DRCFalsePositiveRegressions, DRC_REGRESSION_TEST_FIXTUR
         {
             UNITS_PROVIDER unitsProvider( pcbIUScale, EDA_UNITS::INCH );
 
+            wxString report;
             std::map<KIID, EDA_ITEM*> itemMap;
             m_board->FillItemMap( itemMap );
 
             for( const DRC_ITEM& item : violations )
-            {
-                BOOST_TEST_MESSAGE( item.ShowReport( &unitsProvider, RPT_SEVERITY_ERROR,
-                                                     itemMap ) );
-            }
+                report += item.ShowReport( &unitsProvider, RPT_SEVERITY_ERROR, itemMap );
 
-            BOOST_ERROR( wxString::Format( "DRC regression: %s, failed (err: expected 0 found %d",
-                                            relPath, (int)violations.size() ) );
+            BOOST_ERROR( wxString::Format( "DRC regression: %s\n"
+                                           "%d violations found (expected 0)\n"
+                                           "%s",
+                                           relPath,
+                                           (int) violations.size(),
+                                           report ) );
         }
     }
 }
@@ -127,8 +131,10 @@ BOOST_FIXTURE_TEST_CASE( DRCFalseNegativeRegressions, DRC_REGRESSION_TEST_FIXTUR
 {
     // These documents at one time failed to catch DRC errors that they should have
 
-    std::map<int, SEVERITY> issue19325_ignore;
+    std::map<int, SEVERITY> issue19325_ignore, issue22102_ignore;
     issue19325_ignore[DRCE_DRILLED_HOLES_TOO_CLOSE] = SEVERITY::RPT_SEVERITY_IGNORE;
+    issue22102_ignore[DRCE_UNCONNECTED_ITEMS] = SEVERITY::RPT_SEVERITY_IGNORE;
+    issue22102_ignore[DRCE_DANGLING_TRACK] = SEVERITY::RPT_SEVERITY_IGNORE;
 
     std::vector<std::tuple<wxString, int, decltype(BOARD_DESIGN_SETTINGS::m_DRCSeverities)>> tests =
     {
@@ -141,7 +147,7 @@ BOOST_FIXTURE_TEST_CASE( DRCFalseNegativeRegressions, DRC_REGRESSION_TEST_FIXTUR
         { "issue6945",  2, {} },
         { "issue7241",  1, {} },
         { "issue7267",  5, {} },
-        { "issue7325",  4, {} },
+        { "issue7325",  2, {} },
         { "issue8003",  2, {} },
         { "issue9081",  2, {} },
         { "issue12109", 8, {} },        // Pads fail annular width test
@@ -151,66 +157,134 @@ BOOST_FIXTURE_TEST_CASE( DRCFalseNegativeRegressions, DRC_REGRESSION_TEST_FIXTUR
         { "reverse_via", 3, {} },       // Via/track ordering
         { "intersectingzones", 1, {} }, // zones are too close to each other
         { "fill_bad",   1, {} },        // zone max BBox was too small
-        { "issue18878", 9, {} },
+        { "issue18878", 12, {} },       // Updated: fix reports all cross-net mask bridge pairs
         { "issue19325/issue19325", 4, issue19325_ignore }, // Overlapping pad annular ring calculation
+        { "issue22102", 2, issue22102_ignore },        // arc-to-rect collision; colocated arcs collision
+        { "issue11814", 2, {} },        // Teardrop clearance to pad
     };
 
     for( const auto& [testName, expectedErrors, customSeverities] : tests )
     {
-        BOOST_TEST_CONTEXT( testName )
-        {
-            KI_TEST::LoadBoard( m_settingsManager, testName, m_board );
-            // Do not refill zones here because this is testing the DRC engine, not the zone filler
+        KI_TEST::LoadBoard( m_settingsManager, testName, m_board );
+        // Do not refill zones here because this is testing the DRC engine, not the zone filler
 
-            std::vector<PCB_MARKER> markers;
-            std::vector<DRC_ITEM>   violations;
-            BOARD_DESIGN_SETTINGS&  bds = m_board->GetDesignSettings();
+        std::vector<PCB_MARKER> markers;
+        std::vector<DRC_ITEM>   violations;
+        BOARD_DESIGN_SETTINGS&  bds = m_board->GetDesignSettings();
 
-            // Disable DRC tests not useful in this testcase
-            bds.m_DRCSeverities[DRCE_COPPER_SLIVER] = SEVERITY::RPT_SEVERITY_IGNORE;
-            bds.m_DRCSeverities[DRCE_LIB_FOOTPRINT_ISSUES] = SEVERITY::RPT_SEVERITY_IGNORE;
-            bds.m_DRCSeverities[DRCE_LIB_FOOTPRINT_MISMATCH] = SEVERITY::RPT_SEVERITY_IGNORE;
+        // Disable DRC tests not useful in this testcase
+        bds.m_DRCSeverities[DRCE_COPPER_SLIVER] = SEVERITY::RPT_SEVERITY_IGNORE;
+        bds.m_DRCSeverities[DRCE_LIB_FOOTPRINT_ISSUES] = SEVERITY::RPT_SEVERITY_IGNORE;
+        bds.m_DRCSeverities[DRCE_LIB_FOOTPRINT_MISMATCH] = SEVERITY::RPT_SEVERITY_IGNORE;
+        bds.m_DRCSeverities[DRCE_TRACK_NOT_CENTERED_ON_VIA] = SEVERITY::RPT_SEVERITY_IGNORE;
 
-            for(const auto [test, severity] : customSeverities)
-                bds.m_DRCSeverities[test] = severity;
+        for(const auto [test, severity] : customSeverities)
+            bds.m_DRCSeverities[test] = severity;
 
-            bds.m_DRCEngine->SetViolationHandler(
-                    [&]( const std::shared_ptr<DRC_ITEM>& aItem, VECTOR2I aPos, int aLayer,
-                         DRC_CUSTOM_MARKER_HANDLER* aCustomHandler )
-                    {
-                        markers.emplace_back( PCB_MARKER( aItem, aPos ) );
-
-                        if( bds.m_DrcExclusions.find( markers.back().SerializeToString() )
-                            == bds.m_DrcExclusions.end() )
-                        {
-                            violations.push_back( *aItem );
-                        }
-                    } );
-
-            bds.m_DRCEngine->RunTests( EDA_UNITS::MM, true, false );
-
-            if( violations.size() == expectedErrors )
-            {
-                BOOST_CHECK_EQUAL( 1, 1 ); // quiet "did not check any assertions" warning
-                BOOST_TEST_MESSAGE( wxString::Format( "DRC regression: %s, passed", testName ) );
-            }
-            else
-            {
-                UNITS_PROVIDER unitsProvider( pcbIUScale, EDA_UNITS::INCH );
-
-                std::map<KIID, EDA_ITEM*> itemMap;
-                m_board->FillItemMap( itemMap );
-
-                for( const DRC_ITEM& item : violations )
+        bds.m_DRCEngine->SetViolationHandler(
+                [&]( const std::shared_ptr<DRC_ITEM>& aItem, const VECTOR2I& aPos, int aLayer,
+                     const std::function<void( PCB_MARKER* )>& aPathGenerator )
                 {
-                    BOOST_TEST_MESSAGE( item.ShowReport( &unitsProvider, RPT_SEVERITY_ERROR,
-                                                         itemMap ) );
-                }
+                    markers.emplace_back( PCB_MARKER( aItem, aPos ) );
 
-                BOOST_CHECK_EQUAL( violations.size(), expectedErrors );
+                    if( bds.m_DrcExclusions.find( markers.back().SerializeToString() )
+                        == bds.m_DrcExclusions.end() )
+                    {
+                        violations.push_back( *aItem );
+                    }
+                } );
 
-                BOOST_ERROR( wxString::Format( "DRC regression: %s, failed", testName ) );
-            }
+        bds.m_DRCEngine->RunTests( EDA_UNITS::MM, true, false );
+
+        if( violations.size() == expectedErrors )
+        {
+            BOOST_CHECK_EQUAL( 1, 1 ); // quiet "did not check any assertions" warning
+            BOOST_TEST_MESSAGE( wxString::Format( "DRC regression: %s, passed", testName ) );
+        }
+        else
+        {
+            UNITS_PROVIDER unitsProvider( pcbIUScale, EDA_UNITS::INCH );
+
+            wxString report;
+            std::map<KIID, EDA_ITEM*> itemMap;
+            m_board->FillItemMap( itemMap );
+
+            for( const DRC_ITEM& item : violations )
+                report += item.ShowReport( &unitsProvider, RPT_SEVERITY_ERROR, itemMap );
+
+            BOOST_ERROR( wxString::Format( "DRC regression: %s\n"
+                                           "%d violations found (expected %d)\n"
+                                           "%s",
+                                           testName,
+                                           (int) violations.size(),
+                                           expectedErrors,
+                                           report ) );
+        }
+    }
+}
+
+
+BOOST_FIXTURE_TEST_CASE( DRCZoneFalsePositiveRegressions, DRC_REGRESSION_TEST_FIXTURE )
+{
+    // These documents at one time flagged DRC errors that they shouldn't have.
+    // These tests require zone filling to properly test the DRC checks.
+
+    std::vector<wxString> tests =
+    {
+        "issue19090/issue19090",  // Copper graphic shapes count as thermal spoke connections
+        "issue23467/issue23467",  // Zones must respect clearance from NPTH pads with no copper layers
+    };
+
+    for( const wxString& relPath : tests )
+    {
+        KI_TEST::LoadBoard( m_settingsManager, relPath, m_board );
+        KI_TEST::FillZones( m_board.get() );
+
+        std::vector<DRC_ITEM>  violations;
+        BOARD_DESIGN_SETTINGS& bds = m_board->GetDesignSettings();
+
+        // Disable DRC tests not useful or not handled in this testcase
+        bds.m_DRCSeverities[ DRCE_INVALID_OUTLINE ] = SEVERITY::RPT_SEVERITY_IGNORE;
+        bds.m_DRCSeverities[ DRCE_UNCONNECTED_ITEMS ] = SEVERITY::RPT_SEVERITY_IGNORE;
+        bds.m_DRCSeverities[ DRCE_COPPER_SLIVER ] = SEVERITY::RPT_SEVERITY_IGNORE;
+        bds.m_DRCSeverities[ DRCE_LIB_FOOTPRINT_ISSUES ] = SEVERITY::RPT_SEVERITY_IGNORE;
+        bds.m_DRCSeverities[ DRCE_LIB_FOOTPRINT_MISMATCH ] = SEVERITY::RPT_SEVERITY_IGNORE;
+
+        // Ensure starved thermal is enabled for this test
+        bds.m_DRCSeverities[ DRCE_STARVED_THERMAL ] = SEVERITY::RPT_SEVERITY_ERROR;
+
+        bds.m_DRCEngine->SetViolationHandler(
+                [&]( const std::shared_ptr<DRC_ITEM>& aItem, const VECTOR2I& aPos, int aLayer,
+                     const std::function<void( PCB_MARKER* )>& aPathGenerator )
+                {
+                    if( bds.GetSeverity( aItem->GetErrorCode() ) == SEVERITY::RPT_SEVERITY_ERROR )
+                        violations.push_back( *aItem );
+                } );
+
+        bds.m_DRCEngine->RunTests( EDA_UNITS::MM, true, false );
+
+        if( violations.empty() )
+        {
+            BOOST_CHECK_EQUAL( 1, 1 );  // quiet "did not check any assertions" warning
+            BOOST_TEST_MESSAGE( wxString::Format( "DRC zone regression: %s, passed", relPath ) );
+        }
+        else
+        {
+            UNITS_PROVIDER unitsProvider( pcbIUScale, EDA_UNITS::INCH );
+
+            wxString report;
+            std::map<KIID, EDA_ITEM*> itemMap;
+            m_board->FillItemMap( itemMap );
+
+            for( const DRC_ITEM& item : violations )
+                report += item.ShowReport( &unitsProvider, RPT_SEVERITY_ERROR, itemMap );
+
+            BOOST_ERROR( wxString::Format( "DRC zone regression: %s\n"
+                                           "%d violations found (expected 0)\n"
+                                           "%s",
+                                           relPath,
+                                           (int) violations.size(),
+                                           report ) );
         }
     }
 }

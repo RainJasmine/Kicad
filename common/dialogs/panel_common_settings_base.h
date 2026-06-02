@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////
-// C++ code generated with wxFormBuilder (version 4.2.1-0-g80c4cb6)
+// C++ code generated with wxFormBuilder (version 4.2.1-0-g80c4cb6a-dirty)
 // http://www.wxformbuilder.org/
 //
 // PLEASE DO *NOT* EDIT THIS FILE!
@@ -20,16 +20,16 @@ class STD_BITMAP_BUTTON;
 #include <wx/colour.h>
 #include <wx/settings.h>
 #include <wx/statline.h>
+#include <wx/radiobut.h>
+#include <wx/sizer.h>
 #include <wx/choice.h>
 #include <wx/gbsizer.h>
-#include <wx/sizer.h>
 #include <wx/textctrl.h>
 #include <wx/bmpbuttn.h>
 #include <wx/bitmap.h>
 #include <wx/image.h>
 #include <wx/icon.h>
 #include <wx/button.h>
-#include <wx/radiobut.h>
 #include <wx/checkbox.h>
 #include <wx/spinctrl.h>
 #include <wx/panel.h>
@@ -44,11 +44,13 @@ class PANEL_COMMON_SETTINGS_BASE : public RESETTABLE_PANEL
 	private:
 
 	protected:
+		wxBoxSizer* bLeftSizer;
 		wxStaticText* m_staticText20;
 		wxStaticLine* m_staticline3;
+		wxFlexGridSizer* m_renderingSizer;
+		wxRadioButton* m_rbAccelerated;
+		wxRadioButton* m_rbFallback;
 		wxChoice* m_antialiasing;
-		wxStaticText* m_antialiasingFallbackLabel;
-		wxChoice* m_antialiasingFallback;
 		wxStaticText* m_staticText21;
 		wxStaticLine* m_staticline2;
 		wxTextCtrl* m_textEditorPath;
@@ -67,6 +69,7 @@ class PANEL_COMMON_SETTINGS_BASE : public RESETTABLE_PANEL
 		wxCheckBox* m_focusFollowSchPcb;
 		wxCheckBox* m_hotkeyFeedback;
 		wxCheckBox* m_gridStriping;
+		wxCheckBox* m_disableCustomCursors;
 		wxStaticText* m_stIconTheme;
 		wxRadioButton* m_rbIconThemeLight;
 		wxRadioButton* m_rbIconThemeDark;
@@ -84,6 +87,13 @@ class PANEL_COMMON_SETTINGS_BASE : public RESETTABLE_PANEL
 		wxStaticText* m_highContrastLabel;
 		wxTextCtrl* m_highContrastCtrl;
 		wxStaticText* m_highContrastUnits;
+		wxStaticText* m_stAppTheme;
+		wxRadioButton* m_rbAppThemeLight;
+		wxRadioButton* m_rbAppThemeDark;
+		wxRadioButton* m_rbAppThemeAuto;
+		wxStaticText* m_staticText251;
+		wxStaticLine* m_staticline7;
+		wxBoxSizer* m_scalingSizer;
 		wxStaticText* m_staticText23;
 		wxStaticLine* m_staticline6;
 		wxCheckBox* m_warpMouseOnMove;
@@ -91,24 +101,15 @@ class PANEL_COMMON_SETTINGS_BASE : public RESETTABLE_PANEL
 		wxStaticText* m_staticText24;
 		wxStaticLine* m_staticline5;
 		wxCheckBox* m_cbRememberOpenFiles;
-		wxStaticText* m_staticTextautosave;
-		wxSpinCtrl* m_SaveTime;
 		wxStaticText* m_staticTextFileHistorySize;
 		wxSpinCtrl* m_fileHistorySize;
-		wxStaticText* m_staticTextClear3DCache;
-		wxSpinCtrl* m_Clear3DCacheFilesOlder;
-		wxStaticText* m_staticTextDays;
 		wxStaticText* m_staticText25;
 		wxStaticLine* m_staticline4;
 		wxCheckBox* m_cbBackupEnabled;
-		wxCheckBox* m_cbBackupAutosave;
-		wxStaticText* m_staticText9;
-		wxSpinCtrl* m_backupLimitTotalFiles;
-		wxStaticText* m_staticText10;
-		wxSpinCtrl* m_backupLimitDailyFiles;
-		wxStaticText* m_staticText11;
-		wxSpinCtrl* m_backupMinInterval;
-		wxStaticText* m_staticText15;
+		wxStaticText* m_staticTextBackupFormat;
+		wxChoice* m_choiceBackupFormat;
+		wxStaticText* m_staticTextBackupLocation;
+		wxChoice* m_choiceBackupLocation;
 		wxStaticText* m_staticText16;
 		wxSpinCtrl* m_backupLimitTotalSize;
 		wxStaticText* m_staticText17;

@@ -50,7 +50,35 @@ public:
     typedef SHAPE_INDEX<ITEM*>          ITEM_SHAPE_INDEX;
     typedef std::unordered_set<ITEM*>   ITEM_SET;
 
-    INDEX(){};
+    INDEX() : m_deferred( false ) {};
+
+    /**
+     * When deferred, Add() registers items in metadata but skips spatial index
+     * insertion. Call BuildSpatialIndex() to bulk load all items at once.
+     */
+    void SetDeferred( bool aDeferred );
+
+    /**
+     * Bulk load the spatial sub-indices from all registered items.
+     * Call after SetDeferred(false) to populate the R-trees.
+     */
+    void BuildSpatialIndex();
+
+    /**
+     * Create a copy-on-write clone of this index. The spatial tree structure is
+     * shared (O(1)) while metadata (net map, item set) is copied.
+     */
+    std::unique_ptr<INDEX> Clone() const
+    {
+        auto clone = std::make_unique<INDEX>();
+
+        for( const auto& si : m_subIndices )
+            clone->m_subIndices.emplace_back( std::make_unique<ITEM_SHAPE_INDEX>( si->Clone() ) );
+
+        clone->m_netMap = m_netMap;
+        clone->m_allItems = m_allItems;
+        return clone;
+    }
 
     /**
      * Adds item to the spatial index.
@@ -126,6 +154,7 @@ private:
     std::deque<std::unique_ptr<ITEM_SHAPE_INDEX>> m_subIndices;
     std::map<NET_HANDLE, NET_ITEMS_LIST> m_netMap;
     ITEM_SET                             m_allItems;
+    bool                                 m_deferred;
 };
 
 
@@ -149,7 +178,12 @@ int INDEX::Query( const ITEM* aItem, int aMinDistance, Visitor& aVisitor ) const
     const PNS_LAYER_RANGE& layers = aItem->Layers();
 
     for( int i = layers.Start(); i <= layers.End(); ++i )
-        total += querySingle( i, aItem->Shape( i ), aMinDistance, aVisitor );
+    {
+        const SHAPE* shape = aItem->Shape( i );
+
+        if( shape )
+            total += querySingle( i, shape, aMinDistance, aVisitor );
+    }
 
     return total;
 }

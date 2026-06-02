@@ -28,6 +28,7 @@
 #define EDA_ITEM_H
 
 #include <deque>
+#include <set>
 
 #include <api/serializable.h>
 #include <core/typeinfo.h>
@@ -35,6 +36,8 @@
 #include <eda_search_data.h>
 #include <view/view_item.h>
 #include <kiid.h>
+
+class SHAPE_LINE_CHAIN;
 
 enum class BITMAPS : unsigned int;
 
@@ -109,7 +112,7 @@ public:
     inline KICAD_T Type() const { return m_structType; }
 
     EDA_ITEM* GetParent() const { return m_parent; }
-    virtual void SetParent( EDA_ITEM* aParent )   { m_parent = aParent; }
+    virtual void SetParent( EDA_ITEM* aParent );
 
     virtual void SetParentGroup( EDA_GROUP* aGroup ) { m_group = aGroup; }
     virtual EDA_GROUP* GetParentGroup() const { return m_group; }
@@ -128,7 +131,12 @@ public:
     inline bool IsBrightened() const { return m_flags & BRIGHTENED; }
 
     inline bool IsRollover() const { return m_isRollover; }
-    inline void SetIsRollover( bool aIsRollover ) { m_isRollover = aIsRollover; }
+    inline VECTOR2I GetRolloverPos() const { return m_rolloverPos; }
+    inline void SetIsRollover( bool aIsRollover, const VECTOR2I& aMousePos )
+    {
+        m_isRollover = aIsRollover;
+        m_rolloverPos = aMousePos;
+    }
 
     inline void SetSelected() { SetFlags( SELECTED ); }
     inline void SetBrightened() { SetFlags( BRIGHTENED ); }
@@ -248,6 +256,18 @@ public:
     }
 
     /**
+     * Test if \a aPoly intersects this item.
+     *
+     * @param aPoly A reference to a #SHAPE_LINE_CHAIN object containing the polygon or polyline to test.
+     * @param aContained Set to true to test for containment instead of an intersection.
+     * @return True if \a aPoly contains or intersects the item.
+     */
+    virtual bool HitTest( const SHAPE_LINE_CHAIN& aPoly, bool aContained ) const
+    {
+        return false; // derived classes should override this function
+    }
+
+    /**
      * Return the orthogonal bounding box of this object for display purposes.
      *
      * This box should be an enclosing perimeter for visible components of this
@@ -364,6 +384,11 @@ public:
      */
     virtual wxString GetItemDescription( UNITS_PROVIDER* aUnitsProvider, bool aFull ) const;
 
+    virtual wxString DisambiguateItemDescription( UNITS_PROVIDER* aUnitsProvider, bool aFull ) const
+    {
+        return GetItemDescription( aUnitsProvider, aFull );
+    }
+
     /**
      * Return a pointer to an image to be used in menus.
      *
@@ -453,6 +478,7 @@ public:
     virtual std::vector<int> ViewGetLayers() const override;
 
     virtual EMBEDDED_FILES* GetEmbeddedFiles() { return nullptr; }
+    virtual const std::vector<wxString>* GetEmbeddedFonts() { return nullptr; }
 
 #if defined(DEBUG)
 
@@ -513,8 +539,10 @@ protected:
     EDA_ITEM_FLAGS m_flags;
     EDA_ITEM*      m_parent;        ///< Owner.
     EDA_GROUP*     m_group;         ///< The group this item belongs to, if any.  No ownership implied.
-    bool           m_forceVisible;
-    bool           m_isRollover;
+
+    VECTOR2I m_rolloverPos;
+    bool     m_isRollover;
+    bool     m_forceVisible;
 };
 
 

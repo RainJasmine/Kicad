@@ -17,8 +17,7 @@
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef PCB_SEARCH_PANE_H
-#define PCB_SEARCH_PANE_H
+#pragma once
 
 #include <board.h>
 #include <widgets/search_pane.h>
@@ -34,12 +33,10 @@ public:
     virtual void OnBoardItemAdded( BOARD& aBoard, BOARD_ITEM* aBoardItem ) override;
     virtual void OnBoardItemsAdded( BOARD& aBoard, std::vector<BOARD_ITEM*>& aBoardItems ) override;
     virtual void OnBoardItemRemoved( BOARD& aBoard, BOARD_ITEM* aBoardItem ) override;
-    virtual void OnBoardItemsRemoved( BOARD&                    aBoard,
-                                      std::vector<BOARD_ITEM*>& aBoardItems ) override;
+    virtual void OnBoardItemsRemoved( BOARD& aBoard, std::vector<BOARD_ITEM*>& aBoardItems ) override;
     virtual void OnBoardNetSettingsChanged( BOARD& aBoard ) override;
     virtual void OnBoardItemChanged( BOARD& aBoard, BOARD_ITEM* aBoardItem ) override;
-    virtual void OnBoardItemsChanged( BOARD&                    aBoard,
-                                      std::vector<BOARD_ITEM*>& aBoardItems ) override;
+    virtual void OnBoardItemsChanged( BOARD& aBoard, std::vector<BOARD_ITEM*>& aBoardItems ) override;
     virtual void OnBoardHighlightNetChanged( BOARD& aBoard ) override;
     virtual void OnBoardRatsnestChanged( BOARD& aBoard ) override;
     virtual void OnBoardCompositeUpdate( BOARD& aBoard, std::vector<BOARD_ITEM*>& aAddedItems,
@@ -47,11 +44,11 @@ public:
                                          std::vector<BOARD_ITEM*>& aChangedItems ) override;
 
 private:
-    void            onUnitsChanged( wxCommandEvent& event );
-    void            onBoardChanged( wxCommandEvent& event );
+    void onUnitsChanged( wxCommandEvent& event );
+    void onBoardChanging( wxCommandEvent& event );
+    void onBoardChanged( wxCommandEvent& event );
 
+private:
     PCB_EDIT_FRAME* m_pcbFrame;
-    BOARD* m_brd;
+    BOARD*          m_brd;
 };
-
-#endif

@@ -40,34 +40,7 @@
 
 #include <ki_exception.h>
 #include <kicommon.h>
-
-/**
- * This is like sprintf() but the output is appended to a std::string instead of to a
- * character array.
- *
- * @param aResult is the string to append to, previous text is not clear()ed.
- * @param aFormat is a printf() style format string.
- * @return the count of bytes appended to the result string, no terminating nul is included.
- */
-KICOMMON_API int
-#if defined(__GNUG__)
-    __attribute__ ((format (printf, 2, 3)))
-#endif
-    StrPrintf( std::string* aResult, const char* aFormat, ... );
-
-
-/**
- * This is like sprintf() but the output is returned in a std::string instead of to a
- * character array.
- *
- * @param format is a printf() style format string.
- * @return std::string - the result of the sprintf().
- */
-KICOMMON_API std::string
-#if defined(__GNUG__)
-    __attribute__ ((format (printf, 1, 2)))
-#endif
-    StrPrintf( const char* format, ... );
+#include <io/kicad/kicad_io_utils.h>
 
 
 /**
@@ -82,7 +55,7 @@ KICOMMON_API std::string
 KICOMMON_API wxString SafeReadFile( const wxString& aFilePath, const wxString& aReadType );
 
 
-#define LINE_READER_LINE_DEFAULT_MAX        1000000
+#define LINE_READER_LINE_DEFAULT_MAX        16000000
 #define LINE_READER_LINE_INITIAL_SIZE       5000
 
 /**
@@ -474,6 +447,11 @@ public:
         return m_mystring;
     }
 
+    std::string& MutableString()
+    {
+        return m_mystring;
+    }
+
 protected:
     void write( const char* aOutBuf, int aCount ) override;
 
@@ -484,6 +462,11 @@ private:
 
 /**
  * Used for text file output.
+ *
+ * Writes through a sibling temp file and atomically renames onto the final target in
+ * Finish(). A crash, throw, or power loss between construction and Finish() leaves the
+ * final target byte-identical to its prior contents -- never truncated. If Finish() is
+ * not called explicitly, the destructor attempts a best-effort commit and logs on failure.
  *
  * It is about 8 times faster than STREAM_OUTPUTFORMATTER for file streams.
  */
@@ -497,32 +480,50 @@ public:
      *              for text files that are to be created here and now.
      * @param aQuoteChar is a char used for quoting problematic strings (with whitespace or
      *                   special characters in them).
-     * @throw IO_ERROR if the file cannot be opened.
+     * @throw IO_ERROR if the sibling temp file cannot be created.
      */
     FILE_OUTPUTFORMATTER( const wxString& aFileName, const wxChar* aMode = wxT( "wt" ),
                           char aQuoteChar = '"' );
 
     ~FILE_OUTPUTFORMATTER();
 
+    /**
+     * Flushes the temp file to disk and atomically renames it over the final target path.
+     * After a successful return the final target contains the bytes written; on failure
+     * the original contents remain intact.
+     *
+     * @return true on successful commit.
+     * @throw IO_ERROR if fsync, close, or rename fails.
+     */
+    bool Finish() override;
+
 protected:
     void write( const char* aOutBuf, int aCount ) override;
 
-    FILE*       m_fp;               ///< takes ownership
-    wxString    m_filename;
+    FILE*       m_fp;               ///< takes ownership; points at the temp file
+    wxString    m_filename;         ///< final destination path
+    wxString    m_tempPath;         ///< sibling temp file being written
+    bool        m_committed;        ///< set true once Finish() has renamed into place
 };
 
 
 class KICOMMON_API PRETTIFIED_FILE_OUTPUTFORMATTER : public OUTPUTFORMATTER
 {
 public:
-    PRETTIFIED_FILE_OUTPUTFORMATTER( const wxString& aFileName, const wxChar* aMode = wxT( "wt" ),
-                                     char aQuoteChar = '"' );
+    PRETTIFIED_FILE_OUTPUTFORMATTER( const wxString& aFileName,
+            KICAD_FORMAT::FORMAT_MODE aFormatMode = KICAD_FORMAT::FORMAT_MODE::NORMAL,
+            const wxChar* aMode = wxT( "wt" ), char aQuoteChar = '"' );
 
     ~PRETTIFIED_FILE_OUTPUTFORMATTER();
 
     /**
-     * Performs prettification and writes the stored buffer to the file.
-     * @return true if the write succeeded.
+     * Runs prettification over the buffered bytes, writes them to the sibling temp file,
+     * fsyncs, and atomically renames the temp file over the final target. A crash or
+     * power loss anywhere in this sequence leaves the final target byte-identical to its
+     * prior contents.
+     *
+     * @return true on successful commit.
+     * @throw IO_ERROR if prettification, fwrite, fsync, or rename fails.
      */
     bool Finish() override;
 
@@ -530,8 +531,12 @@ protected:
     void write( const char* aOutBuf, int aCount ) override;
 
 private:
-    FILE* m_fp;
-    std::string m_buf;
+    FILE*                     m_fp;
+    wxString                  m_filename;   ///< final destination path
+    wxString                  m_tempPath;   ///< sibling temp file being written
+    bool                      m_committed;  ///< set true once rename has landed
+    std::string               m_buf;
+    KICAD_FORMAT::FORMAT_MODE m_mode;
 };
 
 

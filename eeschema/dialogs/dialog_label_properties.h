@@ -21,8 +21,7 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#ifndef DIALOG_LABEL_PROPERTIES_H
-#define DIALOG_LABEL_PROPERTIES_H
+#pragma once
 
 #include <fields_grid_table.h>
 #include <widgets/unit_binder.h>
@@ -63,18 +62,15 @@ private:
     void OnDeleteField( wxCommandEvent& event ) override;
     void OnMoveUp( wxCommandEvent& event ) override;
     void OnMoveDown( wxCommandEvent& event ) override;
+    void OnGridCellChanging( wxGridEvent& event );
     void onMultiLabelCheck( wxCommandEvent& aEvent ) override;
-    void OnSizeGrid( wxSizeEvent& event ) override;
     void OnUpdateUI( wxUpdateUIEvent& event ) override;
-
-    void AdjustGridColumns( int aWidth );
 
     bool TransferDataToWindow() override;
     bool TransferDataFromWindow() override;
 
 private:
     SCH_EDIT_FRAME*       m_Parent;
-    int                   m_width;
     int                   m_delayedFocusRow;
     int                   m_delayedFocusColumn;
 
@@ -93,7 +89,6 @@ private:
     wxString              m_previousLabelText;
 
     std::list<std::unique_ptr<SCH_LABEL_BASE>>* m_labelList;
+
+    bool m_multilineAllowed;    // set to true when a multine set of labels is in edit
 };
-
-
-#endif // DIALOG_LABEL_PROPERTIES_H

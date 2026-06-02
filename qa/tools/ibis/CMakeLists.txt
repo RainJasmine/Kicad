@@ -65,7 +65,6 @@ target_link_libraries( ibis_proto
     Boost::headers
     ${wxWidgets_LIBRARIES}
     ${GDI_PLUS_LIBRARIES}
-    ${PYTHON_LIBRARIES}
     ${EESCHEMA_EXTRA_LIBS}    # -lrt must follow Boost
 )
 

@@ -20,22 +20,28 @@
 
 #include <iostream>
 #include <unordered_set>
+#include <utility>
 #include <wx/datetime.h>
 #include <wx/log.h>
+#include <wx/tokenzr.h>
 
 #include <boost/algorithm/string.hpp>
 
+#include <libraries/symbol_library_adapter.h>
 #include <database/database_connection.h>
 #include <database/database_lib_settings.h>
 #include <fmt.h>
+#include <ki_exception.h>
 #include <lib_symbol.h>
-#include <symbol_lib_table.h>
 
 #include "sch_io_database.h"
 
+#include <dialog_database_lib_settings.h>
 
-SCH_IO_DATABASE::SCH_IO_DATABASE() : SCH_IO( wxS( "Database library" ) ),
-        m_libTable( nullptr ),
+
+SCH_IO_DATABASE::SCH_IO_DATABASE() :
+        SCH_IO( wxS( "Database library" ) ),
+        m_adapter( nullptr ),
         m_settings(),
         m_conn()
 {
@@ -65,7 +71,7 @@ void SCH_IO_DATABASE::EnumerateSymbolLib( std::vector<LIB_SYMBOL*>& aSymbolList,
                                           const wxString&           aLibraryPath,
                                           const std::map<std::string, UTF8>*         aProperties )
 {
-    wxCHECK_RET( m_libTable, "Database plugin missing library table handle!" );
+    wxCHECK_RET( m_adapter, "Database plugin missing library manager adapter handle!" );
     ensureSettings( aLibraryPath );
     ensureConnection();
     cacheLib();
@@ -73,9 +79,7 @@ void SCH_IO_DATABASE::EnumerateSymbolLib( std::vector<LIB_SYMBOL*>& aSymbolList,
     if( !m_conn )
         THROW_IO_ERROR( m_lastError );
 
-    bool powerSymbolsOnly = ( aProperties &&
-                              aProperties->find( SYMBOL_LIB_TABLE::PropPowerSymsOnly ) !=
-                              aProperties->end() );
+    bool powerSymbolsOnly = ( aProperties && aProperties->contains( SYMBOL_LIBRARY_ADAPTER::PropPowerSymsOnly ) );
 
     for( auto const& pair : m_nameToSymbolcache )
     {
@@ -91,12 +95,14 @@ LIB_SYMBOL* SCH_IO_DATABASE::LoadSymbol( const wxString&   aLibraryPath,
                                          const wxString&   aAliasName,
                                          const std::map<std::string, UTF8>* aProperties )
 {
-    wxCHECK( m_libTable, nullptr );
+    wxCHECK_MSG( m_adapter, nullptr, "Database plugin missing library manager adapter handle!" );
     ensureSettings( aLibraryPath );
     ensureConnection();
 
     if( !m_conn )
         THROW_IO_ERROR( m_lastError );
+
+    cacheLib();
 
     /*
      * Table names are tricky, in order to allow maximum flexibility to the user.
@@ -107,20 +113,33 @@ LIB_SYMBOL* SCH_IO_DATABASE::LoadSymbol( const wxString&   aLibraryPath,
      * name is blank if our config has an entry for the null table.
      */
 
-    std::string tableName = "";
+    std::string tableName;
     std::string symbolName( aAliasName.ToUTF8() );
 
-    if( aAliasName.Contains( '/' ) )
+    auto sanitizedIt = m_sanitizedNameMap.find( aAliasName );
+
+    if( sanitizedIt != m_sanitizedNameMap.end() )
     {
-        tableName = std::string( aAliasName.BeforeFirst( '/' ).ToUTF8() );
-        symbolName = std::string( aAliasName.AfterFirst( '/' ).ToUTF8() );
+        tableName = sanitizedIt->second.first;
+        symbolName = sanitizedIt->second.second;
+    }
+    else
+    {
+        tableName.clear();
+
+        if( aAliasName.Contains( '/' ) )
+        {
+            tableName = std::string( aAliasName.BeforeFirst( '/' ).ToUTF8() );
+            symbolName = std::string( aAliasName.AfterFirst( '/' ).ToUTF8() );
+        }
     }
 
     std::vector<const DATABASE_LIB_TABLE*> tablesToTry;
 
     for( const DATABASE_LIB_TABLE& tableIter : m_settings->m_Tables )
     {
-        if( tableIter.name == tableName )
+        // no table means globally unique keys, try all tables
+        if( tableName.empty() || tableIter.name == tableName )
             tablesToTry.emplace_back( &tableIter );
     }
 
@@ -205,11 +224,14 @@ void SCH_IO_DATABASE::cacheLib()
 {
     long long currentTimestampSeconds = wxDateTime::Now().GetValue().GetValue() / 1000;
 
-    if( m_libTable->GetModifyHash() == m_cacheModifyHash
+    if( m_adapter->GetModifyHash() == m_cacheModifyHash
         && ( currentTimestampSeconds - m_cacheTimestamp ) < m_settings->m_Cache.max_age )
     {
         return;
     }
+
+    std::map<wxString, std::unique_ptr<LIB_SYMBOL>> newSymbolCache;
+    std::map<wxString, std::pair<std::string, std::string>> newSanitizedNameMap;
 
     for( const DATABASE_LIB_TABLE& table : m_settings->m_Tables )
     {
@@ -232,19 +254,28 @@ void SCH_IO_DATABASE::cacheLib()
             if( !result.count( table.key_col ) )
                 continue;
 
-            std::string prefix = table.name.empty() ? "" : fmt::format( "{}/", table.name );
-            wxString    name( fmt::format( "{}{}", prefix,
-                                           std::any_cast<std::string>( result[table.key_col] ) ) );
+            std::string rawName = std::any_cast<std::string>( result[table.key_col] );
+            UTF8        sanitizedName = LIB_ID::FixIllegalChars( rawName, false );
+            std::string sanitizedKey = sanitizedName.c_str();
+            std::string prefix =
+                    ( m_settings->m_GloballyUniqueKeys || table.name.empty() ) ? "" : fmt::format( "{}/", table.name );
+            std::string sanitizedDisplayName = fmt::format( "{}{}", prefix, sanitizedKey );
+            wxString    name( sanitizedDisplayName );
+
+            newSanitizedNameMap[name] = std::make_pair( table.name, rawName );
 
             std::unique_ptr<LIB_SYMBOL> symbol = loadSymbolFromRow( name, table, result );
 
             if( symbol )
-                m_nameToSymbolcache[symbol->GetName()] = std::move( symbol );
+                newSymbolCache[symbol->GetName()] = std::move( symbol );
         }
     }
 
+    m_nameToSymbolcache = std::move( newSymbolCache );
+    m_sanitizedNameMap = std::move( newSanitizedNameMap );
+
     m_cacheTimestamp = currentTimestampSeconds;
-    m_cacheModifyHash = m_libTable->GetModifyHash();
+    m_cacheModifyHash = m_adapter->GetModifyHash();
 }
 
 void SCH_IO_DATABASE::ensureSettings( const wxString& aSettingsPath )
@@ -430,7 +461,7 @@ std::unique_ptr<LIB_SYMBOL>  SCH_IO_DATABASE::loadSymbolFromRow( const wxString&
         symbolId.Parse( std::any_cast<std::string>( aRow.at( aTable.symbols_col ) ) );
 
         if( symbolId.IsValid() )
-            originalSymbol = m_libTable->LoadSymbol( symbolId );
+            originalSymbol = m_adapter->LoadSymbol( symbolId );
 
         if( originalSymbol )
         {
@@ -465,22 +496,20 @@ std::unique_ptr<LIB_SYMBOL>  SCH_IO_DATABASE::loadSymbolFromRow( const wxString&
     LIB_ID libId = symbol->GetLibId();
     libId.SetSubLibraryName( aTable.name );;
     symbol->SetLibId( libId );
+    wxArrayString footprintsList;
 
     if( aRow.count( aTable.footprints_col ) )
     {
         std::string footprints = std::any_cast<std::string>( aRow.at( aTable.footprints_col ) );
 
         wxString footprintsStr = wxString( footprints.c_str(), wxConvUTF8 );
-        wxArrayString footprintsList;
-        wxStringTokenizer tokenizer( footprintsStr, ';' );
+        wxStringTokenizer tokenizer( footprintsStr, ";\t\r\n", wxTOKEN_STRTOK );
 
         while( tokenizer.HasMoreTokens() )
             footprintsList.Add( tokenizer.GetNextToken() );
 
         if( footprintsList.size() > 0 )
             symbol->GetFootprintField().SetText( footprintsList[0] );
-
-        symbol->SetFPFilters( footprintsList );
     }
     else
     {
@@ -509,10 +538,10 @@ std::unique_ptr<LIB_SYMBOL>  SCH_IO_DATABASE::loadSymbolFromRow( const wxString&
         wxString value( std::any_cast<std::string>( aRow.at( aTable.properties.footprint_filters ) )
                                 .c_str(),
                         wxConvUTF8 );
-        wxArrayString filters;
-        filters.push_back( value );
-        symbol->SetFPFilters( filters );
+        footprintsList.push_back( value );
     }
+
+    symbol->SetFPFilters( footprintsList );
 
     if( !aTable.properties.exclude_from_sim.empty()
         && aRow.count( aTable.properties.exclude_from_sim ) )
@@ -572,6 +601,7 @@ std::unique_ptr<LIB_SYMBOL>  SCH_IO_DATABASE::loadSymbolFromRow( const wxString&
 
     static const wxString c_valueFieldName( wxS( "Value" ) );
     static const wxString c_datasheetFieldName( wxS( "Datasheet" ) );
+    static const wxString c_footprintFieldName( wxS( "Footprint" ) );
 
     for( const DATABASE_FIELD_MAPPING& mapping : aTable.fields )
     {
@@ -581,6 +611,11 @@ std::unique_ptr<LIB_SYMBOL>  SCH_IO_DATABASE::loadSymbolFromRow( const wxString&
                         mapping.column );
             continue;
         }
+
+        // Skip footprint field if it maps to the footprints column, since that column is
+        // already processed above with tokenization for semicolon-separated multiple footprints.
+        if( mapping.name_wx == c_footprintFieldName && mapping.column == aTable.footprints_col )
+            continue;
 
         std::string strValue;
 
@@ -659,4 +694,10 @@ std::unique_ptr<LIB_SYMBOL>  SCH_IO_DATABASE::loadSymbolFromRow( const wxString&
     symbol->GetDrawItems().sort();
 
     return symbol;
+}
+
+
+DIALOG_SHIM* SCH_IO_DATABASE::CreateConfigurationDialog( wxWindow* aParent )
+{
+    return new DIALOG_DATABASE_LIB_SETTINGS( aParent, this );
 }

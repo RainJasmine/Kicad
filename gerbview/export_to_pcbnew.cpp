@@ -38,6 +38,7 @@
 #include <wildcards_and_files_ext.h>
 #include "excellon_image.h"
 #include <wx/log.h>
+#include <convert_basic_shapes_to_polygon.h>
 
 
 GBR_TO_PCB_EXPORTER::GBR_TO_PCB_EXPORTER( GERBVIEW_FRAME* aFrame, const wxString& aFileName )
@@ -135,6 +136,9 @@ bool GBR_TO_PCB_EXPORTER::ExportPcb( const int* aLayerLookUpTable, int aCopperLa
     for( const EXPORT_VIA& via : m_vias )
         export_via( via );
 
+    for( const EXPORT_SLOT& slot : m_slots )
+        export_slot( slot );
+
     fprintf( m_fp, ")\n" );
 
     fclose( m_fp );
@@ -170,22 +174,25 @@ void GBR_TO_PCB_EXPORTER::export_non_copper_item( const GERBER_DRAW_ITEM* aGbrIt
         VECTOR2I center = aGbrItem->GetABPosition( seg_start );
         int radius = d_codeDescr->m_Size.x / 2;
         writePcbFilledCircle( center, radius, aLayer );
-    }
         break;
+    }
 
     case GBR_SPOT_RECT:
     case GBR_SPOT_OVAL:
     case GBR_SPOT_POLY:
     case GBR_SPOT_MACRO:
+    {
         d_codeDescr->ConvertShapeToPolygon( aGbrItem );
-        {
         SHAPE_POLY_SET polyshape = d_codeDescr->m_Polygon;
+
+        if( polyshape.OutlineCount() == 0 )
+            break;
 
         // Compensate the Y axis orientation ( writePcbPolygon invert the Y coordinate )
         polyshape.Outline( 0 ).Mirror( { 0, 0 }, FLIP_DIRECTION::TOP_BOTTOM );
         writePcbPolygon( polyshape, aLayer, aGbrItem->GetABPosition( seg_start ) );
-        }
         break;
+    }
 
     case GBR_ARC:
         export_non_copper_arc( aGbrItem, aLayer );
@@ -234,6 +241,7 @@ void GBR_TO_PCB_EXPORTER::export_non_copper_item( const GERBER_DRAW_ITEM* aGbrIt
             export_stroke_info( aGbrItem->m_Size.x );
             fprintf( m_fp, "\t)\n" );
         }
+
         break;
     }
 }
@@ -295,8 +303,10 @@ void GBR_TO_PCB_EXPORTER::export_non_copper_arc( const GERBER_DRAW_ITEM* aGbrIte
 
 void GBR_TO_PCB_EXPORTER::collect_hole( const GERBER_DRAW_ITEM* aGbrItem )
 {
-    int size = std::min( aGbrItem->m_Size.x, aGbrItem->m_Size.y );
-    m_vias.emplace_back( aGbrItem->m_Start, size + 1, size );
+    if( aGbrItem->m_ShapeType == GBR_SPOT_CIRCLE )
+        m_vias.emplace_back( aGbrItem->m_Start, aGbrItem->m_Size.x + 1, aGbrItem->m_Size.x );
+    else if( aGbrItem->m_ShapeType == GBR_SEGMENT )
+        m_slots.emplace_back( aGbrItem->m_Start, aGbrItem->m_End, aGbrItem->m_Size.x );
 }
 
 
@@ -308,7 +318,7 @@ void GBR_TO_PCB_EXPORTER::export_via( const EXPORT_VIA& aVia )
     via_pos.y = -via_pos.y;
 
     // Layers are Front to Back
-    fprintf( m_fp, " (via (at %s %s) (size %s) (drill %s)",
+    fprintf( m_fp, "\t(via (at %s %s) (size %s) (drill %s)",
              FormatDouble2Str( MapToPcbUnits( via_pos.x ) ).c_str(),
              FormatDouble2Str( MapToPcbUnits( via_pos.y ) ).c_str(),
              FormatDouble2Str( MapToPcbUnits( aVia.m_Size ) ).c_str(),
@@ -317,6 +327,31 @@ void GBR_TO_PCB_EXPORTER::export_via( const EXPORT_VIA& aVia )
     fprintf( m_fp, " (layers %s %s))\n",
              LSET::Name( F_Cu ).ToStdString().c_str(),
              LSET::Name( B_Cu ).ToStdString().c_str() );
+}
+
+
+void GBR_TO_PCB_EXPORTER::export_slot( const EXPORT_SLOT& aSlot )
+{
+    VECTOR2I start = aSlot.m_Start;
+    VECTOR2I end = aSlot.m_End;
+
+    // Reverse Y axis:
+    start.y = -start.y;
+    end.y = -end.y;
+
+    VECTOR2I dir = end - start;
+    int      minorAxis = aSlot.m_Width;
+    int      majorAxis = aSlot.m_Width + dir.EuclideanNorm();
+    VECTOR2I center = ( start + end ) / 2;
+
+    fprintf( m_fp, "\t(footprint \"slot\" (pad 1 thru_hole oval (at %s %s %s) (size %s %s) (drill oval %s %s)))\n",
+             FormatDouble2Str( MapToPcbUnits( center.x ) ).c_str(),
+             FormatDouble2Str( MapToPcbUnits( center.y ) ).c_str(),
+             FormatDouble2Str( EDA_ANGLE( dir ).AsDegrees() ).c_str(),
+             FormatDouble2Str( MapToPcbUnits( majorAxis + 1 ) ).c_str(),
+             FormatDouble2Str( MapToPcbUnits( minorAxis + 1 ) ).c_str(),
+             FormatDouble2Str( MapToPcbUnits( majorAxis ) ).c_str(),
+             FormatDouble2Str( MapToPcbUnits( minorAxis ) ).c_str() );
 }
 
 
@@ -490,6 +525,9 @@ void GBR_TO_PCB_EXPORTER::export_flashed_copper_item( const GERBER_DRAW_ITEM* aG
     {
         SHAPE_POLY_SET macroShape;
         macroShape = *macro->GetApertureMacroShape( aGbrItem, VECTOR2I( 0, 0 ) );
+
+        if( macroShape.OutlineCount() == 0 )
+            return;
 
         // Compensate the Y axis orientation ( writePcbPolygon invert the Y coordinate )
         macroShape.Outline( 0 ).Mirror( { 0, 0 }, FLIP_DIRECTION::TOP_BOTTOM );

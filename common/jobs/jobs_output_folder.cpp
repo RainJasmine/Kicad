@@ -30,9 +30,14 @@ JOBS_OUTPUT_FOLDER::JOBS_OUTPUT_FOLDER() :
 }
 
 
-bool JOBS_OUTPUT_FOLDER::HandleOutputs( const wxString& baseTempPath, PROJECT* aProject,
-                                        const std::vector<JOB_OUTPUT>& aOutputsToHandle )
+bool JOBS_OUTPUT_FOLDER::HandleOutputs( const wxString&                baseTempPath,
+                                        PROJECT*                       aProject,
+                                        const std::vector<wxString>&   aPathsWithOverwriteDisallowed,
+                                        const std::vector<JOB_OUTPUT>& aOutputsToHandle,
+                                        std::optional<wxString>&       aResolvedOutputPath )
 {
+    aResolvedOutputPath.reset();
+
     wxString outputPath = ExpandTextVars( m_outputPath, aProject );
     outputPath = ExpandEnvVarSubstitutions( outputPath, aProject );
 
@@ -41,14 +46,22 @@ bool JOBS_OUTPUT_FOLDER::HandleOutputs( const wxString& baseTempPath, PROJECT* a
 
     if( !wxFileName::DirExists( outputPath ) )
     {
-        if( !wxFileName::Mkdir( outputPath, wxS_DIR_DEFAULT ) )
+        if( !wxFileName::Mkdir( outputPath, wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL ) )
+        {
+            aResolvedOutputPath.reset();
             return false;
+        }
     }
 
     wxString errors;
 
-    if( !CopyDirectory( baseTempPath, outputPath, errors ) )
+    if( !CopyDirectory( baseTempPath, outputPath, aPathsWithOverwriteDisallowed, errors ) )
+    {
+        aResolvedOutputPath.reset();
         return false;
+    }
+
+    aResolvedOutputPath = outputPath;
 
     return true;
 }

@@ -22,21 +22,21 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-
 #ifndef DIALOG_FOOTPRINT_PROPERTIES_H
 #define DIALOG_FOOTPRINT_PROPERTIES_H
 
-
 #include <dialog_footprint_properties_base.h>
+
 #include <wx/valnum.h>
-#include <pcb_fields_grid_table.h>
-#include <footprint.h>
+
 #include <widgets/unit_binder.h>
+#include <widgets/margin_offset_binder.h>
 
 
 class PCB_EDIT_FRAME;
 class PANEL_FP_PROPERTIES_3D_MODEL;
 class PANEL_EMBEDDED_FILES;
+class PCB_FIELDS_GRID_TABLE;
 
 class DIALOG_FOOTPRINT_PROPERTIES: public DIALOG_FOOTPRINT_PROPERTIES_BASE
 {
@@ -69,7 +69,6 @@ private:
     void EditLibraryFootprint( wxCommandEvent&  ) override;
     void UpdateFootprint( wxCommandEvent&  ) override;
     void ChangeFootprint( wxCommandEvent&  ) override;
-    void OnGridSize( wxSizeEvent& aEvent ) override;
     void OnAddField( wxCommandEvent&  ) override;
     void OnDeleteField( wxCommandEvent&  ) override;
     void OnUpdateUI( wxUpdateUIEvent&  ) override;
@@ -78,8 +77,6 @@ private:
     void OnText( wxCommandEvent& event ) override;
     void OnChoice( wxCommandEvent& event ) override;
     void OnCheckBox( wxCommandEvent& event ) override;
-
-    void adjustGridColumns();
 
 private:
     PCB_EDIT_FRAME*                  m_frame;
@@ -94,8 +91,7 @@ private:
 
     UNIT_BINDER                      m_netClearance;
     UNIT_BINDER                      m_solderMask;
-    UNIT_BINDER                      m_solderPaste;
-    UNIT_BINDER                      m_solderPasteRatio;
+    MARGIN_OFFSET_BINDER             m_solderPaste;
 
     wxString                         m_delayedErrorMessage;
     wxGrid*                          m_delayedFocusGrid;
@@ -109,8 +105,6 @@ private:
 
     bool                             m_initialized;
 
-    wxSize                           m_gridSize;
-    wxSize                           m_lastRequestedSize;
     PANEL_EMBEDDED_FILES*            m_embeddedFiles;
 };
 

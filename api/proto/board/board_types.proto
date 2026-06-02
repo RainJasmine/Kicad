@@ -127,6 +127,7 @@ enum BoardLayer
   BL_User_45 = 98;
 }
 
+// Deprecated: Use Net with the name property only
 message NetCode
 {
   int32 value = 1;
@@ -135,7 +136,7 @@ message NetCode
 // Describes a copper item's net
 message Net
 {
-  // A unique code representing this net
+  // Deprecated: net codes are no longer used in KiCad
   NetCode code = 1;
 
   // Human-readable net name
@@ -196,6 +197,10 @@ enum UnconnectedLayerRemoval
 
   // Remove annular rings on unconnected layers, but preserve start and end layers even if unconnected.
   ULR_REMOVE_EXCEPT_START_AND_END = 3;
+
+  // Keep annular rings only on the start and end layers regardless of connections.
+  // Since: 10.0.0
+  ULR_START_END_ONLY = 4;
 }
 
 // The shape of a pad on a given layer
@@ -364,6 +369,14 @@ enum ViaDrillFillingMode
   VDFM_FROM_DESIGN_RULES = 3;
 }
 
+enum ViaDrillPostMachiningMode
+{
+  VDPM_UNKNOWN = 0;
+  VDPM_NOT_POST_MACHINED = 1;
+  VDPM_COUNTERBORE = 2;
+  VDPM_COUNTERSINK = 3;
+}
+
 message DrillProperties
 {
   // Lowest (closest to F_Cu) layer this drill exists on.
@@ -381,6 +394,15 @@ message DrillProperties
   ViaDrillCappingMode capped = 5;
 
   ViaDrillFillingMode filled = 6;
+
+}
+
+message PostMachiningProperties
+{
+  ViaDrillPostMachiningMode mode = 1;
+  int32 size = 2;
+  int32 depth = 3;
+  int32 angle = 4;
 }
 
 // A pad stack definition for a multilayer pad or via.
@@ -411,6 +433,15 @@ message PadStack
 
   // Controls for how copper zones connect to the padstack
   ZoneConnectionSettings zone_settings = 9;
+
+  // Optional secondary drill hit for backdrilling
+  DrillProperties secondary_drill = 10;
+
+  // Optional tertiary drill hit for backdrilling
+  DrillProperties tertiary_drill = 11;
+
+  PostMachiningProperties front_post_machining = 12;
+  PostMachiningProperties back_post_machining = 13;
 }
 
 enum ViaType
@@ -426,6 +457,12 @@ enum ViaType
   // Microvias, blind/buried vias, can have arbitrary start and end layers, but also have different
   // size defaults and design rules
   VT_MICRO = 3;
+
+  // Blind vias start on an outer layer and end in the middle
+  VT_BLIND = 4;  // Since V10
+
+  // Buried vias start and end on inner layers
+  VT_BURIED = 5;  // Since V10
 }
 
 // Represents a via
@@ -454,6 +491,48 @@ message BoardGraphicShape
   Net net = 3;
   kiapi.common.types.KIID  id = 4;
   kiapi.common.types.LockedState locked = 5;
+}
+
+enum BarcodeKind
+{
+  BK_UNKNOWN = 0;
+  BK_CODE_39 = 1;
+  BK_CODE_128 = 2;
+  BK_DATA_MATRIX = 3;
+  BK_QR_CODE = 4;
+  BK_MICRO_QR_CODE = 5;
+}
+
+enum BarcodeErrorCorrection
+{
+  BEC_UNKNOWN = 0;
+  BEC_L = 1;
+  BEC_M = 2;
+  BEC_Q = 3;
+  BEC_H = 4;
+}
+
+message Barcode
+{
+  kiapi.common.types.KIID id = 1;
+
+  string text = 2;
+  BarcodeKind kind = 3;
+  BarcodeErrorCorrection error_correction = 4;
+
+  kiapi.common.types.Vector2 position = 5;
+  kiapi.common.types.Angle orientation = 6;
+  BoardLayer layer = 7;
+
+  kiapi.common.types.Distance width = 8;
+  kiapi.common.types.Distance height = 9;
+
+  bool show_text = 10;
+  kiapi.common.types.Distance text_height = 11;
+
+  bool knockout = 12;
+  kiapi.common.types.Vector2 knockout_margin = 13;
+  kiapi.common.types.LockedState locked = 14;
 }
 
 // A board-specific text object, existing on a board layer
@@ -503,6 +582,18 @@ message ThermalSpokeSettings
   kiapi.common.types.Distance gap = 3;
 }
 
+message SymbolPinInfo
+{
+  // The pin name for the associated symbol pin, if one exists
+  string name = 1;
+
+  // The electrical type of the associated symbol pin, if one exists (EPT_UNKNOWN if not)
+  kiapi.common.types.ElectricalPinType type = 2;
+
+  // True if the pin is attached to a no-connect marker in the schematic
+  bool no_connect = 3;
+}
+
 message Pad
 {
   kiapi.common.types.KIID id = 1;
@@ -517,6 +608,16 @@ message Pad
 
   // Copper-to-copper clearance override
   kiapi.common.types.Distance copper_clearance_override = 8;
+
+  // Since: 9.0.4
+  kiapi.common.types.Distance pad_to_die_length = 9;
+
+  // Information about the associated symbol pin, if one exists
+  // Since: 9.0.7
+  SymbolPinInfo symbol_pin = 10;
+
+  // Since: 10.0.0
+  kiapi.common.types.Time pad_to_die_delay = 11;
 }
 
 enum ZoneType
@@ -610,6 +711,7 @@ enum PlacementRuleSourceType
   PRST_SHEET_NAME = 1;
   PRST_COMPONENT_CLASS = 2;
   PRST_GROUP = 3;
+  PRST_DESIGN_BLOCK = 4;
 }
 
 message RuleAreaSettings
@@ -836,7 +938,16 @@ message Dimension
 
 message ReferenceImage
 {
-  // TODO
+  kiapi.common.types.KIID id = 1;
+  BoardLayer layer = 2;
+
+  kiapi.common.types.Vector2 position = 3;
+  kiapi.common.types.Vector2 transform_origin_offset = 4;
+  kiapi.common.types.Ratio image_scale = 5;
+
+  bytes image_data = 6;
+
+  kiapi.common.types.LockedState locked = 7;
 }
 
 message Group
@@ -879,6 +990,9 @@ message FootprintAttributes
   bool exempt_from_courtyard_requirement = 6;
   bool do_not_populate = 7;
   FootprintMountingStyle mounting_style = 8;
+
+  // Since: 9.0.7
+  bool allow_soldermask_bridges = 9;
 }
 
 message NetTieDefinition
@@ -966,4 +1080,19 @@ message FootprintInstance
 
   // The sheet path to the associated symbol for this footprint instance, if one exists
   kiapi.common.types.SheetPath symbol_path = 13;
+
+  // The name of the hierarchical sheet the associated symbol for this footprint exists on,
+  // or the empty string if there is no associated symbol
+  // Since: 9.0.7
+  string symbol_sheet_name = 14;
+
+  // The filename of the hierarchical sheet the associated symbol for this footprint exists on,
+  // or the empty string if there is no associated symbol
+  // Since: 9.0.7
+  string symbol_sheet_filename = 15;
+
+  // The the footprint filters given by the symbol this footprint is associated with,
+  // or the empty string if there is no associated symbol
+  // Since: 9.0.7
+  string symbol_footprint_filters = 16;
 }

@@ -26,7 +26,6 @@
 #include <wx/crt.h>
 
 #include <macros.h>
-#include <locale_io.h>
 
 #define ARG_USE_CONTOURS "--use-contours"
 #define ARG_OUTPUT_UNITS "--output-units"
@@ -35,7 +34,7 @@
 #define ARG_MODE_MULTI "--mode-multi"
 
 CLI::PCB_EXPORT_DXF_COMMAND::PCB_EXPORT_DXF_COMMAND() :
-        PCB_EXPORT_BASE_COMMAND( "dxf", false, true )
+        PCB_EXPORT_BASE_COMMAND( "dxf", IO_TYPE::FILE, IO_TYPE::DIRECTORY )
 {
     m_argParser.add_description( UTF8STDSTR( _( "Generate a DXF from a list of layers" ) ) );
 
@@ -107,15 +106,17 @@ CLI::PCB_EXPORT_DXF_COMMAND::PCB_EXPORT_DXF_COMMAND() :
                                   "which files may be output." ) ) )
             .flag();
 
-    m_argParser.add_argument( DEPRECATED_ARG_PLOT_INVISIBLE_TEXT )
-            .help( UTF8STDSTR( _( DEPRECATED_ARG_PLOT_INVISIBLE_TEXT_DESC ) ) )
-            .flag();
-
     m_argParser.add_argument( ARG_SCALE )
             .help( UTF8STDSTR( _( ARG_SCALE_DESC ) ) )
             .scan<'g', double>()
             .default_value( 1.0 )
             .metavar( "SCALE" );
+
+    m_argParser.add_argument( ARG_CHECK_ZONES )
+            .help( UTF8STDSTR( _( ARG_CHECK_ZONES_DESC ) ) )
+            .flag();
+
+    addVariantsArg();
 }
 
 
@@ -127,10 +128,15 @@ int CLI::PCB_EXPORT_DXF_COMMAND::doPerform( KIWAY& aKiway )
     dxfJob->SetConfiguredOutputPath( m_argOutput );
     dxfJob->m_drawingSheet = m_argDrawingSheet;
     dxfJob->m_sketchPadsOnFabLayers = m_argParser.get<bool>( ARG_SKETCH_PADS_ON_FAB_LAYERS );
+    if( dxfJob->m_sketchPadsOnFabLayers )
+        dxfJob->m_plotPadNumbers = true;
     dxfJob->m_hideDNPFPsOnFabLayers = m_argParser.get<bool>( ARG_HIDE_DNP_FPS_ON_FAB_LAYERS );
     dxfJob->m_sketchDNPFPsOnFabLayers = m_argParser.get<bool>( ARG_SKETCH_DNP_FPS_ON_FAB_LAYERS );
     dxfJob->m_crossoutDNPFPsOnFabLayers = m_argParser.get<bool>( ARG_CROSSOUT_DNP_FPS_ON_FAB_LAYERS );
     dxfJob->SetVarOverrides( m_argDefineVars );
+
+    if( !m_argVariantNames.empty() )
+        dxfJob->m_variant = m_argVariantNames.front();
 
     if( !wxFile::Exists( dxfJob->m_filename ) )
     {
@@ -146,9 +152,7 @@ int CLI::PCB_EXPORT_DXF_COMMAND::doPerform( KIWAY& aKiway )
     dxfJob->m_plotDrawingSheet = m_argParser.get<bool>( ARG_INCLUDE_BORDER_TITLE );
     dxfJob->m_subtractSolderMaskFromSilk = m_argParser.get<bool>( ARG_SUBTRACT_SOLDERMASK );
     dxfJob->m_scale = m_argParser.get<double>( ARG_SCALE );
-
-    if( m_argParser.get<bool>( DEPRECATED_ARG_PLOT_INVISIBLE_TEXT ) )
-        wxFprintf( stdout, DEPRECATED_ARD_PLOT_INVISIBLE_TEXT_WARNING );
+    dxfJob->m_checkZonesBeforePlot = m_argParser.get<bool>( ARG_CHECK_ZONES );
 
     int drillShape = m_argParser.get<int>( ARG_DRILL_SHAPE_OPTION );
     dxfJob->m_drillShapeOption = static_cast<DRILL_MARKS>( drillShape );
@@ -186,7 +190,5 @@ int CLI::PCB_EXPORT_DXF_COMMAND::doPerform( KIWAY& aKiway )
                    _( "The new behavior will match --mode-multi" ) );
     }
 
-
-    LOCALE_IO dummy;    // Switch to "C" locale
     return aKiway.ProcessJob( KIWAY::FACE_PCB, dxfJob.get() );
 }

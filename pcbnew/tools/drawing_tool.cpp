@@ -31,6 +31,7 @@
 #include <settings/settings_manager.h>
 #include <pcbnew_settings.h>
 #include <footprint_editor_settings.h>
+#include <dialogs/dialog_barcode_properties.h>
 #include <dialogs/dialog_text_properties.h>
 #include <dialogs/dialog_track_via_size.h>
 #include <gal/graphics_abstraction_layer.h>
@@ -47,13 +48,16 @@
 #include <tool/tool_manager.h>
 #include <tools/pcb_actions.h>
 #include <tools/pcb_grid_helper.h>
+#include <kiplatform/ui.h>
 #include <tools/pcb_selection_tool.h>
+#include <pcb_barcode.h>
 #include <tools/tool_event_utils.h>
 #include <tools/zone_create_helper.h>
 #include <tools/zone_filler_tool.h>
 #include <view/view.h>
 #include <widgets/appearance_controls.h>
 #include <widgets/wx_infobar.h>
+#include <wildcards_and_files_ext.h>
 #include <wx/filedlg.h>
 #include <wx/msgdlg.h>
 
@@ -61,17 +65,22 @@
 #include <board.h>
 #include <board_commit.h>
 #include <board_design_settings.h>
+#include <drc/drc_engine.h>
+#include <drc/drc_rule.h>
 #include <confirm.h>
 #include <footprint.h>
 #include <macros.h>
 #include <gal/painter.h>
+#include <pad.h>
 #include <pcb_edit_frame.h>
 #include <pcb_group.h>
+#include <pcb_point.h>
 #include <pcb_reference_image.h>
 #include <pcb_text.h>
 #include <pcb_textbox.h>
 #include <pcb_table.h>
 #include <pcb_tablecell.h>
+#include <pcb_track.h>
 #include <pcb_dimension.h>
 #include <pcbnew_id.h>
 #include <scoped_set_reset.h>
@@ -105,8 +114,7 @@ protected:
     {
         PCB_EDIT_FRAME*        frame = (PCB_EDIT_FRAME*) getToolManager()->GetToolHolder();
         BOARD_DESIGN_SETTINGS& bds = frame->GetBoard()->GetDesignSettings();
-        bool                   useIndex = !bds.m_UseConnectedTrackWidth
-                                                && !bds.UseCustomTrackViaSize();
+        bool                   useIndex = !bds.m_UseConnectedTrackWidth && !bds.UseCustomTrackViaSize();
         wxString               msg;
 
         Clear();
@@ -117,7 +125,7 @@ protected:
 
         AppendSeparator();
 
-        for( unsigned i = 1; i < bds.m_ViasDimensionsList.size(); i++ )
+        for( int i = 1; i < (int) bds.m_ViasDimensionsList.size(); i++ )
         {
             VIA_DIMENSION via = bds.m_ViasDimensionsList[i];
 
@@ -194,7 +202,7 @@ DRAWING_TOOL::~DRAWING_TOOL()
 bool DRAWING_TOOL::Init()
 {
     auto haveHighlight =
-            [&]( const SELECTION& sel )
+            [this]( const SELECTION& sel )
             {
                 KIGFX::RENDER_SETTINGS* cfg = m_toolMgr->GetView()->GetPainter()->GetSettings();
 
@@ -255,11 +263,11 @@ bool DRAWING_TOOL::Init()
     CONDITIONAL_MENU& ctxMenu = m_menu->GetMenu();
 
     // cancel current tool goes in main context menu at the top if present
-    ctxMenu.AddItem( ACTIONS::cancelInteractive,       activeToolFunctor, 1 );
+    ctxMenu.AddItem( ACTIONS::cancelInteractive,         activeToolFunctor, 1 );
     ctxMenu.AddSeparator( 1 );
 
-    ctxMenu.AddItem( PCB_ACTIONS::clearHighlight,      haveHighlight, 2 );
-    ctxMenu.AddSeparator(                              haveHighlight, 2 );
+    ctxMenu.AddItem( PCB_ACTIONS::clearHighlight,        haveHighlight, 2 );
+    ctxMenu.AddSeparator(                                haveHighlight, 2 );
 
     // tool-specific actions
     ctxMenu.AddItem( PCB_ACTIONS::closeOutline,          canCloseOutline, 200 );
@@ -272,13 +280,12 @@ bool DRAWING_TOOL::Init()
     ctxMenu.AddItem( PCB_ACTIONS::lengthTunerSettings,   tuningToolActive, 200 );
     ctxMenu.AddItem( PCB_ACTIONS::changeDimensionArrows, dimensionToolActive, 200 );
 
-    ctxMenu.AddCheckItem( PCB_ACTIONS::toggleHV45Mode, !tuningToolActive, 250 );
     ctxMenu.AddSeparator( 500 );
 
     std::shared_ptr<VIA_SIZE_MENU> viaSizeMenu = std::make_shared<VIA_SIZE_MENU>();
     viaSizeMenu->SetTool( this );
     m_menu->RegisterSubMenu( viaSizeMenu );
-    ctxMenu.AddMenu( viaSizeMenu.get(),                viaToolActive, 500 );
+    ctxMenu.AddMenu( viaSizeMenu.get(),                  viaToolActive, 500 );
 
     ctxMenu.AddSeparator( 500 );
 
@@ -316,7 +323,7 @@ void DRAWING_TOOL::Reset( RESET_REASON aReason )
     InferBold( &m_textAttrs );
     m_textAttrs.m_Italic = bds.GetTextItalic( m_layer );
     m_textAttrs.m_KeepUpright = bds.GetTextUpright( m_layer );
-    m_textAttrs.m_Mirrored = IsBackLayer( m_layer );
+    m_textAttrs.m_Mirrored = m_board->IsBackLayer( m_layer );
     m_textAttrs.m_Halign = GR_TEXT_H_ALIGN_LEFT;
     m_textAttrs.m_Valign = GR_TEXT_V_ALIGN_TOP;
 
@@ -333,7 +340,20 @@ DRAWING_TOOL::MODE DRAWING_TOOL::GetDrawingMode() const
 void DRAWING_TOOL::UpdateStatusBar() const
 {
     if( m_frame )
-        m_frame->DisplayConstraintsMsg( Is45Limited() ? _( "Constrain to H, V, 45" ) : wxString( "" ) );
+    {
+        switch( GetAngleSnapMode() )
+        {
+        case LEADER_MODE::DEG45:
+            m_frame->DisplayConstraintsMsg( _( "Constrain to H, V, 45" ) );
+            break;
+        case LEADER_MODE::DEG90:
+            m_frame->DisplayConstraintsMsg( _( "Constrain to H, V" ) );
+            break;
+        default:
+            m_frame->DisplayConstraintsMsg( wxString( "" ) );
+            break;
+        }
+    }
 }
 
 
@@ -585,14 +605,12 @@ int DRAWING_TOOL::DrawBezier( const TOOL_EVENT& aEvent )
             {
                 startingPoint = bezierRef.GetEnd();
 
-                // If the last bezier has a zero C2 control arm, allow the user to
-                // define a new C1 control arm for the next one.
+                // If the last bezier has a zero C2 control arm, allow the user to define a new C1
+                // control arm for the next one.
                 if( bezierRef.GetEnd() != bezierRef.GetBezierC2() )
                 {
-                    // Mirror the control point across the end point to get
-                    // a tangent control point
-                    startingC1 =
-                            bezierRef.GetEnd() - ( bezierRef.GetBezierC2() - bezierRef.GetEnd() );
+                    // Mirror the control point across the end point to get a tangent control point
+                    startingC1 = bezierRef.GetEnd() - ( bezierRef.GetBezierC2() - bezierRef.GetEnd() );
                 }
             }
         }
@@ -618,6 +636,7 @@ int DRAWING_TOOL::PlaceReferenceImage( const TOOL_EVENT& aEvent )
     VECTOR2I             cursorPos = getViewControls()->GetCursorPosition();
     PCB_SELECTION_TOOL*  selectionTool = m_toolMgr->GetTool<PCB_SELECTION_TOOL>();
     BOARD_COMMIT         commit( m_frame );
+    SCOPED_DRAW_MODE     scopedDrawMode( m_mode, MODE::IMAGE );
 
     m_toolMgr->RunAction( ACTIONS::selectionClear );
 
@@ -681,8 +700,7 @@ int DRAWING_TOOL::PlaceReferenceImage( const TOOL_EVENT& aEvent )
         grid.SetSnap( !evt->Modifier( MD_SHIFT ) );
         grid.SetUseGrid( getView()->GetGAL()->GetGridSnapping() && !evt->DisableGridSnapping() );
         cursorPos = GetClampedCoords( grid.BestSnapAnchor( m_controls->GetMousePosition(),
-                                                           { m_frame->GetActiveLayer() },
-                                                           GRID_GRAPHICS ),
+                                                           { m_frame->GetActiveLayer() }, GRID_GRAPHICS ),
                                       COORDS_PADDING );
         m_controls->ForceCursorPosition( true, cursorPos );
 
@@ -738,10 +756,19 @@ int DRAWING_TOOL::PlaceReferenceImage( const TOOL_EVENT& aEvent )
                 m_toolMgr->RunAction( ACTIONS::selectionClear );
 
                 wxFileDialog dlg( m_frame, _( "Choose Image" ), wxEmptyString, wxEmptyString,
-                                  _( "Image Files" ) + wxS( " " ) + wxImage::GetImageExtWildcard(),
-                                  wxFD_OPEN );
+                                  FILEEXT::ImageFileWildcard(), wxFD_OPEN );
 
-                if( dlg.ShowModal() != wxID_OK )
+                KIPLATFORM::UI::AllowNetworkFileSystems( &dlg );
+
+                bool         cancelled = false;
+
+                RunMainStack(
+                        [&]()
+                        {
+                            cancelled = dlg.ShowModal() != wxID_OK;
+                        } );
+
+                if( cancelled )
                     continue;
 
                 // If we started with a hotkey which has a position then warp back to that.
@@ -846,6 +873,62 @@ int DRAWING_TOOL::PlaceReferenceImage( const TOOL_EVENT& aEvent )
     return 0;
 }
 
+struct POINT_PLACER : public INTERACTIVE_PLACER_BASE
+{
+    POINT_PLACER( DRAWING_TOOL& aDrawingTool, PCB_BASE_EDIT_FRAME& aFrame ) :
+            m_drawingTool( aDrawingTool ),
+            m_frame( aFrame ),
+            m_gridHelper( aDrawingTool.GetManager(), aFrame.GetMagneticItemsSettings() )
+    {
+    }
+
+    std::unique_ptr<BOARD_ITEM> CreateItem() override
+    {
+        std::unique_ptr<PCB_POINT> new_point = std::make_unique<PCB_POINT>( m_frame.GetModel() );
+
+        PCB_LAYER_ID layer = m_frame.GetActiveLayer();
+        new_point->SetLayer( layer );
+
+        return new_point;
+    }
+
+    void SnapItem( BOARD_ITEM* aItem ) override
+    {
+        m_gridHelper.SetSnap( !( m_modifiers & MD_SHIFT ) );
+        m_gridHelper.SetUseGrid( !( m_modifiers & MD_CTRL ) );
+
+        KIGFX::VIEW_CONTROLS& viewControls = *m_drawingTool.GetManager()->GetViewControls();
+        const VECTOR2I        position = viewControls.GetMousePosition();
+
+        VECTOR2I cursorPos = m_gridHelper.BestSnapAnchor( position, aItem->GetLayerSet() );
+        viewControls.ForceCursorPosition( true, cursorPos );
+        aItem->SetPosition( cursorPos );
+    }
+
+    DRAWING_TOOL&        m_drawingTool;
+    PCB_BASE_EDIT_FRAME& m_frame;
+    PCB_GRID_HELPER      m_gridHelper;
+};
+
+
+int DRAWING_TOOL::PlacePoint( const TOOL_EVENT& aEvent )
+{
+    if( m_isFootprintEditor && !m_frame->GetModel() )
+        return 0;
+
+    if( m_inDrawingTool )
+        return 0;
+
+    REENTRANCY_GUARD guard( &m_inDrawingTool );
+
+    POINT_PLACER     placer( *this, *frame() );
+    SCOPED_DRAW_MODE scopedDrawMode( m_mode, MODE::MD_POINT );
+
+    doInteractiveItemPlacement( aEvent, &placer, _( "Place point" ), IPO_REPEAT | IPO_SINGLE_CLICK );
+
+    return 0;
+}
+
 
 int DRAWING_TOOL::PlaceText( const TOOL_EVENT& aEvent )
 {
@@ -915,10 +998,9 @@ int DRAWING_TOOL::PlaceText( const TOOL_EVENT& aEvent )
 
         grid.SetSnap( !evt->Modifier( MD_SHIFT ) );
         grid.SetUseGrid( getView()->GetGAL()->GetGridSnapping() && !evt->DisableGridSnapping() );
-        VECTOR2I cursorPos =
-                GetClampedCoords( grid.BestSnapAnchor( m_controls->GetMousePosition(),
-                                                       { m_frame->GetActiveLayer() }, GRID_TEXT ),
-                                  COORDS_PADDING );
+        VECTOR2I cursorPos = GetClampedCoords( grid.BestSnapAnchor( m_controls->GetMousePosition(),
+                                                                    { m_frame->GetActiveLayer() }, GRID_TEXT ),
+                                               COORDS_PADDING );
         m_controls->ForceCursorPosition( true, cursorPos );
 
         if( evt->IsDrag() )
@@ -978,7 +1060,7 @@ int DRAWING_TOOL::PlaceText( const TOOL_EVENT& aEvent )
                 InferBold( &textAttrs );
                 textAttrs.m_Italic = bds.GetTextItalic( layer );
                 textAttrs.m_KeepUpright = bds.GetTextUpright( layer );
-                textAttrs.m_Mirrored = IsBackLayer( layer );
+                textAttrs.m_Mirrored = m_board->IsBackLayer( layer );
                 textAttrs.m_Halign = GR_TEXT_H_ALIGN_LEFT;
                 textAttrs.m_Valign = GR_TEXT_V_ALIGN_BOTTOM;
 
@@ -999,7 +1081,7 @@ int DRAWING_TOOL::PlaceText( const TOOL_EVENT& aEvent )
                         [&]()
                         {
                             // QuasiModal required for Scintilla auto-complete
-                            cancelled = !textDialog.ShowQuasiModal();
+                            cancelled = textDialog.ShowQuasiModal() != wxID_OK;
                         } );
 
                 if( cancelled || NoPrintableChars( text->GetText() ) )
@@ -1111,6 +1193,7 @@ int DRAWING_TOOL::DrawTable( const TOOL_EVENT& aEvent )
     PCB_TABLE*                   table = nullptr;
     const BOARD_DESIGN_SETTINGS& bds = m_frame->GetDesignSettings();
     BOARD_COMMIT                 commit( m_frame );
+    SCOPED_DRAW_MODE             scopedDrawMode( m_mode, MODE::TABLE );
     PCB_GRID_HELPER              grid( m_toolMgr, m_frame->GetMagneticItemsSettings() );
 
     // We might be running as the same shape in another co-routine.  Make sure that one
@@ -1158,14 +1241,16 @@ int DRAWING_TOOL::DrawTable( const TOOL_EVENT& aEvent )
         setCursor();
         grid.SetSnap( !evt->Modifier( MD_SHIFT ) );
         grid.SetUseGrid( getView()->GetGAL()->GetGridSnapping() && !evt->DisableGridSnapping() );
-        VECTOR2I cursorPos =
-                GetClampedCoords( grid.BestSnapAnchor( m_controls->GetMousePosition(),
-                                                       { m_frame->GetActiveLayer() }, GRID_TEXT ),
-                                  COORDS_PADDING );
+        VECTOR2I cursorPos = GetClampedCoords( grid.BestSnapAnchor( m_controls->GetMousePosition(),
+                                                                    { m_frame->GetActiveLayer() }, GRID_TEXT ),
+                                               COORDS_PADDING );
         m_controls->ForceCursorPosition( true, cursorPos );
 
-        if( evt->IsCancelInteractive() || ( table && evt->IsAction( &ACTIONS::undo ) )
-            || evt->IsDrag() )
+        if( evt->IsDrag() )
+        {
+            continue;
+        }
+        else if( evt->IsCancelInteractive() || ( table && evt->IsAction( &ACTIONS::undo ) ) )
         {
             if( table )
             {
@@ -1237,19 +1322,26 @@ int DRAWING_TOOL::DrawTable( const TOOL_EVENT& aEvent )
                 table->Normalize();
 
                 DIALOG_TABLE_PROPERTIES dlg( m_frame, table );
+                bool                    cancelled;
 
-                // QuasiModal required for Scintilla auto-complete
-                if( dlg.ShowQuasiModal() == wxID_OK )
+                RunMainStack(
+                        [&]()
+                        {
+                            // QuasiModal required for Scintilla auto-complete
+                            cancelled = dlg.ShowQuasiModal() != wxID_OK;
+                        } );
+
+                if( cancelled )
+                {
+                    delete table;
+                }
+                else
                 {
                     commit.Add( table, m_frame->GetScreen() );
                     commit.Push( _( "Draw Table" ) );
 
                     m_toolMgr->RunAction<EDA_ITEM*>( ACTIONS::selectItem, table );
                     m_toolMgr->PostAction( ACTIONS::activatePointEditor );
-                }
-                else
-                {
-                    delete table;
                 }
 
                 table = nullptr;
@@ -1330,6 +1422,160 @@ void DRAWING_TOOL::constrainDimension( PCB_DIMENSION_BASE* aDim )
     aDim->Update();
 }
 
+int DRAWING_TOOL::DrawBarcode( const TOOL_EVENT& aEvent )
+{
+    if( m_inDrawingTool )
+        return 0;
+
+    REENTRANCY_GUARD guard( &m_inDrawingTool );
+
+    PCB_BARCODE*                 barcode = nullptr;
+    BOARD_COMMIT                 commit( m_frame );
+    SCOPED_DRAW_MODE             scopedDrawMode( m_mode, MODE::BARCODE );
+    PCB_GRID_HELPER              grid( m_toolMgr, m_frame->GetMagneticItemsSettings() );
+    const BOARD_DESIGN_SETTINGS& bds = m_frame->GetDesignSettings();
+
+    auto setCursor =
+            [&]()
+            {
+                if( barcode )
+                    m_frame->GetCanvas()->SetCurrentCursor( KICURSOR::MOVING );
+                else
+                    m_frame->GetCanvas()->SetCurrentCursor( KICURSOR::PENCIL );
+            };
+
+    auto cleanup =
+            [&]()
+            {
+                m_toolMgr->RunAction( ACTIONS::selectionClear );
+                m_controls->ForceCursorPosition( false );
+                m_controls->ShowCursor( true );
+                m_controls->SetAutoPan( false );
+                m_controls->CaptureCursor( false );
+                delete barcode;
+                barcode = nullptr;
+            };
+
+    m_toolMgr->RunAction( ACTIONS::selectionClear );
+
+    m_frame->PushTool( aEvent );
+
+    Activate();
+    // Must be done after Activate() so that it gets set into the correct context
+    getViewControls()->ShowCursor( true );
+    m_controls->ForceCursorPosition( false );
+    setCursor();
+
+    if( aEvent.HasPosition() )
+        m_toolMgr->PrimeTool( aEvent.Position() );
+
+    while( TOOL_EVENT* evt = Wait() )
+    {
+        setCursor();
+
+        grid.SetSnap( !evt->Modifier( MD_SHIFT ) );
+        grid.SetUseGrid( getView()->GetGAL()->GetGridSnapping() && !evt->DisableGridSnapping() );
+        VECTOR2I cursorPos = GetClampedCoords( grid.BestSnapAnchor( m_controls->GetMousePosition(),
+                                                                    { m_frame->GetActiveLayer() }, GRID_TEXT ),
+                                               COORDS_PADDING );
+        m_controls->ForceCursorPosition( true, cursorPos );
+
+        if( evt->IsDrag() )
+        {
+            continue;
+        }
+        else if( evt->IsCancelInteractive() || ( barcode && evt->IsAction( &ACTIONS::undo ) ) )
+        {
+            if( barcode )
+            {
+                cleanup();
+            }
+            else
+            {
+                m_frame->PopTool( aEvent );
+                break;
+            }
+        }
+        else if( evt->IsActivate() )
+        {
+            if( barcode )
+                cleanup();
+
+            if( evt->IsMoveTool() )
+            {
+                // leave ourselves on the stack so we come back after the move
+                break;
+            }
+            else
+            {
+                m_frame->PopTool( aEvent );
+                break;
+            }
+        }
+        else if( evt->IsClick( BUT_RIGHT ) )
+        {
+            if( !barcode )
+                m_toolMgr->VetoContextMenuMouseWarp();
+
+            m_menu->ShowContextMenu( selection() );
+        }
+        else if( evt->IsClick( BUT_LEFT ) )
+        {
+            m_toolMgr->RunAction( ACTIONS::selectionClear );
+
+            PCB_LAYER_ID layer = m_frame->GetActiveLayer();
+
+            barcode = new PCB_BARCODE( m_frame->GetModel() );
+            barcode->SetFlags( IS_NEW );
+            barcode->SetLayer( layer );
+            barcode->SetPosition( cursorPos );
+            barcode->SetTextSize( bds.GetTextSize( layer ).y );
+
+            DIALOG_BARCODE_PROPERTIES dlg( m_frame, barcode );
+            bool                      cancelled;
+
+            RunMainStack(
+                    [&]()
+                    {
+                        cancelled = dlg.ShowModal() != wxID_OK;
+                    } );
+
+            if( cancelled )
+            {
+                delete barcode;
+            }
+            else
+            {
+                if( !m_view->IsLayerVisible( layer ) )
+                {
+                    m_frame->GetAppearancePanel()->SetLayerVisible( layer, true );
+                    m_frame->GetCanvas()->Refresh();
+                }
+
+                commit.Add( barcode );
+                commit.Push( _( "Draw Barcode" ) );
+
+                m_toolMgr->RunAction<EDA_ITEM*>( ACTIONS::selectItem, barcode );
+                m_view->Update( &selection() );
+            }
+
+            barcode = nullptr;
+        }
+        else
+        {
+            evt->SetPassEvent();
+        }
+
+        getViewControls()->SetAutoPan( false );
+        getViewControls()->CaptureCursor( false );
+    }
+
+    getViewControls()->SetAutoPan( false );
+    getViewControls()->CaptureCursor( false );
+    m_frame->GetCanvas()->SetCurrentCursor( KICURSOR::ARROW );
+    return 0;
+}
+
 
 int DRAWING_TOOL::DrawDimension( const TOOL_EVENT& aEvent )
 {
@@ -1407,7 +1653,10 @@ int DRAWING_TOOL::DrawDimension( const TOOL_EVENT& aEvent )
         setCursor();
 
         grid.SetSnap( !evt->Modifier( MD_SHIFT ) );
-        bool is45Limited = Is45Limited() && !evt->Modifier( MD_CTRL );
+        auto angleSnap = GetAngleSnapMode();
+        if( evt->Modifier( MD_CTRL ) )
+            angleSnap = LEADER_MODE::DIRECT;
+        bool constrained = angleSnap != LEADER_MODE::DIRECT;
         grid.SetUseGrid( getView()->GetGAL()->GetGridSnapping() && !evt->DisableGridSnapping() );
 
         if( step == SET_HEIGHT && t != PCB_DIM_ORTHOGONAL_T )
@@ -1538,7 +1787,7 @@ int DRAWING_TOOL::DrawDimension( const TOOL_EVENT& aEvent )
                 t = dimension->Type();
 
                 dimension->SetLayer( layer );
-                dimension->SetMirrored( IsBackLayer( layer ) );
+                dimension->SetMirrored( m_board->IsBackLayer( layer ) );
                 dimension->SetTextSize( boardSettings.GetTextSize( layer ) );
                 dimension->SetTextThickness( boardSettings.GetTextThickness( layer ) );
                 dimension->SetItalic( boardSettings.GetTextItalic( layer ) );
@@ -1615,7 +1864,7 @@ int DRAWING_TOOL::DrawDimension( const TOOL_EVENT& aEvent )
             case SET_END:
                 dimension->SetEnd( cursorPos );
 
-                if( is45Limited || t == PCB_DIM_CENTER_T )
+                if( constrained || t == PCB_DIM_CENTER_T )
                     constrainDimension( dimension );
 
                 if( t == PCB_DIM_ORTHOGONAL_T )
@@ -1803,6 +2052,11 @@ int DRAWING_TOOL::PlaceImportedGraphics( const TOOL_EVENT& aEvent )
     REENTRANCY_GUARD guard( &m_inDrawingTool );
 
     DIALOG_IMPORT_GRAPHICS dlg( m_frame );
+
+    // Set filename on drag-and-drop
+    if( aEvent.HasParameter() )
+        dlg.SetFilenameOverride( *aEvent.Parameter<wxString*>() );
+
     int dlgResult = dlg.ShowModal();
 
     std::list<std::unique_ptr<EDA_ITEM>>& list = dlg.GetImportedItems();
@@ -1828,17 +2082,25 @@ int DRAWING_TOOL::PlaceImportedGraphics( const TOOL_EVENT& aEvent )
 
     if( dlg.ShouldGroupItems() )
     {
-        group = new PCB_GROUP( m_frame->GetModel() );
+        size_t boardItemCount = std::count_if( list.begin(), list.end(),
+                                               []( const std::unique_ptr<EDA_ITEM>& ptr )
+                                               {
+                                                   return ptr->IsBOARD_ITEM();
+                                               } );
 
-        newItems.push_back( group );
-        selectedItems.push_back( group );
-        preview.Add( group );
+        if( boardItemCount >= 2 )
+        {
+            group = new PCB_GROUP( m_frame->GetModel() );
+
+            newItems.push_back( group );
+            selectedItems.push_back( group );
+            preview.Add( group );
+        }
     }
 
     if( dlg.ShouldFixDiscontinuities() )
     {
-        std::vector<PCB_SHAPE*>                 shapeList;
-        std::vector<std::unique_ptr<PCB_SHAPE>> newShapes;
+        std::vector<PCB_SHAPE*> shapeList;
 
         for( const std::unique_ptr<EDA_ITEM>& ptr : list )
         {
@@ -1846,13 +2108,7 @@ int DRAWING_TOOL::PlaceImportedGraphics( const TOOL_EVENT& aEvent )
                 shapeList.push_back( shape );
         }
 
-        ConnectBoardShapes( shapeList, newShapes, dlg.GetTolerance() );
-
-        for( std::unique_ptr<PCB_SHAPE>& ptr : newShapes )
-        {
-            ptr->SetParent( m_frame->GetBoard() );
-            list.push_back( std::move( ptr ) );
-        }
+        ConnectBoardShapes( shapeList, dlg.GetTolerance() );
     }
 
     for( std::unique_ptr<EDA_ITEM>& ptr : list )
@@ -1937,9 +2193,8 @@ int DRAWING_TOOL::PlaceImportedGraphics( const TOOL_EVENT& aEvent )
 
         grid.SetSnap( !evt->Modifier( MD_SHIFT ) );
         grid.SetUseGrid( getView()->GetGAL()->GetGridSnapping() && !evt->DisableGridSnapping() );
-        cursorPos = GetClampedCoords(
-                grid.BestSnapAnchor( m_controls->GetMousePosition(), { layer }, GRID_GRAPHICS ),
-                COORDS_PADDING );
+        cursorPos = GetClampedCoords( grid.BestSnapAnchor( m_controls->GetMousePosition(), { layer }, GRID_GRAPHICS ),
+                                      COORDS_PADDING );
         m_controls->ForceCursorPosition( true, cursorPos );
 
         if( evt->IsCancelInteractive() || evt->IsActivate() )
@@ -2041,8 +2296,7 @@ int DRAWING_TOOL::SetAnchor( const TOOL_EVENT& aEvent )
 
         grid.SetSnap( !evt->Modifier( MD_SHIFT ) );
         grid.SetUseGrid( getView()->GetGAL()->GetGridSnapping() && !evt->DisableGridSnapping() );
-        VECTOR2I cursorPos = grid.BestSnapAnchor( m_controls->GetMousePosition(),
-                                                  LSET::AllLayersMask() );
+        VECTOR2I cursorPos = grid.BestSnapAnchor( m_controls->GetMousePosition(), LSET::AllLayersMask() );
         m_controls->ForceCursorPosition( true, cursorPos );
 
         if( evt->IsClick( BUT_LEFT ) || evt->IsDblClick( BUT_LEFT ) )
@@ -2124,7 +2378,7 @@ bool DRAWING_TOOL::drawShape( const TOOL_EVENT& aTool, PCB_SHAPE** aGraphic,
         InferBold( &m_textAttrs );
         m_textAttrs.m_Italic = bds.GetTextItalic( m_layer );
         m_textAttrs.m_KeepUpright = bds.GetTextUpright( m_layer );
-        m_textAttrs.m_Mirrored = IsBackLayer( m_layer );
+        m_textAttrs.m_Mirrored = m_board->IsBackLayer( m_layer );
         m_textAttrs.m_Halign = GR_TEXT_H_ALIGN_LEFT;
         m_textAttrs.m_Valign = GR_TEXT_V_ALIGN_TOP;
     }
@@ -2187,16 +2441,26 @@ bool DRAWING_TOOL::drawShape( const TOOL_EVENT& aTool, PCB_SHAPE** aGraphic,
             m_frame->SetMsgPanel( graphic );
 
         grid.SetSnap( !evt->Modifier( MD_SHIFT ) );
-        bool is45Limited = Is45Limited() && !evt->Modifier( MD_CTRL );
+        auto angleSnap = GetAngleSnapMode();
 
-        // Rectangular shapes never get 45-degree snapping
-        if( shape == SHAPE_T::RECTANGLE )
-            is45Limited = false;
+        // Drawing rectangles and circles ignore the snap behavior by default, but constrains
+        // when the modifier key is pressed
+        if( shape == SHAPE_T::RECTANGLE || shape == SHAPE_T::CIRCLE)
+        {
+            if( evt->Modifier( MD_CTRL ) )
+                angleSnap = LEADER_MODE::DEG45;
+            else
+                angleSnap = LEADER_MODE::DIRECT;
+        }
+        else {
+            // All other drawing uses the snap mode, except that is disabled with the modifier key
+            if( evt->Modifier( MD_CTRL ) )
+                angleSnap = LEADER_MODE::DIRECT;
+        }
 
         grid.SetUseGrid( getView()->GetGAL()->GetGridSnapping() && !evt->DisableGridSnapping() );
-        cursorPos = GetClampedCoords(
-                grid.BestSnapAnchor( m_controls->GetMousePosition(), { m_layer }, GRID_GRAPHICS ),
-                COORDS_PADDING );
+        cursorPos = GetClampedCoords( grid.BestSnapAnchor( m_controls->GetMousePosition(), { m_layer }, GRID_GRAPHICS ),
+                                      COORDS_PADDING );
         m_controls->ForceCursorPosition( true, cursorPos );
 
         if( evt->IsCancelInteractive() || ( started && evt->IsAction( &ACTIONS::undo ) ) )
@@ -2248,7 +2512,7 @@ bool DRAWING_TOOL::drawShape( const TOOL_EVENT& aTool, PCB_SHAPE** aGraphic,
                 InferBold( &m_textAttrs );
                 m_textAttrs.m_Italic = bds.GetTextItalic( m_layer );
                 m_textAttrs.m_KeepUpright = bds.GetTextUpright( m_layer );
-                m_textAttrs.m_Mirrored = IsBackLayer( m_layer );
+                m_textAttrs.m_Mirrored = m_board->IsBackLayer( m_layer );
                 m_textAttrs.m_Halign = GR_TEXT_H_ALIGN_LEFT;
                 m_textAttrs.m_Valign = GR_TEXT_V_ALIGN_TOP;
             }
@@ -2370,21 +2634,25 @@ bool DRAWING_TOOL::drawShape( const TOOL_EVENT& aTool, PCB_SHAPE** aGraphic,
             else
                 clampedCursorPos = getClampedDifferenceEnd( twoPointMgr.GetOrigin(), cursorPos );
 
-            // 45 degree lines
-            if( started && is45Limited )
+            // constrained lines
+            if( started && angleSnap != LEADER_MODE::DIRECT )
             {
                 const VECTOR2I lineVector( clampedCursorPos - VECTOR2I( twoPointMgr.GetOrigin() ) );
 
-                // get a restricted 45/H/V line from the last fixed point to the cursor
-                VECTOR2I newEnd = GetVectorSnapped45( lineVector, ( shape == SHAPE_T::RECTANGLE ) );
+                VECTOR2I newEnd;
+                if( angleSnap == LEADER_MODE::DEG90 )
+                    newEnd = GetVectorSnapped90( lineVector );
+                else
+                    newEnd = GetVectorSnapped45( lineVector, ( shape == SHAPE_T::RECTANGLE ) );
+
                 m_controls->ForceCursorPosition( true, VECTOR2I( twoPointMgr.GetEnd() ) );
                 twoPointMgr.SetEnd( twoPointMgr.GetOrigin() + newEnd );
-                twoPointMgr.SetAngleSnap( true );
+                twoPointMgr.SetAngleSnap( angleSnap );
             }
             else
             {
                 twoPointMgr.SetEnd( clampedCursorPos );
-                twoPointMgr.SetAngleSnap( false );
+                twoPointMgr.SetAngleSnap( LEADER_MODE::DIRECT );
             }
 
             updateSegmentFromGeometryMgr( twoPointMgr, graphic );
@@ -2580,11 +2848,15 @@ bool DRAWING_TOOL::drawArc( const TOOL_EVENT& aTool, PCB_SHAPE** aGraphic,
         graphic->SetLayer( m_layer );
 
         grid.SetSnap( !evt->Modifier( MD_SHIFT ) );
-        bool is45Limited = Is45Limited() && !evt->Modifier( MD_CTRL );
+        LEADER_MODE angleSnap = GetAngleSnapMode();
+
+        if( evt->Modifier( MD_CTRL ) )
+            angleSnap = LEADER_MODE::DIRECT;
+
         grid.SetUseGrid( getView()->GetGAL()->GetGridSnapping() && !evt->DisableGridSnapping() );
-        VECTOR2I cursorPos = GetClampedCoords(
-                grid.BestSnapAnchor( m_controls->GetMousePosition(), graphic, GRID_GRAPHICS ),
-                COORDS_PADDING );
+        VECTOR2I cursorPos = GetClampedCoords( grid.BestSnapAnchor( m_controls->GetMousePosition(), graphic,
+                                                                    GRID_GRAPHICS ),
+                                               COORDS_PADDING );
         m_controls->ForceCursorPosition( true, cursorPos );
 
         if( evt->IsCancelInteractive() || ( started && evt->IsAction( &ACTIONS::undo ) ) )
@@ -2656,7 +2928,7 @@ bool DRAWING_TOOL::drawArc( const TOOL_EVENT& aTool, PCB_SHAPE** aGraphic,
         else if( evt->IsMotion() )
         {
             // set angle snap
-            arcManager.SetAngleSnap( is45Limited );
+            arcManager.SetAngleSnap( angleSnap != LEADER_MODE::DIRECT );
 
             // update, but don't step the manager state
             arcManager.AddPoint( cursorPos, false );
@@ -2821,8 +3093,7 @@ std::unique_ptr<PCB_SHAPE> DRAWING_TOOL::drawOneBezier( const TOOL_EVENT&   aToo
     KIGFX::PREVIEW::BEZIER_GEOM_MANAGER bezierManager;
 
     // Arc drawing assistant overlay
-    KIGFX::PREVIEW::BEZIER_ASSISTANT bezierAsst( bezierManager, pcbIUScale,
-                                                 m_frame->GetUserUnits() );
+    KIGFX::PREVIEW::BEZIER_ASSISTANT bezierAsst( bezierManager, pcbIUScale, m_frame->GetUserUnits() );
 
     // Add a VIEW_GROUP that serves as a preview for the new item
     PCB_SELECTION preview;
@@ -2893,9 +3164,9 @@ std::unique_ptr<PCB_SHAPE> DRAWING_TOOL::drawOneBezier( const TOOL_EVENT&   aToo
 
         grid.SetSnap( !evt->Modifier( MD_SHIFT ) );
         grid.SetUseGrid( getView()->GetGAL()->GetGridSnapping() && !evt->DisableGridSnapping() );
-        VECTOR2I cursorPos = GetClampedCoords(
-                grid.BestSnapAnchor( m_controls->GetMousePosition(), bezier.get(), GRID_GRAPHICS ),
-                COORDS_PADDING );
+        VECTOR2I cursorPos = GetClampedCoords( grid.BestSnapAnchor( m_controls->GetMousePosition(), bezier.get(),
+                                                                    GRID_GRAPHICS ),
+                                               COORDS_PADDING );
         m_controls->ForceCursorPosition( true, cursorPos );
 
         if( evt->IsCancelInteractive() || ( started() && evt->IsAction( &ACTIONS::undo ) ) )
@@ -3230,17 +3501,19 @@ int DRAWING_TOOL::DrawZone( const TOOL_EVENT& aEvent )
 
         LSET layers( { m_frame->GetActiveLayer() } );
         grid.SetSnap( !evt->Modifier( MD_SHIFT ) );
-        bool is45Limited = Is45Limited() && !evt->Modifier( MD_CTRL );
+        LEADER_MODE angleSnap = GetAngleSnapMode();
+
+        if( evt->Modifier( MD_CTRL ) )
+            angleSnap = LEADER_MODE::DIRECT;
+
         grid.SetUseGrid( getView()->GetGAL()->GetGridSnapping() && !evt->DisableGridSnapping() );
 
         VECTOR2I cursorPos = evt->HasPosition() ? evt->Position() : m_controls->GetMousePosition();
-        cursorPos = GetClampedCoords( grid.BestSnapAnchor( cursorPos, layers, GRID_GRAPHICS ),
-                                      COORDS_PADDING );
+        cursorPos = GetClampedCoords( grid.BestSnapAnchor( cursorPos, layers, GRID_GRAPHICS ), COORDS_PADDING );
 
         m_controls->ForceCursorPosition( true, cursorPos );
 
-        polyGeomMgr.SetLeaderMode( is45Limited ? POLYGON_GEOM_MANAGER::LEADER_MODE::DEG45
-                                               : POLYGON_GEOM_MANAGER::LEADER_MODE::DIRECT );
+        polyGeomMgr.SetLeaderMode( angleSnap );
 
         if( evt->IsCancelInteractive() )
         {
@@ -3406,12 +3679,17 @@ int DRAWING_TOOL::DrawVia( const TOOL_EVENT& aEvent )
         int                         m_worstClearance;
         bool                        m_allowDRCViolations;
 
+        int sub_e( int aClearance )
+        {
+            return std::max( 0, aClearance - m_drcEpsilon );
+        };
+
         VIA_PLACER( PCB_BASE_EDIT_FRAME* aFrame ) :
-            m_frame( aFrame ),
-            m_gridHelper( aFrame->GetToolManager(), aFrame->GetMagneticItemsSettings() ),
-            m_drcEngine( aFrame->GetBoard()->GetDesignSettings().m_DRCEngine ),
-            m_drcEpsilon( aFrame->GetBoard()->GetDesignSettings().GetDRCEpsilon() ),
-            m_worstClearance( 0 )
+                m_frame( aFrame ),
+                m_gridHelper( aFrame->GetToolManager(), aFrame->GetMagneticItemsSettings() ),
+                m_drcEngine( aFrame->GetBoard()->GetDesignSettings().m_DRCEngine ),
+                m_drcEpsilon( aFrame->GetBoard()->GetDesignSettings().GetDRCEpsilon() ),
+                m_worstClearance( 0 )
         {
             ROUTER_TOOL* router = m_frame->GetToolManager()->GetTool<ROUTER_TOOL>();
 
@@ -3451,11 +3729,21 @@ int DRAWING_TOOL::DrawVia( const TOOL_EVENT& aEvent )
         {
         }
 
-        PCB_TRACK* findTrack( PCB_VIA* aVia )
+        /**
+         * Get the bounding box the via would have if placed at the given position
+         * (the via's bounding box is relative to its own position).
+         */
+        static BOX2I getEffectiveBoundingBox( const PCB_VIA& aVia, const VECTOR2I& aPosition )
         {
-            const LSET lset = aVia->GetLayerSet();
-            VECTOR2I   position = aVia->GetPosition();
-            BOX2I      bbox = aVia->GetBoundingBox();
+            BOX2I bbox = aVia.GetBoundingBox();
+            bbox.Move( aPosition - aVia.GetPosition() );
+            return bbox;
+        }
+
+        PCB_TRACK* findTrack( const PCB_VIA* aVia, const VECTOR2I& aPosition ) const
+        {
+            const LSET  lset = aVia->GetLayerSet();
+            const BOX2I bbox = getEffectiveBoundingBox( *aVia, aPosition );
 
             std::vector<KIGFX::VIEW::LAYER_ITEM_PAIR> items;
             KIGFX::PCB_VIEW*        view = m_frame->GetCanvas()->GetView();
@@ -3479,9 +3767,8 @@ int DRAWING_TOOL::DrawVia( const TOOL_EVENT& aEvent )
                 {
                     PCB_TRACK* track = static_cast<PCB_TRACK*>( item );
 
-                    if( TestSegmentHit( position, track->GetStart(), track->GetEnd(),
-                                        ( track->GetWidth()
-                                            + aVia->GetWidth( track->GetLayer() ) ) / 2 ) )
+                    if( TestSegmentHit( aPosition, track->GetStart(), track->GetEnd(),
+                                        ( track->GetWidth() + aVia->GetWidth( track->GetLayer() ) ) / 2 ) )
                     {
                         possible_tracks.push_back( track );
                     }
@@ -3490,7 +3777,7 @@ int DRAWING_TOOL::DrawVia( const TOOL_EVENT& aEvent )
                 {
                     PCB_ARC* arc = static_cast<PCB_ARC*>( item );
 
-                    if( arc->HitTest( position, aVia->GetWidth( arc->GetLayer() ) / 2 ) )
+                    if( arc->HitTest( aPosition, aVia->GetWidth( arc->GetLayer() ) / 2 ) )
                         possible_tracks.push_back( arc );
                 }
             }
@@ -3501,7 +3788,7 @@ int DRAWING_TOOL::DrawVia( const TOOL_EVENT& aEvent )
             for( PCB_TRACK* track : possible_tracks )
             {
                 SEG test( track->GetStart(), track->GetEnd() );
-                int dist = ( test.NearestPoint( position ) - position ).EuclideanNorm();
+                int dist = ( test.NearestPoint( aPosition ) - aPosition ).EuclideanNorm();
 
                 if( dist < min_d )
                 {
@@ -3527,17 +3814,14 @@ int DRAWING_TOOL::DrawVia( const TOOL_EVENT& aEvent )
                     bool hit = false;
 
                     aVia->Padstack().ForEachUniqueLayer(
-                        [&]( PCB_LAYER_ID aLayer )
-                        {
-                            if( hit )
-                                return;
-
-                            if( zone->Outline()->Collide( aVia->GetPosition(),
-                                                          aVia->GetWidth( aLayer ) / 2 ) )
+                            [&]( PCB_LAYER_ID aLayer )
                             {
-                                hit = true;
-                            }
-                        } );
+                                if( hit )
+                                    return;
+
+                                if( zone->Outline()->Collide( aVia->GetPosition(), aVia->GetWidth( aLayer ) / 2 ) )
+                                    hit = true;
+                            } );
 
                     return hit;
                 }
@@ -3567,26 +3851,22 @@ int DRAWING_TOOL::DrawVia( const TOOL_EVENT& aEvent )
                     std::shared_ptr<SHAPE> viaShape = aVia->GetEffectiveShape( layer );
                     std::shared_ptr<SHAPE> otherShape = aOther->GetEffectiveShape( layer );
 
-                    if( viaShape->Collide( otherShape.get(), clearance - m_drcEpsilon ) )
+                    if( viaShape->Collide( otherShape.get(), sub_e( clearance ) ) )
                         return true;
                 }
             }
 
             if( aOther->HasHole() )
             {
-                constraint = m_drcEngine->EvalRules( HOLE_CLEARANCE_CONSTRAINT, aVia, aOther,
-                                                     UNDEFINED_LAYER );
+                constraint = m_drcEngine->EvalRules( HOLE_CLEARANCE_CONSTRAINT, aVia, aOther, UNDEFINED_LAYER );
                 clearance = constraint.GetValue().Min();
 
                 if( clearance >= 0 )
                 {
                     std::shared_ptr<SHAPE> viaShape = aVia->GetEffectiveShape( UNDEFINED_LAYER );
 
-                    if( viaShape->Collide( aOther->GetEffectiveHoleShape().get(),
-                                           clearance - m_drcEpsilon ) )
-                    {
+                    if( viaShape->Collide( aOther->GetEffectiveHoleShape().get(), sub_e( clearance ) ) )
                         return true;
-                    }
                 }
             }
 
@@ -3642,30 +3922,39 @@ int DRAWING_TOOL::DrawVia( const TOOL_EVENT& aEvent )
             return false;
         }
 
-        PAD* findPad( PCB_VIA* aVia )
+        PAD* findPad( const PCB_VIA* aVia, const VECTOR2I& aPosition ) const
         {
-            const VECTOR2I position = aVia->GetPosition();
-            const LSET     lset = aVia->GetLayerSet();
+            const LSET  lset = aVia->GetLayerSet();
+            const BOX2I bbox = getEffectiveBoundingBox( *aVia, aPosition );
 
-            for( FOOTPRINT* fp : m_board->Footprints() )
+            const KIGFX::PCB_VIEW&                    view = *m_frame->GetCanvas()->GetView();
+            std::vector<KIGFX::VIEW::LAYER_ITEM_PAIR> items;
+
+            view.Query( bbox, items );
+
+            for( const KIGFX::VIEW::LAYER_ITEM_PAIR& it : items )
             {
-                for( PAD* pad : fp->Pads() )
+                if( !it.first->IsBOARD_ITEM() )
+                    continue;
+
+                BOARD_ITEM& item = static_cast<BOARD_ITEM&>( *it.first );
+
+                if( item.Type() == PCB_PAD_T && ( item.GetLayerSet() & lset ).any() )
                 {
-                    if( pad->HitTest( position ) && ( pad->GetLayerSet() & lset ).any() )
-                    {
-                        return pad;
-                    }
+                    PAD& pad = static_cast<PAD&>( item );
+
+                    if( pad.HitTest( aPosition ) )
+                        return &pad;
                 }
             }
 
             return nullptr;
         }
 
-        PCB_SHAPE* findGraphic( const PCB_VIA* aVia ) const
+        PCB_SHAPE* findGraphic( const PCB_VIA* aVia, const VECTOR2I& aPosition ) const
         {
             const LSET lset = aVia->GetLayerSet() & LSET::AllCuMask();
-            VECTOR2I   position = aVia->GetPosition();
-            BOX2I      bbox = aVia->GetBoundingBox();
+            BOX2I      bbox = getEffectiveBoundingBox( *aVia, aPosition );
 
             std::vector<KIGFX::VIEW::LAYER_ITEM_PAIR> items;
             KIGFX::PCB_VIEW* view = m_frame->GetCanvas()->GetView();
@@ -3688,7 +3977,7 @@ int DRAWING_TOOL::DrawVia( const TOOL_EVENT& aEvent )
                 {
                     PCB_SHAPE* shape = static_cast<PCB_SHAPE*>( item );
 
-                    if( shape->HitTest( position, aVia->GetWidth( activeLayer ) / 2 ) )
+                    if( shape->HitTest( aPosition, aVia->GetWidth( activeLayer ) / 2 ) )
                         possible_shapes.push_back( shape );
                 }
             }
@@ -3698,7 +3987,7 @@ int DRAWING_TOOL::DrawVia( const TOOL_EVENT& aEvent )
 
             for( PCB_SHAPE* shape : possible_shapes )
             {
-                int dist = ( shape->GetPosition() - position ).EuclideanNorm();
+                int dist = ( shape->GetPosition() - aPosition ).EuclideanNorm();
 
                 if( dist < min_d )
                 {
@@ -3815,6 +4104,9 @@ int DRAWING_TOOL::DrawVia( const TOOL_EVENT& aEvent )
 
             for( ZONE* z : m_board->Zones() )
             {
+                if( z->GetIsRuleArea() )
+                    continue; // ignore rule areas
+
                 for( PCB_LAYER_ID layer : lset )
                 {
                     if( z->IsOnLayer( layer ) )
@@ -3846,11 +4138,16 @@ int DRAWING_TOOL::DrawVia( const TOOL_EVENT& aEvent )
 
             MAGNETIC_SETTINGS* settings = m_frame->GetMagneticItemsSettings();
             PCB_VIA*           via = static_cast<PCB_VIA*>( aItem );
-            VECTOR2I           position = via->GetPosition();
+
+            // When snapping, use the mouse position, not the item position, which may be
+            // grid-snapped, so that we can get the cursor within snap-range of snap points.
+            // If we don't get a snap, the via will be left as it is (i.e. maybe grid-snapped).
+            KIGFX::VIEW_CONTROLS& viewControls = *m_frame->GetCanvas()->GetViewControls();
+            const VECTOR2I        position = viewControls.GetMousePosition();
 
             if( settings->tracks != MAGNETIC_OPTIONS::NO_EFFECT && m_gridHelper.GetSnap() )
             {
-                if( PCB_TRACK* track = findTrack( via ) )
+                if( PCB_TRACK* track = findTrack( via, position ) )
                 {
                     SEG      trackSeg( track->GetStart(), track->GetEnd() );
                     VECTOR2I snap = m_gridHelper.AlignToSegment( position, trackSeg );
@@ -3862,7 +4159,7 @@ int DRAWING_TOOL::DrawVia( const TOOL_EVENT& aEvent )
 
             if( settings->pads != MAGNETIC_OPTIONS::NO_EFFECT && m_gridHelper.GetSnap() )
             {
-                if( PAD* pad = findPad( via ) )
+                if( PAD* pad = findPad( via, position ) )
                 {
                     aItem->SetPosition( pad->GetPosition() );
                     return;
@@ -3871,11 +4168,21 @@ int DRAWING_TOOL::DrawVia( const TOOL_EVENT& aEvent )
 
             if( settings->graphics && m_gridHelper.GetSnap() )
             {
-                if( PCB_SHAPE* shape = findGraphic( via ) )
+                if( PCB_SHAPE* shape = findGraphic( via, position ) )
                 {
                     if( shape->IsAnyFill() )
                     {
-                        aItem->SetPosition( shape->GetPosition() );
+                        // Is this shape something to be replaced by the via, or something to be
+                        // stitched by multiple vias?  Use an area-based test to make a guess.
+                        SHAPE_POLY_SET poly;
+                        shape->TransformShapeToPolygon( poly, shape->GetLayer(), 0, ARC_LOW_DEF, ERROR_INSIDE );
+                        double shapeArea = poly.Area();
+
+                        int    R = via->GetWidth( shape->GetLayer() ) / 2;
+                        double viaArea = M_PI * R * R;
+
+                        if( viaArea * 4 > shapeArea )
+                            aItem->SetPosition( shape->GetPosition() );
                     }
                     else
                     {
@@ -3957,8 +4264,9 @@ int DRAWING_TOOL::DrawVia( const TOOL_EVENT& aEvent )
             WX_INFOBAR* infobar = m_frame->GetInfoBar();
             PCB_VIA*    via = static_cast<PCB_VIA*>( aItem );
             VECTOR2I    viaPos = via->GetPosition();
-            PCB_TRACK*  track = findTrack( via );
-            PAD*        pad = findPad( via );
+            PCB_TRACK*  track = findTrack( via, via->GetPosition() );
+            PAD*        pad = findPad( via, via->GetPosition() );
+            PCB_SHAPE*  shape = findGraphic( via, via->GetPosition() );
 
             if( track )
             {
@@ -3968,6 +4276,11 @@ int DRAWING_TOOL::DrawVia( const TOOL_EVENT& aEvent )
             else if( pad )
             {
                 via->SetNetCode( pad->GetNetCode() );
+                via->SetIsFree( false );
+            }
+            else if( shape && shape->GetNetCode() > 0 )
+            {
+                via->SetNetCode( shape->GetNetCode() );
                 via->SetIsFree( false );
             }
             else
@@ -4017,7 +4330,7 @@ int DRAWING_TOOL::DrawVia( const TOOL_EVENT& aEvent )
                 track->SetEnd( viaPos );
 
                 PCB_TRACK* newTrack = dynamic_cast<PCB_TRACK*>( track->Clone() );
-                const_cast<KIID&>( newTrack->m_Uuid ) = KIID();
+                newTrack->ResetUuidDirect();
 
                 newTrack->SetStart( viaPos );
                 newTrack->SetEnd( trackEnd );
@@ -4096,16 +4409,19 @@ void DRAWING_TOOL::setTransitions()
     Go( &DRAWING_TOOL::DrawDimension,         PCB_ACTIONS::drawCenterDimension.MakeEvent() );
     Go( &DRAWING_TOOL::DrawDimension,         PCB_ACTIONS::drawRadialDimension.MakeEvent() );
     Go( &DRAWING_TOOL::DrawDimension,         PCB_ACTIONS::drawLeader.MakeEvent() );
+    Go( &DRAWING_TOOL::DrawBarcode,           PCB_ACTIONS::placeBarcode.MakeEvent() );
     Go( &DRAWING_TOOL::DrawZone,              PCB_ACTIONS::drawZone.MakeEvent() );
     Go( &DRAWING_TOOL::DrawZone,              PCB_ACTIONS::drawRuleArea.MakeEvent() );
     Go( &DRAWING_TOOL::DrawZone,              PCB_ACTIONS::drawZoneCutout.MakeEvent() );
     Go( &DRAWING_TOOL::DrawZone,              PCB_ACTIONS::drawSimilarZone.MakeEvent() );
     Go( &DRAWING_TOOL::DrawVia,               PCB_ACTIONS::drawVia.MakeEvent() );
+    Go( &DRAWING_TOOL::PlacePoint,            PCB_ACTIONS::placePoint.MakeEvent() );
     Go( &DRAWING_TOOL::PlaceReferenceImage,   PCB_ACTIONS::placeReferenceImage.MakeEvent() );
     Go( &DRAWING_TOOL::PlaceText,             PCB_ACTIONS::placeText.MakeEvent() );
     Go( &DRAWING_TOOL::DrawTable,             PCB_ACTIONS::drawTable.MakeEvent() );
     Go( &DRAWING_TOOL::DrawRectangle,         PCB_ACTIONS::drawTextBox.MakeEvent() );
     Go( &DRAWING_TOOL::PlaceImportedGraphics, PCB_ACTIONS::placeImportedGraphics.MakeEvent() );
+    Go( &DRAWING_TOOL::PlaceImportedGraphics, PCB_ACTIONS::ddImportGraphics.MakeEvent() );
     Go( &DRAWING_TOOL::SetAnchor,             PCB_ACTIONS::setAnchor.MakeEvent() );
 
     Go( &DRAWING_TOOL::PlaceTuningPattern,    PCB_ACTIONS::tuneSingleTrack.MakeEvent() );

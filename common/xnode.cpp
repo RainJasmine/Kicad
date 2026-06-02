@@ -22,23 +22,101 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include <fmt/format.h>
 
 #include "xnode.h"
 
 #include <richio.h>
 #include <string_utils.h>
+#include <io/kicad/kicad_io_utils.h>
 
 
-typedef wxXmlAttribute   XATTR;
+XATTR::XATTR( const wxString& aName, const VALUE_TYPE& aValue ) :
+        wxXmlAttribute( aName, wxEmptyString ),
+        m_originalValue( aValue )
+{
+    std::visit( [&]<typename T0>( T0&& arg )
+                {
+                    using T = std::decay_t<T0>;
+
+                    if constexpr( std::is_same_v<T, int> )
+                    {
+                        wxXmlAttribute::SetValue( wxString::Format( "%d", arg ) );
+                    }
+                    else if constexpr( std::is_same_v<T, double> )
+                    {
+                        std::string buf;
+
+                        if( arg != 0.0 && std::fabs( arg ) <= 0.0001 )
+                        {
+                            buf = fmt::format( "{:.16f}", arg );
+
+                            // remove trailing zeros (and the decimal marker if needed)
+                            while( !buf.empty() && buf[buf.size() - 1] == '0' )
+                            {
+                                buf.pop_back();
+                            }
+
+                            // if the value was really small
+                            // we may have just stripped all the zeros after the decimal
+                            if( buf[buf.size() - 1] == '.' )
+                            {
+                                buf.pop_back();
+                            }
+                        }
+                        else
+                        {
+                            buf = fmt::format( "{:.10g}", arg );
+                        }
+
+                        wxXmlAttribute::SetValue( buf );
+                    }
+                    else if constexpr( std::is_same_v<T, wxString> )
+                    {
+                        wxXmlAttribute::SetValue( arg );
+                    }
+                    else
+                    {
+                        static_assert( sizeof( T ) == 0, "Missing type handling in XNODE::FormatContents" );
+                    }
+                    }, aValue );
+}
 
 
-void XNODE::Format( OUTPUTFORMATTER* out, int nestLevel )
+void XNODE::AddBool( const wxString& aKey, bool aValue )
+{
+    AddAttribute( aKey, aValue ? wxT( "yes" ) : wxT( "no" ) );
+}
+
+
+void XNODE::AddAttribute( const wxString& aName, const wxString& aValue )
+{
+    XATTR* attr = new XATTR( aName, aValue );
+    wxXmlNode::AddAttribute( attr );
+}
+
+
+void XNODE::AddAttribute( const wxString& aName, int aValue )
+{
+    XATTR* attr = new XATTR( aName, aValue );
+    wxXmlNode::AddAttribute( attr );
+}
+
+
+void XNODE::AddAttribute( const wxString& aName, double aValue )
+{
+    XATTR* attr = new XATTR( aName, aValue );
+    wxXmlNode::AddAttribute( attr );
+}
+
+
+void XNODE::Format( OUTPUTFORMATTER* out ) const
 {
     switch( GetType() )
     {
     case wxXML_ELEMENT_NODE:
-        out->Print( nestLevel, "(%s", TO_UTF8( GetName() ) );
-        FormatContents( out, nestLevel );
+        out->Print( "(%s", TO_UTF8( GetName() ) );
+        FormatContents( out );
 
         if( GetNext() )
             out->Print( 0, ")\n" );
@@ -48,39 +126,54 @@ void XNODE::Format( OUTPUTFORMATTER* out, int nestLevel )
         break;
 
     default:
-        FormatContents( out, nestLevel );
+        FormatContents( out );
     }
 }
 
 
-void XNODE::FormatContents( OUTPUTFORMATTER* out, int nestLevel )
+void XNODE::FormatContents( OUTPUTFORMATTER* out ) const
 {
     // output attributes first if they exist
-    for( XATTR* attr = (XATTR*) GetAttributes();  attr;  attr = (XATTR*) attr->GetNext() )
+    for( wxXmlAttribute* attr = GetAttributes(); attr; attr = attr->GetNext() )
     {
+        bool quote = true;
+
+        if( auto xa = dynamic_cast<XATTR*>( attr ) )
+        {
+            XATTR::VALUE_TYPE value = xa->GetValue();
+
+            std::visit( [&quote]<typename T0>( T0&& )
+                    {
+                        using T = std::decay_t<T0>;
+
+                        if constexpr( std::is_same_v<T, int> || std::is_same_v<T, double> )
+                        {
+                            quote = false;
+                        }
+                    }, value );
+        }
+
         out->Print( 0, " (%s %s)",
                     TO_UTF8( attr->GetName() ),
-                    out->Quotew( attr->GetValue() ).c_str() );
+                    quote ? out->Quotew( attr->GetValue() ).c_str() : TO_UTF8( attr->GetValue() ) );
     }
 
     // we only expect to have used one of two types here:
     switch( GetType() )
     {
     case wxXML_ELEMENT_NODE:
-
-        // output children if they exist.
-        for( XNODE* kid = (XNODE*) GetChildren();  kid;  kid = (XNODE*) kid->GetNext() )
+        for( XNODE* child = GetChildren(); child; child = child->GetNext() )
         {
-            if( kid->GetType() != wxXML_TEXT_NODE )
+            if( child->GetType() != wxXML_TEXT_NODE )
             {
-                if( kid == GetChildren() )
+                if( child == GetChildren() )
                     out->Print( 0, "\n" );
 
-                kid->Format( out, nestLevel+1 );
+                child->Format( out );
             }
             else
             {
-                kid->Format( out, 0 );
+                child->Format( out );
             }
         }
 
@@ -93,6 +186,15 @@ void XNODE::FormatContents( OUTPUTFORMATTER* out, int nestLevel )
     default:
         ;   // not supported
     }
+}
+
+
+wxString XNODE::Format() const
+{
+    STRING_FORMATTER formatter;
+    Format( &formatter );
+    KICAD_FORMAT::Prettify( formatter.MutableString() );
+    return formatter.GetString();
 }
 
 // EOF

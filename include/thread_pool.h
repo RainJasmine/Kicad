@@ -28,7 +28,7 @@
 #include <bs_thread_pool.hpp>
 #include <import_export.h>
 
-using thread_pool = BS::thread_pool;
+using thread_pool = BS::priority_thread_pool;
 
 /**
  * Get a reference to the current thread pool.  N.B., you cannot copy the thread pool
@@ -38,6 +38,15 @@ using thread_pool = BS::thread_pool;
  * @return Reference to the current (potentially newly constructed) thread pool
  */
 APIEXPORT thread_pool& GetKiCadThreadPool();
+
+/**
+ * Invalidate the cached thread pool pointer.
+ *
+ * This must be called after the thread pool owned by PGM_BASE is destroyed
+ * (via KICAD_SINGLETON::Shutdown()) to prevent dangling pointer access.
+ * Any subsequent calls to GetKiCadThreadPool() will re-initialize the cache.
+ */
+APIEXPORT void InvalidateKiCadThreadPool();
 
 
 #endif /* INCLUDE_THREAD_POOL_H_ */

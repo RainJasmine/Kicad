@@ -22,6 +22,7 @@
  */
 
 #include <pcb_plotter.h>
+#include <common.h>
 #include <plotters/plotter.h>
 #include <plotters/plotters_pslike.h>
 #include <board.h>
@@ -33,10 +34,12 @@
 #include <jobs/job_export_pcb_dxf.h>
 #include <jobs/job_export_pcb_pdf.h>
 #include <jobs/job_export_pcb_plot.h>
+#include <jobs/job_export_pcb_png.h>
 #include <jobs/job_export_pcb_ps.h>
 #include <jobs/job_export_pcb_svg.h>
 #include <pgm_base.h>
 #include <pcbnew_settings.h>
+#include <geometry/shape_poly_set.h>
 #include <math/util.h> // for KiROUND
 
 
@@ -64,7 +67,8 @@ PCB_PLOTTER::PCB_PLOTTER( BOARD* aBoard, REPORTER* aReporter, PCB_PLOT_PARAMS& a
 bool PCB_PLOTTER::Plot( const wxString& aOutputPath, const LSEQ& aLayersToPlot,
                         const LSEQ& aCommonLayers, bool aUseGerberFileExtensions,
                         bool aOutputPathIsSingle, std::optional<wxString> aLayerName,
-                        std::optional<wxString> aSheetName, std::optional<wxString> aSheetPath )
+                        std::optional<wxString> aSheetName, std::optional<wxString> aSheetPath,
+                        std::vector<wxString>* aOutputFiles )
 {
     std::function<bool( wxString* )> textResolver = [&]( wxString* token ) -> bool
     {
@@ -84,7 +88,13 @@ bool PCB_PLOTTER::Plot( const wxString& aOutputPath, const LSEQ& aLayersToPlot,
 
     if( m_plotOpts.GetFormat() == PLOT_FORMAT::SVG && m_plotOpts.GetSvgFitPagetoBoard() ) // Page is board boundary size
     {
-        BOX2I     bbox = m_board->ComputeBoundingBox( false );
+        BOX2I     bbox = m_board->ComputeBoundingBox( false, false );
+        SHAPE_POLY_SET boardOutlines;
+
+        // Board outline geometry is better if it exists so that origin is not influenced by Edge.Cuts line width
+        if( m_board->GetBoardPolygonOutlines( boardOutlines, false ) && boardOutlines.OutlineCount() > 0 )
+            bbox = boardOutlines.BBox();
+
         PAGE_INFO currPageInfo = m_board->GetPageSettings();
 
         currPageInfo.SetWidthMils( bbox.GetWidth() / pcbIUScale.IU_PER_MILS );
@@ -101,7 +111,10 @@ bool PCB_PLOTTER::Plot( const wxString& aOutputPath, const LSEQ& aLayersToPlot,
     LSEQ layersToPlot;
     LSEQ commonLayers;
 
-    if( aOutputPathIsSingle )
+    const bool isPdfMultiPage =
+            ( m_plotOpts.GetFormat() == PLOT_FORMAT::PDF && m_plotOpts.m_PDFSingle );
+
+    if( aOutputPathIsSingle && !m_plotOpts.GetDXFMultiLayeredExportOption() && !isPdfMultiPage )
     {
         layersToPlot.push_back( aLayersToPlot[0] );
 
@@ -115,13 +128,17 @@ bool PCB_PLOTTER::Plot( const wxString& aOutputPath, const LSEQ& aLayersToPlot,
     }
 
     int finalPageCount = 0;
+    std::vector<std::pair<PCB_LAYER_ID, wxString>> layersToExport;
 
+    // Skip the disabled copper layers and build the layer ID -> layer name mapping for plotter
+    // DXF plotter will use this information to name its layers
     for( PCB_LAYER_ID layer : layersToPlot )
     {
         if( copperLayerShouldBeSkipped( layer ) )
             continue;
 
         finalPageCount++;
+        layersToExport.emplace_back( layer, m_board->GetLayerName( layer ) );
     }
 
     std::unique_ptr<GERBER_JOBFILE_WRITER> jobfile_writer;
@@ -129,6 +146,7 @@ bool PCB_PLOTTER::Plot( const wxString& aOutputPath, const LSEQ& aLayersToPlot,
     if( m_plotOpts.GetFormat() == PLOT_FORMAT::GERBER && !aOutputPathIsSingle )
         jobfile_writer = std::make_unique<GERBER_JOBFILE_WRITER>( m_board, m_reporter );
 
+    PLOT_FORMAT plot_format = m_plotOpts.GetFormat();
     wxString fileExt( GetDefaultPlotExtension( m_plotOpts.GetFormat() ) );
     wxString sheetPath;
     wxString msg;
@@ -161,8 +179,10 @@ bool PCB_PLOTTER::Plot( const wxString& aOutputPath, const LSEQ& aLayersToPlot,
             if( m_plotOpts.GetFormat() == PLOT_FORMAT::GERBER && aUseGerberFileExtensions )
                 fileExt = GetGerberProtelExtension( layer );
 
-            if( m_plotOpts.GetFormat() == PLOT_FORMAT::PDF && m_plotOpts.m_PDFSingle )
+            if( plot_format == PLOT_FORMAT::PDF && m_plotOpts.m_PDFSingle )
                 fn.SetExt( GetDefaultPlotExtension( PLOT_FORMAT::PDF ) );
+            else if ( plot_format == PLOT_FORMAT::DXF && m_plotOpts.GetDXFMultiLayeredExportOption() )
+                fn.SetExt( GetDefaultPlotExtension( PLOT_FORMAT::DXF ) );
             else
                 BuildPlotFileName( &fn, aOutputPath, layerName, fileExt );
         }
@@ -173,10 +193,11 @@ bool PCB_PLOTTER::Plot( const wxString& aOutputPath, const LSEQ& aLayersToPlot,
             jobfile_writer->AddGbrFile( layer, fullname );
         }
 
-        if( m_plotOpts.GetFormat() != PLOT_FORMAT::PDF
-            || !m_plotOpts.m_PDFSingle
-            || ( pageNum == 1 && m_plotOpts.GetFormat() == PLOT_FORMAT::PDF
-                    && m_plotOpts.m_PDFSingle ) )
+        if( ( plot_format != PLOT_FORMAT::PDF && plot_format != PLOT_FORMAT::DXF )
+            || ( !m_plotOpts.m_PDFSingle && !m_plotOpts.GetDXFMultiLayeredExportOption() )
+            || ( pageNum == 1
+                 && ( ( plot_format == PLOT_FORMAT::PDF && m_plotOpts.m_PDFSingle )
+                      || ( plot_format == PLOT_FORMAT::DXF && m_plotOpts.GetDXFMultiLayeredExportOption() ) ) ) )
         {
             // this will only be used by pdf
             wxString pageNumber = wxString::Format( "%d", pageNum );
@@ -195,12 +216,14 @@ bool PCB_PLOTTER::Plot( const wxString& aOutputPath, const LSEQ& aLayersToPlot,
             if( aSheetPath.has_value() )
                 sheetPath = aSheetPath.value();
 
+            m_plotOpts.SetLayersToExport( layersToExport );
             plotter = StartPlotBoard( m_board, &m_plotOpts, layer, layerName, fn.GetFullPath(),
                                       sheetName, sheetPath, pageName, pageNumber, finalPageCount );
         }
 
         if( plotter )
         {
+            plotter->SetLayer( layer );
             plotter->SetTitle( ExpandTextVars( m_board->GetTitleBlock().GetTitle(), &textResolver ) );
 
             if( m_plotOpts.m_PDFMetadata )
@@ -224,6 +247,9 @@ bool PCB_PLOTTER::Plot( const wxString& aOutputPath, const LSEQ& aLayersToPlot,
             catch( ... )
             {
                 success = false;
+                delete plotter->RenderSettings();
+                delete plotter;
+                plotter = nullptr;
                 break;
             }
 
@@ -253,8 +279,8 @@ bool PCB_PLOTTER::Plot( const wxString& aOutputPath, const LSEQ& aLayersToPlot,
             }
 
             // last page
-            if( m_plotOpts.GetFormat() != PLOT_FORMAT::PDF
-                    || !m_plotOpts.m_PDFSingle
+            if( (plot_format != PLOT_FORMAT::PDF && plot_format != PLOT_FORMAT::DXF)
+                    || (!m_plotOpts.m_PDFSingle && !m_plotOpts.GetDXFMultiLayeredExportOption())
                     || i == aLayersToPlot.size() - 1
                     || pageNum == finalPageCount )
             {
@@ -273,6 +299,9 @@ bool PCB_PLOTTER::Plot( const wxString& aOutputPath, const LSEQ& aLayersToPlot,
 
                 msg.Printf( _( "Plotted to '%s'." ), fn.GetFullPath() );
                 m_reporter->Report( msg, RPT_SEVERITY_ACTION );
+
+                if( aOutputFiles )
+                    aOutputFiles->push_back( fn.GetFullPath() );
             }
         }
         else
@@ -296,6 +325,9 @@ bool PCB_PLOTTER::Plot( const wxString& aOutputPath, const LSEQ& aLayersToPlot,
         // Build gerber job file from basename
         BuildPlotFileName( &fn, aOutputPath, wxT( "job" ), FILEEXT::GerberJobFileExtension );
         jobfile_writer->CreateJobFile( fn.GetFullPath() );
+
+        if( aOutputFiles )
+            aOutputFiles->push_back( fn.GetFullPath() );
     }
 
     m_reporter->ReportTail( _( "Done." ), RPT_SEVERITY_INFO );
@@ -415,6 +447,7 @@ void PCB_PLOTTER::PlotJobToPlotOpts( PCB_PLOT_PARAMS& aOpts, JOB_EXPORT_PCB_PLOT
         aOpts.SetDXFPlotMode( dxfJob->m_plotGraphicItemsUsingContours ? DXF_OUTLINE_MODE::SKETCH
                                                                       : DXF_OUTLINE_MODE::FILLED );
         aOpts.SetDXFPlotPolygonMode( dxfJob->m_polygonMode );
+        aOpts.SetDXFMultiLayeredExportOption( dxfJob->m_genMode == JOB_EXPORT_PCB_DXF::GEN_MODE::SINGLE );
     }
 
     if( aJob->m_plotFormat == JOB_EXPORT_PCB_PLOT::PLOT_FORMAT::PDF )
@@ -434,6 +467,13 @@ void PCB_PLOTTER::PlotJobToPlotOpts( PCB_PLOT_PARAMS& aOpts, JOB_EXPORT_PCB_PLOT
         aOpts.SetFineScaleAdjustX( psJob->m_XScaleAdjust );
         aOpts.SetFineScaleAdjustY( psJob->m_YScaleAdjust );
         aOpts.SetA4Output( psJob->m_forceA4 );
+    }
+
+    if( aJob->m_plotFormat == JOB_EXPORT_PCB_PLOT::PLOT_FORMAT::PNG )
+    {
+        JOB_EXPORT_PCB_PNG* pngJob = static_cast<JOB_EXPORT_PCB_PNG*>( aJob );
+        aOpts.SetPngDPI( pngJob->m_dpi );
+        aOpts.SetPngAntialias( pngJob->m_antialias );
     }
 
     aOpts.SetUseAuxOrigin( aJob->m_useDrillOrigin );
@@ -463,6 +503,7 @@ void PCB_PLOTTER::PlotJobToPlotOpts( PCB_PLOT_PARAMS& aOpts, JOB_EXPORT_PCB_PLOT
     case JOB_EXPORT_PCB_PLOT::PLOT_FORMAT::DXF:    aOpts.SetFormat( PLOT_FORMAT::DXF );    break;
     case JOB_EXPORT_PCB_PLOT::PLOT_FORMAT::HPGL:   /* no longer supported */               break;
     case JOB_EXPORT_PCB_PLOT::PLOT_FORMAT::PDF:    aOpts.SetFormat( PLOT_FORMAT::PDF );    break;
+    case JOB_EXPORT_PCB_PLOT::PLOT_FORMAT::PNG:    aOpts.SetFormat( PLOT_FORMAT::PNG );    break;
     }
 
     wxString theme = aJob->m_colorTheme;
@@ -474,7 +515,7 @@ void PCB_PLOTTER::PlotJobToPlotOpts( PCB_PLOT_PARAMS& aOpts, JOB_EXPORT_PCB_PLOT
             theme = pcbSettings->m_ColorTheme;
     }
 
-    COLOR_SETTINGS* colors = ::GetColorSettings( aJob->m_colorTheme );
+    COLOR_SETTINGS* colors = ::GetColorSettings( theme );
 
     if( colors->GetFilename() != theme && !aOpts.GetBlackAndWhite() )
     {

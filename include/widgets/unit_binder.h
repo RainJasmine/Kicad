@@ -70,6 +70,11 @@ public:
      */
     virtual void SetUnits( EDA_UNITS aUnits );
 
+    bool UnitsInvariant() const
+    {
+        return m_units == EDA_UNITS::UNSCALED || m_units == EDA_UNITS::DEGREES || m_units == EDA_UNITS::PERCENT;
+    }
+
     virtual void SetNegativeZero() { m_negativeZero = true; }
 
     /**
@@ -124,9 +129,17 @@ public:
     /**
      * Return the current value in Internal Units.
      */
-    virtual long long int GetValue();
+    virtual long long int GetValue() const;
 
-    int GetIntValue() { return (int) GetValue(); }
+    int GetIntValue() const
+    {
+        const long long int value = GetValue();
+        const long long int clamped =
+                std::clamp<long long>( value, static_cast<long long>( std::numeric_limits<int>::lowest() ),
+                                       static_cast<long long>( std::numeric_limits<int>::max() ) );
+
+        return static_cast<int>( clamped );
+    }
 
     /**
      * Return the current value in Internal Units.
@@ -134,7 +147,7 @@ public:
      * The returned value will be truncated according to the precision set by
      * SetPrecision() (if not <= 0).
      */
-    virtual double GetDoubleValue();
+    virtual double GetDoubleValue() const;
 
     virtual EDA_ANGLE GetAngleValue();
 
@@ -211,7 +224,6 @@ public:
     }
 
 protected:
-    void init( UNITS_PROVIDER* aProvider );
     void onClick( wxMouseEvent& aEvent );
     void onComboBox( wxCommandEvent& aEvent );
 
@@ -255,7 +267,7 @@ protected:
 
     wxString            m_errorMessage;
 
-    NUMERIC_EVALUATOR   m_eval;
+    mutable NUMERIC_EVALUATOR   m_eval;
     bool                m_allowEval;
     bool                m_needsEval;
 

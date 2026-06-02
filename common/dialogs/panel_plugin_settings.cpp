@@ -22,7 +22,7 @@
 #include <api/api_server.h>
 #include <widgets/ui_common.h>
 #include <pgm_base.h>
-#include <python_manager.h>
+#include <api/python_manager.h>
 #include <settings/common_settings.h>
 #include <settings/settings_manager.h>
 

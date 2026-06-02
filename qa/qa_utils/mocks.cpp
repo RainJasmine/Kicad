@@ -29,7 +29,7 @@
 #include <wx/snglinst.h>
 #include <wx/app.h>
 #include <board.h>
-#include <fp_lib_table.h>
+#include <collectors.h>
 #include <footprint_viewer_frame.h>
 #include <footprint.h>
 #include <tools/pcb_actions.h>
@@ -38,8 +38,8 @@
 #include <dialog_find.h>
 #include <dialog_filter_selection.h>
 #include <zone_filler.h>
-
-FP_LIB_TABLE GFootprintTable;
+struct PCB_SELECTION_FILTER_OPTIONS;
+#include <preview_items/selection_area.h>
 
 
 DIALOG_FIND::DIALOG_FIND( PCB_EDIT_FRAME* aParent ) :
@@ -50,7 +50,12 @@ DIALOG_FIND::DIALOG_FIND( PCB_EDIT_FRAME* aParent ) :
     m_hitList.clear();
     m_it = m_hitList.begin();
     m_upToDate = false;
+    m_board = nullptr;
 }
+
+DIALOG_FIND::~DIALOG_FIND() {}
+
+void DIALOG_FIND::OnBoardChanged( wxCommandEvent& event ) {}
 
 void DIALOG_FIND::onFindNextClick( wxCommandEvent& aEvent )
 {
@@ -72,17 +77,9 @@ void DIALOG_FIND::onShowSearchPanel( wxHyperlinkEvent& event )
 {
 }
 
-void DIALOG_FIND::OnCloseButtonClick( wxCommandEvent& aEvent )
-{
-}
-
 bool DIALOG_FIND::Show( bool show )
 {
     return true;
-}
-
-void DIALOG_FIND::OnClose( wxCloseEvent& aEvent )
-{
 }
 
 
@@ -146,7 +143,7 @@ DIALOG_FILTER_SELECTION::DIALOG_FILTER_SELECTION( PCB_BASE_FRAME* aParent, OPTIO
         m_options( aOptions )
 {
     // silence another compiler warning about m_options not being used
-    if( m_options.includeModules )
+    if( m_options.includeFootprints )
     {
     }
 }
@@ -159,6 +156,12 @@ void DIALOG_FILTER_SELECTION::checkBoxClicked( wxCommandEvent& aEvent )
 
 void DIALOG_FILTER_SELECTION::allItemsClicked( wxCommandEvent& aEvent )
 {
+}
+
+
+bool DIALOG_FILTER_SELECTION::TransferDataToWindow()
+{
+    return true;
 }
 
 
@@ -192,6 +195,7 @@ PCB_SELECTION_TOOL::PCB_SELECTION_TOOL() :
         m_frame( NULL ),
         m_enteredGroup( NULL ),
         m_nonModifiedCursor( KICURSOR::ARROW ),
+        m_lockedItemsFiltered( false ),
         m_priv( nullptr )
 {
 }
@@ -235,9 +239,9 @@ PCB_SELECTION& PCB_SELECTION_TOOL::GetSelection()
 }
 
 
-PCB_SELECTION& PCB_SELECTION_TOOL::RequestSelection( CLIENT_SELECTION_FILTER aClientFilter,
-                                                 bool aConfirmLockedItems )
+PCB_SELECTION& PCB_SELECTION_TOOL::RequestSelection( CLIENT_SELECTION_FILTER aClientFilter )
 {
+    m_lockedItemsFiltered = false;
     return m_selection;
 }
 
@@ -262,9 +266,9 @@ bool PCB_SELECTION_TOOL::selectCursor( bool aForceSelect, CLIENT_SELECTION_FILTE
 }
 
 
-bool PCB_SELECTION_TOOL::selectMultiple()
+void PCB_SELECTION_TOOL::SelectMultiple( KIGFX::PREVIEW::SELECTION_AREA& aArea, bool aSubtractive,
+                                         bool aExclusiveOr )
 {
-    return false;
 }
 
 
@@ -357,12 +361,14 @@ int PCB_SELECTION_TOOL::filterSelection( const TOOL_EVENT& aEvent )
 }
 
 
-void PCB_SELECTION_TOOL::FilterCollectedItems( GENERAL_COLLECTOR& aCollector, bool aMultiSelect )
+void PCB_SELECTION_TOOL::FilterCollectedItems( GENERAL_COLLECTOR& aCollector, bool aMultiSelect,
+                                               PCB_SELECTION_FILTER_OPTIONS* aRejected )
 {
 }
 
 
-bool PCB_SELECTION_TOOL::itemPassesFilter( BOARD_ITEM* aItem, bool aMultiSelect )
+bool PCB_SELECTION_TOOL::itemPassesFilter( BOARD_ITEM* aItem, bool aMultiSelect,
+                                          PCB_SELECTION_FILTER_OPTIONS* aRejected )
 {
     return true;
 }
@@ -456,13 +462,19 @@ bool PCB_TOOL_BASE::Is45Limited() const
 }
 
 
+bool PCB_TOOL_BASE::Is90Limited() const
+{
+    return false;
+}
+
+
 ZONE_FILLER::~ZONE_FILLER()
 {
 }
 
 
 ZONE_FILLER_TOOL::ZONE_FILLER_TOOL() :
-    PCB_TOOL_BASE( "pcbnew.ZoneFiller" ),
+    PCB_TOOL_BASE( ZONE_FILLER_TOOL_NAME ),
     m_fillInProgress( false )
 {
 }

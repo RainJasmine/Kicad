@@ -29,7 +29,9 @@
 #define __PNS_LOG_VIEWER_FRAME_H
 
 #include <length_delay_calculation/length_delay_calculation.h>
+#include <pad.h>
 #include <pcb_painter.h>
+#include <pcb_track.h>
 #include <pcb_test_frame.h>
 #include <pcbnew_utils/board_test_utils.h>
 #include <reporter.h>
@@ -122,7 +124,7 @@ public:
             endPad = static_cast<PAD*>( aEndPad->Parent() );
 
         constexpr PATH_OPTIMISATIONS opts = {
-            .OptimiseViaLayers = false, .MergeTracks = false, .OptimiseTracesInPads = false, .InferViaInPad = true
+            .OptimiseVias = false, .MergeTracks = false, .OptimiseTracesInPads = false, .InferViaInPad = true
         };
 
         return m_board->GetLengthCalculation()->CalculateLength( lengthItems, opts, startPad, endPad );
@@ -143,7 +145,7 @@ public:
             endPad = static_cast<PAD*>( aEndPad->Parent() );
 
         constexpr PATH_OPTIMISATIONS opts = {
-            .OptimiseViaLayers = false, .MergeTracks = false, .OptimiseTracesInPads = false, .InferViaInPad = true
+            .OptimiseVias = false, .MergeTracks = false, .OptimiseTracesInPads = false, .InferViaInPad = true
         };
 
         return m_board->GetLengthCalculation()->CalculateDelay( lengthItems, opts, startPad, endPad );
@@ -194,7 +196,7 @@ public:
                                      const int aDiffPairCouplingGap, const int aPNSLayer,
                                      const NETCLASS* aNetClass ) override
     {
-        TIME_DOMAIN_GEOMETRY_CONTEXT ctx;
+        TUNING_PROFILE_GEOMETRY_CONTEXT ctx;
         ctx.NetClass = aNetClass;
         ctx.Width = aWidth;
         ctx.IsDiffPairCoupled = aIsDiffPairCoupled;
@@ -208,7 +210,7 @@ public:
                                              int aDiffPairCouplingGap, int aPNSLayer,
                                              const NETCLASS* aNetClass ) override
     {
-        TIME_DOMAIN_GEOMETRY_CONTEXT ctx;
+        TUNING_PROFILE_GEOMETRY_CONTEXT ctx;
         ctx.NetClass = aNetClass;
         ctx.Width = aWidth;
         ctx.IsDiffPairCoupled = aIsDiffPairCoupled;

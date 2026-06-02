@@ -24,6 +24,7 @@
 #include <settings/cvpcb_settings.h>
 #include <settings/parameters.h>
 #include <wx/config.h>
+#include <geometry/geometry_utils.h>
 
 
 ///! Update the schema version whenever a migration is required
@@ -49,13 +50,14 @@ CVPCB_SETTINGS::CVPCB_SETTINGS() :
 
     addParamsForWindow( &m_FootprintViewer, "footprint_viewer" );
 
-    m_params.emplace_back( new PARAM<double>( "footprint_viewer.zoom", &m_FootprintViewerZoom,
-                                              1.0 ) );
+    m_params.emplace_back( new PARAM<double>( "footprint_viewer.zoom",
+            &m_FootprintViewerZoom, 1.0 ) );
     m_params.emplace_back( new PARAM<bool>( "footprint_viewer.autozoom",
-                                            &m_FootprintViewerAutoZoomOnSelect, true ) );
+            &m_FootprintViewerAutoZoomOnSelect, true ) );
 
-    m_params.emplace_back( new PARAM<bool>( "footprint_viewer.use_45_limit",
-            &m_ViewersDisplay.m_Use45Limit, true ) );
+    m_params.emplace_back( new PARAM<int>( "footprint_viewer.angle_snap_mode",
+            reinterpret_cast<int*>( &m_ViewersDisplay.m_AngleSnapMode ),
+            static_cast<int>( LEADER_MODE::DEG45 ) ) );
 
     m_params.emplace_back( new PARAM<bool>( "footprint_viewer.show_pad_fill",
             &m_ViewersDisplay.m_DisplayPadFill, true ) );

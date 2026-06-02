@@ -71,7 +71,7 @@ void GAL_DISPLAY_OPTIONS_IMPL::ReadWindowSettings( WINDOW_SETTINGS& aCfg )
     m_gridMinSpacing = aCfg.grid.min_spacing;
     m_axesEnabled = aCfg.grid.axes_enabled;
 
-    m_fullscreenCursor = aCfg.cursor.fullscreen_cursor;
+    m_crossHairMode = aCfg.cursor.cross_hair_mode;
     m_forceDisplayCursor = aCfg.cursor.always_show_cursor;
 
     NotifyChanged();
@@ -82,11 +82,8 @@ void GAL_DISPLAY_OPTIONS_IMPL::ReadCommonConfig( COMMON_SETTINGS& aSettings, wxW
 {
     wxLogTrace( traceGalDispOpts, wxS( "Reading common config" ) );
 
-    gl_antialiasing_mode =
-            static_cast<KIGFX::OPENGL_ANTIALIASING_MODE>( aSettings.m_Graphics.opengl_aa_mode );
-
-    cairo_antialiasing_mode =
-            static_cast<KIGFX::CAIRO_ANTIALIASING_MODE>( aSettings.m_Graphics.cairo_aa_mode );
+    antialiasing_mode =
+            static_cast<KIGFX::GAL_ANTIALIASING_MODE>( aSettings.m_Graphics.aa_mode );
 
     m_dpi = DPI_SCALING_COMMON( &aSettings, aWindow );
     UpdateScaleFactor();
@@ -115,7 +112,7 @@ void GAL_DISPLAY_OPTIONS_IMPL::WriteConfig( WINDOW_SETTINGS& aCfg )
     aCfg.grid.line_width = m_gridLineWidth;
     aCfg.grid.min_spacing = m_gridMinSpacing;
     aCfg.grid.axes_enabled = m_axesEnabled;
-    aCfg.cursor.fullscreen_cursor = m_fullscreenCursor;
+    aCfg.cursor.cross_hair_mode = m_crossHairMode;
     aCfg.cursor.always_show_cursor = m_forceDisplayCursor;
 }
 

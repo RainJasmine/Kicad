@@ -22,7 +22,7 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#include <charconv>
+#include <fast_float/fast_float.h>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>         // bsearch()
@@ -348,7 +348,8 @@ void DSNLEXER::Expecting( int aTok ) const
 
 void DSNLEXER::Expecting( const char* text ) const
 {
-    wxString errText = wxString::Format( _( "Expecting %s" ), wxString::FromUTF8( text ) );
+    wxString errText =
+            wxString::Format( _( "Expecting %s. Got '%s'" ), wxString::FromUTF8( text ), GetTokenString( CurTok() ) );
     THROW_PARSE_ERROR( errText, CurSource(), CurLine(), CurLineNumber(), CurOffset() );
 }
 
@@ -729,7 +730,7 @@ L_read:
             }   // while
 
             // L_unterminated:
-            wxString errtxt( _( "Un-terminated delimited string" ) );
+            wxString errtxt( _( "Unterminated delimited string" ) );
             THROW_PARSE_ERROR( errtxt, CurSource(), CurLine(), CurLineNumber(),
                                cur - start + curText.length() );
         }
@@ -857,46 +858,18 @@ wxArrayString* DSNLEXER::ReadCommentLines()
     return ret;
 }
 
+// Skip the white space and also accept both normal numbers and scientfic notation
+#define FROM_CHARS_FLAGS ( fast_float::chars_format::skip_white_space | fast_float::chars_format::general )
 
 double DSNLEXER::parseDouble()
 {
-// We try here to be locale independent to avoid the need to switch to a "C" locale
-#if ( defined( __GNUC__ ) && __GNUC__ < 11 ) || ( defined( __clang__ ) && __clang_major__ < 13 )
-    // GCC older than 11 "supports" C++17 without supporting the C++17 std::from_chars for doubles
-    // clang is similar
-
-    // Use wxString::ToCDouble() which is designed to be locale independent
-    wxString tmp = CurStr();
-    double fval;
-    bool success = tmp.ToCDouble( &fval );
-
-    if( !success )
-    {
-        wxString error;
-        error.Printf( _( "Invalid floating point number in\nfile: '%s'\nline: %d\noffset: %d" ),
-                      CurSource(), CurLineNumber(), CurOffset() );
-
-        THROW_IO_ERROR( error );
-    }
-
-    return fval;
-#else
-    // Use std::from_chars which is designed to be locale independent and performance oriented
-    // for data interchange
-
+    // Use fast_float::from_chars which is designed to be locale independent and significantly
+    // faster than strtod and std::from_chars
     const std::string& str = CurStr();
 
-    // Offset any leading whitespace, this is one thing from_chars does not handle
-    size_t woff = 0;
-
-    while( std::isspace( str[woff] ) && woff < str.length() )
-    {
-        woff++;
-    }
-
     double                 dval{};
-    std::from_chars_result res =
-            std::from_chars( str.data() + woff, str.data() + str.size(), dval );
+    fast_float::from_chars_result res = fast_float::from_chars( str.data(), str.data() + str.size(), dval,
+                                                                FROM_CHARS_FLAGS );
 
     if( res.ec != std::errc() )
     {
@@ -905,5 +878,4 @@ double DSNLEXER::parseDouble()
     }
 
     return dval;
-#endif
 }

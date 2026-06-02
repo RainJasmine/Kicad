@@ -21,9 +21,8 @@
 * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 */
 
-#include <pybind11/pybind11.h>
-
 #include <common.h>
+#include <settings/color_settings.h>
 #include <footprint_editor_settings.h>
 #include <layer_ids.h>
 #include <lset.h>
@@ -36,8 +35,6 @@
 #include <settings/settings_manager.h>
 #include <wx/config.h>
 #include <wx/tokenzr.h>
-#include <zones.h>
-#include <widgets/ui_common.h>
 #include <base_units.h>
 
 #include "../3d-viewer/3d_viewer/eda_3d_viewer_settings.h"
@@ -50,27 +47,14 @@ const int pcbnewSchemaVersion = 5;
 PCBNEW_SETTINGS::PCBNEW_SETTINGS()
         : PCB_VIEWERS_SETTINGS_BASE( "pcbnew", pcbnewSchemaVersion ),
           m_AuiPanels(),
-          m_Cleanup(),
-          m_DrcDialog(),
-          m_ExportIdf(),
-          m_ExportStep(),
-          m_ExportODBPP(),
-          m_ExportVrml(),
-          m_FootprintWizardList(),
-          m_GenDrill(),
-          m_ImportGraphics(),
-          m_NetlistDialog(),
-          m_PlaceFile(),
-          m_Plot(),
           m_FootprintChooser(),
-          m_Zones(),
           m_FootprintViewer(),
           m_FootprintWizard(),
           m_Display(),
           m_TrackDragAction( TRACK_DRAG_ACTION::DRAG ),
           m_ArcEditMode( ARC_EDIT_MODE::KEEP_CENTER_ADJUST_ANGLE_RADIUS ),
           m_CtrlClickHighlight( false ),
-          m_Use45DegreeLimit( false ),
+          m_AngleSnapMode( LEADER_MODE::DIRECT ),
           m_FlipDirection( FLIP_DIRECTION::TOP_BOTTOM ),
           m_ESCClearsNetHighlight( true ),
           m_PolarCoords( false ),
@@ -79,6 +63,7 @@ PCBNEW_SETTINGS::PCBNEW_SETTINGS()
           m_ShowCourtyardCollisions( true ),
           m_AutoRefillZones( false ),
           m_AllowFreePads( false ),
+          m_ImportKeepKiCadLayerNames( false ),
           m_PnsSettings( nullptr ),
           m_FootprintViewerLibListWidth( 200 ),
           m_FootprintViewerFPListWidth( 300 )
@@ -87,8 +72,6 @@ PCBNEW_SETTINGS::PCBNEW_SETTINGS()
     m_MagneticItems.tracks    = MAGNETIC_OPTIONS::CAPTURE_CURSOR_IN_TRACK_TOOL;
     m_MagneticItems.graphics  = false;
     m_MagneticItems.allLayers = false;
-
-    m_LockingOptions.m_sessionSkipPrompts = false;
 
     m_params.emplace_back( new PARAM<bool>( "aui.show_layer_manager",
             &m_AuiPanels.show_layer_manager, true ) );
@@ -124,7 +107,7 @@ PCBNEW_SETTINGS::PCBNEW_SETTINGS()
             &m_AuiPanels.appearance_expand_net_display, false ) );
 
     m_params.emplace_back( new PARAM<bool>( "aui.show_properties",
-            &m_AuiPanels.show_properties, false ) );
+            &m_AuiPanels.show_properties, true ) );
 
     m_params.emplace_back( new PARAM<bool>( "aui.show_search",
             &m_AuiPanels.show_search, false ) );
@@ -202,14 +185,18 @@ PCBNEW_SETTINGS::PCBNEW_SETTINGS()
     m_params.emplace_back( new PARAM<bool>( "editing.ctrl_click_highlight",
             &m_CtrlClickHighlight, false ) );
 
-    m_params.emplace_back( new PARAM<bool>( "editing.pcb_use_45_degree_limit",
-            &m_Use45DegreeLimit, false ) );
+    m_params.emplace_back( new PARAM<int>( "editing.pcb_angle_snap_mode",
+            reinterpret_cast<int*>( &m_AngleSnapMode ),
+            static_cast<int>( LEADER_MODE::DIRECT ) ) );
 
     m_params.emplace_back( new PARAM<bool>( "editing.auto_fill_zones",
             &m_AutoRefillZones, false ) );
 
     m_params.emplace_back( new PARAM<bool>( "editing.allow_free_pads",
             &m_AllowFreePads, false ) );
+
+    m_params.emplace_back( new PARAM<bool>( "import.keep_kicad_layer_names",
+            &m_ImportKeepKiCadLayerNames, false ) );
 
     m_params.emplace_back( new PARAM_LAMBDA<int>( "editing.rotation_angle",
             [this] () -> int
@@ -250,6 +237,9 @@ PCBNEW_SETTINGS::PCBNEW_SETTINGS()
 
     m_params.emplace_back( new PARAM<bool>( "pcb_display.pad_clearance",
             &m_Display.m_PadClearance, true ) );
+
+    m_params.emplace_back( new PARAM<bool>( "pcb_display.pad_use_via_color_for_normal_th_padstacks",
+            &m_Display.m_UseViaColorForNormalTHPadstacks, false ) );
 
     m_params.emplace_back( new PARAM<bool>( "pcb_display.pad_fill",
             &m_ViewersDisplay.m_DisplayPadFill, true ) );
@@ -297,341 +287,8 @@ PCBNEW_SETTINGS::PCBNEW_SETTINGS()
     m_params.emplace_back( new PARAM<bool>( "pcb_display.show_page_borders",
             &m_ShowPageLimits, true ) );
 
-    m_params.emplace_back( new PARAM<bool>( "cleanup.cleanup_refill_zones",
-            &m_Cleanup.cleanup_refill_zones, true ) );
-
-    m_params.emplace_back( new PARAM<bool>( "cleanup.cleanup_vias",
-            &m_Cleanup.cleanup_vias, true ) );
-
-    m_params.emplace_back( new PARAM<bool>( "cleanup.delete_dangling_vias",
-            &m_Cleanup.delete_dangling_vias, true ) );
-
-    m_params.emplace_back( new PARAM<bool>( "cleanup.merge_segments",
-            &m_Cleanup.merge_segments, true ) );
-
-    m_params.emplace_back( new PARAM<bool>( "cleanup.cleanup_unconnected",
-            &m_Cleanup.cleanup_unconnected, true ) );
-
-    m_params.emplace_back( new PARAM<bool>( "cleanup.cleanup_short_circuits",
-            &m_Cleanup.cleanup_short_circuits, true ) );
-
-    m_params.emplace_back( new PARAM<bool>( "cleanup.cleanup_tracks_in_pad",
-            &m_Cleanup.cleanup_tracks_in_pad, false ) );
-
-    m_params.emplace_back( new PARAM<bool>( "drc_dialog.refill_zones",
-            &m_DrcDialog.refill_zones, true ) );
-
-    m_params.emplace_back( new PARAM<bool>( "drc_dialog.test_all_track_errors",
-            &m_DrcDialog.test_all_track_errors, false ) );
-
-    m_params.emplace_back( new PARAM<bool>( "drc_dialog.test_footprints",
-            &m_DrcDialog.test_footprints, false ) );
-
-    m_params.emplace_back( new PARAM<int>( "drc_dialog.severities",
-            &m_DrcDialog.severities, RPT_SEVERITY_ERROR | RPT_SEVERITY_WARNING ) );
-
-    m_params.emplace_back( new PARAM<bool>( "gen_drill.merge_pth_npth",
-            &m_GenDrill.merge_pth_npth, false ) );
-
-    m_params.emplace_back( new PARAM<bool>( "gen_drill.minimal_header",
-            &m_GenDrill.minimal_header, false ) );
-
-    m_params.emplace_back( new PARAM<bool>( "gen_drill.mirror",
-            &m_GenDrill.mirror, false ) );
-
-    m_params.emplace_back( new PARAM<bool>( "gen_drill.unit_drill_is_inch",
-            &m_GenDrill.unit_drill_is_inch, false ) );
-
-    m_params.emplace_back( new PARAM<bool>( "gen_drill.use_route_for_oval_holes",
-            &m_GenDrill.use_route_for_oval_holes, true ) );
-
-    m_params.emplace_back( new PARAM<int>( "gen_drill.drill_file_type",
-            &m_GenDrill.drill_file_type, 0 ) );
-
-    m_params.emplace_back( new PARAM<int>( "gen_drill.map_file_type",
-            &m_GenDrill.map_file_type, 1 ) );
-
-    m_params.emplace_back( new PARAM<int>( "gen_drill.zeros_format",
-            &m_GenDrill.zeros_format, 0, 0, 3 ) );
-
-    m_params.emplace_back( new PARAM<bool>( "gen_drill.generate_map",
-            &m_GenDrill.generate_map, false ) );
-
-    m_params.emplace_back( new PARAM<bool>( "gen_drill.generate_tenting",
-            &m_GenDrill.generate_tenting, false ) );
-
-    m_params.emplace_back( new PARAM<int>( "export_2581.units",
-            &m_Export2581.units, 0 ) );
-
-    m_params.emplace_back( new PARAM<int>( "export_2581.precision",
-            &m_Export2581.precision, 6 ) );
-
-    m_params.emplace_back( new PARAM<int>( "export_2581.version",
-            &m_Export2581.version, 1 ) );
-
-    m_params.emplace_back( new PARAM<bool>( "export_2581.compress",
-            &m_Export2581.compress, false ) );
-
-    m_params.emplace_back( new PARAM<int>( "export_odb.units",
-            &m_ExportODBPP.units, 0 ) );
-
-    m_params.emplace_back( new PARAM<int>( "export_odb.precision",
-            &m_ExportODBPP.precision, 6 ) );
-
-    m_params.emplace_back( new PARAM<int>( "export_odb.compress_format",
-            &m_ExportODBPP.compressFormat, 1 ) );
-
-    m_params.emplace_back( new PARAM<bool>( "export_idf.auto_adjust",
-            &m_ExportIdf.auto_adjust, false ) );
-
-    m_params.emplace_back( new PARAM<int>( "export_idf.ref_units",
-            &m_ExportIdf.ref_units, 0 ) );
-
-    m_params.emplace_back( new PARAM<double>( "export_idf.ref_x",
-            &m_ExportIdf.ref_x, 0 ) );
-
-    m_params.emplace_back( new PARAM<double>( "export_idf.ref_y",
-            &m_ExportIdf.ref_y, 0 ) );
-
-    m_params.emplace_back( new PARAM<bool>( "export_idf.units_mils",
-            &m_ExportIdf.units_mils, false ) );
-
-    m_params.emplace_back( new PARAM<int>( "export_step.origin_mode",
-            &m_ExportStep.origin_mode, 1 ) );
-
-    m_params.emplace_back( new PARAM<int>( "export_step.origin_units",
-            &m_ExportStep.origin_units, 0 ) );
-
-    m_params.emplace_back( new PARAM<double>( "export_step.origin_x",
-            &m_ExportStep.origin_x, 0 ) );
-
-    m_params.emplace_back( new PARAM<double>( "export_step.origin_y",
-            &m_ExportStep.origin_y, 0 ) );
-
-    m_params.emplace_back( new PARAM<bool>( "export_step.no_unspecified",
-            &m_ExportStep.no_unspecified, false ) );
-
-    m_params.emplace_back( new PARAM<bool>( "export_step.no_dnp",
-            &m_ExportStep.no_dnp, false ) );
-
-    m_params.emplace_back( new PARAM<bool>( "export_step.replace_models",
-            &m_ExportStep.replace_models, true ) );
-
-    m_params.emplace_back( new PARAM<bool>( "export_step.overwrite_file",
-            &m_ExportStep.overwrite_file, true ) );
-
-    m_params.emplace_back( new PARAM<int>( "export_vrml.units",
-            &m_ExportVrml.units, 1 ) );
-
-    m_params.emplace_back( new PARAM<bool>( "export_vrml.no_unspecified",
-            &m_ExportVrml.no_unspecified, false ) );
-
-    m_params.emplace_back( new PARAM<bool>( "export_vrml.no_dnp",
-            &m_ExportVrml.no_dnp, false ) );
-
-    m_params.emplace_back( new PARAM<bool>( "export_vrml.copy_3d_models",
-            &m_ExportVrml.copy_3d_models, false ) );
-
-    m_params.emplace_back( new PARAM<bool>( "export_vrml.use_relative_paths",
-            &m_ExportVrml.use_relative_paths, false ) );
-
-    m_params.emplace_back( new PARAM<int>( "export_vrml.ref_units",
-            &m_ExportVrml.ref_units, 0 ) );
-
-    m_params.emplace_back( new PARAM<double>( "export_vrml.ref_x",
-            &m_ExportVrml.ref_x, 0 ) );
-
-    m_params.emplace_back( new PARAM<double>( "export_vrml.ref_y",
-            &m_ExportVrml.ref_y, 0 ) );
-
-    m_params.emplace_back( new PARAM<int>( "export_vrml.origin_mode",
-            &m_ExportVrml.origin_mode, 0 ) );
-
-    m_params.emplace_back( new PARAM<int>( "zones.net_sort_mode",
-            &m_Zones.net_sort_mode, -1 ) );
-
-    m_params.emplace_back( new PARAM<int>( "import_graphics.layer",
-            &m_ImportGraphics.layer, Dwgs_User ) );
-
-    m_params.emplace_back( new PARAM<bool>( "import_graphics.use_dlg_layer_selection",
-            &m_ImportGraphics.use_dlg_layer_selection, true ) );
-
-    m_params.emplace_back( new PARAM<bool>( "import_graphics.interactive_placement",
-            &m_ImportGraphics.interactive_placement, true ) );
-
-    m_params.emplace_back( new PARAM<bool>( "import_graphics.group_items",
-            &m_ImportGraphics.group_items, true ) );
-
-    m_params.emplace_back( new PARAM<bool>( "import_graphics.fix_discontinuities",
-            &m_ImportGraphics.fix_discontinuities, true ) );
-
-    m_params.emplace_back( new PARAM<double>( "import_graphics.tolerance",
-            &m_ImportGraphics.tolerance, 1.0, 0.0, 10.0 ) );
-
-    m_params.emplace_back( new PARAM<int>( "import_graphics.line_width_units",
-            &m_ImportGraphics.dxf_line_width_units, 0 ) );
-
-    m_params.emplace_back( new PARAM<double>( "import_graphics.line_width",
-            &m_ImportGraphics.dxf_line_width, 0.2 ) );
-
-    m_params.emplace_back( new PARAM<int>( "import_graphics.origin_units",
-            &m_ImportGraphics.origin_units, 0 ) );
-
-    m_params.emplace_back( new PARAM<double>( "import_graphics.origin_x",
-            &m_ImportGraphics.origin_x, 0 ) );
-
-    m_params.emplace_back( new PARAM<double>( "import_graphics.origin_y",
-            &m_ImportGraphics.origin_y, 0 ) );
-
-    m_params.emplace_back( new PARAM<int>( "import_graphics.dxf_units",
-            &m_ImportGraphics.dxf_units, 0 ) );
-
-    m_params.emplace_back( new PARAM<int>( "netlist.report_filter",
-            &m_NetlistDialog.report_filter, -1 ) );
-
-    m_params.emplace_back( new PARAM<bool>( "netlist.update_footprints",
-            &m_NetlistDialog.update_footprints, true ) );
-
-    m_params.emplace_back( new PARAM<bool>( "netlist.transfer_groups",
-            &m_NetlistDialog.transfer_groups, true ) );
-
-    m_params.emplace_back( new PARAM<bool>( "netlist.delete_shorting_tracks",
-            &m_NetlistDialog.delete_shorting_tracks, false ) );
-
-    m_params.emplace_back( new PARAM<bool>( "netlist.delete_extra_footprints",
-            &m_NetlistDialog.delete_extra_footprints, false ) );
-
-    m_params.emplace_back( new PARAM<bool>( "netlist.associate_by_ref_sch",
-            &m_NetlistDialog.associate_by_ref_sch, false ) );
-
-    /*
-     * place_file.output_directory is only used at run-time; actual data is in project file
-     *
-     * m_params.emplace_back( new PARAM<wxString>( "place_file.output_directory",
-     *                        &m_PlaceFile.output_directory, wxEmptyString ) );
-     */
-
-    m_params.emplace_back( new PARAM<int>( "place_file.units",
-            &m_PlaceFile.units, 1 ) );
-
-    m_params.emplace_back( new PARAM<int>( "place_file.file_options",
-            &m_PlaceFile.file_options, 0 ) );
-
-    m_params.emplace_back( new PARAM<int>( "place_file.file_format",
-            &m_PlaceFile.file_format, 0 ) );
-
-    m_params.emplace_back( new PARAM<bool>( "place_file.excludeTH",
-            &m_PlaceFile.exclude_TH, false ) );
-
-    m_params.emplace_back( new PARAM<bool>( "place_file.onlySMD",
-            &m_PlaceFile.only_SMD, false ) );
-
-    m_params.emplace_back( new PARAM<bool>( "place_file.include_board_edge",
-            &m_PlaceFile.include_board_edge, false ) );
-
-    m_params.emplace_back( new PARAM<bool>( "place_file.use_place_file_origin",
-            &m_PlaceFile.use_aux_origin, true ) );
-
-    m_params.emplace_back( new PARAM<bool>( "place_file.negate_xcoord",
-            &m_PlaceFile.negate_xcoord, false ) );
-
-    m_params.emplace_back( new PARAM<int>( "plot.all_layers_on_one_page",
-            &m_Plot.all_layers_on_one_page, 1 ) );
-
-    m_params.emplace_back( new PARAM<bool>( "plot.edgecut_on_all_layers",
-            &m_Plot.edgecut_on_all_layers, true ) );
-
-    m_params.emplace_back( new PARAM<int>( "plot.pads_drill_mode",
-            &m_Plot.pads_drill_mode, 2 ) );
-
-    m_params.emplace_back( new PARAM<double>( "plot.fine_scale_x",
-            &m_Plot.fine_scale_x, 0 ) );
-
-    m_params.emplace_back( new PARAM<double>( "plot.fine_scale_y",
-            &m_Plot.fine_scale_y, 0 ) );
-
-    m_params.emplace_back( new PARAM<double>( "plot.ps_fine_width_adjust",
-            &m_Plot.ps_fine_width_adjust, 0 ) );
-
-    m_params.emplace_back( new PARAM<bool>( "plot.check_zones_before_plotting",
-            &m_Plot.check_zones_before_plotting, true ) );
-
-    m_params.emplace_back( new PARAM<bool>( "plot.mirror",
-            &m_Plot.mirror, false ) );
-
-    m_params.emplace_back( new PARAM<bool>( "plot.as_item_checkboxes",
-            &m_Plot.as_item_checkboxes, false ) );
-
-    m_params.emplace_back( new PARAM<wxString>( "window.footprint_text_shown_columns",
-            &m_FootprintTextShownColumns, "0 1 2 3 4 5 7" ) );
-
-    m_params.emplace_back( new PARAM<int>( "footprint_wizard_list.width",
-            &m_FootprintWizardList.width, -1 ) );
-
-    m_params.emplace_back( new PARAM<int>( "footprint_wizard_list.height",
-            &m_FootprintWizardList.height, -1 ) );
-
-    m_params.emplace_back( new PARAM<bool>( "reannotate_dialog.annotate_sort_on_modules",
-            &m_Reannotate.sort_on_fp_location, true ) );
-    m_params.emplace_back( new PARAM<bool>( "reannotate_dialog.annotate_remove_front_prefix",
-            &m_Reannotate.remove_front_prefix, false ) );
-    m_params.emplace_back( new PARAM<bool>( "reannotate_dialog.annotate_remove_back_prefix",
-            &m_Reannotate.remove_back_prefix, false ) );
-    m_params.emplace_back( new PARAM<bool>( "reannotate_dialog.annotate_exclude_locked",
-            &m_Reannotate.exclude_locked, false ) );
-
-    m_params.emplace_back( new PARAM<int>( "reannotate_dialog.annotate_grid_index",
-            &m_Reannotate.grid_index, 0 ) );
-    m_params.emplace_back( new PARAM<int>( "reannotate_dialog.annotate_sort_code",
-            &m_Reannotate.sort_code, 0 ) );
-    m_params.emplace_back( new PARAM<int>( "reannotate_dialog.annotate_choice",
-            &m_Reannotate.annotation_choice, 0 ) );
-
-    m_params.emplace_back( new PARAM<wxString>( "reannotate_dialog.annotate_front_refdes_start",
-            &m_Reannotate.front_refdes_start, "1" ) );
-    m_params.emplace_back( new PARAM<wxString>( "reannotate_dialog.annotate_back_refdes_start",
-            &m_Reannotate.back_refdes_start, "" ) );
-    m_params.emplace_back( new PARAM<wxString>( "reannotate_dialog.annotate_front_prefix",
-            &m_Reannotate.front_prefix, "" ) );
-    m_params.emplace_back( new PARAM<wxString>( "reannotate_dialog.annotate_back_prefix",
-            &m_Reannotate.back_prefix, "" ) );
-    m_params.emplace_back( new PARAM<wxString>( "reannotate_dialog.annotate_exclude_list",
-            &m_Reannotate.exclude_list, "" ) );
-    m_params.emplace_back( new PARAM<wxString>( "reannotate_dialog.annotate_report_file_name",
-            &m_Reannotate.report_file_name, "" ) );
-
-    m_params.emplace_back( new PARAM_LAMBDA<nlohmann::json>( "action_plugins",
-            [&]() -> nlohmann::json
-            {
-                nlohmann::json js = nlohmann::json::array();
-
-                for( const auto& pair : m_VisibleActionPlugins )
-                    js.push_back( nlohmann::json( { { pair.first.ToUTF8(), pair.second } } ) );
-
-                return js;
-            },
-            [&]( const nlohmann::json& aObj )
-            {
-                m_VisibleActionPlugins.clear();
-
-                if( !aObj.is_array() )
-                {
-                    return;
-                }
-
-                for( const auto& entry : aObj )
-                {
-                    if( entry.empty() || !entry.is_object() )
-                        continue;
-
-                    for( const auto& pair : entry.items() )
-                    {
-                        m_VisibleActionPlugins.emplace_back( std::make_pair(
-                                wxString( pair.key().c_str(), wxConvUTF8 ), pair.value() ) );
-                    }
-                }
-            },
-            nlohmann::json::array() ) );
+    m_params.emplace_back( new PARAM<bool>( "export_d356.doNotExportUnconnectedPads",
+            &m_ExportD356.doNotExportUnconnectedPads, false ) );
 
     addParamsForWindow( &m_FootprintViewer, "footprint_viewer" );
 
@@ -650,10 +307,19 @@ PCBNEW_SETTINGS::PCBNEW_SETTINGS()
     addParamsForWindow( &m_FootprintWizard, "footprint_wizard" );
 
     m_params.emplace_back( new PARAM<wxString>( "system.last_footprint_lib_dir",
-            &m_lastFootprintLibDir, "" ) );
+            &m_LastFootprintLibDir, "" ) );
 
     m_params.emplace_back( new PARAM<wxString>( "system.last_footprint3d_dir",
-            &m_lastFootprint3dDir, "" ) );
+            &m_LastFootprint3dDir, "" ) );
+
+    m_params.emplace_back( new PARAM<bool>( "DRC.report_all_track_errors",
+            &m_DRCDialog.report_all_track_errors, false ) );
+
+    m_params.emplace_back( new PARAM<bool>( "DRC.crossprobe",
+            &m_DRCDialog.crossprobe, true ) );
+
+    m_params.emplace_back( new PARAM<bool>( "DRC.scroll_on_crossprobe",
+            &m_DRCDialog.scroll_on_crossprobe, true ) );
 
     registerMigration( 0, 1,
             [&]()
@@ -761,45 +427,6 @@ bool PCBNEW_SETTINGS::MigrateFromLegacy( wxConfigBase* aCfg )
 
     ret &= fromLegacy<double>( aCfg, "PlotLineWidth_mm",            "plot.line_width" );
 
-    aCfg->SetPath( "/dialogs/cleanup_tracks" );
-    ret &= fromLegacy<bool>(  aCfg, "DialogCleanupVias",            "cleanup.cleanup_vias" );
-    ret &= fromLegacy<bool>(  aCfg, "DialogCleanupMergeSegments",   "cleanup.merge_segments" );
-    ret &= fromLegacy<bool>(  aCfg, "DialogCleanupUnconnected",     "cleanup.cleanup_unconnected" );
-    ret &= fromLegacy<bool>(  aCfg, "DialogCleanupShortCircuit",    "cleanup.cleanup_short_circuits" );
-    ret &= fromLegacy<bool>(  aCfg, "DialogCleanupTracksInPads",    "cleanup.cleanup_tracks_in_pad" );
-    aCfg->SetPath( "../.." );
-
-    ret &= fromLegacy<bool>(   aCfg, "RefillZonesBeforeDrc",  "drc_dialog.refill_zones" );
-    ret &= fromLegacy<bool>(   aCfg, "DrcTestFootprints",     "drc_dialog.test_footprints" );
-
-    ret &= fromLegacy<bool>(   aCfg, "DrillMergePTHNPTH",    "gen_drill.merge_pth_npth" );
-    ret &= fromLegacy<bool>(   aCfg, "DrillMinHeader",       "gen_drill.minimal_header" );
-    ret &= fromLegacy<bool>(   aCfg, "DrillMirrorYOpt",      "gen_drill.mirror" );
-    ret &= fromLegacy<bool>(   aCfg, "DrillUnit",            "gen_drill.unit_drill_is_inch" );
-    ret &= fromLegacy<bool>(   aCfg, "OvalHolesRouteMode",   "gen_drill.use_route_for_oval_holes" );
-    ret &= fromLegacy<int>(    aCfg, "DrillFileType",        "gen_drill.drill_file_type" );
-    ret &= fromLegacy<int>(    aCfg, "DrillMapFileType",     "gen_drill.map_file_type" );
-    ret &= fromLegacy<int>(    aCfg, "DrillZerosFormat",     "gen_drill.zeros_format" );
-
-    ret &= fromLegacy<bool>(   aCfg, "IDFRefAutoAdj",        "export_idf.auto_adjust" );
-    ret &= fromLegacy<int>(    aCfg, "IDFRefUnits",          "export_idf.ref_units" );
-    ret &= fromLegacy<double>( aCfg, "IDFRefX",              "export_idf.ref_x" );
-    ret &= fromLegacy<double>( aCfg, "IDFRefY",              "export_idf.ref_y" );
-    ret &= fromLegacy<bool>(   aCfg, "IDFExportThou",        "export_idf.units_mils" );
-
-    ret &= fromLegacy<int>(    aCfg, "STEP_Origin_Opt",      "export_step.origin_mode" );
-    ret &= fromLegacy<int>(    aCfg, "STEP_UserOriginUnits", "export_step.origin_units" );
-    ret &= fromLegacy<double>( aCfg, "STEP_UserOriginX",     "export_step.origin_x" );
-    ret &= fromLegacy<double>( aCfg, "STEP_UserOriginY",     "export_step.origin_y" );
-    ret &= fromLegacy<bool>(   aCfg, "STEP_NoVirtual",       "export_step.no_virtual" );
-
-    ret &= fromLegacy<bool>(   aCfg, "PlotSVGModeColor",     "export_svg.black_and_white" );
-    ret &= fromLegacy<bool>(   aCfg, "PlotSVGModeMirror",    "export_svg.mirror" );
-    ret &= fromLegacy<bool>(   aCfg, "PlotSVGModeOneFile",   "export_svg.one_file" );
-    ret &= fromLegacy<bool>(   aCfg, "PlotSVGBrdEdge",       "export_svg.plot_board_edges" );
-    ret &= fromLegacy<int>(    aCfg, "PlotSVGPageOpt",       "export_svg.page_size" );
-    ret &= fromLegacyString(   aCfg, "PlotSVGDirectory",     "export_svg.output_dir" );
-
     {
         nlohmann::json js = nlohmann::json::array();
         wxString       key;
@@ -850,14 +477,6 @@ bool PCBNEW_SETTINGS::MigrateFromLegacy( wxConfigBase* aCfg )
     //
     // NOTE: there's no value in line-wrapping these; it just makes the table unreadable.
     //
-    ret &= fromLegacy<int>(    aCfg, "VrmlExportUnit",       "export_vrml.units" );
-    ret &= fromLegacy<bool>(   aCfg, "VrmlExportCopyFiles",  "export_vrml.copy_3d_models" );
-    ret &= fromLegacy<bool>(   aCfg, "VrmlUseRelativePaths", "export_vrml.use_relative_paths" );
-    ret &= fromLegacy<int>(    aCfg, "VrmlRefUnits",         "export_vrml.ref_units" );
-    ret &= fromLegacy<double>( aCfg, "VrmlRefX",             "export_vrml.ref_x" );
-    ret &= fromLegacy<double>( aCfg, "VrmlRefY",             "export_vrml.ref_y" );
-    ret &= fromLegacy<int>   ( aCfg, "VrmlOriginMode",       "export_vrml.origin_mode" );
-
     ret &= fromLegacy<int>(    aCfg, "Zone_Ouline_Hatch_Opt", "zones.hatching_style" );
     ret &= fromLegacy<int>(    aCfg, "Zone_NetSort_Opt",      "zones.net_sort_mode" );
     ret &= fromLegacy<double>( aCfg, "Zone_Clearance",        "zones.clearance" );
@@ -865,35 +484,12 @@ bool PCBNEW_SETTINGS::MigrateFromLegacy( wxConfigBase* aCfg )
     ret &= fromLegacy<double>( aCfg, "Zone_TH_Gap",           "zones.thermal_relief_gap" );
     ret &= fromLegacy<double>( aCfg, "Zone_TH_Copper_Width",  "zones.thermal_relief_copper_width" );
 
-    aCfg->SetPath( "ImportGraphics" );
-    ret &= fromLegacy<int>(    aCfg, "BoardLayer",           "import_graphics.layer" );
-    ret &= fromLegacy<bool>(   aCfg, "InteractivePlacement", "import_graphics.interactive_placement" );
-    ret &= fromLegacyString(   aCfg, "LastFile",             "import_graphics.last_file" );
-    ret &= fromLegacy<double>( aCfg, "LineWidth",            "import_graphics.line_width" );
-    ret &= fromLegacy<int>(    aCfg, "LineWidthUnits",       "import_graphics.line_width_units" );
-    ret &= fromLegacy<int>(    aCfg, "PositionUnits",        "import_graphics.origin_units" );
-    ret &= fromLegacy<double>( aCfg, "PositionX",            "import_graphics.origin_x" );
-    ret &= fromLegacy<double>( aCfg, "PositionY",            "import_graphics.origin_y" );
-    aCfg->SetPath( ".." );
-
-    ret &= fromLegacy<int>(  aCfg, "NetlistReportFilterMsg",       "netlist.report_filter" );
-    ret &= fromLegacy<bool>( aCfg, "NetlistUpdateFootprints",      "netlist.update_footprints" );
-    ret &= fromLegacy<bool>( aCfg, "NetlistDeleteShortingTracks",  "netlist.delete_shorting_tracks" );
-    ret &= fromLegacy<bool>( aCfg, "NetlistDeleteExtraFootprints", "netlist.delete_extra_footprints" );
-
-    ret &= fromLegacy<int>(    aCfg, "PlaceFileUnits",          "place_file.units" );
-    ret &= fromLegacy<int>(    aCfg, "PlaceFileOpts",           "place_file.file_options" );
-    ret &= fromLegacy<int>(    aCfg, "PlaceFileFormat",         "place_file.file_format" );
-    ret &= fromLegacy<bool>(   aCfg, "PlaceFileIncludeBrdEdge", "place_file.include_board_edge" );
-
     ret &= fromLegacy<int>(    aCfg, "PrintSinglePage",          "plot.all_layers_on_one_page" );
     ret &= fromLegacy<int>(    aCfg, "PrintPadsDrillOpt",        "plot.pads_drill_mode" );
     ret &= fromLegacy<double>( aCfg, "PlotXFineScaleAdj",        "plot.fine_scale_x" );
     ret &= fromLegacy<double>( aCfg, "PlotYFineScaleAdj",        "plot.fine_scale_y" );
     ret &= fromLegacy<double>( aCfg, "PSPlotFineWidthAdj",       "plot.ps_fine_width_adjust" );
     ret &= fromLegacy<bool>(   aCfg, "CheckZonesBeforePlotting", "plot.check_zones_before_plotting" );
-
-    ret &= fromLegacyString( aCfg, "FootprintTextShownColumns", "window.footprint_text_shown_columns" );
 
     ret &= fromLegacy<int>( aCfg, "FpWizardListWidth",        "footprint_wizard_list.width" );
     ret &= fromLegacy<int>( aCfg, "FpWizardListHeight",       "footprint_wizard_list.height" );
@@ -960,7 +556,8 @@ bool PCBNEW_SETTINGS::MigrateFromLegacy( wxConfigBase* aCfg )
     migrateLegacyColor( "Color4DPCBBackground",      LAYER_PCB_BACKGROUND );
     migrateLegacyColor( "Color4DPCBCursor",          LAYER_CURSOR );
     migrateLegacyColor( "Color4DRatsEx",             LAYER_RATSNEST );
-    migrateLegacyColor( "Color4DViaBBlindEx",        LAYER_VIA_BBLIND );
+    migrateLegacyColor( "Color4DViaBBlindEx",        LAYER_VIA_BLIND );
+    migrateLegacyColor( "Color4DViaBBlindEx",        LAYER_VIA_BURIED );
     migrateLegacyColor( "Color4DViaMicroEx",         LAYER_VIA_MICROVIA );
     migrateLegacyColor( "Color4DViaThruEx",          LAYER_VIA_THROUGH );
     migrateLegacyColor( "Color4DWorksheet",          LAYER_DRAWINGSHEET );
@@ -997,17 +594,3 @@ bool PCBNEW_SETTINGS::MigrateFromLegacy( wxConfigBase* aCfg )
 
     return ret;
 }
-
-//namespace py = pybind11;
-//
-//PYBIND11_MODULE( pcbnew, m )
-//{
-//    py::class_<PCBNEW_SETTINGS>( m, "settings" )
-//            .def_readwrite( "Use45DegreeGraphicSegments", &PCBNEW_SETTINGS::m_Use45DegreeGraphicSegments )
-//            .def_readwrite( "FlipLeftRight", &PCBNEW_SETTINGS::m_FlipDirection )
-//            .def_readwrite( "AddUnlockedPads", &PCBNEW_SETTINGS::m_AddUnlockedPads)
-//            .def_readwrite( "UsePolarCoords", &PCBNEW_SETTINGS::m_PolarCoords)
-//            .def_readwrite( "RotationAngle", &PCBNEW_SETTINGS::m_RotationAngle)
-//            .def_readwrite( "ShowPageLimits", &PCBNEW_SETTINGS::m_ShowPageLimits)
-//            ;
-//}

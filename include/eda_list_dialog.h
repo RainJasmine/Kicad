@@ -22,21 +22,18 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#ifndef  EDA_LIST_DIALOG_H
-#define  EDA_LIST_DIALOG_H
-
-
-#include <../common/dialogs/eda_list_dialog_base.h>
+#pragma once
+#include <dialogs/eda_list_dialog_base.h>
 
 
 class EDA_DRAW_FRAME;
+class wxCheckBox;
 
 /**
  * A dialog which shows:
  *  - a list of elements for selection,
  *  - a text control to display help or info about the selected item.
  *  - 2 buttons (OK and Cancel)
- *
  */
 class EDA_LIST_DIALOG : public EDA_LIST_DIALOG_BASE
 {
@@ -50,8 +47,7 @@ public:
      * @param aPreselectText An item name if an item must be preselected.
      */
     EDA_LIST_DIALOG( wxWindow* aParent, const wxString& aTitle, const wxArrayString& aItemHeaders,
-                     const std::vector<wxArrayString>& aItemList,
-                     const wxString& aPreselectText = wxEmptyString,
+                     const std::vector<wxArrayString>& aItemList, const wxString& aPreselectText = wxEmptyString,
                      bool aSortList = true );
 
     EDA_LIST_DIALOG( wxWindow* aParent, const wxString& aTitle, bool aSortList = true );
@@ -71,6 +67,16 @@ public:
      */
     wxString GetTextSelection( int aColumn = 0 );
 
+    /**
+     * Add a checkbox value to the dialog.
+     */
+    void AddExtraCheckbox( const wxString& aLabel, bool* aValuePtr );
+
+    /**
+     * Fills in the value pointers from the checkboxes after the dialog has run.
+     */
+    void GetExtraCheckboxValues();
+
     long GetSelection();
 
     bool Show( bool show ) override;
@@ -79,18 +85,18 @@ protected:
     void initDialog( const wxArrayString& aItemHeaders, const std::vector<wxArrayString>& aItemList,
                      const wxString& aPreselectText);
 
-private:
-    virtual void onSize( wxSizeEvent& event ) override;
-    void onListItemActivated( wxListEvent& event ) override;
     void textChangeInFilterBox(wxCommandEvent& event) override;
+
+private:
+    void onSize( wxSizeEvent& event ) override;
+    void onListItemActivated( wxListEvent& event ) override;
 
     void sortList();
 
 private:
     // The list of items, locally stored
-    std::vector<wxArrayString> m_itemsList;
-    bool                       m_sortList;
+    std::vector<wxArrayString>   m_itemsList;
+    bool                         m_sortList;
+    std::map<wxCheckBox*, bool*> m_extraCheckboxMap;
 };
 
-
-#endif    // EDA_LIST_DIALOG_H

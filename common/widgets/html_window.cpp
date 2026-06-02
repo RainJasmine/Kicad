@@ -37,6 +37,8 @@ HTML_WINDOW::HTML_WINDOW( wxWindow* aParent, wxWindowID aId, const wxPoint& aPos
           wxSysColourChangedEventHandler( HTML_WINDOW::onThemeChanged ), this );
 
     Connect( wxEVT_RIGHT_UP, wxMouseEventHandler( HTML_WINDOW::onRightClick ), nullptr, this );
+    Connect( wxEVT_COMMAND_MENU_SELECTED, wxMenuEventHandler( HTML_WINDOW::onMenuEvent ), nullptr, this );
+    Bind( wxEVT_CHAR_HOOK, wxKeyEventHandler( HTML_WINDOW::onCharHook ), this );
 }
 
 
@@ -44,6 +46,8 @@ HTML_WINDOW::~HTML_WINDOW()
 {
 	// Disconnect Events
 	Disconnect( wxEVT_RIGHT_UP, wxMouseEventHandler( HTML_WINDOW::onRightClick ), nullptr, this );
+    Disconnect( wxEVT_COMMAND_MENU_SELECTED, wxMenuEventHandler( HTML_WINDOW::onMenuEvent ), nullptr, this );
+    Unbind( wxEVT_CHAR_HOOK, wxKeyEventHandler( HTML_WINDOW::onCharHook ), this );
 }
 
 
@@ -78,6 +82,18 @@ void HTML_WINDOW::ThemeChanged()
 }
 
 
+bool HTML_WINDOW::ScrollToAnchor( const wxString& aAnchor )
+{
+    // Check if we have content loaded
+    if( !GetInternalRepresentation() )
+        return false;
+
+    // Try to scroll to the anchor
+    bool result = wxHtmlWindow::ScrollToAnchor( aAnchor );
+    return result;
+}
+
+
 void HTML_WINDOW::onThemeChanged( wxSysColourChangedEvent &aEvent )
 {
     ThemeChanged();
@@ -87,26 +103,61 @@ void HTML_WINDOW::onThemeChanged( wxSysColourChangedEvent &aEvent )
 void HTML_WINDOW::onRightClick( wxMouseEvent& event )
 {
     wxMenu popup;
-    popup.Append( wxID_COPY, "Copy" );
+    popup.Append( ID_COPY_SELECTION, _( "Copy" ) );
+    popup.Append( ID_SELECT_ALL, _( "Select All" ) );
     PopupMenu( &popup );
 }
 
 
 void HTML_WINDOW::onMenuEvent( wxMenuEvent& event )
 {
-    if( event.GetId() == wxID_COPY )
-    {
-        wxLogNull doNotLog; // disable logging of failed clipboard actions
+    if( event.GetId() == ID_COPY_SELECTION )
+        doCopySelection();
+    else if( event.GetId() == ID_SELECT_ALL )
+        SelectAll();
+}
 
-        if( wxTheClipboard->Open() )
+
+void HTML_WINDOW::onCharHook( wxKeyEvent& aEvent )
+{
+    if( aEvent.CmdDown() || aEvent.ControlDown() )
+    {
+        switch( aEvent.GetKeyCode() )
         {
-            bool primarySelection = wxTheClipboard->IsUsingPrimarySelection();
-            wxTheClipboard->UsePrimarySelection( false );   // required to use the main clipboard
-            wxTheClipboard->SetData( new wxTextDataObject( SelectionToText() ) );
-            wxTheClipboard->Flush(); // Allow data to be available after closing KiCad
-            wxTheClipboard->Close();
-            wxTheClipboard->UsePrimarySelection( primarySelection );
+        case 'A':
+            SelectAll();
+            return;
+
+        case 'C':
+            doCopySelection();
+            return;
+
+        default:
+            break;
         }
+    }
+
+    aEvent.Skip();
+}
+
+
+void HTML_WINDOW::doCopySelection()
+{
+    wxString selectedText = SelectionToText();
+
+    if( selectedText.IsEmpty() )
+        return;
+
+    wxLogNull doNotLog; // disable logging of failed clipboard actions
+
+    if( wxTheClipboard->Open() )
+    {
+        bool primarySelection = wxTheClipboard->IsUsingPrimarySelection();
+        wxTheClipboard->UsePrimarySelection( false );   // required to use the main clipboard
+        wxTheClipboard->SetData( new wxTextDataObject( selectedText ) );
+        wxTheClipboard->Flush(); // Allow data to be available after closing KiCad
+        wxTheClipboard->Close();
+        wxTheClipboard->UsePrimarySelection( primarySelection );
     }
 }
 

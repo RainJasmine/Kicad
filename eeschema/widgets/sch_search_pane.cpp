@@ -26,40 +26,32 @@ SCH_SEARCH_PANE::SCH_SEARCH_PANE( SCH_EDIT_FRAME* aFrame ) :
         SEARCH_PANE( aFrame ),
         m_schFrame( aFrame )
 {
-    m_sch = &(m_schFrame->Schematic());
+    m_sch = &m_schFrame->Schematic();
 
     if( m_sch != nullptr )
         m_sch->AddListener( this );
 
-    m_schFrame->Connect( EDA_EVT_UNITS_CHANGED, wxCommandEventHandler( SCH_SEARCH_PANE::onUnitsChanged ),
-                         nullptr, this );
-
-    m_schFrame->Connect( EDA_EVT_SCHEMATIC_CHANGED, wxCommandEventHandler( SCH_SEARCH_PANE::onSchChanged ),
-                         nullptr, this );
-
-    m_schFrame->Bind( EDA_EVT_SCHEMATIC_CHANGING, [&]( wxCommandEvent& )
-                                                  {
-                                                      ClearAllResults();
-                                                  } );
+    m_schFrame->Bind( EDA_EVT_UNITS_CHANGED, &SCH_SEARCH_PANE::onUnitsChanged, this );
+    m_schFrame->Bind( EDA_EVT_SCHEMATIC_CHANGING, &SCH_SEARCH_PANE::onSchChanging, this );
+    m_schFrame->Bind( EDA_EVT_SCHEMATIC_CHANGED, &SCH_SEARCH_PANE::onSchChanged, this );
 
     wxFont infoFont = KIUI::GetDockedPaneFont( this );
     SetFont( infoFont );
     m_notebook->SetFont( infoFont );
 
-    AddSearcher( new SYMBOL_SEARCH_HANDLER( aFrame ) );
-    AddSearcher( new POWER_SEARCH_HANDLER( aFrame ) );
-    AddSearcher( new TEXT_SEARCH_HANDLER( aFrame ) );
-    AddSearcher( new LABEL_SEARCH_HANDLER( aFrame ) );
-    AddSearcher( new GROUP_SEARCH_HANDLER( aFrame ) );
+    AddSearcher( std::make_shared<SYMBOL_SEARCH_HANDLER>( aFrame ) );
+    AddSearcher( std::make_shared<POWER_SEARCH_HANDLER>( aFrame ) );
+    AddSearcher( std::make_shared<TEXT_SEARCH_HANDLER>( aFrame ) );
+    AddSearcher( std::make_shared<LABEL_SEARCH_HANDLER>( aFrame ) );
+    AddSearcher( std::make_shared<GROUP_SEARCH_HANDLER>( aFrame ) );
 }
 
 
 SCH_SEARCH_PANE::~SCH_SEARCH_PANE()
 {
-    m_schFrame->Disconnect( EDA_EVT_UNITS_CHANGED, wxCommandEventHandler( SCH_SEARCH_PANE::onUnitsChanged ),
-                            nullptr, this );
-    m_schFrame->Disconnect( EDA_EVT_SCHEMATIC_CHANGED, wxCommandEventHandler( SCH_SEARCH_PANE::onSchChanged ),
-                            nullptr, this );
+    m_schFrame->Unbind( EDA_EVT_UNITS_CHANGED, &SCH_SEARCH_PANE::onUnitsChanged, this );
+    m_schFrame->Unbind( EDA_EVT_SCHEMATIC_CHANGING, &SCH_SEARCH_PANE::onSchChanging, this );
+    m_schFrame->Unbind( EDA_EVT_SCHEMATIC_CHANGED, &SCH_SEARCH_PANE::onSchChanged, this );
 }
 
 
@@ -67,16 +59,26 @@ void SCH_SEARCH_PANE::onUnitsChanged( wxCommandEvent& event )
 {
     ClearAllResults();
     RefreshSearch();
+    event.Skip();
+}
 
+
+void SCH_SEARCH_PANE::onSchChanging( wxCommandEvent& event )
+{
+    ClearAllResults();
     event.Skip();
 }
 
 
 void SCH_SEARCH_PANE::onSchChanged( wxCommandEvent& event )
 {
+    m_sch = &m_schFrame->Schematic();
+
+    if( m_sch != nullptr )
+        m_sch->AddListener( this );
+
     ClearAllResults();
     RefreshSearch();
-
     event.Skip();
 }
 

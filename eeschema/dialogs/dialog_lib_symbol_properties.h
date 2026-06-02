@@ -54,32 +54,39 @@ protected:
     void OnText( wxCommandEvent& event ) override;
   	void OnCombobox( wxCommandEvent& event ) override;
   	void OnCheckBox( wxCommandEvent& event ) override;
-    void OnSpinCtrl( wxSpinEvent& event ) override;
-    void OnSpinCtrlText( wxCommandEvent& event ) override;
+    void OnUnitSpinCtrl( wxSpinEvent& event ) override;
+    void OnUnitSpinCtrlText( wxCommandEvent& event ) override;
+    void OnUnitSpinCtrlKillFocus( wxFocusEvent& event ) override;
+    void OnUnitSpinCtrlEnter( wxCommandEvent& event ) override;
+    void OnBodyStyle( wxCommandEvent& event ) override;
 
 private:
     void OnAddField( wxCommandEvent& event ) override;
     void OnDeleteField( wxCommandEvent& event ) override;
     void OnMoveUp( wxCommandEvent& event ) override;
     void OnMoveDown( wxCommandEvent& event ) override;
+    void OnAddBodyStyle( wxCommandEvent& event ) override;
+    void OnBodyStyleMoveUp( wxCommandEvent& event ) override;
+    void OnBodyStyleMoveDown( wxCommandEvent& event ) override;
+    void OnDeleteBodyStyle( wxCommandEvent& event ) override;
     void OnSymbolNameKillFocus( wxFocusEvent& event ) override;
     void OnSymbolNameText( wxCommandEvent& event ) override;
     void OnAddFootprintFilter( wxCommandEvent& event ) override;
     void OnEditFootprintFilter( wxCommandEvent& event ) override;
-    void OnSizeGrid( wxSizeEvent& event ) override;
     void OnGridCellChanging( wxGridEvent& event );
+    void OnGridCellChanged( wxGridEvent& event );
+    void OnGridMotion( wxMouseEvent& event );
     void OnEditSpiceModel( wxCommandEvent& event ) override;
     void OnUpdateUI( wxUpdateUIEvent& event ) override;
     void OnCancelButtonClick( wxCommandEvent& event ) override;
     void OnPageChanging( wxNotebookEvent& event ) override;
     void OnFpFilterDClick( wxMouseEvent& event ) override;
-    void OnBtnCreateJumperPinGroup( wxCommandEvent& event ) override;
-    void OnBtnRemoveJumperPinGroup( wxCommandEvent& event ) override;
-    void OnGroupedPinListClick( wxCommandEvent& event ) override;
-    void OnAvailablePinsClick( wxCommandEvent& event ) override;
+    void OnAddJumperGroup( wxCommandEvent& event ) override;
+    void OnRemoveJumperGroup( wxCommandEvent& event ) override;
 
-    void adjustGridColumns();
+    bool updateUnitCount();
     void syncControlStates( bool aIsAlias );
+    void addInheritedFields( const std::shared_ptr<LIB_SYMBOL>& aParent );
 
 public:
     SYMBOL_EDIT_FRAME* m_Parent;
@@ -98,7 +105,6 @@ public:
     wxString           m_delayedErrorMessage;
 
     std::bitset<64>    m_shownColumns;
-    wxSize             m_size;
 
     PANEL_EMBEDDED_FILES* m_embeddedFiles;
 

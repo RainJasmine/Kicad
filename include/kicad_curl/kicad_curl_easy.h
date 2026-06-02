@@ -149,6 +149,46 @@ public:
 
     bool SetOutputStream( const std::ostream* aOutput );
 
+    /**
+     * Set the connection timeout in seconds.
+     *
+     * This controls how long CURL will wait for a connection to be established.
+     * The default is 30 seconds.
+     *
+     * @param aTimeoutSecs timeout in seconds, or 0 to disable
+     * @return true if successful
+     */
+    bool SetConnectTimeout( long aTimeoutSecs );
+
+    /**
+     * Set the total operation timeout in seconds.
+     *
+     * Limits the maximum time a transfer may take, including both connection and
+     * data transfer phases.  Appropriate for small fixed-size payloads (e.g. JSON
+     * metadata) where any transfer exceeding the limit is almost certainly stalled.
+     * Do not use for large or unbounded downloads, since a slow but progressing
+     * transfer would be aborted; prefer SetStallTimeout() instead.
+     *
+     * @param aTimeoutSecs total timeout in seconds, or 0 to disable
+     * @return true if successful
+     */
+    bool SetTimeout( long aTimeoutSecs );
+
+    /**
+     * Detect stalled transfers without limiting overall transfer time.
+     *
+     * If the average transfer rate falls below @p aMinBytesPerSec for at least
+     * @p aDurationSecs seconds, libcurl aborts the transfer.  Use this for
+     * downloads of unbounded or large size (packages, resources) so that a
+     * progressing-but-slow link is not aborted while still bounding hangs from
+     * servers that accept the connection then stop sending data.
+     *
+     * @param aMinBytesPerSec lower threshold for the average transfer rate
+     * @param aDurationSecs   how long the rate may stay below the threshold
+     * @return true if successful
+     */
+    bool SetStallTimeout( long aMinBytesPerSec, long aDurationSecs );
+
     CURL* GetCurl() { return m_CURL; }
 
     int GetResponseStatusCode();

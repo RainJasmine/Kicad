@@ -28,13 +28,16 @@
 #include <pad.h>
 #include <pcb_track.h>
 #include <pcb_text.h>
+#include <thread_pool.h>
 #include <zone.h>
 #include <geometry/seg.h>
 #include <drc/drc_engine.h>
 #include <drc/drc_item.h>
 #include <drc/drc_rule.h>
-#include <drc/drc_test_provider_clearance_base.h>
+#include <drc/drc_test_provider.h>
 #include <drc/drc_rtree.h>
+
+#include <set>
 
 /*
     Solder mask tests. Checks for silkscreen which is clipped by mask openings and for bridges
@@ -77,7 +80,7 @@ private:
     bool checkMaskAperture( BOARD_ITEM* aMaskItem, BOARD_ITEM* aTestItem, PCB_LAYER_ID aTestLayer,
                             int aTestNet, BOARD_ITEM** aCollidingItem );
 
-    bool checkItemMask( BOARD_ITEM* aMaskItem, int aTestNet );
+    bool checkItemMask( BOARD_ITEM* aItem, int aTestNet );
 
 private:
     DRC_RULE m_bridgeRule;
@@ -90,89 +93,75 @@ private:
     std::unique_ptr<DRC_RTREE> m_fullSolderMaskRTree;
     std::unique_ptr<DRC_RTREE> m_itemTree;
 
+    std::mutex                                  m_checkedPairsMutex;
     std::unordered_map<PTR_PTR_CACHE_KEY, LSET> m_checkedPairs;
 
     // Shapes used to define solder mask apertures don't have nets, so we assign them the
     // first object+net that bridges their aperture (after which any other nets will generate
     // violations).
+    //
+    // When "report all track errors" is enabled, we store all items per net so we can report
+    // violations for each pair of items from different nets.
+    std::mutex                                                           m_netMapMutex;
     std::unordered_map<PTR_LAYER_CACHE_KEY, std::pair<BOARD_ITEM*, int>> m_maskApertureNetMap;
+
+    // Extended storage for "report all track errors" mode: stores all items per net per aperture
+    std::unordered_map<PTR_LAYER_CACHE_KEY, std::vector<std::pair<BOARD_ITEM*, int>>> m_maskApertureNetMapAll;
+
+    // Pending collision info for deferred violation reporting (avoids race condition).
+    // Stores info about each mask aperture that bridges different nets.
+    struct MASK_APERTURE_COLLISION
+    {
+        BOARD_ITEM*  aperture;
+        BOARD_ITEM*  collidingItem;
+        int          collidingNet;
+        VECTOR2I     pos;
+        PCB_LAYER_ID layer;
+    };
+
+    std::mutex                                            m_collisionMutex;
+    std::vector<MASK_APERTURE_COLLISION>                  m_pendingCollisions;
 };
 
 
 void DRC_TEST_PROVIDER_SOLDER_MASK::addItemToRTrees( BOARD_ITEM* aItem )
 {
-    ZONE* solderMask = m_board->m_SolderMaskBridges;
-
-    if( aItem->Type() == PCB_ZONE_T )
+    for( PCB_LAYER_ID layer : { F_Mask, B_Mask } )
     {
-        ZONE* zone = static_cast<ZONE*>( aItem );
+        if( !aItem->IsOnLayer( layer ) )
+            continue;
 
-        for( PCB_LAYER_ID layer : { F_Mask, B_Mask } )
+        SHAPE_POLY_SET* solderMask = m_board->m_SolderMaskBridges->GetFill( layer );
+
+        if( aItem->Type() == PCB_ZONE_T )
         {
-            if( zone->IsOnLayer( layer ) )
-            {
-                solderMask->GetFill( layer )->BooleanAdd( *zone->GetFilledPolysList( layer ) );
-            }
+            ZONE* zone = static_cast<ZONE*>( aItem );
+
+            solderMask->BooleanAdd( *zone->GetFilledPolysList( layer ) );
         }
-    }
-    else if( aItem->Type() == PCB_PAD_T )
-    {
-        for( PCB_LAYER_ID layer : { F_Mask, B_Mask } )
+        else
         {
-            if( aItem->IsOnLayer( layer ) )
+            int clearance = m_webWidth / 2;
+
+            if( aItem->Type() == PCB_PAD_T )
+                clearance += static_cast<PAD*>( aItem )->GetSolderMaskExpansion( layer );
+            else if( aItem->Type() == PCB_VIA_T )
+                clearance += static_cast<PCB_VIA*>( aItem )->GetSolderMaskExpansion();
+            else if( aItem->Type() == PCB_SHAPE_T )
+                clearance += static_cast<PCB_SHAPE*>( aItem )->GetSolderMaskExpansion();
+
+            if( aItem->Type() == PCB_FIELD_T || aItem->Type() == PCB_TEXT_T )
             {
-                PAD* pad = static_cast<PAD*>( aItem );
-                int clearance = ( m_webWidth / 2 ) + pad->GetSolderMaskExpansion( layer );
+                PCB_TEXT* text = static_cast<PCB_TEXT*>( aItem );
 
-                aItem->TransformShapeToPolygon( *solderMask->GetFill( layer ), layer, clearance,
-                                                m_maxError, ERROR_OUTSIDE );
-
-                m_itemTree->Insert( aItem, layer, m_largestClearance );
+                text->TransformTextToPolySet( *solderMask, clearance, m_maxError, ERROR_OUTSIDE );
             }
-        }
-    }
-    else if( aItem->Type() == PCB_VIA_T )
-    {
-        for( PCB_LAYER_ID layer : { F_Mask, B_Mask } )
-        {
-            if( aItem->IsOnLayer( layer ) )
+            else
             {
-                PCB_VIA* via = static_cast<PCB_VIA*>( aItem );
-                int      clearance = ( m_webWidth / 2 ) + via->GetSolderMaskExpansion();
-
-                via->TransformShapeToPolygon( *solderMask->GetFill( layer ), layer, clearance,
-                                              m_maxError, ERROR_OUTSIDE );
-
-                m_itemTree->Insert( aItem, layer, m_largestClearance );
+                aItem->TransformShapeToPolygon( *solderMask, layer, clearance, m_maxError, ERROR_OUTSIDE );
             }
-        }
-    }
-    else if( aItem->Type() == PCB_FIELD_T || aItem->Type() == PCB_TEXT_T )
-    {
-        for( PCB_LAYER_ID layer : { F_Mask, B_Mask } )
-        {
-            if( aItem->IsOnLayer( layer ) )
-            {
-                const PCB_TEXT* text = static_cast<const PCB_TEXT*>( aItem );
 
-                text->TransformTextToPolySet( *solderMask->GetFill( layer ),
-                                              m_webWidth / 2, m_maxError, ERROR_OUTSIDE );
-
-                m_itemTree->Insert( aItem, layer, m_largestClearance );
-            }
-        }
-    }
-    else
-    {
-        for( PCB_LAYER_ID layer : { F_Mask, B_Mask } )
-        {
-            if( aItem->IsOnLayer( layer ) )
-            {
-                aItem->TransformShapeToPolygon( *solderMask->GetFill( layer ), layer,
-                                                m_webWidth / 2, m_maxError, ERROR_OUTSIDE );
-
-                m_itemTree->Insert( aItem, layer, m_largestClearance );
-            }
+            m_itemTree->Insert( aItem, layer, m_largestClearance );
         }
     }
 }
@@ -227,6 +216,9 @@ void DRC_TEST_PROVIDER_SOLDER_MASK::buildRTrees()
 
     m_fullSolderMaskRTree->Insert( solderMask, F_Mask );
     m_fullSolderMaskRTree->Insert( solderMask, B_Mask );
+    m_fullSolderMaskRTree->Build();
+
+    m_itemTree->Build();
 
     m_checkedPairs.clear();
 }
@@ -289,12 +281,10 @@ void DRC_TEST_PROVIDER_SOLDER_MASK::testSilkToMaskClearance()
 
                         if( clearance > 0 )
                         {
-                            wxString msg = formatMsg( _( "(%s clearance %s; actual %s)" ),
-                                                      constraint.GetName(),
-                                                      clearance,
-                                                      actual );
-
-                            drce->SetErrorMessage( drce->GetErrorText() + wxS( " " ) + msg );
+                            drce->SetErrorDetail( formatMsg( _( "(%s clearance %s; actual %s)" ),
+                                                             constraint.GetName(),
+                                                             clearance,
+                                                             actual ) );
                         }
 
                         drce->SetItems( item );
@@ -309,22 +299,10 @@ void DRC_TEST_PROVIDER_SOLDER_MASK::testSilkToMaskClearance()
 }
 
 
-bool isNullAperture( BOARD_ITEM* aItem )
+bool isNPTHPadWithNoCopper( BOARD_ITEM* aItem )
 {
     if( aItem->Type() == PCB_PAD_T )
-    {
-        PAD* pad = static_cast<PAD*>( aItem );
-
-        // TODO(JE) padstacks
-        if( pad->GetAttribute() == PAD_ATTRIB::NPTH
-                && ( pad->GetShape( PADSTACK::ALL_LAYERS ) == PAD_SHAPE::CIRCLE
-                     || pad->GetShape( PADSTACK::ALL_LAYERS ) == PAD_SHAPE::OVAL )
-                && pad->GetSize( PADSTACK::ALL_LAYERS ).x <= pad->GetDrillSize().x
-                && pad->GetSize( PADSTACK::ALL_LAYERS ).y <= pad->GetDrillSize().y )
-        {
-            return true;
-        }
-    }
+        return static_cast<PAD*>( aItem )->IsNPTHWithNoCopper();
 
     return false;
 }
@@ -354,7 +332,7 @@ bool DRC_TEST_PROVIDER_SOLDER_MASK::checkMaskAperture( BOARD_ITEM* aMaskItem, BO
                                                        PCB_LAYER_ID aTestLayer, int aTestNet,
                                                        BOARD_ITEM** aCollidingItem )
 {
-    if( aTestLayer == F_Mask && !aTestItem->IsOnLayer( PADSTACK::ALL_LAYERS ) )
+    if( aTestLayer == F_Mask && !aTestItem->IsOnLayer( F_Cu ) )
         return false;
 
     if( aTestLayer == B_Mask && !aTestItem->IsOnLayer( B_Cu ) )
@@ -369,24 +347,35 @@ bool DRC_TEST_PROVIDER_SOLDER_MASK::checkMaskAperture( BOARD_ITEM* aMaskItem, BO
         return false;
 
     PTR_LAYER_CACHE_KEY key = { aMaskItem, maskLayer };
+    BOARD_ITEM*         alreadyEncounteredItem = nullptr;
+    int                 encounteredItemNet = -1;
 
-    auto ii = m_maskApertureNetMap.find( key );
-
-    if( ii == m_maskApertureNetMap.end() )
     {
-        m_maskApertureNetMap[ key ] = { aTestItem, aTestNet };
+        std::lock_guard<std::mutex> lock( m_netMapMutex );
+        auto ii = m_maskApertureNetMap.find( key );
 
-        // First net; no bridge yet....
-        return false;
-    }
+        if( ii == m_maskApertureNetMap.end() )
+        {
+            m_maskApertureNetMap[ key ] = { aTestItem, aTestNet };
+            m_maskApertureNetMapAll[ key ].push_back( { aTestItem, aTestNet } );
 
-    auto& [cacheKey, cacheEntry] = *ii;
-    auto& [alreadyEncounteredItem, encounteredItemNet] = cacheEntry;
+            // First net; no bridge yet....
+            return false;
+        }
 
-    if( encounteredItemNet == aTestNet && aTestNet >= 0 )
-    {
-        // Same net; still no bridge...
-        return false;
+        alreadyEncounteredItem = ii->second.first;
+        encounteredItemNet = ii->second.second;
+
+        // Always store the item in the full list for complete violation reporting.
+        // This ensures all items are available when we generate violations in post-processing,
+        // avoiding race conditions from parallel thread execution.
+        m_maskApertureNetMapAll[ key ].push_back( { aTestItem, aTestNet } );
+
+        if( encounteredItemNet == aTestNet && aTestNet >= 0 )
+        {
+            // Same net; no bridge.
+            return false;
+        }
     }
 
     if( fp && aTestItem->GetParentFootprint() == fp )
@@ -422,22 +411,35 @@ bool DRC_TEST_PROVIDER_SOLDER_MASK::checkMaskAperture( BOARD_ITEM* aMaskItem, BO
 }
 
 
-bool DRC_TEST_PROVIDER_SOLDER_MASK::checkItemMask( BOARD_ITEM* aMaskItem, int aTestNet )
+bool DRC_TEST_PROVIDER_SOLDER_MASK::checkItemMask( BOARD_ITEM* aItem, int aTestNet )
 {
-    if( FOOTPRINT* fp = aMaskItem->GetParentFootprint() )
+    if( FOOTPRINT* fp = aItem->GetParentFootprint() )
     {
         // If we're allowing bridges then we're allowing bridges.  Nothing to check.
         if( fp->AllowSolderMaskBridges() )
             return false;
 
-        // Graphic items are used to implement net-ties between pads of a group within a net-tie
-        // footprint.  They must be allowed to intrude into their pad's mask aperture.
-        if( aTestNet < 0 && aMaskItem->Type() == PCB_PAD_T && fp->IsNetTie() )
+        // Items belonging to a net-tie may share the mask aperture of pads in the same group.
+        if( aItem->Type() == PCB_PAD_T && fp->IsNetTie() )
         {
+            PAD* pad = static_cast<PAD*>( aItem );
             std::map<wxString, int> padNumberToGroupIdxMap = fp->MapPadNumbersToNetTieGroups();
+            int groupIdx = padNumberToGroupIdxMap[ pad->GetNumber() ];
 
-            if( padNumberToGroupIdxMap[ static_cast<PAD*>( aMaskItem )->GetNumber() ] >= 0 )
-                return false;
+            if( groupIdx >= 0 )
+            {
+                if( aTestNet < 0 )
+                    return false;
+
+                if( pad->GetNetCode() == aTestNet )
+                    return false;
+
+                for( PAD* other : fp->GetNetTiePads( pad ) )
+                {
+                    if( other->GetNetCode() == aTestNet )
+                        return false;
+                }
+            }
         }
     }
 
@@ -446,12 +448,15 @@ bool DRC_TEST_PROVIDER_SOLDER_MASK::checkItemMask( BOARD_ITEM* aMaskItem, int aT
 
 
 void DRC_TEST_PROVIDER_SOLDER_MASK::testItemAgainstItems( BOARD_ITEM* aItem, const BOX2I& aItemBBox,
-                                                          PCB_LAYER_ID aRefLayer,
-                                                          PCB_LAYER_ID aTargetLayer )
+                                                          PCB_LAYER_ID aRefLayer, PCB_LAYER_ID aTargetLayer )
 {
-    PAD*     pad = aItem->Type() == PCB_PAD_T ? static_cast<PAD*>( aItem ) : nullptr;
-    PCB_VIA* via = aItem->Type() == PCB_VIA_T ? static_cast<PCB_VIA*>( aItem ) : nullptr;
-    int      itemNet = -1;
+    PAD*       pad = aItem->Type() == PCB_PAD_T ? static_cast<PAD*>( aItem ) : nullptr;
+    PCB_VIA*   via = aItem->Type() == PCB_VIA_T ? static_cast<PCB_VIA*>( aItem ) : nullptr;
+    PCB_SHAPE* shape = aItem->Type() == PCB_SHAPE_T ? static_cast<PCB_SHAPE*>( aItem ) : nullptr;
+    int        itemNet = -1;
+
+    std::optional<DRC_CONSTRAINT> itemConstraint;
+    DRC_CONSTRAINT                otherConstraint;
 
     if( aItem->IsConnected() )
         itemNet = static_cast<BOARD_CONNECTED_ITEM*>( aItem )->GetNetCode();
@@ -463,8 +468,7 @@ void DRC_TEST_PROVIDER_SOLDER_MASK::testItemAgainstItems( BOARD_ITEM* aItem, con
             [&]( BOARD_ITEM* other ) -> bool
             {
                 FOOTPRINT* itemFP = aItem->GetParentFootprint();
-                PAD*       otherPad = other->Type() == PCB_PAD_T ? static_cast<PAD*>( other )
-                                                                 : nullptr;
+                PAD*       otherPad = other->Type() == PCB_PAD_T ? static_cast<PAD*>( other ) : nullptr;
                 int        otherNet = -1;
 
                 if( other->IsConnected() )
@@ -473,7 +477,7 @@ void DRC_TEST_PROVIDER_SOLDER_MASK::testItemAgainstItems( BOARD_ITEM* aItem, con
                 if( otherNet > 0 && otherNet == itemNet )
                     return false;
 
-                if( isNullAperture( other ) )
+                if( isNPTHPadWithNoCopper( other ) )
                     return false;
 
                 if( itemFP && itemFP == other->GetParentFootprint() )
@@ -496,6 +500,22 @@ void DRC_TEST_PROVIDER_SOLDER_MASK::testItemAgainstItems( BOARD_ITEM* aItem, con
                     return false;
                 }
 
+                if( itemFP && itemFP->IsNetTie() )
+                {
+                    const std::set<int>& nets = itemFP->GetNetTieCache( aItem );
+
+                    if( otherNet < 0 || nets.count( otherNet ) )
+                        return false;
+                }
+
+                if( FOOTPRINT* otherFP = other->GetParentFootprint(); otherFP && otherFP->IsNetTie() )
+                {
+                    const std::set<int>& nets = otherFP->GetNetTieCache( other );
+
+                    if( itemNet < 0 || nets.count( itemNet ) )
+                        return false;
+                }
+
                 BOARD_ITEM* a = aItem;
                 BOARD_ITEM* b = other;
 
@@ -503,27 +523,29 @@ void DRC_TEST_PROVIDER_SOLDER_MASK::testItemAgainstItems( BOARD_ITEM* aItem, con
                 if( static_cast<void*>( a ) > static_cast<void*>( b ) )
                     std::swap( a, b );
 
-                auto it = m_checkedPairs.find( { a, b } );
+                {
+                    std::lock_guard<std::mutex> lock( m_checkedPairsMutex );
+                    auto it = m_checkedPairs.find( { a, b } );
 
-                if( it != m_checkedPairs.end() && it->second.test( aTargetLayer ) )
-                {
-                    return false;
-                }
-                else
-                {
-                    m_checkedPairs[ { a, b } ].set( aTargetLayer );
-                    return true;
+                    if( it != m_checkedPairs.end() && it->second.test( aTargetLayer ) )
+                    {
+                        return false;
+                    }
+                    else
+                    {
+                        m_checkedPairs[{ a, b }].set( aTargetLayer );
+                        return true;
+                    }
                 }
             },
             // Visitor:
             [&]( BOARD_ITEM* other ) -> bool
             {
-                PAD*     otherPad = other->Type() == PCB_PAD_T ? static_cast<PAD*>( other )
-                                                               : nullptr;
-                PCB_VIA* otherVia = other->Type() == PCB_VIA_T ? static_cast<PCB_VIA*>( other )
-                                                               : nullptr;
-                auto     otherShape = other->GetEffectiveShape( aTargetLayer );
-                int      otherNet = -1;
+                PAD*       otherPad = other->Type() == PCB_PAD_T ? static_cast<PAD*>( other ) : nullptr;
+                PCB_VIA*   otherVia = other->Type() == PCB_VIA_T ? static_cast<PCB_VIA*>( other ) : nullptr;
+                PCB_SHAPE* otherShape = other->Type() == PCB_SHAPE_T ? static_cast<PCB_SHAPE*>( other ) : nullptr;
+                auto       otherItemShape = other->GetEffectiveShape( aTargetLayer );
+                int        otherNet = -1;
 
                 if( other->IsConnected() )
                     otherNet = static_cast<BOARD_CONNECTED_ITEM*>( other )->GetNetCode();
@@ -544,17 +566,37 @@ void DRC_TEST_PROVIDER_SOLDER_MASK::testItemAgainstItems( BOARD_ITEM* aItem, con
                 }
 
                 if( pad )
-                    clearance += pad->GetSolderMaskExpansion( PADSTACK::ALL_LAYERS );
+                    clearance += pad->GetSolderMaskExpansion( aRefLayer );
                 else if( via && !via->IsTented( aRefLayer ) )
                     clearance += via->GetSolderMaskExpansion();
+                else if( shape )
+                    clearance += shape->GetSolderMaskExpansion();
 
                 if( otherPad )
-                    clearance += otherPad->GetSolderMaskExpansion( PADSTACK::ALL_LAYERS );
-                else if( otherVia && !otherVia->IsTented( aRefLayer ) )
+                    clearance += otherPad->GetSolderMaskExpansion( aTargetLayer );
+                else if( otherVia && !otherVia->IsTented( aTargetLayer ) )
                     clearance += otherVia->GetSolderMaskExpansion();
+                else if( otherShape )
+                    clearance += otherShape->GetSolderMaskExpansion();
 
-                if( itemShape->Collide( otherShape.get(), clearance, &actual, &pos ) )
+                if( itemShape->Collide( otherItemShape.get(), clearance, &actual, &pos ) )
                 {
+                    if( !itemConstraint.has_value() )
+                        itemConstraint = m_drcEngine->EvalRules( BRIDGED_MASK_CONSTRAINT, aItem, nullptr, aRefLayer );
+
+                    otherConstraint = m_drcEngine->EvalRules( BRIDGED_MASK_CONSTRAINT, other, nullptr, aTargetLayer );
+
+                    bool itemConstraintIgnored = itemConstraint->GetSeverity() == RPT_SEVERITY_IGNORE;
+                    bool otherConstraintIgnored = otherConstraint.GetSeverity() == RPT_SEVERITY_IGNORE;
+
+                    // Mask apertures are ignored on their own; in other cases both participants must be ignored
+                    if(    ( isMaskAperture( aItem ) && itemConstraintIgnored )
+                        || ( isMaskAperture( other ) && otherConstraintIgnored )
+                        || ( itemConstraintIgnored && otherConstraintIgnored ) )
+                    {
+                        return !m_drcEngine->IsCancelled();
+                    }
+
                     wxString    msg;
                     BOARD_ITEM* colliding = nullptr;
 
@@ -570,29 +612,27 @@ void DRC_TEST_PROVIDER_SOLDER_MASK::testItemAgainstItems( BOARD_ITEM* aItem, con
                     {
                         if( checkMaskAperture( aItem, other, aRefLayer, otherNet, &colliding ) )
                         {
-                            auto drce = DRC_ITEM::Create( DRCE_SOLDERMASK_BRIDGE );
+                            // Store collision info for deferred reporting after all threads complete.
+                            // This avoids race conditions where some items haven't been added yet.
+                            std::lock_guard<std::mutex> lock( m_collisionMutex );
 
-                            drce->SetErrorMessage( msg );
-                            drce->SetItems( aItem, colliding, other );
-                            drce->SetViolatingRule( &m_bridgeRule );
-                            reportViolation( drce, pos, aTargetLayer );
+                            m_pendingCollisions.push_back( { aItem, other, otherNet, pos, aTargetLayer } );
                         }
                     }
                     else if( isMaskAperture( other ) )
                     {
                         if( checkMaskAperture( other, aItem, aRefLayer, itemNet, &colliding ) )
                         {
-                            auto drce = DRC_ITEM::Create( DRCE_SOLDERMASK_BRIDGE );
+                            // Store collision info for deferred reporting after all threads complete.
+                            // This avoids race conditions where some items haven't been added yet.
+                            std::lock_guard<std::mutex> lock( m_collisionMutex );
 
-                            drce->SetErrorMessage( msg );
-                            drce->SetItems( other, colliding, aItem );
-                            drce->SetViolatingRule( &m_bridgeRule );
-                            reportViolation( drce, pos, aTargetLayer );
+                            m_pendingCollisions.push_back( { other, aItem, itemNet, pos, aTargetLayer } );
                         }
                     }
                     else if( checkItemMask( other, itemNet ) )
                     {
-                        auto drce = DRC_ITEM::Create( DRCE_SOLDERMASK_BRIDGE );
+                        std::shared_ptr<DRC_ITEM> drce = DRC_ITEM::Create( DRCE_SOLDERMASK_BRIDGE );
 
                         drce->SetErrorMessage( msg );
                         drce->SetItems( aItem, other );
@@ -607,11 +647,13 @@ void DRC_TEST_PROVIDER_SOLDER_MASK::testItemAgainstItems( BOARD_ITEM* aItem, con
 }
 
 
-void DRC_TEST_PROVIDER_SOLDER_MASK::testMaskItemAgainstZones( BOARD_ITEM* aItem,
-                                                              const BOX2I& aItemBBox,
-                                                              PCB_LAYER_ID aMaskLayer,
-                                                              PCB_LAYER_ID aTargetLayer )
+void DRC_TEST_PROVIDER_SOLDER_MASK::testMaskItemAgainstZones( BOARD_ITEM* aItem, const BOX2I& aItemBBox,
+                                                              PCB_LAYER_ID aMaskLayer, PCB_LAYER_ID aTargetLayer )
 {
+    PAD*       pad = aItem->Type() == PCB_PAD_T ? static_cast<PAD*>( aItem ) : nullptr;
+    PCB_VIA*   via = aItem->Type() == PCB_VIA_T ? static_cast<PCB_VIA*>( aItem ) : nullptr;
+    PCB_SHAPE* shape = aItem->Type() == PCB_SHAPE_T ? static_cast<PCB_SHAPE*>( aItem ) : nullptr;
+
     for( ZONE* zone : m_board->m_DRCCopperZones )
     {
         if( !zone->GetLayerSet().test( aTargetLayer ) )
@@ -630,10 +672,12 @@ void DRC_TEST_PROVIDER_SOLDER_MASK::testMaskItemAgainstZones( BOARD_ITEM* aItem,
         BOX2I inflatedBBox( aItemBBox );
         int   clearance = m_board->GetDesignSettings().m_SolderMaskToCopperClearance;
 
-        if( aItem->Type() == PCB_PAD_T )
-            clearance += static_cast<PAD*>( aItem )->GetSolderMaskExpansion( PADSTACK::ALL_LAYERS );
-        else if( aItem->Type() == PCB_VIA_T )
-            clearance += static_cast<PCB_VIA*>( aItem )->GetSolderMaskExpansion();
+        if( pad )
+            clearance += pad->GetSolderMaskExpansion( aTargetLayer );
+        else if( via && !via->IsTented( aTargetLayer ) )
+            clearance += via->GetSolderMaskExpansion();
+        else if( shape )
+            clearance += shape->GetSolderMaskExpansion();
 
         inflatedBBox.Inflate( clearance );
 
@@ -646,8 +690,8 @@ void DRC_TEST_PROVIDER_SOLDER_MASK::testMaskItemAgainstZones( BOARD_ITEM* aItem,
 
         std::shared_ptr<SHAPE> itemShape = aItem->GetEffectiveShape( aMaskLayer );
 
-        if( zoneTree && zoneTree->QueryColliding( aItemBBox, itemShape.get(), aTargetLayer,
-                                                  clearance, &actual, &pos ) )
+        if( zoneTree && zoneTree->QueryColliding( aItemBBox, itemShape.get(), aTargetLayer, clearance,
+                                                  &actual, &pos ) )
         {
             wxString    msg;
             BOARD_ITEM* colliding = nullptr;
@@ -663,7 +707,7 @@ void DRC_TEST_PROVIDER_SOLDER_MASK::testMaskItemAgainstZones( BOARD_ITEM* aItem,
             {
                 if( checkMaskAperture( aItem, zone, aTargetLayer, zoneNet, &colliding ) )
                 {
-                    auto drce = DRC_ITEM::Create( DRCE_SOLDERMASK_BRIDGE );
+                    std::shared_ptr<DRC_ITEM> drce = DRC_ITEM::Create( DRCE_SOLDERMASK_BRIDGE );
 
                     drce->SetErrorMessage( msg );
                     drce->SetItems( aItem, colliding, zone );
@@ -673,7 +717,7 @@ void DRC_TEST_PROVIDER_SOLDER_MASK::testMaskItemAgainstZones( BOARD_ITEM* aItem,
             }
             else
             {
-                auto drce = DRC_ITEM::Create( DRCE_SOLDERMASK_BRIDGE );
+                std::shared_ptr<DRC_ITEM> drce = DRC_ITEM::Create( DRCE_SOLDERMASK_BRIDGE );
 
                 drce->SetErrorMessage( msg );
                 drce->SetItems( aItem, zone );
@@ -690,31 +734,30 @@ void DRC_TEST_PROVIDER_SOLDER_MASK::testMaskItemAgainstZones( BOARD_ITEM* aItem,
 
 void DRC_TEST_PROVIDER_SOLDER_MASK::testMaskBridges()
 {
-    LSET copperAndMaskLayers( { F_Mask, B_Mask, F_Cu, B_Cu } );
-
-    const size_t progressDelta = 250;
-    int          count = 0;
-    int          ii = 0;
+    LSET                     copperAndMaskLayers( { F_Mask, B_Mask, F_Cu, B_Cu } );
+    std::atomic<int>         count = 0;
+    std::vector<BOARD_ITEM*> test_items;
 
     forEachGeometryItem( s_allBasicItemsButZones, copperAndMaskLayers,
             [&]( BOARD_ITEM* item ) -> bool
             {
-                ++count;
+                test_items.push_back( item );
                 return true;
             } );
 
-    forEachGeometryItem( s_allBasicItemsButZones, copperAndMaskLayers,
-            [&]( BOARD_ITEM* item ) -> bool
-            {
-                if( m_drcEngine->IsErrorLimitExceeded( DRCE_SOLDERMASK_BRIDGE ) )
-                    return false;
+    thread_pool& tp = GetKiCadThreadPool();
 
-                if( !reportProgress( ii++, count, progressDelta ) )
+    auto returns = tp.submit_loop( 0, test_items.size(),
+            [&]( size_t i ) -> bool
+            {
+                BOARD_ITEM* item = test_items[ i ];
+
+                if( m_drcEngine->IsErrorLimitExceeded( DRCE_SOLDERMASK_BRIDGE ) )
                     return false;
 
                 BOX2I itemBBox = item->GetBoundingBox();
 
-                if( item->IsOnLayer( F_Mask ) && !isNullAperture( item ) )
+                if( item->IsOnLayer( F_Mask ) && !isNPTHPadWithNoCopper( item ) )
                 {
                     // Test for aperture-to-aperture collisions
                     testItemAgainstItems( item, itemBBox, F_Mask, F_Mask );
@@ -728,7 +771,7 @@ void DRC_TEST_PROVIDER_SOLDER_MASK::testMaskBridges()
                     testItemAgainstItems( item, itemBBox, F_Cu, F_Mask );
                 }
 
-                if( item->IsOnLayer( B_Mask ) && !isNullAperture( item ) )
+                if( item->IsOnLayer( B_Mask ) && !isNPTHPadWithNoCopper( item ) )
                 {
                     // Test for aperture-to-aperture collisions
                     testItemAgainstItems( item, itemBBox, B_Mask, B_Mask );
@@ -742,8 +785,94 @@ void DRC_TEST_PROVIDER_SOLDER_MASK::testMaskBridges()
                     testItemAgainstItems( item, itemBBox, B_Cu, B_Mask );
                 }
 
+                ++count;
+
                 return true;
             } );
+
+    for( auto& ret : returns )
+    {
+        if( !ret.valid() )
+            continue;
+
+        while( ret.wait_for( std::chrono::milliseconds( 100 ) ) == std::future_status::timeout )
+            reportProgress( count, test_items.size() );
+    }
+
+    // Process deferred mask aperture violations now that all threads have completed.
+    // This ensures we have the complete list of items for each aperture.
+    std::set<std::tuple<BOARD_ITEM*, BOARD_ITEM*, BOARD_ITEM*>> reportedTriplets;
+
+    for( const MASK_APERTURE_COLLISION& collision : m_pendingCollisions )
+    {
+        if( m_drcEngine->IsErrorLimitExceeded( DRCE_SOLDERMASK_BRIDGE ) )
+            break;
+
+        PCB_LAYER_ID maskLayer = IsFrontLayer( collision.layer ) ? F_Mask : B_Mask;
+        PTR_LAYER_CACHE_KEY key = { collision.aperture, maskLayer };
+
+        std::vector<std::pair<BOARD_ITEM*, int>> itemsInAperture;
+
+        {
+            std::lock_guard<std::mutex> lock( m_netMapMutex );
+            auto it = m_maskApertureNetMapAll.find( key );
+
+            if( it != m_maskApertureNetMapAll.end() )
+                itemsInAperture = it->second;
+        }
+
+        wxString msg;
+
+        if( collision.layer == F_Mask )
+            msg = _( "Front solder mask aperture bridges items with different nets" );
+        else
+            msg = _( "Rear solder mask aperture bridges items with different nets" );
+
+        bool reportedAnyTrack = false;
+
+        for( auto& [firstNetItem, firstNet] : itemsInAperture )
+        {
+            // Only report items from a different net than the colliding item.
+            if( firstNet == collision.collidingNet )
+                continue;
+
+            // Deduplicate: ensure we don't report the same triplet twice.
+            auto tripletKey = std::make_tuple( collision.aperture, firstNetItem, collision.collidingItem );
+
+            if( reportedTriplets.count( tripletKey ) )
+                continue;
+
+            reportedTriplets.insert( tripletKey );
+
+            // Also insert the reverse to avoid reporting (A, B, C) and (A, C, B).
+            reportedTriplets.insert( std::make_tuple( collision.aperture, collision.collidingItem, firstNetItem ) );
+
+            bool firstIsTrack = firstNetItem->Type() == PCB_TRACE_T || firstNetItem->Type() == PCB_ARC_T;
+
+            if( firstIsTrack )
+            {
+                if( m_drcEngine->GetReportAllTrackErrors() || !reportedAnyTrack )
+                {
+                    auto drce = DRC_ITEM::Create( DRCE_SOLDERMASK_BRIDGE );
+
+                    drce->SetErrorMessage( msg );
+                    drce->SetItems( collision.aperture, firstNetItem, collision.collidingItem );
+                    drce->SetViolatingRule( &m_bridgeRule );
+                    reportViolation( drce, collision.pos, collision.layer );
+                    reportedAnyTrack = true;
+                }
+            }
+            else
+            {
+                auto drce = DRC_ITEM::Create( DRCE_SOLDERMASK_BRIDGE );
+
+                drce->SetErrorMessage( msg );
+                drce->SetItems( collision.aperture, firstNetItem, collision.collidingItem );
+                drce->SetViolatingRule( &m_bridgeRule );
+                reportViolation( drce, collision.pos, collision.layer );
+            }
+        }
+    }
 }
 
 
@@ -761,15 +890,42 @@ bool DRC_TEST_PROVIDER_SOLDER_MASK::Run()
     m_maxError = m_board->GetDesignSettings().m_MaxError;
     m_largestClearance = 0;
 
+    auto updateLargestClearance =
+            [&]( int aClearance )
+            {
+                m_largestClearance = std::max( m_largestClearance, aClearance );
+            };
+
     for( FOOTPRINT* footprint : m_board->Footprints() )
     {
         for( PAD* pad : footprint->Pads() )
-            m_largestClearance = std::max( m_largestClearance, pad->GetSolderMaskExpansion( PADSTACK::ALL_LAYERS ) );
+            updateLargestClearance( pad->GetSolderMaskExpansion( PADSTACK::ALL_LAYERS ) );
+
+        for( BOARD_ITEM* item : footprint->GraphicalItems() )
+        {
+            if( item->Type() == PCB_SHAPE_T )
+                updateLargestClearance( static_cast<PCB_SHAPE*>( item )->GetSolderMaskExpansion() );
+        }
     }
 
-    // Order is important here: m_webWidth must be added in before m_largestCourtyardClearance is
-    // maxed with the various SILK_CLEARANCE_CONSTRAINTS.
+    for( PCB_TRACK* track : m_board->Tracks() )
+        updateLargestClearance( track->GetSolderMaskExpansion() );
+
+    for( BOARD_ITEM* item : m_board->Drawings() )
+    {
+        if( item->Type() == PCB_SHAPE_T )
+            updateLargestClearance( static_cast<PCB_SHAPE*>( item )->GetSolderMaskExpansion() );
+    }
+
+    // Order is important here: m_webWidth must be added in before m_largestClearance is
+    // maxed with the various clearance constraints.
     m_largestClearance += m_largestClearance + m_webWidth;
+
+    // Include SolderMaskToCopperClearance so R-tree queries find copper items that are within
+    // the required distance of mask apertures. Without this, tracks passing near pad apertures
+    // from different nets would not be found if SolderMaskToCopperClearance > m_largestClearance.
+    m_largestClearance = std::max( m_largestClearance,
+                                   m_board->GetDesignSettings().m_SolderMaskToCopperClearance );
 
     DRC_CONSTRAINT worstClearanceConstraint;
 
@@ -781,6 +937,8 @@ bool DRC_TEST_PROVIDER_SOLDER_MASK::Run()
 
     m_checkedPairs.clear();
     m_maskApertureNetMap.clear();
+    m_maskApertureNetMapAll.clear();
+    m_pendingCollisions.clear();
 
     buildRTrees();
 

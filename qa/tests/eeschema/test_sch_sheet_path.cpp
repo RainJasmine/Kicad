@@ -37,13 +37,14 @@
 #include <eeschema_helpers.h>
 #include <sch_screen.h>
 #include <sch_sheet.h>
+#include <schematic.h>
 
 #include <sstream>
 
 class TEST_SCH_SHEET_PATH_FIXTURE
 {
 public:
-    TEST_SCH_SHEET_PATH_FIXTURE()
+    TEST_SCH_SHEET_PATH_FIXTURE() : m_schematic( nullptr )
     {
         for( unsigned i = 0; i < 4; ++i )
         {
@@ -52,6 +53,7 @@ public:
             std::ostringstream ss;
             ss << "Sheet" << i;
             m_sheets[i].GetField( FIELD_T::SHEET_NAME )->SetText( ss.str() );
+            m_sheets[i].SetParent( &m_schematic );
         }
 
         // 0->1->2
@@ -60,6 +62,7 @@ public:
         m_linear.push_back( &m_sheets[2] );
     }
 
+    SCHEMATIC      m_schematic;
     SCH_SHEET_PATH m_empty_path;
 
     /**
@@ -176,6 +179,48 @@ BOOST_AUTO_TEST_CASE( SheetPathPageProperties )
     // BOOST_CHECK_EQUAL( m_linear.GetPageNumber(), "1" );
     // m_linear.SetPageNumber( "i" );
     // BOOST_CHECK_EQUAL( m_linear.GetPageNumber(), "i" );
+}
+
+
+/**
+ * Test PathHumanReadable with sheet names containing slashes.
+ * This tests the fix for GitLab issue #21878 where slashes in sheet names
+ * caused incorrect netclass pattern matching.
+ */
+BOOST_AUTO_TEST_CASE( PathHumanReadableWithSlashes )
+{
+    SCH_SHEET_PATH pathWithSlash;
+    SCHEMATIC schematicLocal( nullptr );
+    std::vector<SCH_SHEET> sheets;
+
+    for( unsigned i = 0; i < 3; ++i )
+    {
+        sheets.emplace_back( nullptr, VECTOR2I( i, i ) );
+        sheets[i].SetParent( &schematicLocal );
+    }
+
+    sheets[0].GetField( FIELD_T::SHEET_NAME )->SetText( "Root" );
+    sheets[1].GetField( FIELD_T::SHEET_NAME )->SetText( "Power/Supply" );
+    sheets[2].GetField( FIELD_T::SHEET_NAME )->SetText( "SubSheet" );
+
+    pathWithSlash.push_back( &sheets[0] );
+    pathWithSlash.push_back( &sheets[1] );
+    pathWithSlash.push_back( &sheets[2] );
+
+    // Without escaping, the path contains the literal '/' in the sheet name
+    wxString unescaped = pathWithSlash.PathHumanReadable( true, false, false );
+    BOOST_CHECK_EQUAL( unescaped, "/Power/Supply/SubSheet/" );
+
+    // With escaping, the '/' in the sheet name becomes "{slash}"
+    wxString escaped = pathWithSlash.PathHumanReadable( true, false, true );
+    BOOST_CHECK_EQUAL( escaped, "/Power{slash}Supply/SubSheet/" );
+
+    // The escaped version should be unambiguous since '/' only means path separator
+    // and "{slash}" means a literal slash character in the sheet name.
+
+    // Test with stripping trailing separator
+    wxString escapedNoTrail = pathWithSlash.PathHumanReadable( true, true, true );
+    BOOST_CHECK_EQUAL( escapedNoTrail, "/Power{slash}Supply/SubSheet" );
 }
 
 

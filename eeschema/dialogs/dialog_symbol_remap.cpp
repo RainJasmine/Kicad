@@ -32,7 +32,8 @@
 #include <wx_filename.h>
 #include "widgets/wx_html_report_panel.h"
 
-#include <symbol_library.h>
+#include <libraries/legacy_symbol_library.h>
+#include <libraries/symbol_library_adapter.h>
 #include <core/kicad_algo.h>
 #include <symbol_viewer_frame.h>
 #include <project_rescue.h>
@@ -42,7 +43,6 @@
 #include <sch_edit_frame.h>
 #include <schematic.h>
 #include <settings/settings_manager.h>
-#include <symbol_lib_table.h>
 #include <env_paths.h>
 #include <project_sch.h>
 #include <wx/msgdlg.h>
@@ -121,16 +121,13 @@ void DIALOG_SYMBOL_REMAP::OnRemapSymbols( wxCommandEvent& aEvent )
     // check to see if the schematic has not been converted to the symbol library table
     // method for looking up symbols.
 
-    wxFileName prjSymLibTableFileName( Prj().GetProjectPath(),
-                                       SYMBOL_LIB_TABLE::GetSymbolLibTableFileName() );
+    wxFileName prjSymLibTableFileName( Prj().GetProjectPath(), FILEEXT::SymbolLibraryTableFileName );
 
     // Delete the existing project symbol library table.
     if( prjSymLibTableFileName.FileExists() )
         wxRemoveFile( prjSymLibTableFileName.GetFullPath() );
 
     createProjectSymbolLibTable( m_messagePanel->Reporter() );
-    Prj().SetElem( PROJECT::ELEM::SYMBOL_LIB_TABLE, nullptr );
-    PROJECT_SCH::SchSymbolLibTable( &Prj() );
 
     remapSymbolsToLibTable( m_messagePanel->Reporter() );
 
@@ -138,20 +135,22 @@ void DIALOG_SYMBOL_REMAP::OnRemapSymbols( wxCommandEvent& aEvent )
     wxString paths;
     wxArrayString libNames;
 
-    SYMBOL_LIBS::SetLibNamesAndPaths( &Prj(), paths, libNames );
+    LEGACY_SYMBOL_LIBS::SetLibNamesAndPaths( &Prj(), paths, libNames );
 
     // Reload the cache symbol library.
-    Prj().SetElem( PROJECT::ELEM::SCH_SYMBOL_LIBS, nullptr );
-    PROJECT_SCH::SchLibs( &Prj() );
+    Prj().SetElem( PROJECT::ELEM::LEGACY_SYMBOL_LIBS, nullptr );
+    PROJECT_SCH::LegacySchLibs( &Prj() );
 
     Raise();
     m_remapped = true;
 }
 
 
-size_t DIALOG_SYMBOL_REMAP::getLibsNotInGlobalSymbolLibTable( std::vector< SYMBOL_LIB* >& aLibs )
+size_t DIALOG_SYMBOL_REMAP::getLibsNotInGlobalSymbolLibTable( std::vector< LEGACY_SYMBOL_LIB* >& aLibs )
 {
-    for( SYMBOL_LIB& lib : *PROJECT_SCH::SchLibs( &Prj() ) )
+    LIBRARY_MANAGER& mgr = Pgm().GetLibraryManager();
+
+    for( LEGACY_SYMBOL_LIB& lib : *PROJECT_SCH::LegacySchLibs( &Prj() ) )
     {
         // Ignore the cache library.
         if( lib.IsCache() )
@@ -160,7 +159,7 @@ size_t DIALOG_SYMBOL_REMAP::getLibsNotInGlobalSymbolLibTable( std::vector< SYMBO
         // Check for the obvious library name.
         wxString libFileName = lib.GetFullFileName();
 
-        if( !SYMBOL_LIB_TABLE::GetGlobalLibTable().FindRowByURI( libFileName ) )
+        if( !mgr.FindRowByURI( LIBRARY_TABLE_TYPE::SYMBOL, libFileName ) )
             aLibs.push_back( &lib );
     }
 
@@ -170,15 +169,21 @@ size_t DIALOG_SYMBOL_REMAP::getLibsNotInGlobalSymbolLibTable( std::vector< SYMBO
 
 void DIALOG_SYMBOL_REMAP::createProjectSymbolLibTable( REPORTER& aReporter )
 {
-    std::vector<SYMBOL_LIB*> libs;
+    SYMBOL_LIBRARY_ADAPTER* adapter = PROJECT_SCH::SymbolLibAdapter( &Prj() );
+    LIBRARY_MANAGER&        manager = Pgm().GetLibraryManager();
+
+    std::optional<LIBRARY_TABLE*> optTable = manager.Table( LIBRARY_TABLE_TYPE::SYMBOL, LIBRARY_TABLE_SCOPE::PROJECT );
+    wxCHECK( optTable, /* void */ );
+    LIBRARY_TABLE* projectTable = *optTable;
+
+    std::vector<LEGACY_SYMBOL_LIB*> libs;
 
     if( getLibsNotInGlobalSymbolLibTable( libs ) )
     {
         wxBusyCursor          busy;
-        SYMBOL_LIB_TABLE      libTable;
-        std::vector<wxString> libNames = SYMBOL_LIB_TABLE::GetGlobalLibTable().GetLogicalLibs();
+        std::vector<wxString> libNames = adapter->GetLibraryNames();
 
-        for( SYMBOL_LIB* lib : libs )
+        for( LEGACY_SYMBOL_LIB* lib : libs )
         {
             wxString libName = lib->GetName();
             int libNameInc = 1;
@@ -215,36 +220,31 @@ void DIALOG_SYMBOL_REMAP::createProjectSymbolLibTable( REPORTER& aReporter )
                                                     normalizedPath ),
                                   RPT_SEVERITY_INFO );
 
-                libTable.InsertRow( new SYMBOL_LIB_TABLE_ROW( libName, normalizedPath, type ) );
+                LIBRARY_TABLE_ROW& newRow = projectTable->InsertRow();
+                newRow.SetNickname( libName );
+                newRow.SetURI( normalizedPath );
+                newRow.SetType( type );
             }
             else
             {
-                aReporter.Report( wxString::Format( _( "Library '%s' not found." ),
-                                                    normalizedPath ),
+                aReporter.Report( wxString::Format( _( "Library '%s' not found." ), normalizedPath ),
                                   RPT_SEVERITY_WARNING );
             }
         }
 
         // Don't save empty project symbol library table.
-        if( !libTable.IsEmpty() )
+        if( !projectTable->Rows().empty() )
         {
-            wxFileName fn( Prj().GetProjectPath(), SYMBOL_LIB_TABLE::GetSymbolLibTableFileName() );
+            projectTable->Save().map_error(
+                    [&aReporter]( const LIBRARY_ERROR& aError )
+                    {
+                        aReporter.ReportTail( _( "Error saving library table:\n\n" ) + aError.message );
+                    } );
 
-            try
-            {
-                FILE_OUTPUTFORMATTER formatter( fn.GetFullPath() );
-                libTable.Format( &formatter, 0 );
-            }
-            catch( const IO_ERROR& ioe )
-            {
-                aReporter.ReportTail( wxString::Format( _( "Error writing project symbol library "
-                                                           "table.\n  %s" ),
-                                                        ioe.What() ),
-                                      RPT_SEVERITY_ERROR );
-            }
+            // Trigger a reload of the table and cancel an in-progress background load
+            Pgm().GetLibraryManager().ProjectChanged();
 
-            aReporter.ReportTail( _( "Created project symbol library table.\n" ),
-                                  RPT_SEVERITY_INFO );
+            aReporter.ReportTail( _( "Created project symbol library table.\n" ), RPT_SEVERITY_INFO );
         }
     }
 }
@@ -297,7 +297,7 @@ bool DIALOG_SYMBOL_REMAP::remapSymbolToLibTable( SCH_SYMBOL* aSymbol )
     wxCHECK_MSG( !aSymbol->GetLibId().GetLibItemName().empty(), false,
                  "The symbol LIB_ID name is empty." );
 
-    for( SYMBOL_LIB& lib : *PROJECT_SCH::SchLibs( &Prj() ) )
+    for( LEGACY_SYMBOL_LIB& lib : *PROJECT_SCH::LegacySchLibs( &Prj() ) )
     {
         // Ignore the cache library.
         if( lib.IsCache() )
@@ -313,14 +313,12 @@ bool DIALOG_SYMBOL_REMAP::remapSymbolToLibTable( SCH_SYMBOL* aSymbol )
             // Find the same library in the symbol library table using the full path and file name.
             wxString libFileName = lib.GetFullFileName();
 
-            const LIB_TABLE_ROW* row =
-                    PROJECT_SCH::SchSymbolLibTable( &Prj() )->FindRowByURI( libFileName );
-
-            if( row )
+            if( std::optional<wxString> nickname =
+                    PROJECT_SCH::SymbolLibAdapter( &Prj() )->FindLibraryByURI( libFileName ) )
             {
                 LIB_ID id = aSymbol->GetLibId();
 
-                id.SetLibNickname( row->GetNickName() );
+                id.SetLibNickname( *nickname );
 
                 // Don't resolve symbol library links now.
                 aSymbol->SetLibId( id );
@@ -355,10 +353,10 @@ bool DIALOG_SYMBOL_REMAP::backupProject( REPORTER& aReporter )
             errorMsg.Printf( _( "Cannot create project remap back up folder '%s'." ),
                              destFileName.GetPath() );
 
-            wxMessageDialog dlg( this, errorMsg, _( "Backup Error" ),
-                                 wxYES_NO | wxCENTRE | wxRESIZE_BORDER | wxICON_QUESTION );
-            dlg.SetYesNoLabels( wxMessageDialog::ButtonLabel( _( "Continue with Rescue" ) ),
-                                wxMessageDialog::ButtonLabel( _( "Abort Rescue" ) ) );
+            KICAD_MESSAGE_DIALOG dlg( this, errorMsg, _( "Backup Error" ),
+                                      wxYES_NO | wxCENTRE | wxRESIZE_BORDER | wxICON_QUESTION );
+            dlg.SetYesNoLabels( KICAD_MESSAGE_DIALOG::ButtonLabel( _( "Continue with Rescue" ) ),
+                                KICAD_MESSAGE_DIALOG::ButtonLabel( _( "Abort Rescue" ) ) );
 
             if( dlg.ShowModal() == wxID_NO )
                 return false;
@@ -373,7 +371,7 @@ bool DIALOG_SYMBOL_REMAP::backupProject( REPORTER& aReporter )
 
         // Back up symbol library table.
         srcFileName.SetPath( Prj().GetProjectPath() );
-        srcFileName.SetName( SYMBOL_LIB_TABLE::GetSymbolLibTableFileName() );
+        srcFileName.SetName( FILEEXT::SymbolLibraryTableFileName );
         destFileName = srcFileName;
         destFileName.AppendDir( backupFolder );
         destFileName.SetName( destFileName.GetName() + timeStamp );
@@ -527,13 +525,13 @@ bool DIALOG_SYMBOL_REMAP::backupProject( REPORTER& aReporter )
 
     if( !errorMsg.IsEmpty() )
     {
-        wxMessageDialog dlg( this, _( "Some of the project files could not be backed up." ),
-                             _( "Backup Error" ),
-                             wxYES_NO | wxCENTRE | wxRESIZE_BORDER | wxICON_QUESTION );
+        KICAD_MESSAGE_DIALOG dlg( this, _( "Some of the project files could not be backed up." ),
+                                  _( "Backup Error" ),
+                                  wxYES_NO | wxCENTRE | wxRESIZE_BORDER | wxICON_QUESTION );
         errorMsg.Trim();
         dlg.SetExtendedMessage( errorMsg );
-        dlg.SetYesNoLabels( wxMessageDialog::ButtonLabel( _( "Continue with Rescue" ) ),
-                            wxMessageDialog::ButtonLabel( _( "Abort Rescue" ) ) );
+        dlg.SetYesNoLabels( KICAD_MESSAGE_DIALOG::ButtonLabel( _( "Continue with Rescue" ) ),
+                            KICAD_MESSAGE_DIALOG::ButtonLabel( _( "Abort Rescue" ) ) );
 
         if( dlg.ShowModal() == wxID_NO )
             return false;

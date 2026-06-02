@@ -28,6 +28,7 @@
 #include <eeschema_settings.h>
 #include <widgets/panel_symbol_chooser.h>
 #include <symbol_chooser_frame.h>
+#include <algorithm>
 
 
 static std::vector<PICKED_SYMBOL> s_SymbolHistoryList;
@@ -36,7 +37,7 @@ static unsigned                   s_SymbolHistoryMaxCount = 8;
 static void AddSymbolToHistory( const PICKED_SYMBOL& aSymbol )
 {
     // Remove duplicates
-    alg::delete_if( s_SymbolHistoryList,
+    std::erase_if( s_SymbolHistoryList,
                     [&]( const PICKED_SYMBOL& candidate ) -> bool
                     {
                         return candidate.LibId == aSymbol.LibId
@@ -191,9 +192,11 @@ void SYMBOL_CHOOSER_FRAME::OnOK( wxCommandEvent& aEvent )
 
 WINDOW_SETTINGS* SYMBOL_CHOOSER_FRAME::GetWindowSettings( APP_SETTINGS_BASE* aCfg )
 {
-    EESCHEMA_SETTINGS* cfg = dynamic_cast<EESCHEMA_SETTINGS*>( aCfg );
-    wxASSERT( cfg );
-    return &cfg->m_LibViewPanel.window;
+    if( EESCHEMA_SETTINGS* cfg = dynamic_cast<EESCHEMA_SETTINGS*>( aCfg ) )
+        return &cfg->m_LibViewPanel.window;
+
+    wxFAIL_MSG( wxT( "SYMBOL_CHOOSER not running with EESCHEMA_SETTINGS" ) );
+    return &aCfg->m_Window;     // non-null fail-safe
 }
 
 

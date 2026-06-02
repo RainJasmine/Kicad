@@ -32,8 +32,7 @@
 
 struct ERC_REGRESSION_TEST_FIXTURE
 {
-    ERC_REGRESSION_TEST_FIXTURE() :
-            m_settingsManager( true /* headless */ )
+    ERC_REGRESSION_TEST_FIXTURE()
     { }
 
     SETTINGS_MANAGER           m_settingsManager;
@@ -47,8 +46,7 @@ BOOST_FIXTURE_TEST_CASE( ERCNoConnect, ERC_REGRESSION_TEST_FIXTURE )
 
     // Check for Errors related to no connect flag
 
-    std::vector<std::pair<wxString, int>> tests =
-    {
+    std::vector<std::pair<wxString, int>> tests = {
         { "NoConnectOnPin", 0 },
         { "NoConnectOnLine", 0 },
         { "NoConnectOnLineWithLabel", 1 },
@@ -56,6 +54,8 @@ BOOST_FIXTURE_TEST_CASE( ERCNoConnect, ERC_REGRESSION_TEST_FIXTURE )
         { "NoConnectOnLineWithHierarchicalLabel", 3 },
         { "NoConnectPinsConnectedByLine", 1 },
         { "NoConnectPinsConnectedByLabel", 1 },
+        { "issue24201/issue24201", 0 },
+        { "issue24201_label/issue24201", 1 },
     };
 
     for( const std::pair<wxString, int>& test : tests )
@@ -72,7 +72,6 @@ BOOST_FIXTURE_TEST_CASE( ERCNoConnect, ERC_REGRESSION_TEST_FIXTURE )
         m_schematic->ConnectionGraph()->RunERC();
 
         ERC_TESTER tester( m_schematic.get() );
-        tester.TestConflictingBusAliases();
         tester.TestMultUnitPinConflicts();
         tester.TestMultiunitFootprints();
         tester.TestNoConnectPins();

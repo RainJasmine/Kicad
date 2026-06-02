@@ -36,10 +36,22 @@ if( MSVC )
         set( KICAD_HOST_ARCH "x64" )
         set( KICAD_HOST_ARCH_X64 1 )
     else()
-        message(FATAL_ERROR "Failed to determine the host architecture: ${CMAKE_SYSTEM_PROCESSOR}")
+        message(FATAL_ERROR "Failed to determine the host architecture: ${CMAKE_HOST_SYSTEM_PROCESSOR}")
+    endif()
+
+    if( NOT KICAD_BUILD_ARCH STREQUAL KICAD_HOST_ARCH )
+        set( CMAKE_CROSSCOMPILING TRUE )
+
+        string(TOUPPER ${KICAD_BUILD_ARCH} CMAKE_SYSTEM_PROCESSOR)
     endif()
 else()
-    if ( NOT CMAKE_SIZEOF_VOID_P EQUAL 8 )
+    if( CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|ARM64|AARCH64" )
+        set( KICAD_BUILD_ARCH "arm64" )
+        set( KICAD_BUILD_ARCH_ARM64 1 )
+    elseif( CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM" )
+        set( KICAD_BUILD_ARCH "arm" )
+        set( KICAD_BUILD_ARCH_ARM 1 )
+    elseif( NOT CMAKE_SIZEOF_VOID_P EQUAL 8 )
         set( KICAD_BUILD_ARCH "x86" )
         set( KICAD_BUILD_ARCH_X86 1 )
     elseif( CMAKE_SIZEOF_VOID_P EQUAL 8 )
@@ -61,39 +73,18 @@ if( MSVC )
         # Explicitly specify the assembler to be used for Arm32 compile
         file(TO_CMAKE_PATH "$ENV{VCToolsInstallDir}\\bin\\HostX86\\arm\\armasm.exe" CMAKE_ASM_COMPILER)
 
-        set(CMAKE_ASM_MASM_COMPILER ${CMAKE_ASM_COMPILER})
-        message("CMAKE_ASM_MASM_COMPILER explicitly set to: ${CMAKE_ASM_MASM_COMPILER}")
 
-        # Enable generic assembly compilation to avoid CMake generate VS proj files that explicitly
-        # use ml[64].exe as the assembler.
-        enable_language(ASM)
-        set(CMAKE_ASM_COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_MultiThreaded         "")
-        set(CMAKE_ASM_COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_MultiThreadedDLL      "")
-        set(CMAKE_ASM_COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_MultiThreadedDebug    "")
-        set(CMAKE_ASM_COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_MultiThreadedDebugDLL "")
-        set(CMAKE_ASM_COMPILE_OBJECT "<CMAKE_ASM_COMPILER> -g <INCLUDES> <FLAGS> -o <OBJECT> <SOURCE>")
-
+        enable_language(ASM_MARMASM)
+        # Bugfix for CMake < 29.1
+        set(ASM_DIALECT "_MARMASM")
+        set(CMAKE_ASM${ASM_DIALECT}_COMPILE_OBJECT "<CMAKE_ASM${ASM_DIALECT}_COMPILER> <INCLUDES> <FLAGS> -o <OBJECT> <SOURCE>")
     elseif(KICAD_BUILD_ARCH_ARM64)
         message( "Configuring ARM64 assembler" )
 
-        # Explicitly specify the assembler to be used for Arm64 compile
-        if (CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM64")
-            file(TO_CMAKE_PATH "$ENV{VCToolsInstallDir}\\bin\\Hostarm64\\arm64\\armasm64.exe" CMAKE_ASM_COMPILER)
-        else()
-            file(TO_CMAKE_PATH "$ENV{VCToolsInstallDir}\\bin\\HostX64\\arm64\\armasm64.exe" CMAKE_ASM_COMPILER)
-        endif()
-
-        set(CMAKE_ASM_MASM_COMPILER ${CMAKE_ASM_COMPILER})
-        message("CMAKE_ASM_MASM_COMPILER explicitly set to: ${CMAKE_ASM_MASM_COMPILER}")
-
-        # Enable generic assembly compilation to avoid CMake generate VS proj files that explicitly
-        # use ml[64].exe as the assembler.
-        enable_language(ASM)
-        set(CMAKE_ASM_COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_MultiThreaded         "")
-        set(CMAKE_ASM_COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_MultiThreadedDLL      "")
-        set(CMAKE_ASM_COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_MultiThreadedDebug    "")
-        set(CMAKE_ASM_COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_MultiThreadedDebugDLL "")
-        set(CMAKE_ASM_COMPILE_OBJECT "<CMAKE_ASM_COMPILER> -g <INCLUDES> <FLAGS> -o <OBJECT> <SOURCE>")
+        enable_language(ASM_MARMASM)
+        # Bugfix for CMake < 29.1
+        set(ASM_DIALECT "_MARMASM")
+        set(CMAKE_ASM${ASM_DIALECT}_COMPILE_OBJECT "<CMAKE_ASM${ASM_DIALECT}_COMPILER> <INCLUDES> <FLAGS> -o <OBJECT> <SOURCE>")
     else()
         message( "Configuring MASM assembler" )
         if(KICAD_BUILD_ARCH_X86)

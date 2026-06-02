@@ -22,7 +22,49 @@
 #include <wx/string.h>
 #include <wx/wxcrt.h>
 #include <wx/filename.h>
+
+#include <cstdio>
+#include <io.h>
+#include <stdexcept>
+#include <string>
+#include <vector>
 #include <windows.h>
+#include <shlwapi.h>
+#include <winternl.h>
+
+// NtQueryDirectoryFile-based directory enumeration for fast file listing.
+// This approach is based on git-for-windows fscache implementation:
+// https://github.com/git-for-windows/git/blob/main/compat/win32/fscache.c
+// Copyright (C) Johannes Schindelin and the Git for Windows project
+// Licensed under GPL v2.
+//
+// FILE_FULL_DIR_INFORMATION is documented in the Windows Driver Kit but not the SDK.
+
+#if !defined( __MINGW32__ )     // already defined in the included mingw header <winternl.h>
+                                // So do not redefine it on mingw
+typedef struct _FILE_FULL_DIR_INFORMATION
+{
+    ULONG         NextEntryOffset;
+    ULONG         FileIndex;
+    LARGE_INTEGER CreationTime;
+    LARGE_INTEGER LastAccessTime;
+    LARGE_INTEGER LastWriteTime;
+    LARGE_INTEGER ChangeTime;
+    LARGE_INTEGER EndOfFile;
+    LARGE_INTEGER AllocationSize;
+    ULONG         FileAttributes;
+    ULONG         FileNameLength;
+    ULONG         EaSize;
+    WCHAR         FileName[1];
+} FILE_FULL_DIR_INFORMATION, *PFILE_FULL_DIR_INFORMATION;
+#endif
+
+typedef NTSTATUS( NTAPI* PFN_NtQueryDirectoryFile )( HANDLE, HANDLE, PIO_APC_ROUTINE, PVOID,
+                                                     PIO_STATUS_BLOCK, PVOID, ULONG,
+                                                     FILE_INFORMATION_CLASS, BOOLEAN,
+                                                     PUNICODE_STRING, BOOLEAN );
+
+#define FileFullDirectoryInformation ( (FILE_INFORMATION_CLASS) 2 )
 
 // Define USE_MSYS2_FALlBACK if the code for _MSC_VER does not compile on msys2
 //#define  USE_MSYS2_FALLBACK
@@ -72,48 +114,165 @@ FILE* KIPLATFORM::IO::SeqFOpen( const wxString& aPath, const wxString& aMode )
 
 bool KIPLATFORM::IO::DuplicatePermissions( const wxString &aSrc, const wxString &aDest )
 {
-    bool retval = false;
+    // Only copy the DACL. Copying OWNER/GROUP would require SE_RESTORE_NAME when the
+    // target is owned by a different principal (common for files under ProgramData or
+    // on network shares), turning ACL preservation into a hard failure. The temp file
+    // is created by the current user, so leaving owner as the current user is correct.
+    const SECURITY_INFORMATION secInfo = DACL_SECURITY_INFORMATION;
+
+    // Size-probe call: required buffer size is returned via dwSize. By API contract this
+    // call fails with ERROR_INSUFFICIENT_BUFFER; the previous implementation wrapped it
+    // in an if() and therefore never executed the body, silently returning false on every
+    // save and surfacing as "Cannot copy permissions" once atomic save made the failure
+    // fatal.
     DWORD dwSize = 0;
+    GetFileSecurityW( aSrc.wc_str(), secInfo, nullptr, 0, &dwSize );
 
-    // Retrieve the security descriptor from the source file
-    if( GetFileSecurity( aSrc.wc_str(),
-            OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
-            NULL, 0, &dwSize ) )
+    if( dwSize == 0 || GetLastError() != ERROR_INSUFFICIENT_BUFFER )
+        return false;
+
+    std::vector<BYTE> sdBuffer( dwSize );
+    PSECURITY_DESCRIPTOR pSD = static_cast<PSECURITY_DESCRIPTOR>( sdBuffer.data() );
+
+    return GetFileSecurityW( aSrc.wc_str(), secInfo, pSD, dwSize, &dwSize )
+           && SetFileSecurityW( aDest.wc_str(), secInfo, pSD );
+}
+
+bool KIPLATFORM::IO::MakeWriteable( const wxString& aFilePath )
+{
+    DWORD attrs = GetFileAttributesW( aFilePath.wc_str() );
+
+    if( attrs == INVALID_FILE_ATTRIBUTES )
+        return false;
+
+    // Remove read-only and hidden attributes if present. Both of these can prevent file
+    // operations on Windows. Hidden files in particular can cause issues when files are
+    // synced via cloud services like OneDrive.
+    DWORD attrsToRemove = FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_HIDDEN;
+
+    if( attrs & attrsToRemove )
     {
-        #ifdef __MINGW32__
-        // pSD is used as PSECURITY_DESCRIPTOR, aka void* pointer
-        // it create an annoying warning on gcc with "delete[] pSD;" :
-        // "warning: deleting 'PSECURITY_DESCRIPTOR' {aka 'void*'} is undefined"
-        // so use a BYTE* pointer (do not cast it to a void pointer)
-        BYTE* pSD = new BYTE[dwSize];
-        #else
-        PSECURITY_DESCRIPTOR pSD = static_cast<PSECURITY_DESCRIPTOR>( new BYTE[dwSize] );
-        #endif
-
-        if( !pSD )
-            return false;
-
-        if( !GetFileSecurity( aSrc.wc_str(),
-                OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION
-                        | DACL_SECURITY_INFORMATION, pSD, dwSize, &dwSize ) )
-        {
-            delete[] pSD;
-            return false;
-        }
-
-        // Assign the retrieved security descriptor to the destination file
-        if( !SetFileSecurity( aDest.wc_str(),
-                OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION
-                        | DACL_SECURITY_INFORMATION, pSD ) )
-        {
-            retval = false;
-        }
-
-        delete[] pSD;
+        attrs &= ~attrsToRemove;
+        return SetFileAttributesW( aFilePath.wc_str(), attrs ) != 0;
     }
 
-    return retval;
+    return true;
 }
+
+KIPLATFORM::IO::TARGET_ATTRS KIPLATFORM::IO::CaptureTargetAttributes( const wxString& aPath )
+{
+    TARGET_ATTRS snapshot;
+    DWORD        attrs = GetFileAttributesW( aPath.wc_str() );
+
+    if( attrs == INVALID_FILE_ATTRIBUTES )
+        return snapshot;
+
+    // Only preserve bits that SetFileSecurity (used by DuplicatePermissions) does not
+    // carry across a rename. Other attributes on the new file come from the temp's
+    // default creation attrs and should not be overwritten here.
+    snapshot.value    = static_cast<std::uint32_t>( attrs )
+                        & ( FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_HIDDEN );
+    snapshot.captured = true;
+    return snapshot;
+}
+
+
+bool KIPLATFORM::IO::ApplyTargetAttributes( const wxString& aPath, const TARGET_ATTRS& aAttrs )
+{
+    if( !aAttrs.captured )
+        return true;
+
+    DWORD current = GetFileAttributesW( aPath.wc_str() );
+
+    if( current == INVALID_FILE_ATTRIBUTES )
+        return false;
+
+    DWORD merged = current | static_cast<DWORD>( aAttrs.value );
+
+    if( merged == current )
+        return true;
+
+    return SetFileAttributesW( aPath.wc_str(), merged ) != 0;
+}
+
+
+FILE* KIPLATFORM::IO::OpenUniqueSiblingTempFile( const wxString& aTargetPath,
+                                                 const wxString& aMode, wxString* aTempPathOut,
+                                                 wxString* aError )
+{
+    // Exclusive-create closes the TOCTOU window: if another process pre-created a file
+    // at the candidate path, CreateFileW with CREATE_NEW fails and we retry.
+    for( unsigned attempt = 0; attempt < 32; ++attempt )
+    {
+        wxString candidate = MakeSiblingTempPath( aTargetPath );
+        HANDLE h = CreateFileW( candidate.wc_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                                FILE_ATTRIBUTE_NORMAL, nullptr );
+
+        if( h != INVALID_HANDLE_VALUE )
+        {
+            int fd = _open_osfhandle( reinterpret_cast<intptr_t>( h ), _O_WRONLY | _O_BINARY );
+
+            if( fd < 0 )
+            {
+                CloseHandle( h );
+                DeleteFileW( candidate.wc_str() );
+
+                if( aError )
+                {
+                    *aError = wxString::Format( wxT( "_open_osfhandle failed for '%s'" ),
+                                                candidate );
+                }
+
+                return nullptr;
+            }
+
+            FILE* fp = _wfdopen( fd, aMode.wc_str() );
+
+            if( !fp )
+            {
+                _close( fd ); // also closes the HANDLE
+                DeleteFileW( candidate.wc_str() );
+
+                if( aError )
+                    *aError = wxString::Format( wxT( "_wfdopen failed for '%s'" ), candidate );
+
+                return nullptr;
+            }
+
+            if( aTempPathOut )
+                *aTempPathOut = candidate;
+
+            return fp;
+        }
+
+        DWORD err = GetLastError();
+
+        if( err != ERROR_FILE_EXISTS && err != ERROR_ALREADY_EXISTS )
+        {
+            if( aError )
+                *aError = wxString::Format( wxT( "CreateFile failed for '%s' (Win32 %lu)" ),
+                                            candidate, err );
+
+            return nullptr;
+        }
+    }
+
+    if( aError )
+        *aError = wxT( "Exhausted temp-file retry budget" );
+
+    return nullptr;
+}
+
+
+wxString KIPLATFORM::IO::ResolveSymlinkTarget( const wxString& aPath )
+{
+    // Windows reparse points are semantically richer than POSIX symlinks (junctions,
+    // mount points, symlinks). The pre-atomic save code used wxFopen which opened
+    // through symlinks; MoveFileExW with MOVEFILE_REPLACE_EXISTING also follows
+    // reparse points for the target, so no pre-resolution is needed here.
+    return aPath;
+}
+
 
 bool KIPLATFORM::IO::IsFileHidden( const wxString& aFileName )
 {
@@ -155,4 +314,267 @@ void KIPLATFORM::IO::LongPathAdjustment( wxFileName& aFilename )
         aFilename.RemoveDir( 0 );
         aFilename.RemoveDir( 0 );
     }
+}
+
+
+long long KIPLATFORM::IO::TimestampDir( const wxString& aDirPath, const wxString& aFilespec )
+{
+    long long timestamp = 0;
+
+    // Use NtQueryDirectoryFile for fast directory enumeration (same approach as git-for-windows).
+    // This retrieves multiple directory entries per syscall into a large buffer, reducing
+    // kernel transitions compared to FindFirstFile/FindNextFile.
+    static PFN_NtQueryDirectoryFile pNtQueryDirectoryFile = nullptr;
+
+    if( !pNtQueryDirectoryFile )
+    {
+        HMODULE ntdll = GetModuleHandleW( L"ntdll.dll" );
+
+        if( ntdll )
+        {
+            pNtQueryDirectoryFile =
+                    (PFN_NtQueryDirectoryFile) GetProcAddress( ntdll, "NtQueryDirectoryFile" );
+        }
+    }
+
+    if( !pNtQueryDirectoryFile )
+        return timestamp;
+
+    std::wstring dirPath( aDirPath.t_str() );
+
+    if( !dirPath.empty() && dirPath.back() != L'\\' )
+        dirPath += L'\\';
+
+    // Prefix with \\?\ for long path support, handling UNC paths specially
+    std::wstring ntPath;
+
+    if( dirPath.size() >= 2 && dirPath[0] == L'\\' && dirPath[1] == L'\\' )
+    {
+        if( dirPath.size() >= 4 && dirPath[2] == L'?' && dirPath[3] == L'\\' )
+        {
+            // Already has \\?\ prefix
+            ntPath = dirPath;
+        }
+        else
+        {
+            // UNC path: \\server\share -> \\?\UNC\server\share
+            ntPath = L"\\\\?\\UNC\\" + dirPath.substr( 2 );
+        }
+    }
+    else
+    {
+        // Local path: C:\foo -> \\?\C:\foo
+        ntPath = L"\\\\?\\" + dirPath;
+    }
+
+    HANDLE hDir = CreateFileW( ntPath.c_str(), FILE_LIST_DIRECTORY,
+                               FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                               OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr );
+
+    if( hDir == INVALID_HANDLE_VALUE )
+        return timestamp;
+
+    std::wstring pattern( aFilespec.t_str() );
+
+    // 64KB buffer for directory entries (same size as git-for-windows)
+    alignas( sizeof( LONGLONG ) ) char buffer[64 * 1024];
+
+    IO_STATUS_BLOCK iosb;
+    NTSTATUS        status;
+    bool            firstQuery = true;
+
+    for( ;; )
+    {
+        status = pNtQueryDirectoryFile( hDir, nullptr, nullptr, nullptr, &iosb, buffer,
+                                        sizeof( buffer ), FileFullDirectoryInformation, FALSE,
+                                        nullptr, firstQuery ? TRUE : FALSE );
+        firstQuery = false;
+
+        if( status != 0 )
+            break;
+
+        PFILE_FULL_DIR_INFORMATION dirInfo = (PFILE_FULL_DIR_INFORMATION) buffer;
+
+        for( ;; )
+        {
+            // Extract null-terminated filename
+            std::wstring fileName( dirInfo->FileName, dirInfo->FileNameLength / sizeof( WCHAR ) );
+
+            // Skip directories and match against pattern
+            if( !( dirInfo->FileAttributes & FILE_ATTRIBUTE_DIRECTORY )
+                && PathMatchSpecW( fileName.c_str(), pattern.c_str() ) )
+            {
+                // Shift right by 13 (~0.8ms resolution) to avoid overflow when summing many files
+                timestamp += dirInfo->LastWriteTime.QuadPart >> 13;
+                timestamp += dirInfo->EndOfFile.LowPart;
+            }
+
+            if( dirInfo->NextEntryOffset == 0 )
+                break;
+
+            dirInfo = (PFILE_FULL_DIR_INFORMATION) ( (char*) dirInfo + dirInfo->NextEntryOffset );
+        }
+    }
+
+    CloseHandle( hDir );
+
+    return timestamp;
+}
+
+
+bool KIPLATFORM::IO::FlushToDisk( FILE* aFp )
+{
+    if( !aFp )
+        return false;
+
+    if( std::fflush( aFp ) != 0 )
+        return false;
+
+    int fd = _fileno( aFp );
+
+    if( fd < 0 )
+        return false;
+
+    HANDLE h = reinterpret_cast<HANDLE>( _get_osfhandle( fd ) );
+
+    if( h == INVALID_HANDLE_VALUE )
+        return false;
+
+    return FlushFileBuffers( h ) != 0;
+}
+
+
+bool KIPLATFORM::IO::FlushDirectory( const wxString& aDirPath )
+{
+    // NTFS metadata journaling commits rename operations durably on its own, so there is
+    // no equivalent of POSIX dir-fsync. Report success unconditionally.
+    (void) aDirPath;
+    return true;
+}
+
+
+bool KIPLATFORM::IO::AtomicRename( const wxString& aSrc, const wxString& aDst, wxString* aError )
+{
+    // Try MoveFileEx first. MOVEFILE_WRITE_THROUGH ensures the rename is committed before
+    // return, so a power loss after success does not lose the replacement. MOVEFILE_REPLACE_EXISTING
+    // allows overwriting the destination (the caller has already verified this is the intent).
+    // A brief retry loop absorbs transient antivirus / indexer / cloud-sync locks that would
+    // otherwise surface as ERROR_SHARING_VIOLATION or ERROR_ACCESS_DENIED.
+    DWORD lastError = 0;
+
+    for( int attempt = 0; attempt < 10; ++attempt )
+    {
+        if( MoveFileExW( aSrc.wc_str(), aDst.wc_str(),
+                         MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH ) )
+            return true;
+
+        lastError = GetLastError();
+
+        if( lastError != ERROR_SHARING_VIOLATION && lastError != ERROR_ACCESS_DENIED
+            && lastError != ERROR_LOCK_VIOLATION )
+            break;
+
+        Sleep( 50 );
+    }
+
+    // Fall back to ReplaceFileW, which handles some share-mode cases MoveFileEx cannot
+    // (for instance when the destination is open for reading with FILE_SHARE_DELETE).
+    if( ReplaceFileW( aDst.wc_str(), aSrc.wc_str(), nullptr, REPLACEFILE_WRITE_THROUGH, nullptr,
+                      nullptr ) )
+        return true;
+
+    DWORD fallbackError = GetLastError();
+
+    if( aError )
+    {
+        wchar_t* msg = nullptr;
+        FormatMessageW( FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM
+                            | FORMAT_MESSAGE_IGNORE_INSERTS,
+                        nullptr, fallbackError ? fallbackError : lastError,
+                        MAKELANGID( LANG_NEUTRAL, SUBLANG_DEFAULT ), reinterpret_cast<LPWSTR>( &msg ),
+                        0, nullptr );
+
+        if( msg )
+        {
+            *aError = wxString( msg );
+            LocalFree( msg );
+        }
+        else
+        {
+            *aError = wxString::Format( wxT( "Win32 error %lu" ), fallbackError ? fallbackError
+                                                                                : lastError );
+        }
+    }
+
+    return false;
+}
+
+
+KIPLATFORM::IO::MAPPED_FILE::MAPPED_FILE( const wxString& aFileName )
+{
+    m_fileHandle = CreateFileW( aFileName.wc_str(), GENERIC_READ, FILE_SHARE_READ,
+                                nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr );
+
+    if( m_fileHandle == INVALID_HANDLE_VALUE )
+    {
+        m_fileHandle = nullptr;
+        throw std::runtime_error( std::string( "Cannot open file: " )
+                                  + aFileName.ToStdString() );
+    }
+
+    LARGE_INTEGER fileSize;
+
+    if( !GetFileSizeEx( m_fileHandle, &fileSize ) )
+    {
+        CloseHandle( m_fileHandle );
+        m_fileHandle = nullptr;
+        throw std::runtime_error( std::string( "Cannot determine file size: " )
+                                  + aFileName.ToStdString() );
+    }
+
+    m_size = static_cast<size_t>( fileSize.QuadPart );
+
+    if( m_size == 0 )
+    {
+        CloseHandle( m_fileHandle );
+        m_fileHandle = nullptr;
+        return;
+    }
+
+    m_mapHandle = CreateFileMappingW( m_fileHandle, nullptr, PAGE_READONLY, 0, 0, nullptr );
+
+    if( !m_mapHandle )
+    {
+        CloseHandle( m_fileHandle );
+        m_fileHandle = nullptr;
+        readIntoBuffer( aFileName );
+        return;
+    }
+
+    void* ptr = MapViewOfFile( m_mapHandle, FILE_MAP_READ, 0, 0, 0 );
+
+    if( !ptr )
+    {
+        CloseHandle( m_mapHandle );
+        m_mapHandle = nullptr;
+        CloseHandle( m_fileHandle );
+        m_fileHandle = nullptr;
+        readIntoBuffer( aFileName );
+        return;
+    }
+
+    m_data = static_cast<const uint8_t*>( ptr );
+}
+
+
+KIPLATFORM::IO::MAPPED_FILE::~MAPPED_FILE()
+{
+    if( m_data && m_mapHandle )
+        UnmapViewOfFile( m_data );
+
+    if( m_mapHandle )
+        CloseHandle( m_mapHandle );
+
+    if( m_fileHandle )
+        CloseHandle( m_fileHandle );
 }

@@ -37,9 +37,14 @@ struct PACKAGE_VIEW_DATA
     wxString          repository_name;
     wxString          current_version;
     wxString          update_version;
+    bool              swig_warning;
     PACKAGE_VIEW_DATA( const PCM_PACKAGE aPackage ) :
-            package( std::move( aPackage ) ), bitmap( nullptr ), state( PPS_INSTALLED ),
-            pinned( false ){};
+            package( std::move( aPackage ) ),
+            bitmap( nullptr ),
+            state( PPS_INSTALLED ),
+            pinned( false ),
+            swig_warning( false )
+    {};
     PACKAGE_VIEW_DATA( const PCM_INSTALLATION_ENTRY& aEntry ) :
             package( std::move( aEntry.package ) ), bitmap( nullptr )
     {
@@ -48,6 +53,7 @@ struct PACKAGE_VIEW_DATA
         repository_name = aEntry.repository_name;
         current_version = aEntry.current_version;
         pinned = aEntry.pinned;
+        swig_warning = false;
     }
 };
 

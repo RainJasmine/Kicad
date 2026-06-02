@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100mm" height="100mm">
+  <!-- Single-node closed path (teardrop shape).
+       One anchor point at (50,80) with cubic bezier control points creating a loop.
+       Regression test for https://gitlab.com/kicad/code/kicad/-/issues/11445 -->
+  <path d="M 50,80 C 80,20 20,20 50,80 Z" fill="black" stroke="none" />
+</svg>

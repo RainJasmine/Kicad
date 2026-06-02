@@ -26,6 +26,7 @@
 #include "wx/html/m_templ.h"
 #include "wx/html/styleparams.h"
 #include "core/kicad_algo.h"
+#include <algorithm>
 #include <drc/drc_item.h>
 #include <drc/drc_rule.h>
 #include <board.h>
@@ -204,6 +205,10 @@ DRC_ITEM DRC_ITEM::footprintFilters( DRCE_FOOTPRINT_FILTERS,
         _HKI( "Footprint doesn't match symbol's footprint filters" ),
         wxT( "footprint_filters_mismatch" ) );
 
+DRC_ITEM DRC_ITEM::schematicFieldsParity( DRCE_SCHEMATIC_FIELDS_PARITY,
+        _HKI( "Footprint field does not match symbol field" ),
+        wxT( "footprint_symbol_field_mismatch" ) );
+
 DRC_ITEM DRC_ITEM::libFootprintIssues( DRCE_LIB_FOOTPRINT_ISSUES,
         _HKI( "Footprint not found in libraries" ),
         wxT( "lib_footprint_issues" ) );
@@ -244,8 +249,8 @@ DRC_ITEM DRC_ITEM::silkEdgeClearance( DRCE_SILK_EDGE_CLEARANCE,
         _HKI( "Silkscreen clipped by board edge" ),
         wxT( "silk_edge_clearance" ) );
 
-DRC_ITEM DRC_ITEM::silkOverlaps( DRCE_OVERLAPPING_SILK,
-        _HKI( "Silkscreen overlap" ),
+DRC_ITEM DRC_ITEM::silkClearance( DRCE_SILK_CLEARANCE,
+        _HKI( "Silkscreen clearance" ),
         wxT( "silk_overlap" ) );
 
 DRC_ITEM DRC_ITEM::textHeightOutOfRange( DRCE_TEXT_HEIGHT,
@@ -297,97 +302,106 @@ DRC_ITEM DRC_ITEM::nonMirroredTextOnBackLayer( DRCE_NONMIRRORED_TEXT_ON_BACK_LAY
         _HKI( "Non-Mirrored text on back layer" ),
         wxT( "nonmirrored_text_on_back_layer" ) );
 
-/// Deprecated item names
-/// They have the current error code but the old name for compatibility with old settings files
+DRC_ITEM DRC_ITEM::missingTuningProfile( DRCE_MISSING_TUNING_PROFILE,
+        _HKI( "Missing tuning profile" ),
+        wxT( "missing_tuning_profile" ) );
 
-DRC_ITEM DRC_ITEM::holeNearHolev8( DRCE_DRILLED_HOLES_TOO_CLOSE,
-        _HKI( "Drilled hole too close to other hole - deprecated" ),
-        wxT( "hole_near_hole" ) );
+DRC_ITEM DRC_ITEM::tuningProfileImplicitRules( DRCE_TUNING_PROFILE_IMPLICIT_RULES,
+        _HKI( "Tuning profile track geometries" ),
+        wxT( "tuning_profile_track_geometries" ) );
 
-std::vector<std::reference_wrapper<RC_ITEM>> DRC_ITEM::allItemTypes(
-        {
-            DRC_ITEM::heading_electrical,
-            DRC_ITEM::shortingItems,
-            DRC_ITEM::tracksCrossing,
-            DRC_ITEM::clearance,
-            DRC_ITEM::creepage,
-            DRC_ITEM::viaDangling,
-            DRC_ITEM::trackDangling,
-            DRC_ITEM::starvedThermal,
+DRC_ITEM DRC_ITEM::trackOnPostMachinedLayer( DRCE_TRACK_ON_POST_MACHINED_LAYER,
+        _HKI( "Track connected to post-machined or backdrilled layer" ),
+        wxT( "track_on_post_machined_layer" ) );
 
-            DRC_ITEM::heading_DFM,
-            DRC_ITEM::edgeClearance,
-            DRC_ITEM::holeClearance,
-            DRC_ITEM::holeNearHole,
-            DRC_ITEM::holesCoLocated,
-            DRC_ITEM::trackWidth,
-            DRC_ITEM::trackAngle,
-            DRC_ITEM::trackSegmentLength,
-            DRC_ITEM::annularWidth,
-            DRC_ITEM::drillTooSmall,
-            DRC_ITEM::microviaDrillTooSmall,
-            DRC_ITEM::courtyardsOverlap,
-            DRC_ITEM::missingCourtyard,
-            DRC_ITEM::malformedCourtyard,
-            DRC_ITEM::invalidOutline,
-            DRC_ITEM::copperSliver,
-            DRC_ITEM::solderMaskBridge,
-            DRC_ITEM::connectionWidth,
+DRC_ITEM DRC_ITEM::trackNotCenteredOnVia( DRCE_TRACK_NOT_CENTERED_ON_VIA,
+        _HKI( "Track endpoint not centered on via" ),
+        wxT( "track_not_centered_on_via" ) );
 
-            DRC_ITEM::heading_schematic_parity,
-            DRC_ITEM::duplicateFootprints,
-            DRC_ITEM::missingFootprint,
-            DRC_ITEM::extraFootprint,
-            DRC_ITEM::schematicParity,
-            DRC_ITEM::footprintFilters,
-            DRC_ITEM::netConflict,
-            DRC_ITEM::unconnectedItems,
+std::vector<std::reference_wrapper<RC_ITEM>> DRC_ITEM::allItemTypes( {
+        DRC_ITEM::heading_electrical,
+        DRC_ITEM::shortingItems,
+        DRC_ITEM::tracksCrossing,
+        DRC_ITEM::clearance,
+        DRC_ITEM::creepage,
+        DRC_ITEM::viaDangling,
+        DRC_ITEM::trackDangling,
+        DRC_ITEM::starvedThermal,
 
-            DRC_ITEM::heading_signal_integrity,
-            DRC_ITEM::lengthOutOfRange,
-            DRC_ITEM::skewOutOfRange,
-            DRC_ITEM::viaCountOutOfRange,
-            DRC_ITEM::diffPairGapOutOfRange,
-            DRC_ITEM::diffPairUncoupledLengthTooLong,
+        DRC_ITEM::heading_DFM,
+        DRC_ITEM::edgeClearance,
+        DRC_ITEM::holeClearance,
+        DRC_ITEM::holeNearHole,
+        DRC_ITEM::holesCoLocated,
+        DRC_ITEM::trackWidth,
+        DRC_ITEM::trackAngle,
+        DRC_ITEM::trackSegmentLength,
+        DRC_ITEM::annularWidth,
+        DRC_ITEM::drillTooSmall,
+        DRC_ITEM::microviaDrillTooSmall,
+        DRC_ITEM::viaDiameter,
+        DRC_ITEM::courtyardsOverlap,
+        DRC_ITEM::missingCourtyard,
+        DRC_ITEM::malformedCourtyard,
+        DRC_ITEM::invalidOutline,
+        DRC_ITEM::copperSliver,
+        DRC_ITEM::solderMaskBridge,
+        DRC_ITEM::connectionWidth,
+        DRC_ITEM::trackOnPostMachinedLayer,
+        DRC_ITEM::trackNotCenteredOnVia,
+        DRC_ITEM::tuningProfileImplicitRules,
 
-            DRC_ITEM::heading_readability,
-            DRC_ITEM::silkOverlaps,
-            DRC_ITEM::silkMaskClearance,
-            DRC_ITEM::silkEdgeClearance,
-            DRC_ITEM::textHeightOutOfRange,
-            DRC_ITEM::textThicknessOutOfRange,
-            DRC_ITEM::mirroredTextOnFrontLayer,
-            DRC_ITEM::nonMirroredTextOnBackLayer,
+        DRC_ITEM::heading_schematic_parity,
+        DRC_ITEM::duplicateFootprints,
+        DRC_ITEM::missingFootprint,
+        DRC_ITEM::extraFootprint,
+        DRC_ITEM::schematicParity,
+        DRC_ITEM::schematicFieldsParity,
+        DRC_ITEM::footprintFilters,
+        DRC_ITEM::netConflict,
+        DRC_ITEM::unconnectedItems,
 
-            DRC_ITEM::heading_misc,
-            DRC_ITEM::itemsNotAllowed,
-            DRC_ITEM::textOnEdgeCuts,
-            DRC_ITEM::zonesIntersect,
-            DRC_ITEM::isolatedCopper,
-            DRC_ITEM::footprint,
-            DRC_ITEM::padstack,
-            DRC_ITEM::pthInsideCourtyard,
-            DRC_ITEM::npthInsideCourtyard,
-            DRC_ITEM::itemOnDisabledLayer,
-            DRC_ITEM::unresolvedVariable,
-            DRC_ITEM::footprintTypeMismatch,
-            DRC_ITEM::libFootprintIssues,
-            DRC_ITEM::libFootprintMismatch,
-            DRC_ITEM::footprintTHPadhasNoHole,
+        DRC_ITEM::heading_signal_integrity,
+        DRC_ITEM::lengthOutOfRange,
+        DRC_ITEM::skewOutOfRange,
+        DRC_ITEM::viaCountOutOfRange,
+        DRC_ITEM::diffPairGapOutOfRange,
+        DRC_ITEM::diffPairUncoupledLengthTooLong,
 
-            // Deprecated items need to come second to last in the list
-            // They will not be shown in the panel but will be used to
-            // parse old settings files
-            DRC_ITEM::heading_deprecated,
-            DRC_ITEM::holeNearHolev8,
+        DRC_ITEM::heading_readability,
+        DRC_ITEM::silkClearance,
+        DRC_ITEM::silkMaskClearance,
+        DRC_ITEM::silkEdgeClearance,
+        DRC_ITEM::textHeightOutOfRange,
+        DRC_ITEM::textThicknessOutOfRange,
+        DRC_ITEM::mirroredTextOnFrontLayer,
+        DRC_ITEM::nonMirroredTextOnBackLayer,
 
-            // DRC_ITEM types with no user-editable severities
-            // NOTE: this MUST be the last grouping in the list!
-            DRC_ITEM::heading_internal,
-            DRC_ITEM::padstackInvalid,
-            DRC_ITEM::genericError,
-            DRC_ITEM::genericWarning,
-        } );
+        DRC_ITEM::heading_misc,
+        DRC_ITEM::itemsNotAllowed,
+        DRC_ITEM::textOnEdgeCuts,
+        DRC_ITEM::zonesIntersect,
+        DRC_ITEM::isolatedCopper,
+        DRC_ITEM::footprint,
+        DRC_ITEM::padstack,
+        DRC_ITEM::pthInsideCourtyard,
+        DRC_ITEM::npthInsideCourtyard,
+        DRC_ITEM::itemOnDisabledLayer,
+        DRC_ITEM::unresolvedVariable,
+        DRC_ITEM::assertionFailure,
+        DRC_ITEM::footprintTypeMismatch,
+        DRC_ITEM::libFootprintIssues,
+        DRC_ITEM::libFootprintMismatch,
+        DRC_ITEM::footprintTHPadhasNoHole,
+        DRC_ITEM::missingTuningProfile,
+
+        // DRC_ITEM types with no user-editable severities
+        // NOTE: this MUST be the last grouping in the list!
+        DRC_ITEM::heading_internal,
+        DRC_ITEM::padstackInvalid,
+        DRC_ITEM::genericError,
+        DRC_ITEM::genericWarning,
+} );
 
 
 std::shared_ptr<DRC_ITEM> DRC_ITEM::Create( int aErrorCode )
@@ -432,6 +446,7 @@ std::shared_ptr<DRC_ITEM> DRC_ITEM::Create( int aErrorCode )
     case DRCE_NET_CONFLICT:             return std::make_shared<DRC_ITEM>( netConflict );
     case DRCE_EXTRA_FOOTPRINT:          return std::make_shared<DRC_ITEM>( extraFootprint );
     case DRCE_SCHEMATIC_PARITY:         return std::make_shared<DRC_ITEM>( schematicParity );
+    case DRCE_SCHEMATIC_FIELDS_PARITY:         return std::make_shared<DRC_ITEM>( schematicFieldsParity );
     case DRCE_FOOTPRINT_FILTERS:        return std::make_shared<DRC_ITEM>( footprintFilters );
     case DRCE_LIB_FOOTPRINT_ISSUES:     return std::make_shared<DRC_ITEM>( libFootprintIssues );
     case DRCE_LIB_FOOTPRINT_MISMATCH:   return std::make_shared<DRC_ITEM>( libFootprintMismatch );
@@ -440,7 +455,7 @@ std::shared_ptr<DRC_ITEM> DRC_ITEM::Create( int aErrorCode )
     case DRCE_GENERIC_WARNING:          return std::make_shared<DRC_ITEM>( genericWarning );
     case DRCE_GENERIC_ERROR:            return std::make_shared<DRC_ITEM>( genericError );
     case DRCE_COPPER_SLIVER:            return std::make_shared<DRC_ITEM>( copperSliver );
-    case DRCE_OVERLAPPING_SILK:         return std::make_shared<DRC_ITEM>( silkOverlaps );
+    case DRCE_SILK_CLEARANCE:           return std::make_shared<DRC_ITEM>( silkClearance );
     case DRCE_SILK_MASK_CLEARANCE:      return std::make_shared<DRC_ITEM>( silkMaskClearance );
     case DRCE_SILK_EDGE_CLEARANCE:      return std::make_shared<DRC_ITEM>( silkEdgeClearance );
     case DRCE_SOLDERMASK_BRIDGE:        return std::make_shared<DRC_ITEM>( solderMaskBridge );
@@ -456,8 +471,11 @@ std::shared_ptr<DRC_ITEM> DRC_ITEM::Create( int aErrorCode )
     case DRCE_PAD_TH_WITH_NO_HOLE:      return std::make_shared<DRC_ITEM>( footprintTHPadhasNoHole );
     case DRCE_MIRRORED_TEXT_ON_FRONT_LAYER:        return std::make_shared<DRC_ITEM>( mirroredTextOnFrontLayer );
     case DRCE_NONMIRRORED_TEXT_ON_BACK_LAYER:      return std::make_shared<DRC_ITEM>( nonMirroredTextOnBackLayer );
+    case DRCE_MISSING_TUNING_PROFILE:   return std::make_shared<DRC_ITEM>( missingTuningProfile );
+    case DRCE_TRACK_ON_POST_MACHINED_LAYER: return std::make_shared<DRC_ITEM>( trackOnPostMachinedLayer );
+    case DRCE_TRACK_NOT_CENTERED_ON_VIA:    return std::make_shared<DRC_ITEM>( trackNotCenteredOnVia );
+
     default:
-        wxFAIL_MSG( wxT( "Unknown DRC error code" ) );
         return nullptr;
     }
 }
@@ -500,12 +518,12 @@ KIID DRC_ITEM::GetAuxItem3ID() const
 }
 
 
-wxString DRC_ITEM::GetViolatingRuleDesc() const
+wxString DRC_ITEM::GetViolatingRuleDesc( bool aTranslate ) const
 {
     if( m_violatingRule )
-        return wxString::Format( _( "Rule: %s" ), m_violatingRule->m_Name );
+        return wxString::Format( aTranslate ? _( "Rule: %s" ) : wxString( wxT( "Rule: %s" ) ), m_violatingRule->m_Name );
     else
-        return _( "Local override" );
+        return aTranslate ? _( "Local override" ) : wxString( wxT( "Local override" ) );
 }
 
 
@@ -523,6 +541,19 @@ void DRC_ITEMS_PROVIDER::SetSeverities( int aSeverities )
             m_filteredMarkers.push_back( marker );
         }
     }
+
+    // Sort markers so that errors appear before warnings
+    std::stable_sort( m_filteredMarkers.begin(), m_filteredMarkers.end(),
+                      []( const PCB_MARKER* a, const PCB_MARKER* b )
+                      {
+                          return a->GetSeverity() > b->GetSeverity();
+                      } );
+}
+
+
+int DRC_ITEMS_PROVIDER::GetSeverities() const
+{
+    return m_severities;
 }
 
 

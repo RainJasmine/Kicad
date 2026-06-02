@@ -44,11 +44,11 @@ class BOARD_ITEM;
 class FP_CACHE;
 class LSET;
 class PCB_IO_KICAD_SEXPR_PARSER;
-class NETINFO_MAPPING;
 class BOARD_DESIGN_SETTINGS;
 class PCB_DIMENSION_BASE;
-class PCB_SHAPE;
+class PCB_POINT;
 class PCB_REFERENCE_IMAGE;
+class PCB_SHAPE;
 class PCB_TARGET;
 class PAD;
 class PADSTACK;
@@ -59,11 +59,13 @@ class ZONE;
 class PCB_TEXT;
 class PCB_TEXTBOX;
 class PCB_TABLE;
+class PCB_BARCODE;
 class EDA_TEXT;
 class SHAPE_LINE_CHAIN;
 class TEARDROP_PARAMETERS;
 class PCB_IO_KICAD_SEXPR;   // forward decl
 
+// clang-format off
 /// Current s-expression file format version.  2 was the last legacy format version.
 
 //#define SEXPR_BOARD_FILE_VERSION    3         // first s-expression format, used legacy cu stack
@@ -183,14 +185,30 @@ class PCB_IO_KICAD_SEXPR;   // forward decl
 //#define SEXPR_BOARD_FILE_VERSION    20250309  // Component class dynamic assignment rules
 //#define SEXPR_BOARD_FILE_VERSION    20250324  // Jumper pads
 //#define SEXPR_BOARD_FILE_VERSION    20250401  // Time domain length tuning
-#define SEXPR_BOARD_FILE_VERSION      20250513  // Groups can have design block lib_id
+//#define SEXPR_BOARD_FILE_VERSION    20250513  // Groups can have design block lib_id
+//#define SEXPR_BOARD_FILE_VERSION    20250801  // (island) -> (island yes/no)
+//#define SEXPR_BOARD_FILE_VERSION    20250811  // press-fit pad fabr prop support
+//#define SEXPR_BOARD_FILE_VERSION    20250818  // Support for custom layer counts in footprints
+//#define SEXPR_BOARD_FILE_VERSION    20250829  // Support Rounded Rectangles
+//#define SEXPR_BOARD_FILE_VERSION    20250901  // PCB points
+//#define SEXPR_BOARD_FILE_VERSION    20250907  // uuids for tables
+//#define SEXPR_BOARD_FILE_VERSION    20250909  // footprint unit metadata (units/pins)
+//#define SEXPR_BOARD_FILE_VERSION    20250914  // Add support for PCB_BARCODE objects
+//#define SEXPR_BOARD_FILE_VERSION    20250926  // Split via types into blind/buried/through
+//#define SEXPR_BOARD_FILE_VERSION    20251027  // Store pad-to-die delays with correct scaling
+//#define SEXPR_BOARD_FILE_VERSION    20251028  // Stop writing netcodes; they're an internal implementation detail
+//#define SEXPR_BOARD_FILE_VERSION    20251101  // Backdrill and tertiary drill support
+//#define SEXPR_BOARD_FILE_VERSION    20260101  // PCB variants with per-footprint overrides
+//#define SEXPR_BOARD_FILE_VERSION    20260206  // Fix barcode and variant attribute serialization
+//----------------- Start of 11.0 development -----------------
+#define SEXPR_BOARD_FILE_VERSION      20260410  // Extruded 3D body
 
 #define BOARD_FILE_HOST_VERSION       20200825  ///< Earlier files than this include the host tag
 #define LEGACY_ARC_FORMATTING         20210925  ///< These were the last to use old arc formatting
 #define LEGACY_NET_TIES               20220815  ///< These were the last to use the keywords field
                                                 ///<   to indicate a net-tie.
 #define FIRST_NORMALIZED_VERISON      20230924  ///< Earlier files did not have normalized bools
-
+// clang-format on
 
 // common combinations of the above:
 
@@ -333,6 +351,13 @@ public:
     void SaveBoard( const wxString& aFileName, BOARD* aBoard,
                     const std::map<std::string, UTF8>* aProperties = nullptr ) override;
 
+    /** Serialize a BOARD to an OUTPUTFORMATTER without file I/O or Prettify.
+     *  Handles init(), EmbedFonts/ClearEmbeddedFonts, header, Format(), and footer.
+     *  The caller owns the formatter and is responsible for flushing/closing it.
+     *  Skips GroupsSanityCheck (no UI interaction allowed from timer callbacks). */
+    void FormatBoardToFormatter( OUTPUTFORMATTER* aOut, BOARD* aBoard,
+                                 const std::map<std::string, UTF8>* aProperties = nullptr );
+
     BOARD* LoadBoard( const wxString& aFileName, BOARD* aAppendToMe,
                       const std::map<std::string, UTF8>* aProperties = nullptr,
                       PROJECT* aProject = nullptr ) override;
@@ -349,6 +374,8 @@ public:
                                              const std::map<std::string,
                                              UTF8>* aProperties = nullptr ) override;
 
+    bool CachesEnumeratedFootprints() const override { return true; }
+
     bool FootprintExists( const wxString& aLibraryPath, const wxString& aFootprintName,
                           const std::map<std::string, UTF8>* aProperties = nullptr ) override;
 
@@ -364,6 +391,8 @@ public:
 
     void FootprintDelete( const wxString& aLibraryPath, const wxString& aFootprintName,
                           const std::map<std::string, UTF8>* aProperties = nullptr ) override;
+
+    void ClearCachedFootprints( const wxString& aLibraryPath ) override;
 
     long long GetLibraryTimestamp( const wxString& aLibraryPath ) const override;
 
@@ -420,10 +449,10 @@ protected:
     void formatBoardLayers( const BOARD* aBoard ) const;
 
     /// formats the Nets and Netclasses
-    void formatNetInformation( const BOARD* aBoard ) const;
-
-    /// formats the Nets and Netclasses
     void formatProperties( const BOARD* aBoard ) const;
+
+    /// formats the board variant registry
+    void formatVariants( const BOARD* aBoard ) const;
 
     /// writes everything that comes before the board_items, like settings and layers etc
     void formatHeader( const BOARD* aBoard ) const;
@@ -442,10 +471,13 @@ private:
     void format( const PCB_SHAPE* aSegment ) const;
 
     void format( const PCB_TARGET* aTarget ) const;
+    void format( const PCB_POINT* aPoint ) const;
 
     void format( const FOOTPRINT* aFootprint ) const;
 
     void format( const PAD* aPad ) const;
+
+    void format( const PCB_BARCODE* aBarcode ) const;
 
     void format( const PCB_TEXT* aText ) const;
     void format( const PCB_TEXTBOX* aTextBox ) const;
@@ -468,7 +500,7 @@ private:
 
     void formatLayer( PCB_LAYER_ID aLayer, bool aIsKnockout = false ) const;
 
-    void formatLayers( LSET aLayerMask, bool aEnumerateLayers ) const;
+    void formatLayers( LSET aLayerMask, bool aEnumerateLayers, bool aIsZone = false ) const;
 
     friend class FP_CACHE;
 
@@ -483,8 +515,6 @@ protected:
     STRING_FORMATTER       m_sf;
     OUTPUTFORMATTER*       m_out;        ///< output any Format()s to this, no ownership
     int                    m_ctl;
-    NETINFO_MAPPING*       m_mapping;    ///< mapping for net codes, so only not empty net codes
-                                         ///< are stored with consecutive integers as net codes
 
     std::function<bool( wxString aTitle, int aIcon, wxString aMsg, wxString aAction )> m_queryUserCallback;
 };

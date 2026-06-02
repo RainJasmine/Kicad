@@ -30,9 +30,11 @@
 #include <sch_sheet.h>
 #include <schematic.h>
 #include <sch_io/kicad_sexpr/sch_io_kicad_sexpr.h>
-#include <symbol_lib_table.h>
 #include <wildcards_and_files_ext.h>
 #include <wx_filename.h>
+#include <libraries/library_table.h>
+#include <libraries/symbol_library_adapter.h>
+#include <reporter.h>
 #include <wx/dir.h>
 #include <wx/wfstream.h>
 #include <wx/txtstrm.h>
@@ -69,8 +71,8 @@ SCH_SHEET* SCH_IO_CADSTAR_ARCHIVE::LoadSchematicFile( const wxString&        aFi
 {
     wxCHECK( !aFileName.IsEmpty() && aSchematic, nullptr );
 
-    // Show the font substitution warnings
-    fontconfig::FONTCONFIG::SetReporter( &WXLOG_REPORTER::GetInstance() );
+    // Collect the font substitution warnings (RAII - automatically reset on scope exit)
+    FONTCONFIG_REPORTER_SCOPE fontconfigScope( &LOAD_INFO_REPORTER::GetInstance() );
 
     SCH_SHEET* rootSheet = nullptr;
 
@@ -78,13 +80,13 @@ SCH_SHEET* SCH_IO_CADSTAR_ARCHIVE::LoadSchematicFile( const wxString&        aFi
     if( aAppendToMe )
     {
         wxCHECK_MSG( aSchematic->IsValid(), nullptr, "Can't append to a schematic with no root!" );
-        rootSheet = &aSchematic->Root();
+        rootSheet = aAppendToMe;
     }
     else
     {
         rootSheet = new SCH_SHEET( aSchematic );
         rootSheet->SetFileName( aFileName );
-        aSchematic->SetRoot( rootSheet );
+        aSchematic->SetTopLevelSheets( { rootSheet } );
     }
 
     if( !rootSheet->GetScreen() )
@@ -100,42 +102,34 @@ SCH_SHEET* SCH_IO_CADSTAR_ARCHIVE::LoadSchematicFile( const wxString&        aFi
     CADSTAR_SCH_ARCHIVE_LOADER csaLoader( aFileName, m_reporter, m_progressReporter );
     csaLoader.Load( aSchematic, rootSheet );
 
-    // SAVE SYMBOLS TO PROJECT LIBRARY:
-    SYMBOL_LIB_TABLE* libTable = PROJECT_SCH::SchSymbolLibTable( &aSchematic->Prj() );
+    // Save symbols to project library
+    SYMBOL_LIBRARY_ADAPTER* adapter = PROJECT_SCH::SymbolLibAdapter( &aSchematic->Project() );
+    LIBRARY_TABLE* table = adapter->ProjectTable().value_or( nullptr );
+    wxCHECK_MSG( table, nullptr, "Could not load symbol lib table." );
 
-    wxCHECK_MSG( libTable, nullptr, "Could not load symbol lib table." );
-
-    wxFileName prj_fn = aSchematic->Prj().GetProjectFullName();
+    wxFileName prj_fn = aSchematic->Project().GetProjectFullName();
     wxString libName = CADSTAR_SCH_ARCHIVE_LOADER::CreateLibName( prj_fn, nullptr );
 
-    wxFileName libFileName( aSchematic->Prj().GetProjectPath(), libName,
+    wxFileName libFileName( aSchematic->Project().GetProjectPath(), libName,
                             FILEEXT::KiCadSymbolLibFileExtension );
 
     IO_RELEASER<SCH_IO> sch_plugin( SCH_IO_MGR::FindPlugin( SCH_IO_MGR::SCH_KICAD ) );
 
-    if( !libTable->HasLibrary( libName ) )
+    if( !table->HasRow( libName ) )
     {
         // Create a new empty symbol library.
         sch_plugin->CreateLibrary( libFileName.GetFullPath() );
         wxString libTableUri = "${KIPRJMOD}/" + libFileName.GetFullName();
 
         // Add the new library to the project symbol library table.
-        libTable->InsertRow(
-                new SYMBOL_LIB_TABLE_ROW( libName, libTableUri, wxString( "KiCad" ) ) );
+        LIBRARY_TABLE_ROW& row = table->InsertRow();
+        row.SetNickname( libName );
+        row.SetURI( libTableUri );
+        row.SetType( "KiCad" );
 
-        // Save project symbol library table.
-        wxFileName libtab_fn( aSchematic->Prj().GetProjectPath(),
-                       SYMBOL_LIB_TABLE::GetSymbolLibTableFileName() );
+        table->Save();
 
-        // So output formatter goes out of scope and closes the file before reloading.
-        {
-            FILE_OUTPUTFORMATTER formatter( libtab_fn.GetFullPath() );
-            libTable->Format( &formatter, 0 );
-        }
-
-        // Relaod the symbol library table.
-        aSchematic->Prj().SetElem( PROJECT::ELEM::SYMBOL_LIB_TABLE, NULL );
-        PROJECT_SCH::SchSymbolLibTable( &aSchematic->Prj() );
+        adapter->LoadOne( libName );
     }
 
     // set properties to prevent save file on every symbol save
@@ -247,8 +241,8 @@ void SCH_IO_CADSTAR_ARCHIVE::ensureLoadedLibrary( const wxString& aLibraryPath,
     wxFileName csafn;
     wxString   fplibname = "cadstarpcblib";
 
-    // Suppress font substitution warnings
-    fontconfig::FONTCONFIG::SetReporter( nullptr );
+    // Suppress font substitution warnings (RAII - automatically restored on scope exit)
+    FONTCONFIG_REPORTER_SCOPE fontconfigScope( nullptr );
 
     if( aProperties && aProperties->contains( "csa" ) )
     {
@@ -328,4 +322,3 @@ void SCH_IO_CADSTAR_ARCHIVE::ensureLoadedLibrary( const wxString& aLibraryPath,
     m_cachefplibname = fplibname;
     m_cacheTimestamp = timestamp;
 }
-

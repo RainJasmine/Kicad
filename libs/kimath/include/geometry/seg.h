@@ -223,6 +223,16 @@ public:
     }
 
     /**
+     * Check if this segment intersects a line defined by slope \a aSlope and offset \a aOffset.
+     *
+     * @param aSlope slope of the line
+     * @param aOffset offset of the line
+     * @param aIntersection output intersection point, if exists
+     * @return true if the segment intersects the line, false otherwise
+     */
+    bool IntersectsLine( double aSlope, double aOffset, VECTOR2I& aIntersection ) const;
+
+    /**
      * Compute a segment perpendicular to this one, passing through point \a aP.
      *
      * @param aP Point through which the new segment will pass
@@ -380,8 +390,8 @@ public:
     }
 
 private:
-    bool ccw( const VECTOR2I& aA, const VECTOR2I& aB, const VECTOR2I &aC ) const;
 
+    bool checkCollinearOverlap( const SEG& aSeg, bool useXAxis, bool aIgnoreEndpoints, VECTOR2I* aPt ) const;
     bool intersects( const SEG& aSeg, bool aIgnoreEndpoints = false, bool aLines = false,
                      VECTOR2I* aPt = nullptr ) const;
 

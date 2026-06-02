@@ -23,10 +23,6 @@
 
 #include <layer_ids.h>
 #include <lset.h>
-#include <settings/parameters.h>
-
-// Can be removed by refactoring PARAM_LAYER_PRESET
-#include <json_common.h>
 #include <math/box2.h>
 #include <glm/glm.hpp>
 
@@ -52,6 +48,7 @@ struct KICOMMON_API PCB_SELECTION_FILTER_OPTIONS
     bool zones;         ///< Copper zones
     bool keepouts;      ///< Keepout zones
     bool dimensions;    ///< Dimension items
+    bool points;        ///< Points
     bool otherItems;    ///< Anything not fitting one of the above categories
 
     PCB_SELECTION_FILTER_OPTIONS()
@@ -66,6 +63,7 @@ struct KICOMMON_API PCB_SELECTION_FILTER_OPTIONS
         zones       = true;
         keepouts    = true;
         dimensions  = true;
+        points      = true;
         otherItems  = true;
     }
 
@@ -75,7 +73,7 @@ struct KICOMMON_API PCB_SELECTION_FILTER_OPTIONS
     bool Any()
     {
         return ( footprints || text || tracks || vias || pads || graphics || zones
-                 || keepouts || dimensions || otherItems );
+                 || keepouts || dimensions || points || otherItems );
     }
 
     /**
@@ -84,7 +82,23 @@ struct KICOMMON_API PCB_SELECTION_FILTER_OPTIONS
     bool All()
     {
         return ( footprints && text && tracks && vias && pads && graphics && zones
-                 && keepouts && dimensions && otherItems );
+                 && keepouts && dimensions && points && otherItems );
+    }
+
+    void SetAll( bool aState )
+    {
+        footprints  = aState;
+        text        = aState;
+        tracks      = aState;
+        vias        = aState;
+        pads        = aState;
+        graphics    = aState;
+        zones       = aState;
+        keepouts    = aState;
+        dimensions  = aState;
+        points      = aState;
+        otherItems  = aState;
+        lockedItems = aState;
     }
 };
 
@@ -129,10 +143,12 @@ enum class RATSNEST_MODE
 struct KICOMMON_API IP2581_BOM
 {
     wxString mfg;       ///< Manufacturer name column
-    wxString MPN;     ///< Manufacturer part number column
+    wxString MPN;       ///< Manufacturer part number column
     wxString dist;      ///< Distributor name column
     wxString distPN;    ///< Distributor part number column
     wxString id;        ///< Internal ID column
+    wxString bomRev;       ///< Explicit BOM revision override set by user
+    wxString schRevision;  ///< Auto-propagated schematic title block revision
 };
 
 /**
@@ -185,24 +201,6 @@ struct KICOMMON_API LAYER_PRESET
 };
 
 
-class KICOMMON_API PARAM_LAYER_PRESET : public PARAM_LAMBDA<nlohmann::json>
-{
-public:
-    PARAM_LAYER_PRESET( const std::string& aPath, std::vector<LAYER_PRESET>* aPresetList );
-
-    static void MigrateToV9Layers( nlohmann::json& aJson );
-
-    static void MigrateToNamedRenderLayers( nlohmann::json& aJson );
-
-private:
-    nlohmann::json presetsToJson();
-
-    void jsonToPresets( const nlohmann::json& aJson );
-
-    std::vector<LAYER_PRESET>* m_presets;
-};
-
-
 struct KICOMMON_API VIEWPORT
 {
     VIEWPORT( const wxString& aName = wxEmptyString ) :
@@ -219,20 +217,6 @@ struct KICOMMON_API VIEWPORT
 };
 
 
-class KICOMMON_API PARAM_VIEWPORT : public PARAM_LAMBDA<nlohmann::json>
-{
-public:
-    PARAM_VIEWPORT( const std::string& aPath, std::vector<VIEWPORT>* aViewportList );
-
-private:
-    nlohmann::json viewportsToJson();
-
-    void jsonToViewports( const nlohmann::json& aJson );
-
-    std::vector<VIEWPORT>* m_viewports;
-};
-
-
 struct KICOMMON_API VIEWPORT3D
 {
     VIEWPORT3D( const wxString& aName = wxEmptyString ) :
@@ -246,20 +230,6 @@ struct KICOMMON_API VIEWPORT3D
 
     wxString  name;
     glm::mat4 matrix;
-};
-
-
-class KICOMMON_API PARAM_VIEWPORT3D : public PARAM_LAMBDA<nlohmann::json>
-{
-public:
-    PARAM_VIEWPORT3D( const std::string& aPath, std::vector<VIEWPORT3D>* aViewportList );
-
-private:
-    nlohmann::json viewportsToJson();
-
-    void jsonToViewports( const nlohmann::json & aJson );
-
-    std::vector<VIEWPORT3D>* m_viewports;
 };
 
 
@@ -322,20 +292,6 @@ private:
     LAYER_PAIR              m_pair;
     bool                    m_enabled = true;
     std::optional<wxString> m_name;
-};
-
-
-class KICOMMON_API PARAM_LAYER_PAIRS : public PARAM_LAMBDA<nlohmann::json>
-{
-public:
-    PARAM_LAYER_PAIRS( const std::string& aPath, std::vector<LAYER_PAIR_INFO>& m_layerPairInfos );
-
-private:
-    nlohmann::json layerPairsToJson();
-
-    void jsonToLayerPairs( const nlohmann::json& aJson );
-
-    std::vector<LAYER_PAIR_INFO>& m_layerPairInfos;
 };
 
 

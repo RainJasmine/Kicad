@@ -150,8 +150,8 @@ BOOST_AUTO_TEST_CASE( BasicProps )
     // have "some" image data
     BOOST_REQUIRE_NE( img.GetImageData(), nullptr );
 
-    // still default props here
-    const int expected_ppi = 94;
+    // 3780 pixels/meter = 37.8 px/cm; 37.8 * 2.54 = 96.012 -> rounds to 96
+    const int expected_ppi = 96;
     BOOST_CHECK_EQUAL( img.GetPPI(), expected_ppi );
     BOOST_CHECK_EQUAL( img.GetScale(), 5.0 );
 
@@ -164,6 +164,39 @@ BOOST_AUTO_TEST_CASE( BasicProps )
     const BOX2I bb = img.GetBoundingBox();
     BOOST_CHECK( bb.GetPosition() == VECTOR2I( -40, -40 ) );
     BOOST_CHECK( bb.GetEnd() == VECTOR2I( 40, 40 ) );
+}
+
+
+/**
+ * Verify PPI is computed without integer truncation when pixels/cm is non-integer.
+ *
+ * PNG stores resolution as pixels-per-meter (e.g. 3780 PPM for ~96 DPI).
+ * wxWidgets converts to pixels-per-cm as a string ("37.8"). The old code used
+ * GetOptionInt() which truncated "37.8" to 37 before multiplying by 2.54, giving
+ * 94 instead of the correct 96. This tests that the full precision path is used.
+ */
+BOOST_AUTO_TEST_CASE( PPIFromNonIntegerPixelsPerCm )
+{
+    // Minimal 1x1 RGB PNG with pHYs chunk: 3780 pixels/meter in both axes.
+    // 3780 PPM -> 37.8 px/cm -> 37.8 * 2.54 = 96.012 -> rounds to 96 PPI.
+    // Generated with Python (zlib/struct), CRCs verified.
+    static const std::vector<unsigned char> png_with_phys = {
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+        0xDE, 0x00, 0x00, 0x00, 0x09, 0x70, 0x48, 0x59, 0x73, 0x00, 0x00, 0x0E, 0xC4, 0x00, 0x00, 0x0E,
+        0xC4, 0x01, 0x95, 0x2B, 0x0E, 0x1B, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x78, 0xDA,
+        0x63, 0xF8, 0xCF, 0xC0, 0x00, 0x00, 0x03, 0x01, 0x01, 0x00, 0xF7, 0x03, 0x41, 0x43, 0x00, 0x00,
+        0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82
+    };
+
+    BITMAP_BASE bmp;
+    wxMemoryInputStream mis( png_with_phys.data(), png_with_phys.size() );
+    bool ok = bmp.ReadImageFile( mis );
+
+    BOOST_REQUIRE( ok );
+
+    // 3780 PPM should give 96 PPI, not 94 (the old truncation result)
+    BOOST_CHECK_EQUAL( bmp.GetPPI(), 96 );
 }
 
 
@@ -192,23 +225,50 @@ BOOST_AUTO_TEST_CASE( BasicImage )
 }
 
 /**
- * Check the image is right after rotating
+ * Check the image is right after rotating CCW
  */
-BOOST_AUTO_TEST_CASE( RotateImage )
+BOOST_AUTO_TEST_CASE( RotateImageCCW )
 {
-    // Note the parameter name is wrong here, true is clockwise
-    m_4tile.Rotate( false );
+    m_4tile.Rotate( true );  // true = CCW
 
     const wxImage* img_data = m_4tile.GetImageData();
     BOOST_REQUIRE_NE( img_data, nullptr );
 
-    //   black, blue,
-    //   green, red
+    // Original:        After 90 CCW:
+    //   green, black,     black, blue,
+    //   red,   blue       green, red
     const std::vector<TEST_PIXEL_CASE> exp_pixels = {
         { 1, 1, col_black },
         { 6, 1, col_blue },
         { 1, 6, col_green },
         { 6, 6, col_red },
+    };
+
+    for( const auto& c : exp_pixels )
+    {
+        BOOST_CHECK_PREDICATE(
+                KI_TEST::IsImagePixelOfColor, ( *img_data )( c.m_x )( c.m_y )( c.m_color ) );
+    }
+}
+
+/**
+ * Check the image is right after rotating CW
+ */
+BOOST_AUTO_TEST_CASE( RotateImageCW )
+{
+    m_4tile.Rotate( false );  // false = CW
+
+    const wxImage* img_data = m_4tile.GetImageData();
+    BOOST_REQUIRE_NE( img_data, nullptr );
+
+    // Original:        After 90 CW:
+    //   green, black,     red,   green,
+    //   red,   blue       blue,  black
+    const std::vector<TEST_PIXEL_CASE> exp_pixels = {
+        { 1, 1, col_red },
+        { 6, 1, col_green },
+        { 1, 6, col_blue },
+        { 6, 6, col_black },
     };
 
     for( const auto& c : exp_pixels )

@@ -59,7 +59,6 @@
       <property name="window_extra_style"></property>
       <property name="window_name"></property>
       <property name="window_style"></property>
-      <event name="OnClose">OnClose</event>
       <object class="wxBoxSizer" expanded="true">
         <property name="minimum_size"></property>
         <property name="name">bSizer10</property>
@@ -295,6 +294,7 @@
                         <property name="window_extra_style"></property>
                         <property name="window_name"></property>
                         <property name="window_style"></property>
+                        <event name="OnCheckBox">onOptionChanged</event>
                       </object>
                     </object>
                     <object class="sizeritem" expanded="true">
@@ -370,6 +370,7 @@
                         <property name="window_extra_style"></property>
                         <property name="window_name"></property>
                         <property name="window_style"></property>
+                        <event name="OnCheckBox">onOptionChanged</event>
                       </object>
                     </object>
                     <object class="sizeritem" expanded="true">
@@ -445,6 +446,7 @@
                         <property name="window_extra_style"></property>
                         <property name="window_name"></property>
                         <property name="window_style"></property>
+                        <event name="OnCheckBox">onOptionChanged</event>
                       </object>
                     </object>
                     <object class="sizeritem" expanded="true">
@@ -613,6 +615,7 @@
                         <property name="window_extra_style"></property>
                         <property name="window_name"></property>
                         <property name="window_style"></property>
+                        <event name="OnCheckBox">onOptionChanged</event>
                       </object>
                     </object>
                     <object class="sizeritem" expanded="false">
@@ -678,6 +681,7 @@
                         <property name="window_extra_style"></property>
                         <property name="window_name"></property>
                         <property name="window_style"></property>
+                        <event name="OnCheckBox">onOptionChanged</event>
                       </object>
                     </object>
                     <object class="sizeritem" expanded="false">
@@ -743,6 +747,7 @@
                         <property name="window_extra_style"></property>
                         <property name="window_name"></property>
                         <property name="window_style"></property>
+                        <event name="OnCheckBox">onOptionChanged</event>
                       </object>
                     </object>
                     <object class="sizeritem" expanded="false">
@@ -808,6 +813,7 @@
                         <property name="window_extra_style"></property>
                         <property name="window_name"></property>
                         <property name="window_style"></property>
+                        <event name="OnCheckBox">onOptionChanged</event>
                       </object>
                     </object>
                     <object class="sizeritem" expanded="true">
@@ -873,7 +879,7 @@
                         <property name="window_extra_style"></property>
                         <property name="window_name"></property>
                         <property name="window_style"></property>
-                        <event name="OnCheckBox">OnOptions</event>
+                        <event name="OnCheckBox">onOptionChanged</event>
                       </object>
                     </object>
                     <object class="sizeritem" expanded="true">
@@ -949,6 +955,7 @@
                         <property name="window_extra_style"></property>
                         <property name="window_name"></property>
                         <property name="window_style"></property>
+                        <event name="OnCheckBox">onOptionChanged</event>
                       </object>
                     </object>
                   </object>
@@ -1465,7 +1472,7 @@
                 <property name="subclass">; ; forward_declare</property>
                 <property name="toolbar_pane">0</property>
                 <property name="tooltip"></property>
-                <property name="url">http://www.wxformbuilder.org</property>
+                <property name="url"></property>
                 <property name="visited_color"></property>
                 <property name="window_extra_style"></property>
                 <property name="window_name"></property>

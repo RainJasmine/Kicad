@@ -45,7 +45,6 @@ public:
     void Reset( RESET_REASON aReason ) override;
 
     int NewProject( const TOOL_EVENT& aEvent );
-    int NewFromTemplate( const TOOL_EVENT& aEvent );
     int NewFromRepository( const TOOL_EVENT& aEvent );
     int NewJobsetFile( const TOOL_EVENT& aEvent );
     int OpenProject( const TOOL_EVENT& aEvent );
@@ -58,6 +57,8 @@ public:
     int ArchiveProject( const TOOL_EVENT& aEvent );
     int UnarchiveProject( const TOOL_EVENT& aEvent );
     int ExploreProject( const TOOL_EVENT& aEvent );
+    int RestoreLocalHistory( const TOOL_EVENT& aEvent );
+    int ToggleLocalHistory( const TOOL_EVENT& aEvent );
 
     /**
      * @brief Imports a non kicad project from a sch/pcb dropped file.

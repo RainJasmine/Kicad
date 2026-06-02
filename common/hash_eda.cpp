@@ -32,9 +32,12 @@
 #include <pcb_shape.h>
 #include <pad.h>
 #include <pcb_track.h>
+#include <pcb_barcode.h>
 
 #include <macros.h>
 #include <functional>
+#include <algorithm>
+#include <vector>
 
 #include <wx/log.h>
 
@@ -70,11 +73,18 @@ size_t hash_fp_item( const EDA_ITEM* aItem, int aFlags )
         if( aFlags & HASH_ROT )
             hash_combine( ret, footprint->GetOrientation().AsDegrees() );
 
+        std::vector<size_t> hashes;
+
         for( BOARD_ITEM* item : footprint->GraphicalItems() )
-            hash_combine( ret, hash_fp_item( item, aFlags ) );
+            hashes.push_back( hash_fp_item( item, aFlags ) );
 
         for( PAD* pad : footprint->Pads() )
-            hash_combine( ret, hash_fp_item( static_cast<EDA_ITEM*>( pad ), aFlags ) );
+            hashes.push_back( hash_fp_item( static_cast<EDA_ITEM*>( pad ), aFlags ) );
+
+        std::sort( hashes.begin(), hashes.end() );
+
+        for( size_t h : hashes )
+            hash_combine( ret, h );
     }
         break;
 
@@ -205,8 +215,25 @@ size_t hash_fp_item( const EDA_ITEM* aItem, int aFlags )
 
         if( aFlags & HASH_ROT )
             hash_combine( ret, text->GetTextAngle().AsDegrees() );
-    }
+
         break;
+    }
+
+    case PCB_BARCODE_T:
+    {
+        const PCB_BARCODE* barcode = static_cast<const PCB_BARCODE*>( aItem );
+
+        ret = hash_board_item( barcode, aFlags );
+        hash_combine( ret, barcode->GetWidth(), barcode->GetHeight() );
+        hash_combine( ret, barcode->GetPosition().x, barcode->GetPosition().y );
+        hash_combine( ret, barcode->GetMargin().x, barcode->GetMargin().y );
+        hash_combine( ret, barcode->Text().GetText().ToStdString() );
+        hash_combine( ret, barcode->Text().GetTextHeight() );
+        hash_combine( ret, barcode->GetKind() );
+        hash_combine( ret, barcode->GetAngle().AsDegrees() );
+        hash_combine( ret, barcode->GetErrorCorrection() );
+        break;
+    }
 
     case PCB_SHAPE_T:
     {

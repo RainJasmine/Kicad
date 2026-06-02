@@ -24,6 +24,7 @@
 
 
 #include <sch_edit_frame.h>
+#include <widgets/wx_infobar.h>
 #include <bitmaps.h>
 #include <dialog_annotate_base.h>
 #include <eeschema_settings.h>
@@ -45,34 +46,56 @@ public:
     DIALOG_ANNOTATE( SCH_EDIT_FRAME* parent, const wxString& message );
     ~DIALOG_ANNOTATE();
 
+    bool TransferDataToWindow() override;
+
 private:
     /// Initialize member variables.
-    void InitValues();
     void OnOptionChanged( wxCommandEvent& event ) override;
     void OnClearAnnotationClick( wxCommandEvent& event ) override;
     void OnCloseClick( wxCommandEvent& event ) override;
     void OnClose( wxCloseEvent& event ) override;
     void OnAnnotateClick( wxCommandEvent& event ) override;
 
-    // User functions:
-    bool GetResetItems();
+    ANNOTATE_SCOPE_T GetScope()
+    {
+        if( m_rbScope_Schematic->GetValue() )
+            return ANNOTATE_ALL;
+        else if( m_rbScope_Sheet->GetValue() )
+            return ANNOTATE_CURRENT_SHEET;
+        else
+            return ANNOTATE_SELECTION;
+    }
 
-    ANNOTATE_SCOPE_T GetScope();
+    ANNOTATE_ORDER_T GetSortOrder()
+    {
+        if( m_rbSortBy_Y_Position->GetValue() )
+            return SORT_BY_Y_POSITION;
+        else
+            return SORT_BY_X_POSITION;
+    }
 
-    bool GetRecursive();
+    ANNOTATE_ALGO_T GetAnnotateAlgo()
+    {
+        if( m_rbSheetX100->GetValue() )
+            return SHEET_NUMBER_X_100;
+        else if( m_rbSheetX1000->GetValue() )
+            return SHEET_NUMBER_X_1000;
+        else
+            return INCREMENTAL_BY_REF;
+    }
 
-    ANNOTATE_ORDER_T GetSortOrder();
+    int GetStartNumber()
+    {
+        return (int) EDA_UNIT_UTILS::UI::ValueFromString( m_textNumberAfter->GetValue() );
+    }
 
-    ANNOTATE_ALGO_T GetAnnotateAlgo();
-
-    int GetStartNumber();
-
+private:
     SCH_EDIT_FRAME* m_Parent;
 };
 
 
-DIALOG_ANNOTATE::DIALOG_ANNOTATE( SCH_EDIT_FRAME* parent, const wxString& message )
-    : DIALOG_ANNOTATE_BASE( parent )
+DIALOG_ANNOTATE::DIALOG_ANNOTATE( SCH_EDIT_FRAME* parent, const wxString& message ) :
+        DIALOG_ANNOTATE_BASE( parent )
 {
     SetName( DLG_WINDOW_NAME );
     m_Parent = parent;
@@ -92,7 +115,11 @@ DIALOG_ANNOTATE::DIALOG_ANNOTATE( SCH_EDIT_FRAME* parent, const wxString& messag
     SetupStandardButtons( { { wxID_OK,     _( "Annotate" ) },
                             { wxID_CANCEL, _( "Close" )    } } );
 
-    InitValues();
+    annotate_down_right_bitmap->SetBitmap( KiBitmapBundle( BITMAPS::annotate_down_right ) );
+    annotate_right_down_bitmap->SetBitmap( KiBitmapBundle( BITMAPS::annotate_right_down ) );
+
+    m_MessageWindow->MsgPanelSetMinSize( wxSize( -1, 160 ) );
+
     Layout();
 
     // When all widgets have the size fixed, call FinishDialogSettings
@@ -102,45 +129,59 @@ DIALOG_ANNOTATE::DIALOG_ANNOTATE( SCH_EDIT_FRAME* parent, const wxString& messag
 
 DIALOG_ANNOTATE::~DIALOG_ANNOTATE()
 {
-    auto cfg = static_cast<EESCHEMA_SETTINGS*>( Kiface().KifaceSettings() );
+    // We still save/restore to config (instead of letting DIALOG_SHIM do it) because we also
+    // allow editing of these settings in preferences.
 
-    cfg->m_AnnotatePanel.sort_order = GetSortOrder();
-    cfg->m_AnnotatePanel.method = GetAnnotateAlgo();
-    cfg->m_AnnotatePanel.options = m_rbOptions->GetSelection();
+    EESCHEMA_SETTINGS* cfg = static_cast<EESCHEMA_SETTINGS*>( Kiface().KifaceSettings() );
+
+    cfg->m_AnnotatePanel.options = m_rbReset_Annotations->GetValue() ? 1 : 0;
 
     if( m_rbScope_Schematic->IsEnabled() )
     {
         cfg->m_AnnotatePanel.scope = GetScope();
-        cfg->m_AnnotatePanel.recursive = GetRecursive();
+        cfg->m_AnnotatePanel.recursive = m_checkRecursive->GetValue();
     }
 
-    cfg->m_AnnotatePanel.messages_filter = m_MessageWindow->GetVisibleSeverities();
+    cfg->m_AnnotatePanel.regroup_units = m_checkRegroupUnits->GetValue();
 
-    // Get the "start annotation after" value from dialog and update project settings if changed
+    int sort = GetSortOrder();
+    int method = GetAnnotateAlgo();
     int startNum = GetStartNumber();
-    SCH_EDIT_FRAME* schFrame = dynamic_cast<SCH_EDIT_FRAME*>( m_parentFrame );
 
-    if( schFrame )
+    if( SCH_EDIT_FRAME* schFrame = dynamic_cast<SCH_EDIT_FRAME*>( m_parentFrame ) )
     {
         SCHEMATIC_SETTINGS& projSettings = schFrame->Schematic().Settings();
+        bool modified = false;
 
-        // If the user has updated the start annotation number then update the project file.
-        // We manually update the project file here in case the user has changed the value
-        // and just clicked the "Close" button on the annotation dialog.
+        if( projSettings.m_AnnotateSortOrder != sort )
+        {
+            projSettings.m_AnnotateSortOrder = sort;
+            modified = true;
+        }
+
+        if( projSettings.m_AnnotateMethod != method )
+        {
+            projSettings.m_AnnotateMethod = method;
+            modified = true;
+        }
 
         if( projSettings.m_AnnotateStartNum != startNum )
         {
             projSettings.m_AnnotateStartNum = startNum;
-            schFrame->OnModify();
+            modified = true;
         }
+
+        if( modified )
+            schFrame->OnModify();
     }
 }
 
 
-void DIALOG_ANNOTATE::InitValues()
+bool DIALOG_ANNOTATE::TransferDataToWindow()
 {
+    // We still save/restore to config (instead of letting DIALOG_SHIM do it) because we also
+    // allow editing of these settings in preferences.
     EESCHEMA_SETTINGS* cfg = static_cast<EESCHEMA_SETTINGS*>( Kiface().KifaceSettings() );
-    int option;
 
     if( m_rbScope_Schematic->IsEnabled() )
     {
@@ -155,47 +196,36 @@ void DIALOG_ANNOTATE::InitValues()
         m_checkRecursive->SetValue( cfg->m_AnnotatePanel.recursive );
     }
 
+    bool resetAnnotation = cfg->m_AnnotatePanel.options >= 1;
+    m_rbReset_Annotations->SetValue( resetAnnotation );
+    m_rbKeep_Annotations->SetValue( !resetAnnotation );
 
-    m_rbOptions->SetSelection( cfg->m_AnnotatePanel.options );
+    m_checkRegroupUnits->SetValue( cfg->m_AnnotatePanel.regroup_units );
+    m_checkRegroupUnits->Enable( cfg->m_AnnotatePanel.options >= 1 );
 
-    option = cfg->m_AnnotatePanel.sort_order;
-
-    switch( option )
-    {
-    default:
-    case SORT_BY_X_POSITION: m_rbSortBy_X_Position->SetValue( true ); break;
-    case SORT_BY_Y_POSITION: m_rbSortBy_Y_Position->SetValue( true ); break;
-    }
-
-    option = cfg->m_AnnotatePanel.method;
-
-    switch( option )
-    {
-    default:
-    case INCREMENTAL_BY_REF:  m_rbFirstFree->SetValue( true );  break;
-    case SHEET_NUMBER_X_100:  m_rbSheetX100->SetValue( true );  break;
-    case SHEET_NUMBER_X_1000: m_rbSheetX1000->SetValue( true ); break;
-    }
-
-    int annotateStartNum = 0; // Default "start after" value for annotation
-
-    // See if we can get a "start after" value from the project settings
-    SCH_EDIT_FRAME* schFrame = dynamic_cast<SCH_EDIT_FRAME*>( m_parentFrame );
-
-    if( schFrame )
+    if( SCH_EDIT_FRAME* schFrame = dynamic_cast<SCH_EDIT_FRAME*>( m_parentFrame ) )
     {
         SCHEMATIC_SETTINGS& projSettings = schFrame->Schematic().Settings();
-        annotateStartNum = projSettings.m_AnnotateStartNum;
+
+        switch( projSettings.m_AnnotateSortOrder )
+        {
+        default:
+        case SORT_BY_X_POSITION: m_rbSortBy_X_Position->SetValue( true ); break;
+        case SORT_BY_Y_POSITION: m_rbSortBy_Y_Position->SetValue( true ); break;
+        }
+
+        switch( projSettings.m_AnnotateMethod )
+        {
+        default:
+        case INCREMENTAL_BY_REF:  m_rbFirstFree->SetValue( true );  break;
+        case SHEET_NUMBER_X_100:  m_rbSheetX100->SetValue( true );  break;
+        case SHEET_NUMBER_X_1000: m_rbSheetX1000->SetValue( true ); break;
+        }
+
+        m_textNumberAfter->SetValue( wxString::Format( wxT( "%d" ), projSettings.m_AnnotateStartNum ) );
     }
 
-    m_textNumberAfter->SetValue( wxString::Format( wxT( "%d" ), annotateStartNum ) );
-
-    annotate_down_right_bitmap->SetBitmap( KiBitmapBundle( BITMAPS::annotate_down_right ) );
-    annotate_right_down_bitmap->SetBitmap( KiBitmapBundle( BITMAPS::annotate_right_down ) );
-
-    m_MessageWindow->SetVisibleSeverities( cfg->m_AnnotatePanel.messages_filter );
-
-    m_MessageWindow->MsgPanelSetMinSize( wxSize( -1, 160 ) );
+    return true;
 }
 
 
@@ -220,8 +250,12 @@ void DIALOG_ANNOTATE::OnAnnotateClick( wxCommandEvent& event )
     REPORTER& reporter = m_MessageWindow->Reporter();
     m_MessageWindow->SetLazyUpdate( true );     // Don't update after each message
 
+    bool resetAnnotation = m_rbReset_Annotations->GetValue();
+    bool regroupUnits = resetAnnotation && m_checkRegroupUnits->GetValue();
+
     m_Parent->AnnotateSymbols( &commit, GetScope(), GetSortOrder(), GetAnnotateAlgo(),
-                               GetRecursive(), GetStartNumber(), GetResetItems(), true, reporter );
+                               m_checkRecursive->GetValue(), GetStartNumber(), resetAnnotation,
+                               regroupUnits, true, reporter, SYMBOL_FILTER_NON_POWER );
 
     commit.Push( _( "Annotate" ) );
 
@@ -232,7 +266,7 @@ void DIALOG_ANNOTATE::OnAnnotateClick( wxCommandEvent& event )
 void DIALOG_ANNOTATE::OnClearAnnotationClick( wxCommandEvent& event )
 {
     m_MessageWindow->Clear();
-    m_Parent->DeleteAnnotation( GetScope(), GetRecursive(), m_MessageWindow->Reporter() );
+    m_Parent->DeleteAnnotation( GetScope(), m_checkRecursive->GetValue(), m_MessageWindow->Reporter() );
 
     m_MessageWindow->Flush( true ); // Now update to show all messages
 }
@@ -240,64 +274,16 @@ void DIALOG_ANNOTATE::OnClearAnnotationClick( wxCommandEvent& event )
 
 void DIALOG_ANNOTATE::OnOptionChanged( wxCommandEvent& event )
 {
+    m_checkRegroupUnits->Enable( m_rbReset_Annotations->GetValue() );
+
     m_sdbSizer1OK->Enable( true );
     m_sdbSizer1OK->SetDefault();
 }
 
 
-bool DIALOG_ANNOTATE::GetResetItems()
-{
-    return m_rbOptions->GetSelection() >= 1;
-}
-
-
-ANNOTATE_SCOPE_T DIALOG_ANNOTATE::GetScope()
-{
-    if( m_rbScope_Schematic->GetValue() )
-        return ANNOTATE_ALL;
-    else if( m_rbScope_Sheet->GetValue() )
-        return ANNOTATE_CURRENT_SHEET;
-    else
-        return ANNOTATE_SELECTION;
-}
-
-
-bool DIALOG_ANNOTATE::GetRecursive()
-{
-    return m_checkRecursive->GetValue();
-}
-
-
-ANNOTATE_ORDER_T DIALOG_ANNOTATE::GetSortOrder()
-{
-    if( m_rbSortBy_Y_Position->GetValue() )
-        return SORT_BY_Y_POSITION;
-    else
-        return SORT_BY_X_POSITION;
-}
-
-
-ANNOTATE_ALGO_T DIALOG_ANNOTATE::GetAnnotateAlgo()
-{
-    if( m_rbSheetX100->GetValue() )
-        return SHEET_NUMBER_X_100;
-    else if( m_rbSheetX1000->GetValue() )
-        return SHEET_NUMBER_X_1000;
-    else
-        return INCREMENTAL_BY_REF;
-}
-
-
-int DIALOG_ANNOTATE::GetStartNumber()
-{
-    return EDA_UNIT_UTILS::UI::ValueFromString( m_textNumberAfter->GetValue() );
-}
-
-
 void SCH_EDIT_FRAME::OnAnnotate()
 {
-    DIALOG_ANNOTATE* dlg =
-            static_cast<DIALOG_ANNOTATE*>( wxWindow::FindWindowByName( DLG_WINDOW_NAME ) );
+    DIALOG_ANNOTATE* dlg = static_cast<DIALOG_ANNOTATE*>( wxWindow::FindWindowByName( DLG_WINDOW_NAME ) );
 
     if( !dlg )
     {

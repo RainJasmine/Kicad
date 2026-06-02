@@ -26,8 +26,11 @@
 #include <import_export.h>
 #include <pgm_base.h>
 #include <properties/pg_cell_renderer.h>
+#include <properties/property.h>
+#include <properties/property_mgr.h>
 
 #include <algorithm>
+#include <iterator>
 #include <set>
 
 #include <wx/settings.h>
@@ -48,10 +51,12 @@ PROPERTIES_PANEL::PROPERTIES_PANEL( wxWindow* aParent, EDA_BASE_FRAME* aFrame ) 
 {
     wxBoxSizer* mainSizer = new wxBoxSizer( wxVERTICAL );
 
+#if !wxCHECK_VERSION( 3, 3, 0 )
     // on some platforms wxPGGlobalVars is initialized automatically,
     // but others need an explicit init
     if( !wxPGGlobalVars )
         wxPGInitResourceModule();
+#endif
 
     // See https://gitlab.com/kicad/code/kicad/-/issues/12297
     // and https://github.com/wxWidgets/wxWidgets/issues/11787
@@ -122,17 +127,14 @@ PROPERTIES_PANEL::PROPERTIES_PANEL( wxWindow* aParent, EDA_BASE_FRAME* aFrame ) 
     m_grid->CenterSplitter();
 
     Connect( wxEVT_CHAR_HOOK, wxKeyEventHandler( PROPERTIES_PANEL::onCharHook ), nullptr, this );
-    Connect( wxEVT_PG_CHANGED, wxPropertyGridEventHandler( PROPERTIES_PANEL::valueChanged ),
-             nullptr, this );
-    Connect( wxEVT_PG_CHANGING, wxPropertyGridEventHandler( PROPERTIES_PANEL::valueChanging ),
-             nullptr, this );
+    Connect( wxEVT_PG_CHANGED, wxPropertyGridEventHandler( PROPERTIES_PANEL::valueChanged ), nullptr, this );
+    Connect( wxEVT_PG_CHANGING, wxPropertyGridEventHandler( PROPERTIES_PANEL::valueChanging ), nullptr, this );
     Connect( wxEVT_SHOW, wxShowEventHandler( PROPERTIES_PANEL::onShow ), nullptr, this );
 
     Bind( wxEVT_PG_COL_END_DRAG,
           [&]( wxPropertyGridEvent& )
           {
-              m_splitter_key_proportion =
-                      static_cast<float>( m_grid->GetSplitterPosition() ) / m_grid->GetSize().x;
+              m_splitter_key_proportion = static_cast<float>( m_grid->GetSplitterPosition() ) / m_grid->GetSize().x;
           } );
 
     Bind( wxEVT_SIZE,
@@ -161,7 +163,7 @@ void PROPERTIES_PANEL::OnLanguageChanged( wxCommandEvent& aEvent )
         m_grid->CommitChangesFromEditor();
 
     m_grid->Clear();
-    m_displayed.clear();
+    m_displayed.clear();    // no ownership of pointers
 
     UpdateData();
 
@@ -169,23 +171,17 @@ void PROPERTIES_PANEL::OnLanguageChanged( wxCommandEvent& aEvent )
 }
 
 
-class SUPPRESS_GRID_CHANGED_EVENTS
-{
-public:
-    SUPPRESS_GRID_CHANGED_EVENTS( PROPERTIES_PANEL* aPanel ) :
+SUPPRESS_GRID_CHANGED_EVENTS::SUPPRESS_GRID_CHANGED_EVENTS( PROPERTIES_PANEL* aPanel ) :
             m_panel( aPanel )
-    {
-        m_panel->m_SuppressGridChangeEvents++;
-    }
+{
+    m_panel->m_SuppressGridChangeEvents++;
+}
 
-    ~SUPPRESS_GRID_CHANGED_EVENTS()
-    {
-        m_panel->m_SuppressGridChangeEvents--;
-    }
 
-private:
-    PROPERTIES_PANEL* m_panel;
-};
+SUPPRESS_GRID_CHANGED_EVENTS::~SUPPRESS_GRID_CHANGED_EVENTS()
+{
+    m_panel->m_SuppressGridChangeEvents--;
+}
 
 
 void PROPERTIES_PANEL::rebuildProperties( const SELECTION& aSelection )
@@ -225,33 +221,26 @@ void PROPERTIES_PANEL::rebuildProperties( const SELECTION& aSelection )
 
     wxCHECK( !types.empty(), /* void */ );  // already guarded above, but Coverity doesn't know that
 
-    PROPERTY_MANAGER&        propMgr = PROPERTY_MANAGER::Instance();
-    std::set<PROPERTY_BASE*> commonProps;
-    const PROPERTY_LIST&     allProperties = propMgr.GetProperties( *types.begin() );
+    PROPERTY_MANAGER&                  propMgr = PROPERTY_MANAGER::Instance();
+    std::map<wxString, PROPERTY_BASE*> commonProps;
+    const std::vector<PROPERTY_BASE*>& allProperties = propMgr.GetProperties( *types.begin() );
 
-    copy( allProperties.begin(), allProperties.end(),
-          inserter( commonProps, commonProps.begin() ) );
+    for( PROPERTY_BASE* property : allProperties )
+        commonProps.emplace( property->Name(), property );
 
-    PROPERTY_DISPLAY_ORDER displayOrder = propMgr.GetDisplayOrder( *types.begin() );
+    std::map<wxString, int> displayOrder;
+    for( const auto& entry : propMgr.GetDisplayOrder( *types.begin() ) )
+        displayOrder.emplace( entry.first->Name(), entry.second );
 
     std::vector<wxString> groupDisplayOrder = propMgr.GetGroupDisplayOrder( *types.begin() );
-    std::set<wxString> groups( groupDisplayOrder.begin(), groupDisplayOrder.end() );
-
-    std::set<PROPERTY_BASE*> availableProps;
+    std::set<wxString>    groups( groupDisplayOrder.begin(), groupDisplayOrder.end() );
 
     // Get all possible properties
-    for( const TYPE_ID& type : types )
+    for( auto itType = std::next( types.begin() ); itType != types.end(); ++itType )
     {
-        const PROPERTY_LIST& itemProps = propMgr.GetProperties( type );
+        TYPE_ID type = *itType;
 
-        const PROPERTY_DISPLAY_ORDER& itemDisplayOrder = propMgr.GetDisplayOrder( type );
-
-        copy( itemDisplayOrder.begin(), itemDisplayOrder.end(),
-              inserter( displayOrder, displayOrder.begin() ) );
-
-        const std::vector<wxString>& itemGroups = propMgr.GetGroupDisplayOrder( type );
-
-        for( const wxString& group : itemGroups )
+        for( const wxString& group : propMgr.GetGroupDisplayOrder( type ) )
         {
             if( !groups.count( group ) )
             {
@@ -260,16 +249,14 @@ void PROPERTIES_PANEL::rebuildProperties( const SELECTION& aSelection )
             }
         }
 
-        for( auto it = commonProps.begin(); it != commonProps.end(); /* ++it in the loop */ )
+        for( auto it = commonProps.begin(); it != commonProps.end(); )
         {
-            if( !binary_search( itemProps.begin(), itemProps.end(), *it ) )
+            if( !propMgr.GetProperty( type, it->first ) )
                 it = commonProps.erase( it );
             else
                 ++it;
         }
     }
-
-    EDA_ITEM* firstItem = aSelection.Front();
 
     bool isLibraryEditor = m_frame->IsType( FRAME_FOOTPRINT_EDITOR )
                         || m_frame->IsType( FRAME_SCH_SYMBOL_EDITOR );
@@ -277,8 +264,10 @@ void PROPERTIES_PANEL::rebuildProperties( const SELECTION& aSelection )
     bool isDesignEditor = m_frame->IsType( FRAME_PCB_EDITOR )
                        || m_frame->IsType( FRAME_SCH );
 
+    std::set<wxString> availableProps;
+
     // Find a set of properties that is common to all selected items
-    for( PROPERTY_BASE* property : commonProps )
+    for( auto& [name, property] : commonProps )
     {
         if( property->IsHiddenFromPropertiesManager() )
             continue;
@@ -289,29 +278,39 @@ void PROPERTIES_PANEL::rebuildProperties( const SELECTION& aSelection )
         if( isDesignEditor && property->IsHiddenFromDesignEditors() )
             continue;
 
-        if( propMgr.IsAvailableFor( TYPE_HASH( *firstItem ), property, firstItem ) )
-            availableProps.insert( property );
+        wxVariant   dummy;
+        wxPGChoices choices;
+        bool        writable;
+
+        if( extractValueAndWritability( aSelection, name, dummy, writable, choices ) )
+            availableProps.insert( name );
     }
 
-    bool writeable = true;
-    std::set<PROPERTY_BASE*> existingProps;
+    bool               writeable = true;
+    std::set<wxString> existingProps;
 
     for( wxPropertyGridIterator it = m_grid->GetIterator(); !it.AtEnd(); it.Next() )
     {
-        wxPGProperty*  pgProp   = it.GetProperty();
-        PROPERTY_BASE* property = propMgr.GetProperty( TYPE_HASH( *firstItem ), pgProp->GetName() );
+        wxPGProperty* pgProp = it.GetProperty();
+        wxString      name   = pgProp->GetName();
 
-        // Switching item types?  Property may no longer be valid
-        if( !property )
+        // Store the existing name before checking available properties so we can
+        // remove the properties when they are no longer available
+        existingProps.insert( name );
+
+        if( !availableProps.count( name ) )
             continue;
 
-        wxVariant commonVal;
+        wxVariant   commonVal;
+        wxPGChoices choices;
 
-        extractValueAndWritability( aSelection, property, commonVal, writeable );
+        extractValueAndWritability( aSelection, name, commonVal, writeable, choices );
+
+        if( choices.GetCount() > 0 )
+            pgProp->SetChoices( choices );
+
         pgProp->SetValue( commonVal );
         pgProp->Enable( writeable );
-
-        existingProps.insert( property );
     }
 
     if( !existingProps.empty() && existingProps == availableProps )
@@ -320,25 +319,30 @@ void PROPERTIES_PANEL::rebuildProperties( const SELECTION& aSelection )
     // Some difference exists:  start from scratch
     reset();
 
-    std::map<wxPGProperty*, int> pgPropOrders;
+    std::map<wxPGProperty*, int>                   pgPropOrders;
     std::map<wxString, std::vector<wxPGProperty*>> pgPropGroups;
 
-    for( PROPERTY_BASE* property : availableProps )
+    for( const wxString& name : availableProps )
     {
-        wxPGProperty* pgProp = createPGProperty( property );
-        wxVariant commonVal;
+        PROPERTY_BASE* property = commonProps[name];
+        wxPGProperty*  pgProp   = createPGProperty( property );
+        wxVariant      commonVal;
+        wxPGChoices    choices;
 
-        if( !extractValueAndWritability( aSelection, property, commonVal, writeable ) )
+        if( !extractValueAndWritability( aSelection, name, commonVal, writeable, choices ) )
             continue;
 
         if( pgProp )
         {
+            if( choices.GetCount() )
+                pgProp->SetChoices( choices );
+
             pgProp->SetValue( commonVal );
             pgProp->Enable( writeable );
             m_displayed.push_back( property );
 
-            wxASSERT( displayOrder.count( property ) );
-            pgPropOrders[pgProp] = displayOrder[property];
+            wxASSERT( displayOrder.count( name ) );
+            pgPropOrders[pgProp] = displayOrder[name];
             pgPropGroups[property->Group()].emplace_back( pgProp );
         }
     }
@@ -351,7 +355,7 @@ void PROPERTIES_PANEL::rebuildProperties( const SELECTION& aSelection )
             continue;
 
         std::vector<wxPGProperty*>& properties = pgPropGroups[groupName];
-        wxString groupCaption = wxGetTranslation( groupName );
+        wxString                    groupCaption = wxGetTranslation( groupName );
 
         auto groupItem = new wxPropertyCategory( groupName.IsEmpty() ? unspecifiedGroupCaption
                                                                      : groupCaption );
@@ -403,31 +407,51 @@ bool PROPERTIES_PANEL::getItemValue( EDA_ITEM* aItem, PROPERTY_BASE* aProperty, 
 }
 
 
-bool PROPERTIES_PANEL::extractValueAndWritability( const SELECTION& aSelection,
-                                                   PROPERTY_BASE* aProperty,
-                                                   wxVariant& aValue, bool& aWritable )
+bool PROPERTIES_PANEL::extractValueAndWritability( const SELECTION& aSelection, const wxString& aPropName,
+                                                   wxVariant& aValue, bool& aWritable, wxPGChoices& aChoices )
 {
     PROPERTY_MANAGER& propMgr = PROPERTY_MANAGER::Instance();
     bool              different = false;
-    wxVariant         commonVal;
+    bool              first = true;
 
     aWritable = true;
 
     for( EDA_ITEM* item : aSelection )
     {
-        if( !propMgr.IsAvailableFor( TYPE_HASH( *item ), aProperty, item ) )
+        PROPERTY_BASE* property = propMgr.GetProperty( TYPE_HASH( *item ), aPropName );
+
+        if( !property )
             return false;
 
-        if( aProperty->IsHiddenFromPropertiesManager() )
+        if( !propMgr.IsAvailableFor( TYPE_HASH( *item ), property, item ) )
             return false;
+
+        if( property->IsHiddenFromPropertiesManager() )
+            return false;
+
+        wxPGChoices choices = property->GetChoices( item );
+
+        if( first )
+        {
+            aChoices = choices;
+            first = false;
+        }
+        else
+        {
+            wxArrayString labels = choices.GetLabels();
+            wxArrayInt    values = choices.GetValuesForStrings( labels );
+
+            if( labels != aChoices.GetLabels() || values != aChoices.GetValuesForStrings( labels ) )
+                return false;
+        }
 
         // If read-only for any of the selection, read-only for the whole selection.
-        if( !propMgr.IsWriteableFor( TYPE_HASH( *item ), aProperty, item ) )
+        if( !propMgr.IsWriteableFor( TYPE_HASH( *item ), property, item ) )
             aWritable = false;
 
         wxVariant value;
 
-        if( getItemValue( item, aProperty, value ) )
+        if( getItemValue( item, property, value ) )
         {
             // Null value indicates different property values between items
             if( !different && !aValue.IsNull() && value != aValue )
@@ -494,10 +518,15 @@ void PROPERTIES_PANEL::onCharHook( wxKeyEvent& aEvent )
         }
     }
 
-    if( aEvent.GetKeyCode() == WXK_RETURN || aEvent.GetKeyCode() == WXK_NUMPAD_ENTER )
+    if( aEvent.GetKeyCode() == WXK_RETURN || aEvent.GetKeyCode() == WXK_NUMPAD_ENTER
+        || aEvent.GetKeyCode() == WXK_DOWN || aEvent.GetKeyCode() == WXK_UP )
     {
         m_grid->CommitChangesFromEditor();
-        /* don't skip this one; if we're not the last property we'll also go to the next row */
+
+        CallAfter( [this]()
+                   {
+                       m_grid->SelectProperty( m_grid->GetSelectedProperty(), true );
+                   } );
     }
 
     aEvent.Skip();

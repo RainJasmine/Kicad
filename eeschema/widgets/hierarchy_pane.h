@@ -31,6 +31,8 @@
 #include <wx/imaglist.h>
 #include <wx/object.h> // wxRTTI macros
 #include <wx/treectrl.h>
+#include <set>
+#include <vector>
 #include "widgets/wx_panel.h"
 
 
@@ -52,7 +54,7 @@ class HIERARCHY_TREE : public wxTreeCtrl
 public:
     HIERARCHY_TREE( HIERARCHY_PANE* parent ) :
             wxTreeCtrl( (wxWindow*) parent, wxID_ANY, wxDefaultPosition, wxDefaultSize,
-                        wxTR_HAS_BUTTONS | wxTR_EDIT_LABELS, wxDefaultValidator,
+                        wxTR_HAS_BUTTONS | wxTR_EDIT_LABELS | wxTR_HIDE_ROOT, wxDefaultValidator,
                         wxT( "HierachyTreeCtrl" ) )
     {
     }
@@ -71,10 +73,12 @@ class HIERARCHY_PANE : public WX_PANEL
 public:
     enum ContextMenuAction
     {
-        EDIT_PAGE_NUMBER,
+        EDIT_PAGE_NUMBER = wxID_HIGHEST + 1,
         EXPAND_ALL,
         COLLAPSE_ALL,
-        RENAME
+        RENAME,
+        NEW_TOP_LEVEL_SHEET,
+        DELETE_TOP_LEVEL_SHEET
     };
 
     HIERARCHY_PANE( SCH_EDIT_FRAME* aParent );
@@ -98,6 +102,13 @@ public:
      */
     void UpdateLabelsHierarchyTree();
 
+    void UpdateNetHighlight( const wxString& aNetName );
+
+    /**
+     * Returns a list of sheet paths for nodes that are currently collapsed.
+     */
+    std::vector<wxString> GetCollapsedPaths() const;
+
 private:
     /**
      * Create the hierarchical tree of the schematic.
@@ -117,6 +128,7 @@ private:
 
     void onTreeItemRightClick( wxTreeEvent& aEvent );
     void onRightClick( wxTreeItemId aItem );
+    void onContextMenu( wxContextMenuEvent& aEvent );
     void onCharHook( wxKeyEvent& aKeyStroke );
     void onTreeRightClick( wxTreeEvent& event );
     void onTreeEditFinished( wxTreeEvent& event );
@@ -149,6 +161,9 @@ private:
     HIERARCHY_TREE* m_tree;
 
     bool            m_events_bound;
+    bool            m_contextMenuOpen;
+    std::set<wxString> m_collapsedPaths;
+    wxString           m_highlightedNet;
 };
 
 #endif // HIERARCHY_PANE_H

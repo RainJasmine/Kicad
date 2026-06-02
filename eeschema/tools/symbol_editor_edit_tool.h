@@ -36,7 +36,9 @@ class SYMBOL_EDITOR_EDIT_TOOL : public SCH_TOOL_BASE<SYMBOL_EDIT_FRAME>
 {
 public:
     SYMBOL_EDITOR_EDIT_TOOL();
-    ~SYMBOL_EDITOR_EDIT_TOOL() override { }
+    ~SYMBOL_EDITOR_EDIT_TOOL() = default;
+
+    static const std::vector<KICAD_T> SwappableItems;
 
     /// @copydoc TOOL_INTERACTIVE::Init()
     bool Init() override;
@@ -49,7 +51,8 @@ public:
 
     int Properties( const TOOL_EVENT& aEvent );
     int PinTable( const TOOL_EVENT& aEvent );
-    int SetUnitDisplayName( const TOOL_EVENT& aEvent );
+    int ConvertStackedPins( const TOOL_EVENT& aEvent );
+    int ExplodeStackedPin( const TOOL_EVENT& aEvent );
     int UpdateSymbolFields( const TOOL_EVENT& aEvent );
 
     int Undo( const TOOL_EVENT& aEvent );
@@ -59,15 +62,10 @@ public:
     int CopyAsText( const TOOL_EVENT& aEvent );
     int Paste( const TOOL_EVENT& aEvent );
 
-    int Increment( const TOOL_EVENT& aEvent );
-
     /**
      * Delete the selected items, or the item under the cursor.
      */
     int DoDelete( const TOOL_EVENT& aEvent );
-
-    ///< Run the deletion tool.
-    int InteractiveDelete( const TOOL_EVENT& aEvent );
 
 private:
     void editShapeProperties( SCH_SHAPE* aShape );
@@ -75,10 +73,8 @@ private:
     void editTextBoxProperties( SCH_ITEM* aItem );
     void editFieldProperties( SCH_FIELD* aField );
     void editSymbolProperties();
-    void handlePinDuplication(SCH_PIN* aOldPin, SCH_PIN* aNewPin, int &aSymbolLastPinNumber );
+    void editSymbolPropertiesFromLibrary( const LIB_ID& aLibId );
 
     ///< Set up handlers for various events.
     void setTransitions() override;
-
-    EDA_ITEM* m_pickerItem;
 };

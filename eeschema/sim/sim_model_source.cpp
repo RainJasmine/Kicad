@@ -24,18 +24,143 @@
 
 #include <sim/sim_model_source.h>
 
+#include <cctype>
+#include <cstring>
 #include <fmt/core.h>
-#include <pegtl.hpp>
-#include <pegtl/contrib/parse_tree.hpp>
 
 
-namespace SIM_MODEL_SOURCE_PARSER
+namespace
 {
-    using namespace SIM_MODEL_SOURCE_GRAMMAR;
+    bool isWordChar( char c )
+    {
+        return std::isalnum( static_cast<unsigned char>( c ) ) != 0 || c == '_';
+    }
 
-    template <typename Rule> struct pwlValuesSelector : std::false_type {};
-    template <> struct pwlValuesSelector<number<SIM_VALUE::TYPE_FLOAT, NOTATION::SI>>
-        : std::true_type {};
+    // Rewrite numeric literals inside a brace expression from KiCad SI notation to SPICE
+    // notation.  KiCad uses 'M' for mega and 'P' for peta, while ngspice (case-insensitive)
+    // reads 'M' as milli and 'P' as pico, so a verbatim copy of "{t_start + 1M}" silently
+    // changes the value by nine orders of magnitude.  Identifiers, operators, and whitespace
+    // are passed through; only tokens that begin where a number can legally start are
+    // rewritten via SIM_VALUE::ToSpice, which falls back to the original text when a token
+    // is not a recognizable number.
+    std::string rewriteBraceExpression( const std::string& aBrace )
+    {
+        std::string result;
+        std::size_t pos = 0;
+
+        while( pos < aBrace.size() )
+        {
+            const char c = aBrace[pos];
+            const bool prevIsWord = pos > 0 && isWordChar( aBrace[pos - 1] );
+            const bool digitStart = std::isdigit( static_cast<unsigned char>( c ) ) != 0;
+            const bool dotDigitStart = c == '.' && pos + 1 < aBrace.size()
+                                       && std::isdigit( static_cast<unsigned char>( aBrace[pos + 1] ) ) != 0;
+
+            if( prevIsWord || ( !digitStart && !dotDigitStart ) )
+            {
+                result.push_back( c );
+                ++pos;
+                continue;
+            }
+
+            const std::size_t numStart = pos;
+
+            while( pos < aBrace.size() && std::isdigit( static_cast<unsigned char>( aBrace[pos] ) ) )
+                ++pos;
+
+            if( pos < aBrace.size() && aBrace[pos] == '.' )
+            {
+                ++pos;
+
+                while( pos < aBrace.size() && std::isdigit( static_cast<unsigned char>( aBrace[pos] ) ) )
+                    ++pos;
+            }
+
+            if( pos < aBrace.size() && ( aBrace[pos] == 'e' || aBrace[pos] == 'E' ) )
+            {
+                const std::size_t expStart = pos++;
+
+                if( pos < aBrace.size() && ( aBrace[pos] == '+' || aBrace[pos] == '-' ) )
+                    ++pos;
+
+                const std::size_t expDigits = pos;
+
+                while( pos < aBrace.size() && std::isdigit( static_cast<unsigned char>( aBrace[pos] ) ) )
+                    ++pos;
+
+                // Bare 'e' with no following digits is an SI suffix candidate, not a float
+                // exponent.  Roll back so the suffix scan below can claim it.
+                if( pos == expDigits )
+                    pos = expStart;
+            }
+
+            // Optional single-letter SI prefix.  Reject when followed by another alpha char,
+            // since that means the prefix is the start of an identifier (e.g. "1Meg" — leave
+            // ngspice's spelling untouched).
+            if( pos < aBrace.size() && std::strchr( "afpnumkKMGTPE", aBrace[pos] ) != nullptr
+                && ( pos + 1 >= aBrace.size()
+                     || !std::isalpha( static_cast<unsigned char>( aBrace[pos + 1] ) ) ) )
+            {
+                ++pos;
+            }
+
+            result.append( SIM_VALUE::ToSpice( aBrace.substr( numStart, pos - numStart ) ) );
+        }
+
+        return result;
+    }
+
+    // Tokenize a PWL value string and convert each field to SPICE notation.
+    //
+    // The PWL value may contain plain numeric points ("0 0 1u 0 2u 1"), SI-notation unit
+    // prefixes (e.g. "1M" for mega -> "1Meg"), or simulator parameter references and
+    // arithmetic expressions wrapped in braces ("{t_start + 1u}").  Whitespace is the field
+    // separator except inside braces, whose contents are routed through
+    // rewriteBraceExpression so SI numeric literals inside the expression match the
+    // notation used outside it.
+    std::string formatPwlValues( const std::string& aInput )
+    {
+        std::string result;
+        std::size_t pos = 0;
+
+        auto isSpace = []( char c )
+        {
+            return std::isspace( static_cast<unsigned char>( c ) ) != 0;
+        };
+
+        while( pos < aInput.size() )
+        {
+            while( pos < aInput.size() && isSpace( aInput[pos] ) )
+                ++pos;
+
+            if( pos >= aInput.size() )
+                break;
+
+            const std::size_t start = pos;
+            int               braceDepth = 0;
+
+            while( pos < aInput.size() && ( braceDepth > 0 || !isSpace( aInput[pos] ) ) )
+            {
+                if( aInput[pos] == '{' )
+                    ++braceDepth;
+                else if( aInput[pos] == '}' && braceDepth > 0 )
+                    --braceDepth;
+
+                ++pos;
+            }
+
+            std::string token = aInput.substr( start, pos - start );
+
+            if( token.front() == '{' )
+                result.append( rewriteBraceExpression( token ) );
+            else
+                result.append( SIM_VALUE::ToSpice( token ) );
+
+            result.append( " " );
+        }
+
+        return result;
+    }
 }
 
 
@@ -52,10 +177,13 @@ std::string SPICE_GENERATOR_SOURCE::TunerCommand( const SPICE_ITEM& aItem, doubl
     {
     case SIM_MODEL::TYPE::V: // VDC/IDC: it is clear which parameter should be used
     case SIM_MODEL::TYPE::I:
-        result = fmt::format( "alter @{}={:g}", aItem.model->SpiceGenerator().ItemName( aItem ),
+        result = fmt::format( "alter @{}={:g}",
+                              aItem.model->SpiceGenerator().ItemName( aItem ),
                               aValue );
         break;
-    default: break; // other sources: unclear which parameter the user wants
+
+    default:
+        break; // other sources: unclear which parameter the user wants
     }
     return result;
 }
@@ -97,35 +225,8 @@ std::string SPICE_GENERATOR_SOURCE::ItemLine( const SPICE_ITEM& aItem ) const
         {
         case SIM_MODEL::TYPE::V_PWL:
         case SIM_MODEL::TYPE::I_PWL:
-        {
-            tao::pegtl::string_input<> in( m_model.GetParam( 0 ).value, "from_content" );
-            std::unique_ptr<tao::pegtl::parse_tree::node> root;
-
-            try
-            {
-                root = tao::pegtl::parse_tree::parse<SIM_MODEL_SOURCE_PARSER::pwlValuesGrammar,
-                                                     SIM_MODEL_SOURCE_PARSER::pwlValuesSelector>
-                    ( in );
-            }
-            catch( const tao::pegtl::parse_error& )
-            {
-                break;
-            }
-
-            if( root )
-            {
-                for( const auto& node : root->children )
-                {
-                    if( node->is_type<SIM_MODEL_SOURCE_PARSER::number<SIM_VALUE::TYPE_FLOAT,
-                                                                      SIM_VALUE::NOTATION::SI>>() )
-                    {
-                        args.append( SIM_VALUE::ToSpice( node->string() ) + " " );
-                    }
-                }
-            }
-
+            args = formatPwlValues( m_model.GetParam( 0 ).value );
             break;
-        }
 
         case SIM_MODEL::TYPE::V_WHITENOISE:
         case SIM_MODEL::TYPE::I_WHITENOISE:
@@ -201,6 +302,23 @@ std::string SPICE_GENERATOR_SOURCE::ItemLine( const SPICE_ITEM& aItem ) const
 
                 if( argStr != "" )
                     args.append( argStr + " " );
+            }
+
+            // ngspice 46+ changed the PULSE PER default from TSTOP to TR+TF+PW, which turns a
+            // single-shot pulse into a continuous pulse train. When the user has not provided
+            // PER or NP, force a single pulse by appending PER=0 (lets ngspice apply its
+            // internal default) and NP=1.
+            if( m_model.GetType() == SIM_MODEL::TYPE::V_PULSE
+                || m_model.GetType() == SIM_MODEL::TYPE::I_PULSE )
+            {
+                const SIM_MODEL::PARAM* perParam = m_model.FindParam( "per" );
+                const SIM_MODEL::PARAM* npParam  = m_model.FindParam( "np" );
+
+                bool perSet = perParam && SIM_VALUE::ToSpice( perParam->value ) != "";
+                bool npSet  = npParam  && SIM_VALUE::ToSpice( npParam->value ) != "";
+
+                if( !perSet && !npSet )
+                    args.append( "0 1 " );
             }
 
             break;
@@ -833,60 +951,6 @@ std::vector<SIM_MODEL::PARAM::INFO> SIM_MODEL_SOURCE::makePwlParamInfos( const s
     paramInfo.description = aUnit == "V" ? "Time-voltage points" : "Time-current points";
     paramInfos.push_back( paramInfo );
 
-    // TODO: Ngspice doesn't support "td" and "r" for current sources, so let's disable that for
-    // now.
-
-    /*paramInfo.name = "td";
-    paramInfo.type = SIM_VALUE::TYPE_FLOAT;
-    paramInfo.unit = "s";
-    paramInfo.category = SIM_MODEL::PARAM::CATEGORY::PRINCIPAL;
-    paramInfo.defaultValue = "0";
-    paramInfo.description = aUnit == "V" ? "Time-voltage points" : "Time-current points";
-    paramInfo.isSpiceInstanceParam = true;
-    paramInfos.push_back( paramInfo );
-
-    paramInfo.name = "repeat";
-    paramInfo.type = SIM_VALUE::TYPE_BOOL;
-    paramInfo.unit = "";
-    paramInfo.category = SIM_MODEL::PARAM::CATEGORY::PRINCIPAL;
-    paramInfo.defaultValue = "0";
-    paramInfo.description = "Repeat forever";
-    paramInfo.isSpiceInstanceParam = true;
-    paramInfo.spiceInstanceName = "r";
-    paramInfos.push_back( paramInfo );*/
-
-    /*paramInfo.name = "t";
-    paramInfo.type = SIM_VALUE::TYPE_FLOAT_VECTOR;
-    paramInfo.unit = "s";
-    paramInfo.category = SIM_MODEL::PARAM::CATEGORY::PRINCIPAL;
-    paramInfo.defaultValue = "";
-    paramInfo.description = "Time vector";
-    paramInfos.push_back( paramInfo );
-
-    paramInfo.name = aPrefix;
-    paramInfo.type = SIM_VALUE::TYPE_FLOAT_VECTOR;
-    paramInfo.unit = aUnit;
-    paramInfo.category = SIM_MODEL::PARAM::CATEGORY::PRINCIPAL;
-    paramInfo.defaultValue = "";
-    paramInfo.description = aQuantity + " vector";
-    paramInfos.push_back( paramInfo );
-
-    paramInfo.name = "repeat";
-    paramInfo.type = SIM_VALUE::TYPE_BOOL;
-    paramInfo.unit = "";
-    paramInfo.category = SIM_MODEL::PARAM::CATEGORY::PRINCIPAL;
-    paramInfo.defaultValue = "";
-    paramInfo.description = "Repeat forever";
-    paramInfos.push_back( paramInfo );
-
-    paramInfo.name = "td";
-    paramInfo.type = SIM_VALUE::TYPE_FLOAT;
-    paramInfo.unit = "s";
-    paramInfo.category = SIM_MODEL::PARAM::CATEGORY::PRINCIPAL;
-    paramInfo.defaultValue = "0";
-    paramInfo.description = "Delay";
-    paramInfos.push_back( paramInfo );*/
-
     appendAcParamInfos( paramInfos, aUnit );
     appendSpParamInfos( paramInfos, aUnit );
     return paramInfos;
@@ -1228,8 +1292,11 @@ const SIM_MODEL::PARAM* SIM_MODEL_SOURCE::GetTunerParam() const
     switch( GetType() )
     {
     case SIM_MODEL::TYPE::V: // VDC/IDC: it is clear which parameter should be used
-    case SIM_MODEL::TYPE::I: return &GetParam( 0 ); break;
-    default: break; // other sources: unclear which parameter the user wants
+    case SIM_MODEL::TYPE::I:
+        return &GetParam( 0 );
+
+    default:
+        break; // other sources: unclear which parameter the user wants
     }
     return nullptr;
 }

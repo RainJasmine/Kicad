@@ -27,12 +27,14 @@
 
 #include <eda_draw_frame.h>
 #include <frame_type.h>
+#include <libraries/library_table.h>
 #include <sch_draw_panel.h>
 #include <sch_screen.h>
 #include <schematic_settings.h>
 
 #include <stddef.h>
 #include <utility>
+#include <future>
 #include <vector>
 #include <wx/event.h>
 #include <wx/datetime.h>
@@ -49,14 +51,23 @@ class TITLE_BLOCK;
 class SYMBOL_VIEWER_FRAME;
 class SYMBOL_EDIT_FRAME;
 class LIB_SYMBOL;
-class SYMBOL_LIB;
+class LEGACY_SYMBOL_LIB;
 class SYMBOL_LIBRARY_FILTER;
 class LIB_ID;
-class SYMBOL_LIB_TABLE;
+class SYMBOL_LIBRARY_ADAPTER;
 class EESCHEMA_SETTINGS;
 class SYMBOL_EDITOR_SETTINGS;
+struct SCH_SELECTION_FILTER_OPTIONS;
+
+#if defined(__linux__) || defined(__FreeBSD__)
+class SPNAV_2D_PLUGIN;
+#else
 class NL_SCHEMATIC_PLUGIN;
+#endif
+
 class PANEL_SCH_SELECTION_FILTER;
+class DIALOG_SCH_FIND;
+struct BACKGROUND_JOB;
 
 #ifdef wxHAS_INOTIFY
 #define wxFileSystemWatcher wxInotifyFileSystemWatcher
@@ -80,15 +91,15 @@ class wxFileSystemWatcherEvent;
  * check the optional cache library.
  *
  * @param aLibId is the symbol library identifier to load.
- * @param aLibTable is the #SYMBOL_LIBRARY_TABLE to load the alias from.
+ * @param aLibMgr is the #SYMBOL_LIBRARY_MANAGER_ADAPTER to load the alias from.
  * @param aCacheLib is an optional cache library.
  * @param aParent is an optional parent window when displaying an error message.
  * @param aShowErrorMessage set to true to show any error messages.
  *
  * @return The symbol found in the library or NULL if the symbol was not found.
  */
-LIB_SYMBOL* SchGetLibSymbol( const LIB_ID& aLibId, SYMBOL_LIB_TABLE* aLibTable,
-                             SYMBOL_LIB* aCacheLib = nullptr, wxWindow* aParent = nullptr,
+LIB_SYMBOL* SchGetLibSymbol( const LIB_ID& aLibId, SYMBOL_LIBRARY_ADAPTER* aLibMgr,
+                             LEGACY_SYMBOL_LIB* aCacheLib = nullptr, wxWindow* aParent = nullptr,
                              bool aShowErrorMsg = false );
 
 /**
@@ -148,7 +159,6 @@ public:
 
     void UpdateStatusBar() override;
 
-
     /**
      * Call the library viewer to select symbol to import into schematic.
      * If the library viewer is currently running, it is closed and reopened in modal mode.
@@ -188,19 +198,15 @@ public:
     /**
      * Display a list of loaded libraries and allows the user to select a library.
      *
-     * This list is sorted, with the library cache always at end of the list
-     *
+     * @param aDialogTitle title for the dialog window
+     * @param aListLabel label over the list of libraries
+     * @param aExtraCheckboxes [optional] list of label/valuePointer pairs from which to construct extra
+     *                         checkboxes in the dialog.  Values are written back to the pointers when
+     *                         the dialog is finished.
      * @return the library nickname used in the symbol library table.
      */
-    wxString SelectLibraryFromList();
-
-    /**
-     * Display a dialog asking the user to select a symbol library table.
-     *
-     * @param aOptional if set the Cancel button will be relabelled "Skip".
-     * @return Pointer to the selected symbol library table or nullptr if canceled.
-     */
-    SYMBOL_LIB_TABLE* SelectSymLibTable( bool aOptional = false );
+    wxString SelectLibrary( const wxString& aDialogTitle, const wxString& aListLabel,
+                            const std::vector<std::pair<wxString, bool*>>& aExtraCheckboxes = {} );
 
     virtual void RedrawScreen( const VECTOR2I& aCenterPoint, bool aWarpPointer );
 
@@ -234,6 +240,21 @@ public:
      */
     void SyncView();
 
+    /**
+     * Run the Find or Find & Replace dialog.
+     */
+    void ShowFindReplaceDialog( bool aReplace );
+
+    DIALOG_SCH_FIND* GetFindReplaceDialog() const { return m_findReplaceDialog; }
+
+    void ShowFindReplaceStatus( const wxString& aMsg, int aStatusTime );
+    void ClearFindReplaceStatus();
+
+    /**
+     * Notification that the Find dialog has closed.
+     */
+    void OnFindDialogClose();
+
     void CommonSettingsChanged( int aFlags ) override;
 
     /**
@@ -256,32 +277,29 @@ public:
     void OnSymChangeDebounceTimer( wxTimerEvent& aEvent );
 
     /**
-     * Set the modification time of the symbol library table file.
+     * Set the modification timestamp of the watched symbol library.
      *
-     * This is used to detect changes to the symbol library table file.
-     *
-     * @param aTime is the modification time of the symbol library table file.
+     * For single-file libraries this is the file modification time.
+     * For directory-based libraries (.kicad_symdir) this is a hash of
+     * modification times from KIPLATFORM::IO::TimestampDir().
      */
-    void SetSymModificationTime( const wxDateTime& aTime )
+    void SetSymModificationTime( long long aTimestamp )
     {
-        m_watcherLastModified = aTime;
+        m_watcherTimestamp = aTimestamp;
     }
 
     SCH_SELECTION_TOOL* GetSelectionTool() override;
+
+    void GetLibraryItemsForListDialog( wxArrayString& aHeaders, std::vector<wxArrayString>& aItemsToDisplay );
+
+    void HighlightSelectionFilter( const SCH_SELECTION_FILTER_OPTIONS& aOptions );
 
 protected:
     void handleActivateEvent( wxActivateEvent& aEvent ) override;
 
     void handleIconizeEvent( wxIconizeEvent& aEvent ) override;
 
-    /**
-     * Save Symbol Library Tables to disk.
-     *
-     * @param aGlobal when true, the Global Table is saved.
-     * @param aProject when true, the Project Table is saved.
-     * @return True when all requested actions succeeded.
-     */
-    bool saveSymbolLibTables( bool aGlobal, bool aProject );
+    void doCloseWindow() override;
 
     /**
      * Creates (or removes) a watcher on the specified symbol library
@@ -295,22 +313,28 @@ protected:
      */
     virtual void updateSelectionFilterVisbility() {}
 
-    /// These are only used by symbol_editor.  Eeschema should be using the one inside
-    /// the SCHEMATIC.
-    SCHEMATIC_SETTINGS  m_base_frame_defaults;
-
+protected:
     PANEL_SCH_SELECTION_FILTER* m_selectionFilterPanel;
+    DIALOG_SCH_FIND*            m_findReplaceDialog;
+
+    /// Only used by symbol_editor.  Eeschema should be using the one inside the SCHEMATIC.
+    SCHEMATIC_SETTINGS          m_base_frame_defaults;
 
 private:
 
     /// These are file watchers for the symbol library tables.
     std::unique_ptr<wxFileSystemWatcher>    m_watcher;
     wxFileName                              m_watcherFileName;
-    wxDateTime                              m_watcherLastModified;
+    long long                               m_watcherTimestamp;
+    bool                                    m_watcherIsDir;
     wxTimer                                 m_watcherDebounceTimer;
     bool                                    m_inSymChangeTimerEvent;
 
+#if defined(__linux__) || defined(__FreeBSD__)
+    std::unique_ptr<SPNAV_2D_PLUGIN>        m_spaceMouse;
+#else
     std::unique_ptr<NL_SCHEMATIC_PLUGIN>    m_spaceMouse;
+#endif
 };
 
 #endif // SCH_BASE_FRAME_H_

@@ -17,17 +17,17 @@
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <symbol_library.h>
 #include <confirm.h>
 #include <dialogs/html_message_box.h>
 #include <kiface_base.h>
 #include <pgm_base.h>
 #include <wx/app.h>
 #include <core/utf8.h>
-#include <symbol_lib_table.h>
 #include <project_sch.h>
+#include <libraries/legacy_symbol_library.h>
+#include <libraries/symbol_library_adapter.h>
 
-static std::mutex s_symbolTableMutex;
+std::mutex        PROJECT_SCH::s_libAdapterMutex;
 
 // non-member so it can be moved easily, and kept REALLY private.
 // Do NOT Clear() in here.
@@ -59,7 +59,7 @@ SEARCH_STACK* PROJECT_SCH::SchSearchS( PROJECT* aProject )
 
         try
         {
-            SYMBOL_LIBS::GetLibNamesAndPaths( aProject, &libDir );
+            LEGACY_SYMBOL_LIBS::GetLibNamesAndPaths( aProject, &libDir );
         }
         catch( const IO_ERROR& )
         {
@@ -87,18 +87,18 @@ SEARCH_STACK* PROJECT_SCH::SchSearchS( PROJECT* aProject )
 }
 
 
-SYMBOL_LIBS* PROJECT_SCH::SchLibs( PROJECT* aProject )
+LEGACY_SYMBOL_LIBS* PROJECT_SCH::LegacySchLibs( PROJECT* aProject )
 {
-    SYMBOL_LIBS* libs = (SYMBOL_LIBS*) aProject->GetElem( PROJECT::ELEM::SCH_SYMBOL_LIBS );
+    auto libs = static_cast<LEGACY_SYMBOL_LIBS*>( aProject->GetElem( PROJECT::ELEM::LEGACY_SYMBOL_LIBS ) );
 
-    wxASSERT( !libs || libs->ProjectElementType() == PROJECT::ELEM::SCH_SYMBOL_LIBS );
+    wxASSERT( !libs || libs->ProjectElementType() == PROJECT::ELEM::LEGACY_SYMBOL_LIBS );
 
     if( !libs )
     {
-        libs = new SYMBOL_LIBS();
+        libs = new LEGACY_SYMBOL_LIBS();
 
         // Make PROJECT the new SYMBOL_LIBS owner.
-        aProject->SetElem( PROJECT::ELEM::SCH_SYMBOL_LIBS, libs );
+        aProject->SetElem( PROJECT::ELEM::LEGACY_SYMBOL_LIBS, libs );
 
         try
         {
@@ -130,47 +130,23 @@ SYMBOL_LIBS* PROJECT_SCH::SchLibs( PROJECT* aProject )
 }
 
 
-SYMBOL_LIB_TABLE* PROJECT_SCH::SchSymbolLibTable( PROJECT* aProject )
+SYMBOL_LIBRARY_ADAPTER* PROJECT_SCH::SymbolLibAdapter( PROJECT* aProject )
 {
-    std::lock_guard<std::mutex> lock( s_symbolTableMutex );
+    std::scoped_lock lock( s_libAdapterMutex );
 
-    // This is a lazy loading function, it loads the project specific table when
-    // that table is asked for, not before.
-    SYMBOL_LIB_TABLE* tbl =
-            (SYMBOL_LIB_TABLE*) aProject->GetElem( PROJECT::ELEM::SYMBOL_LIB_TABLE );
+    LIBRARY_MANAGER& mgr = Pgm().GetLibraryManager();
+    std::optional<LIBRARY_MANAGER_ADAPTER*> adapter = mgr.Adapter( LIBRARY_TABLE_TYPE::SYMBOL );
 
-    // its gotta be NULL or a SYMBOL_LIB_TABLE, or a bug.
-    wxASSERT( !tbl || tbl->ProjectElementType() == PROJECT::ELEM::SYMBOL_LIB_TABLE );
-
-    if( !tbl )
+    if( !adapter )
     {
-        // Stack the project specific SYMBOL_LIB_TABLE overlay on top of the global table.
-        // ~SYMBOL_LIB_TABLE() will not touch the fallback table, so multiple projects may
-        // stack this way, all using the same global fallback table.
-        tbl = new SYMBOL_LIB_TABLE( &SYMBOL_LIB_TABLE::GetGlobalLibTable() );
+        mgr.RegisterAdapter( LIBRARY_TABLE_TYPE::SYMBOL,
+                             std::make_unique<SYMBOL_LIBRARY_ADAPTER>( mgr ) );
 
-        aProject->SetElem( PROJECT::ELEM::SYMBOL_LIB_TABLE, tbl );
-
-        wxString prjPath;
-
-        wxGetEnv( PROJECT_VAR_NAME, &prjPath );
-
-        if( !prjPath.IsEmpty() )
-        {
-            wxFileName fn( prjPath, SYMBOL_LIB_TABLE::GetSymbolLibTableFileName() );
-
-            try
-            {
-                tbl->Load( fn.GetFullPath() );
-            }
-            catch( const IO_ERROR& ioe )
-            {
-                wxString msg;
-                msg.Printf( _( "Error loading the symbol library table '%s'." ), fn.GetFullPath() );
-                DisplayErrorMessage( nullptr, msg, ioe.What() );
-            }
-        }
+        std::optional<LIBRARY_MANAGER_ADAPTER*> created = mgr.Adapter( LIBRARY_TABLE_TYPE::SYMBOL );
+        wxCHECK( created && ( *created )->Type() == LIBRARY_TABLE_TYPE::SYMBOL, nullptr );
+        return static_cast<SYMBOL_LIBRARY_ADAPTER*>( *created );
     }
 
-    return tbl;
+    wxCHECK( ( *adapter )->Type() == LIBRARY_TABLE_TYPE::SYMBOL, nullptr );
+    return static_cast<SYMBOL_LIBRARY_ADAPTER*>( *adapter );
 }

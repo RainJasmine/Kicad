@@ -116,6 +116,32 @@ BOOST_AUTO_TEST_CASE( NaturalNumberCompare )
 }
 
 
+BOOST_AUTO_TEST_CASE( ValueCompare )
+{
+    using CASE = std::pair<std::pair<wxString, wxString>, int>;
+
+    const std::vector<CASE> cases = {
+            { { wxT( "100" ),  wxT( "10" ) },     1 },
+            { { wxT( "10K" ),  wxT( "1K" ) },     1 },
+            { { wxT( "10K" ),  wxT( "1K5" ) },    1 },
+            { { wxT( "10K" ),  wxT( "10,000" ) }, 0 },
+            { { wxT( "1K5" ),  wxT( "1.5K" ) },   0 },
+            { { wxT( "1K5" ),  wxT( "1,5K" ) },   0 },
+            { { wxT( "K5" ),   wxT( "1K" ) },    -1 },
+            { { wxT( "1K5" ),  wxT( "K55" ) },    1 },
+            { { wxT( "1R5" ),  wxT( "1.5" ) },    0 },
+            { { wxT( "1u5F" ), wxT( "1.5uF" ) },  0 },
+            { { wxT( "1µ5" ),  wxT( "1u5" ) },    0 },
+    };
+
+    for( const auto& c : cases )
+    {
+        BOOST_CHECK_MESSAGE( ValueStringCompare( c.first.first, c.first.second ) == c.second,
+                             c.first.first + " AND " + c.first.second + " failed" );
+    }
+}
+
+
 /**
  * Test the #GetTrailingInt method.
  */
@@ -167,5 +193,23 @@ BOOST_AUTO_TEST_CASE( HTMLEscape )
         BOOST_CHECK_EQUAL( original.utf8_string(), unescapedTest.utf8_string() );
     }
 }
+
+
+/**
+ * Test #SortVariantNames().
+ */
+BOOST_AUTO_TEST_CASE( VariantNameSort )
+{
+    std::vector<wxString> variantNames;
+
+    // Verify default variant name is always sorted to the beginning of the list.
+    variantNames.emplace_back( wxS( "Variant1" ) );
+    variantNames.emplace_back( GetDefaultVariantName() );
+    std::sort( variantNames.begin(), variantNames.end(), SortVariantNames );
+
+    BOOST_CHECK_EQUAL( variantNames[0], GetDefaultVariantName() );
+    BOOST_CHECK_EQUAL( variantNames[1], wxS( "Variant1" ) );
+}
+
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -78,64 +78,206 @@ def test_pcb_export_svg( kitest: KiTestFixture,
 
     for layer_name in layers_to_test:
         generated_svg_path, layer_name_fixed = get_generated_path( kitest,
-                                                                   Path( input_file ).with_suffix( ".svg" ),
+                                                                   input_file.with_suffix( ".svg" ),
                                                                    "export_svg",
                                                                    layer_name )
 
         command = [utils.kicad_cli(), "pcb", "export", "svg", "--page-size-mode", "1",  # 1=Current page size
                    "--exclude-drawing-sheet", "--black-and-white", "--layers", layer_name,
-                   "-o", str(generated_svg_path), input_file]
+                   "-o", str(generated_svg_path), str(input_file)]
 
         run_and_check_export_command( kitest, command, generated_svg_path )
 
-        svg_source_path = str( Path( input_file ).with_suffix( "" ) )
+        svg_source_path = str( input_file.with_suffix( "" ) )
         svg_source_path += layer_name_fixed + ".svg"
 
         # This test works only with Python >= 3.9 because it uses a pathlib function only existing
         # in 3.9 and newer. So skip it for previous versions
         if sys.hexversion >= 0x03090000 :
-            # Comparison DPI = 1270 => 1px == 20um. I.e. allowable error of 60 um after eroding
-            assert utils.svgs_are_equivalent( str( generated_svg_path ), svg_source_path, 1270 )
+            # Comparison DPI = 850 => 1px == 30um. I.e. allowable error of 90 um after eroding
+            assert utils.svgs_are_equivalent( str( generated_svg_path ), svg_source_path, 850,
+                                              diff_handler=kitest.add_attachment )
 
 
-@pytest.mark.skipif(not utils.is_gerbv_installed(), reason="Requires gerbv to be installed")
-@pytest.mark.parametrize("test_file,layers_to_test,originInches,windowsizeInches",
+@pytest.mark.parametrize("test_file,layers_to_test",
+                         [
+                            (
+                                "cli/artwork_generation_regressions/ZoneFill-4.0.7.kicad_pcb",
+                                ["F.Cu","B.Cu"]
+                            ),
+                            (   "cli/artwork_generation_regressions/ZoneFill-Legacy.brd",
+                                ["F.Cu","B.Cu"]
+                            )
+                         ])
+def test_pcb_export_png( kitest: KiTestFixture,
+                         test_file: str,
+                         layers_to_test: List[str] ):
+
+    input_file = kitest.get_data_file_path( test_file )
+
+    for layer_name in layers_to_test:
+        output_dir = kitest.get_output_path( "cli/export_png/{}/{}/".format(
+                input_file.stem, layer_name.replace( ".", "_" ) ) )
+
+        if output_dir.exists():
+            import shutil
+            shutil.rmtree( output_dir )
+
+        output_dir.mkdir( parents=True, exist_ok=True )
+
+        command = [utils.kicad_cli(), "pcb", "export", "png", "--dpi", "300",
+                   "--black-and-white", "--layers", layer_name,
+                   "-o", str(output_dir), str(input_file)]
+
+        stdout, stderr, exitcode = utils.run_and_capture( command )
+        # Don't assert stderr (legacy fills will have errors)
+        assert exitcode == 0
+        assert stdout is not None
+
+        png_files = list( output_dir.glob( "*.png" ) )
+        assert len( png_files ) == 1, \
+            "Expected 1 PNG file in output dir, found {}".format( len( png_files ) )
+
+        generated_png_path = png_files[0]
+        kitest.add_attachment( generated_png_path )
+
+        # Verify the filename contains the board stem
+        assert generated_png_path.stem.startswith( input_file.stem ), \
+            "Unexpected output filename: {}".format( generated_png_path.name )
+
+        assert not utils.image_is_blank( str( generated_png_path ) )
+
+        # FIXME: add golden/reference PNG comparison using utils.images_are_equal()
+        # for regression testing (see test_pcb_export_svg for the pattern)
+
+
+@pytest.mark.skipif(not utils.is_gerbview_available(), reason="Requires gerbview kiface (kicad-cli gerber)")
+@pytest.mark.parametrize("test_file,layers_to_test,max_diff_percent",
                          [
                             (
                                 "cli/artwork_generation_regressions/ZoneFill-4.0.7.kicad_pcb",
                                 ["F.Cu","B.Cu"],
-                                ( 3.5, -4.6 ),
-                                ( 4.3, 2.2 )
+                                0.5
                             ),
                             (   "cli/artwork_generation_regressions/ZoneFill-Legacy.brd",
                                 ["F.Cu","B.Cu"],
-                                ( -0.6, -0.4 ),
-                                ( 1.7, 0.8 )
+                                0.5
+                            ),
+                            (
+                                # Regression for https://gitlab.com/kicad/code/kicad/-/issues/24143:
+                                # gr_poly shapes whose outline contains a degenerate
+                                # near-zero-width "spike" must keep that spike (drawn as a thick
+                                # stroke) when exported to gerber. Fracture/Simplify drops
+                                # the spike from the fill, so the stroke must be plotted from the
+                                # unfractured outline.
+                                "cli/artwork_generation_regressions/Issue24143.kicad_pcb",
+                                ["F.Cu"],
+                                0.0
                             )
                          ])
 def test_pcb_export_gerber( kitest: KiTestFixture,
                             test_file: str,
                             layers_to_test: List[str],
-                            originInches :  Tuple[float, float],
-                            windowsizeInches :  Tuple[float, float] ):
+                            max_diff_percent: float ):
 
     input_file = kitest.get_data_file_path( test_file )
 
     for layer_name in layers_to_test:
-        generated_gerber_path, layer_name_fixed = get_generated_path( kitest,
-                                                                      Path( input_file ).with_suffix( ".gbr" ),
-                                                                      "export_gerber",
-                                                                      layer_name )
+        output_dir = kitest.get_output_path( "cli/export_gerber/{}/{}/".format(
+                input_file.stem, layer_name.replace( ".", "_" ) ) )
 
-        command = [utils.kicad_cli(), "pcb", "export", "gerber", "--no-x2", "--use-drill-file-origin",
+        if output_dir.exists():
+            import shutil
+            shutil.rmtree( output_dir )
+
+        output_dir.mkdir( parents=True, exist_ok=True )
+
+        command = [utils.kicad_cli(), "pcb", "export", "gerbers", "--no-x2", "--use-drill-file-origin",
                    "--layers", layer_name,
-                   "-o", str(generated_gerber_path), input_file]
+                   "-o", str(output_dir), str(input_file)]
 
-        run_and_check_export_command( kitest, command, generated_gerber_path )
+        stdout, stderr, exitcode = utils.run_and_capture( command )
+        assert exitcode == 0
+        assert stdout is not None
 
-        gbr_source_path = str( Path( input_file ).with_suffix( "" ) )
+        gerber_files = [f for f in output_dir.iterdir() if not f.name.endswith( ".gbrjob" )]
+        assert len( gerber_files ) == 1, \
+            "Expected 1 gerber file in output dir, found {}".format( len( gerber_files ) )
+
+        generated_gerber_path = gerber_files[0]
+        kitest.add_attachment( generated_gerber_path )
+
+        gbr_source_path = str( input_file.with_suffix( "" ) )
+        layer_name_fixed = "-" + layer_name.replace( ".", "_" )
         gbr_source_path += layer_name_fixed + ".gbr"
 
-        # Comparison DPI = 5080 => 1px == 5um. I.e. allowable error of 15 um after eroding
-        assert utils.gerbers_are_equivalent( str( generated_gerber_path ), gbr_source_path, 5080,
-                                             originInches, windowsizeInches )
+        assert utils.gerbers_are_equivalent( str( generated_gerber_path ), gbr_source_path,
+                                             diff_handler=kitest.add_attachment,
+                                             max_diff_percent=max_diff_percent )
+
+
+@pytest.mark.parametrize("test_file,golden_name,output_dir,skip_line_count,cli_args",
+                         [
+                            (
+                                "cli/basic_test/basic_test.kicad_pcb",
+                                "basic_test_excellon_default.drl",
+                                "basic_test/drills/excellon_default/",
+                                5,
+                                ["--format","excellon"]
+                            ),
+                            (
+                                "cli/basic_test/basic_test.kicad_pcb",
+                                "basic_test_excellon_inches.drl",
+                                "basic_test/drills/excellon_inches/",
+                                5,
+                                ["--format","excellon","-u","in"]
+                            ),
+                            (
+                                "cli/basic_test/basic_test.kicad_pcb",
+                                "basic_test_excellon_mirror.drl",
+                                "basic_test/drills/excellon_mirror/",
+                                5,
+                                ["--format","excellon","--excellon-mirror-y"]
+                            ),
+                            (
+                                "cli/basic_test/basic_test.kicad_pcb",
+                                "basic_test-PTH-drl.gbr",
+                                "basic_test/drills/gerber_default/",
+                                9,
+                                ["--format","gerber"]
+                            )
+                         ])
+def test_pcb_export_drill( kitest: KiTestFixture,
+                         test_file: str,
+                         golden_name: str,
+                         output_dir: str,
+                         skip_line_count: int,
+                         cli_args: List[str]  ):
+
+    input_file = kitest.get_data_file_path( test_file )
+
+    output_path =  kitest.get_output_path( "cli/{}/".format( output_dir ) )
+
+    command = [utils.kicad_cli(), "pcb", "export", "drill"]
+    command.extend( cli_args )
+    command.append( "-o" )
+    command.append( str( output_path ) )
+    command.append( str( input_file ) )
+
+    stdout, stderr, exitcode = utils.run_and_capture( command )
+
+    print(stdout)
+
+    assert exitcode == 0
+    assert stdout is not None
+
+    stdout_regex = re.search("Created file '(.+)'", stdout)
+    assert stdout_regex
+
+    output_drill_path = Path( stdout_regex.group(1) )
+    assert output_drill_path.exists()
+
+    kitest.add_attachment( output_drill_path )
+
+    compare_filepath = kitest.get_data_file_path( "cli/basic_test/{}".format( golden_name ) )
+    assert utils.textdiff_files( compare_filepath, output_drill_path, skip_line_count )

@@ -72,6 +72,22 @@ enum class PAD_DRILL_SHAPE
     OBLONG,
 };
 
+enum class PAD_DRILL_POST_MACHINING_MODE
+{
+    UNKNOWN,
+    NOT_POST_MACHINED,
+    COUNTERBORE,
+    COUNTERSINK
+};
+
+enum class BACKDRILL_MODE
+{
+    NO_BACKDRILL,
+    BACKDRILL_BOTTOM,
+    BACKDRILL_TOP,
+    BACKDRILL_BOTH
+};
+
 /**
  * The set of pad shapes, used with PAD::{Set,Get}Attribute().
  *
@@ -104,6 +120,23 @@ enum class PAD_PROP
     HEATSINK,              ///< a pad used as heat sink, usually in SMD footprints
     CASTELLATED,           ///< a pad with a castellated through hole
     MECHANICAL,            ///< a pad used for mechanical support
+    PRESSFIT               ///< a PTH with a hole diameter with tight tolerances for press fit pin
+};
+
+
+enum class UNCONNECTED_LAYER_MODE
+{
+    KEEP_ALL,
+    START_END_ONLY,
+    REMOVE_ALL,
+    REMOVE_EXCEPT_START_AND_END
+};
+
+
+enum class CUSTOM_SHAPE_ZONE_MODE
+{
+    OUTLINE,
+    CONVEXHULL
 };
 
 
@@ -147,19 +180,6 @@ public:
     static constexpr PCB_LAYER_ID INNER_LAYERS = In1_Cu;
 
     ///! Whether or not to remove the copper shape for unconnected layers
-    enum class UNCONNECTED_LAYER_MODE
-    {
-        KEEP_ALL,
-        REMOVE_ALL,
-        REMOVE_EXCEPT_START_AND_END
-    };
-
-    enum class CUSTOM_SHAPE_ZONE_MODE
-    {
-        OUTLINE,
-        CONVEXHULL
-    };
-
     ///! The set of properties that define a pad's shape on a given layer
     struct SHAPE_PROPS
     {
@@ -176,7 +196,6 @@ public:
          */
         VECTOR2I offset; ///< Offset of the shape center from the pad center
 
-        double round_rect_corner_radius;
         double round_rect_radius_ratio;
         double chamfered_rect_ratio;    ///< Size of chamfer: ratio of smallest of X,Y size
         int chamfered_rect_positions;   ///< @see RECT_CHAMFER_POSITIONS
@@ -189,6 +208,7 @@ public:
 
         SHAPE_PROPS();
         bool operator==( const SHAPE_PROPS& aOther ) const;
+        int Compare( const SHAPE_PROPS& aOther ) const;
     };
 
     /**
@@ -219,6 +239,9 @@ public:
         std::vector<std::shared_ptr<PCB_SHAPE>> custom_shapes;
 
         bool operator==( const COPPER_LAYER_PROPS& aOther ) const;
+        int Compare( const COPPER_LAYER_PROPS& aOther ) const;
+
+        double Similarity( const COPPER_LAYER_PROPS& aOther ) const;
     };
 
     ///! The features of a padstack that can vary on outer layers.
@@ -235,20 +258,33 @@ public:
         std::optional<bool> has_plugging; ///< True if the drill hole should be plugged on this side
 
         bool operator==( const MASK_LAYER_PROPS& aOther ) const;
+        int Compare( const MASK_LAYER_PROPS& aOther ) const;
     };
 
     ///! The properties of a padstack drill.  Drill position is always the pad position (origin).
     struct DRILL_PROPS
     {
-        VECTOR2I size;  ///< Drill diameter (x == y) or slot dimensions (x != y)
-        PAD_DRILL_SHAPE shape;
-        PCB_LAYER_ID start;
-        PCB_LAYER_ID end;
+        VECTOR2I        size;                            ///< Drill diameter (x == y) or slot dimensions (x != y)
+        PAD_DRILL_SHAPE shape = PAD_DRILL_SHAPE::UNDEFINED;
+        PCB_LAYER_ID    start = UNDEFINED_LAYER;
+        PCB_LAYER_ID    end   = UNDEFINED_LAYER;
 
         std::optional<bool> is_filled; ///< True if the drill hole should be filled completely
         std::optional<bool> is_capped; ///< True if the drill hole should be capped
 
         bool operator==( const DRILL_PROPS& aOther ) const;
+        int Compare( const DRILL_PROPS& aOther ) const;
+    };
+
+    struct POST_MACHINING_PROPS
+    {
+        std::optional<PAD_DRILL_POST_MACHINING_MODE> mode;
+        int size = 0;
+        int depth = 0;
+        int angle = 0;
+
+        bool operator==( const POST_MACHINING_PROPS& aOther ) const;
+        int Compare( const POST_MACHINING_PROPS& aOther ) const;
     };
 
 public:
@@ -272,6 +308,12 @@ public:
     static int Compare( const PADSTACK* aPadstackRef, const PADSTACK* aPadstackCmp );
 
     /**
+     * Check if the padstack has an explicit definition for the given layer.
+     * This is useful for detecting if a layer removal will cause data loss.
+     */
+    bool HasExplicitDefinitionForLayer( PCB_LAYER_ID aLayer ) const;
+
+    /**
      * Return a measure of how likely the other object is to represent the same
      * object.  The scale runs from 0.0 (definitely different objects) to 1.0 (same)
      */
@@ -285,7 +327,7 @@ public:
      * Flips the padstack layers in the case that the pad's parent footprint is flipped to the
      * other side of the board.
      */
-    void FlipLayers( int aCopperLayerCount );
+    void FlipLayers( BOARD* aBoard );
 
     PCB_LAYER_ID StartLayer() const;
     PCB_LAYER_ID EndLayer() const;
@@ -295,6 +337,9 @@ public:
 
     ///! Returns the name of this padstack in IPC-7351 format
     wxString Name() const;
+
+    const wxChar* CustomName() const;
+    void SetCustomName( const wxString& aCustomName );
 
     EDA_ANGLE GetOrientation() const { return m_orientation; }
     void SetOrientation( EDA_ANGLE aAngle )
@@ -308,6 +353,15 @@ public:
 
     DRILL_PROPS& SecondaryDrill() { return m_secondaryDrill; }
     const DRILL_PROPS& SecondaryDrill() const { return m_secondaryDrill; }
+
+    DRILL_PROPS& TertiaryDrill() { return m_tertiaryDrill; }
+    const DRILL_PROPS& TertiaryDrill() const { return m_tertiaryDrill; }
+
+    POST_MACHINING_PROPS& FrontPostMachining() { return m_frontPostMachining; }
+    const POST_MACHINING_PROPS& FrontPostMachining() const { return m_frontPostMachining; }
+
+    POST_MACHINING_PROPS& BackPostMachining() { return m_backPostMachining; }
+    const POST_MACHINING_PROPS& BackPostMachining() const { return m_backPostMachining; }
 
     UNCONNECTED_LAYER_MODE UnconnectedLayerMode() const { return m_unconnectedLayerMode; }
     void SetUnconnectedLayerMode( UNCONNECTED_LAYER_MODE aMode ) { m_unconnectedLayerMode = aMode; }
@@ -456,6 +510,15 @@ public:
 
     void ClearPrimitives( PCB_LAYER_ID aLayer );
 
+    BACKDRILL_MODE GetBackdrillMode() const;
+    void SetBackdrillMode( BACKDRILL_MODE aMode );
+
+    std::optional<int> GetBackdrillSize( bool aTop ) const;
+    void SetBackdrillSize( bool aTop, std::optional<int> aSize );
+
+    PCB_LAYER_ID GetBackdrillEndLayer( bool aTop ) const;
+    void SetBackdrillEndLayer( bool aTop, PCB_LAYER_ID aLayer );
+
 private:
     void packCopperLayer( PCB_LAYER_ID aLayer, kiapi::board::types::PadStack& aProto ) const;
 
@@ -471,7 +534,7 @@ private:
     LSET m_layerSet;
 
     ///! An override for the IPC-7351 padstack name
-    wxString m_customName;
+    std::unique_ptr<wxString> m_customName;
 
     ///! The rotation of the pad relative to an outer reference frame
     EDA_ANGLE m_orientation;
@@ -499,13 +562,19 @@ private:
     ///! vias and pads (F_Cu to B_Cu for normal holes; a subset of layers for blind/buried vias)
     DRILL_PROPS m_drill;
 
-    ///! Secondary drill, used to define back-drilling
+    ///! Secondary drill, used to define back-drilling starting from the bottom side
     DRILL_PROPS m_secondaryDrill;
+
+    ///! Tertiary drill, used to define back-drilling starting from the top side
+    DRILL_PROPS m_tertiaryDrill;
+
+    POST_MACHINING_PROPS m_frontPostMachining;
+    POST_MACHINING_PROPS m_backPostMachining;
 };
 
-#ifndef SWIG
-DECLARE_ENUM_TO_WXANY( PADSTACK::UNCONNECTED_LAYER_MODE );
-#endif
+DECLARE_ENUM_TO_WXANY( PAD_DRILL_POST_MACHINING_MODE );
+DECLARE_ENUM_TO_WXANY( UNCONNECTED_LAYER_MODE );
+DECLARE_ENUM_TO_WXANY( BACKDRILL_MODE );
 
 
 #endif //KICAD_PADSTACK_H

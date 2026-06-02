@@ -157,6 +157,11 @@ public:
     void        SetSvgFitPageToBoard( int aSvgFitPageToBoard ) { m_svgFitPageToBoard = aSvgFitPageToBoard; }
     bool        GetSvgFitPagetoBoard() const { return m_svgFitPageToBoard; }
 
+    void        SetPngDPI( int aDPI ) { m_pngDPI = aDPI; }
+    int         GetPngDPI() const { return m_pngDPI; }
+    void        SetPngAntialias( bool aFlag ) { m_pngAntialias = aFlag; }
+    bool        GetPngAntialias() const { return m_pngAntialias; }
+
     void        SetBlackAndWhite( bool blackAndWhite ) { m_blackAndWhite = blackAndWhite; }
     bool        GetBlackAndWhite() const { return m_blackAndWhite; }
 
@@ -183,6 +188,18 @@ public:
 
     void        SetDashedLineGapRatio( double aVal ) { m_dashedLineGapRatio = aVal; }
     double      GetDashedLineGapRatio() const { return m_dashedLineGapRatio; }
+
+    void        SetDXFMultiLayeredExportOption( bool aFlag ) { m_DXFExportAsMultiLayeredFile = aFlag; }
+    bool        GetDXFMultiLayeredExportOption() const { return m_DXFExportAsMultiLayeredFile; }
+
+    void        SetLayersToExport( std::vector<std::pair<PCB_LAYER_ID, wxString>> & aVal ) { m_layersToExport = aVal; }
+    std::vector<std::pair<PCB_LAYER_ID, wxString>> GetLayersToExport() const { return m_layersToExport; }
+
+    /**
+     * Return the layer this item is on.
+     */
+    PCB_LAYER_ID GetLayer() const { return m_layer; }
+    void         SetLayer( PCB_LAYER_ID aLayer ) { m_layer = aLayer; }
 
     void        SetPDFBackgroundColor( const COLOR4D& aColor ) { m_PDFBackgroundColor = aColor; }
     COLOR4D     GetPDFBackgroundColor() const { return m_PDFBackgroundColor; }
@@ -252,6 +269,8 @@ private:
     /// Precision of coordinates in SVG: accepted 3 - 6; 6 is the internal resolution of Pcbnew
     unsigned   m_svgPrecision;
     bool        m_svgFitPageToBoard;
+    int         m_pngDPI;
+    bool        m_pngAntialias;
 
     bool       m_useAuxOrigin;          ///< Plot gerbers using auxiliary (drill) origin instead
                                         ///<   of absolute coordinates
@@ -291,6 +310,12 @@ private:
 
     /// Dummy colors object that can be created if there is no Pgm context
     std::shared_ptr<COLOR_SETTINGS> m_default_colors;
+
+    bool m_DXFExportAsMultiLayeredFile;
+
+    std::vector<std::pair<PCB_LAYER_ID, wxString>> m_layersToExport;
+
+    PCB_LAYER_ID m_layer;
 };
 
 

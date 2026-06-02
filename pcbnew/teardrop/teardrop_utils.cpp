@@ -33,6 +33,7 @@
 #include <zone_filler.h>
 #include <board_commit.h>
 #include <drc/drc_rtree.h>
+#include <trigo.h>
 
 #include "teardrop.h"
 #include <geometry/convex_hull.h>
@@ -100,7 +101,7 @@ bool TEARDROP_MANAGER::IsRound( BOARD_ITEM* aItem, PCB_LAYER_ID aLayer )
 }
 
 
-void TEARDROP_MANAGER::buildTrackCaches()
+void TEARDROP_MANAGER::BuildTrackCaches()
 {
     for( PCB_TRACK* track : m_board->Tracks() )
     {
@@ -110,43 +111,136 @@ void TEARDROP_MANAGER::buildTrackCaches()
             m_trackLookupList.AddTrack( track, track->GetLayer(), track->GetNetCode() );
         }
     }
+
+    m_tracksRTree.Build();
 }
 
 
 bool TEARDROP_MANAGER::areItemsInSameZone( BOARD_ITEM* aPadOrVia, PCB_TRACK* aTrack ) const
 {
-    for( ZONE* zone: m_board->Zones() )
+    PCB_LAYER_ID layer = aTrack->GetLayer();
+
+    for( ZONE* zone : m_board->Zones() )
     {
         // Skip teardrops
         if( zone->IsTeardropArea() )
             continue;
 
-        // Only consider zones on the same layer
-        if( !zone->IsOnLayer( aTrack->GetLayer() ) )
+        // Only consider zones on the same layer as the track
+        if( !zone->IsOnLayer( layer ) )
             continue;
 
-        if( zone->GetNetCode() == aTrack->GetNetCode() )
+        if( zone->GetNetCode() != aTrack->GetNetCode() )
+            continue;
+
+        // The zone must have filled copper on this layer to provide a connection
+        if( !zone->HasFilledPolysForLayer( layer ) )
+            continue;
+
+        std::shared_ptr<SHAPE_POLY_SET> fill = zone->GetFilledPolysList( layer );
+
+        if( !fill || fill->IsEmpty() )
+            continue;
+
+        // Check if the zone's filled copper actually contains both the pad/via and the track.
+        // The zone outline might contain these items, but the actual fill might not reach them
+        // due to thermal settings, minimum width, island removal, etc.
+        VECTOR2I padPos( aPadOrVia->GetPosition() );
+
+        if( !fill->Contains( padPos ) )
+            continue;
+
+        // Also verify the track is within the filled zone (check both endpoints)
+        if( !fill->Contains( aTrack->GetStart() ) && !fill->Contains( aTrack->GetEnd() ) )
+            continue;
+
+        // If the first item is a pad, ensure it can be connected to the zone
+        if( aPadOrVia->Type() == PCB_PAD_T )
         {
-            if( zone->Outline()->Contains( VECTOR2I( aPadOrVia->GetPosition() ) ) )
+            PAD* pad = static_cast<PAD*>( aPadOrVia );
+
+            if( zone->GetPadConnection() == ZONE_CONNECTION::NONE
+                || pad->GetZoneConnectionOverrides( nullptr ) == ZONE_CONNECTION::NONE )
             {
-                // If the first item is a pad, ensure it can be connected to the zone
-                if( aPadOrVia->Type() == PCB_PAD_T )
-                {
-                    PAD *pad = static_cast<PAD*>( aPadOrVia );
-
-                    if( zone->GetPadConnection() == ZONE_CONNECTION::NONE
-                        || pad->GetZoneConnectionOverrides( nullptr ) == ZONE_CONNECTION::NONE )
-                    {
-                        return false;
-                    }
-                }
-
-                return true;
+                return false;
             }
         }
+
+        return true;
     }
 
     return false;
+}
+
+
+int TEARDROP_MANAGER::computeEmergingTrackLength( PCB_TRACK* aTrack, BOARD_ITEM* aOther,
+                                                  PCB_LAYER_ID aLayer ) const
+{
+    VECTOR2I start = aTrack->GetStart();
+    VECTOR2I end = aTrack->GetEnd();
+    bool     startInside = aOther->HitTest( start, 0 );
+    bool     endInside = aOther->HitTest( end, 0 );
+
+    if( startInside && endInside )
+        return 0;
+
+    // Fully outside: caller handles crossing geometry separately; report full length so
+    // the emergence filter never rejects those.
+    if( !startInside && !endInside )
+        return KiROUND( SEG( start, end ).Length() );
+
+    // Exactly one endpoint inside: normalize so start is outside, end is inside.
+    if( startInside )
+        std::swap( start, end );
+
+    int            maxError = m_board->GetDesignSettings().m_MaxError;
+    int            radius = GetWidth( aOther, aLayer ) / 2;
+    SHAPE_POLY_SET shapebuffer;
+
+    if( IsRound( aOther, aLayer ) )
+    {
+        TransformCircleToPolygon( shapebuffer, aOther->GetPosition(), radius, maxError,
+                                  ERROR_INSIDE, 16 );
+    }
+    else
+    {
+        wxCHECK_MSG( aOther->Type() == PCB_PAD_T, 0, wxT( "Expected non-round item to be PAD" ) );
+        static_cast<PAD*>( aOther )->TransformShapeToPolygon( shapebuffer, aLayer, 0, maxError,
+                                                              ERROR_INSIDE );
+    }
+
+    SHAPE_LINE_CHAIN& outline = shapebuffer.Outline( 0 );
+    outline.SetClosed( true );
+
+    SHAPE_LINE_CHAIN::INTERSECTIONS pts;
+    int                             pt_count = 0;
+
+    if( aTrack->Type() == PCB_ARC_T )
+    {
+        SHAPE_ARC arc( aTrack->GetStart(), static_cast<PCB_ARC*>( aTrack )->GetMid(),
+                       aTrack->GetEnd(), aTrack->GetWidth() );
+        SHAPE_LINE_CHAIN poly = arc.ConvertToPolyline( maxError );
+        pt_count = outline.Intersect( poly, pts );
+    }
+    else
+    {
+        pt_count = outline.Intersect( SEG( start, end ), pts );
+    }
+
+    if( pt_count < 1 )
+        return 0;
+
+    double minDist = std::numeric_limits<double>::max();
+
+    for( const SHAPE_LINE_CHAIN::INTERSECTION& hit : pts )
+    {
+        double d = ( hit.p - start ).EuclideanNorm();
+
+        if( d < minDist )
+            minDist = d;
+    }
+
+    return KiROUND( minDist );
 }
 
 
@@ -208,7 +302,10 @@ static VECTOR2D NormalizeVector( const VECTOR2I& aVector )
 /*
  * Compute the curve part points for teardrops connected to a round shape
  * The Bezier curve control points are optimized for a round pad/via shape,
- * and do not give a good curve shape for other pad shapes
+ * and do not give a good curve shape for other pad shapes.
+ *
+ * For large circles where the teardrop width is constrained, the anchor points
+ * are projected onto the circle edge to ensure proper tangent calculation.
  */
 void TEARDROP_MANAGER::computeCurvedForRoundShape( const TEARDROP_PARAMETERS& aParams,
                                                    std::vector<VECTOR2I>& aPoly,
@@ -240,13 +337,34 @@ void TEARDROP_MANAGER::computeCurvedForRoundShape( const TEARDROP_PARAMETERS& aP
     double minVpercent = double( aTrackHalfWidth ) / radius;
     double weaken = (Vpercent - minVpercent) / ( 1 - minVpercent ) / radius;
 
+    // For large circles where teardrop width is constrained, the anchor points from the
+    // convex hull may not be exactly on the circle. Project them onto the circle edge
+    // to ensure proper tangent calculation for smooth curves.
+    VECTOR2I vecC = pts[2] - aOtherPos;
+    double distC = vecC.EuclideanNorm();
+
+    if( distC > 0 && std::abs( distC - radius ) > maxError )
+    {
+        // Point is not on the circle - project it to the circle edge
+        pts[2] = aOtherPos + vecC.Resize( radius );
+        vecC = pts[2] - aOtherPos;
+    }
+
+    VECTOR2I vecE = pts[4] - aOtherPos;
+    double distE = vecE.EuclideanNorm();
+
+    if( distE > 0 && std::abs( distE - radius ) > maxError )
+    {
+        // Point is not on the circle - project it to the circle edge
+        pts[4] = aOtherPos + vecE.Resize( radius );
+        vecE = pts[4] - aOtherPos;
+    }
+
     double biasBC = 0.5 * SEG( pts[1], pts[2] ).Length();
     double biasAE = 0.5 * SEG( pts[4], pts[0] ).Length();
 
-    VECTOR2I vecC = (VECTOR2I)pts[2] - aOtherPos;
     VECTOR2I tangentC = VECTOR2I( pts[2].x - vecC.y * biasBC * weaken,
                                 pts[2].y + vecC.x * biasBC * weaken );
-    VECTOR2I vecE = (VECTOR2I)pts[4] - aOtherPos;
     VECTOR2I tangentE = VECTOR2I( pts[4].x + vecE.y * biasAE * weaken,
                                 pts[4].y - vecE.x * biasAE * weaken );
 
@@ -269,15 +387,167 @@ void TEARDROP_MANAGER::computeCurvedForRoundShape( const TEARDROP_PARAMETERS& aP
 }
 
 
+/**
+ * Helper to compute a control point for a teardrop anchor on a rounded rectangle corner.
+ * The control point is placed along the tangent to the corner arc at the anchor point,
+ * in the direction that best aligns with the desired direction (typically toward the track).
+ *
+ * @param aAnchor the anchor point on the pad edge
+ * @param aCornerCenter the center of the corner arc
+ * @param aBias the distance from the anchor to place the control point
+ * @param aDesiredDir the direction we want the control point to go (toward track)
+ * @return the computed control point
+ */
+static VECTOR2I computeCornerTangentControlPoint( const VECTOR2I& aAnchor,
+                                                   const VECTOR2I& aCornerCenter,
+                                                   double aBias,
+                                                   const VECTOR2I& aDesiredDir )
+{
+    VECTOR2I radial = aAnchor - aCornerCenter;
+
+    if( radial.EuclideanNorm() == 0 )
+        return aAnchor;
+
+    // Tangent is perpendicular to the radius. There are two perpendicular directions:
+    // (radial.y, -radial.x) and (-radial.y, radial.x)
+    // Choose the one that best aligns with the desired direction (toward the track)
+    VECTOR2I tangent1( radial.y, -radial.x );
+    VECTOR2I tangent2( -radial.y, radial.x );
+
+    // Use dot product to determine which tangent direction aligns better with desired direction
+    int64_t dot1 = static_cast<int64_t>( tangent1.x ) * aDesiredDir.x
+                 + static_cast<int64_t>( tangent1.y ) * aDesiredDir.y;
+    int64_t dot2 = static_cast<int64_t>( tangent2.x ) * aDesiredDir.x
+                 + static_cast<int64_t>( tangent2.y ) * aDesiredDir.y;
+
+    VECTOR2I tangent = ( dot1 > dot2 ) ? tangent1 : tangent2;
+
+    return aAnchor + tangent.Resize( KiROUND( aBias ) );
+}
+
+
+/**
+ * Check if a point is on the curved (semicircular) end of an oval pad.
+ * An oval is a stadium shape with semicircular caps on the ends of the minor axis.
+ *
+ * @param aPoint the point to check
+ * @param aPadPos the pad center position
+ * @param aPadSize the pad size (width, height)
+ * @param aRotation the pad rotation
+ * @param aArcCenter [out] if on curved end, receives the semicircle center
+ * @return true if point is on a curved end of the oval
+ */
+static bool isPointOnOvalEnd( const VECTOR2I& aPoint, const VECTOR2I& aPadPos,
+                              const VECTOR2I& aPadSize, const EDA_ANGLE& aRotation,
+                              VECTOR2I& aArcCenter )
+{
+    // Transform point to pad-local coordinates (unrotated)
+    VECTOR2I localPt = aPoint - aPadPos;
+    RotatePoint( localPt, aRotation );
+
+    int halfW = aPadSize.x / 2;
+    int halfH = aPadSize.y / 2;
+
+    // Oval geometry: semicircle radius is min dimension / 2
+    // The semicircle centers are offset along the major axis
+    int radius = std::min( halfW, halfH );
+    bool isHorizontal = halfW > halfH;
+
+    if( isHorizontal )
+    {
+        // Semicircles at left and right ends
+        int centerOffset = halfW - radius;
+
+        // Check if point is in the curved region (beyond the straight sides)
+        if( std::abs( localPt.x ) <= centerOffset )
+            return false;
+
+        // Determine which end
+        int centerX = ( localPt.x > 0 ) ? centerOffset : -centerOffset;
+        aArcCenter = VECTOR2I( centerX, 0 );
+    }
+    else
+    {
+        // Semicircles at top and bottom ends
+        int centerOffset = halfH - radius;
+
+        // Check if point is in the curved region (beyond the straight sides)
+        if( std::abs( localPt.y ) <= centerOffset )
+            return false;
+
+        // Determine which end
+        int centerY = ( localPt.y > 0 ) ? centerOffset : -centerOffset;
+        aArcCenter = VECTOR2I( 0, centerY );
+    }
+
+    // Transform arc center back to board coordinates
+    RotatePoint( aArcCenter, -aRotation );
+    aArcCenter += aPadPos;
+
+    return true;
+}
+
+
+/**
+ * Check if a point is within a rounded corner region of a rounded rectangle pad.
+ * Returns true if the point is in a corner arc region and provides the corner center.
+ *
+ * @param aPoint the point to check
+ * @param aPadPos the pad center position
+ * @param aPadSize the pad size (width, height)
+ * @param aCornerRadius the corner radius
+ * @param aRotation the pad rotation
+ * @param aCornerCenter [out] if in corner, receives the corner arc center
+ * @return true if point is in a corner arc region
+ */
+static bool isPointOnRoundedCorner( const VECTOR2I& aPoint, const VECTOR2I& aPadPos,
+                                    const VECTOR2I& aPadSize, int aCornerRadius,
+                                    const EDA_ANGLE& aRotation, VECTOR2I& aCornerCenter )
+{
+    // Transform point to pad-local coordinates (unrotated)
+    VECTOR2I localPt = aPoint - aPadPos;
+    RotatePoint( localPt, aRotation );
+
+    // Half-sizes minus corner radius define the inner rectangle
+    int halfW = aPadSize.x / 2;
+    int halfH = aPadSize.y / 2;
+    int innerHalfW = halfW - aCornerRadius;
+    int innerHalfH = halfH - aCornerRadius;
+
+    // Point is in corner region if it's outside the inner rectangle in both dimensions
+    bool inCornerX = std::abs( localPt.x ) > innerHalfW;
+    bool inCornerY = std::abs( localPt.y ) > innerHalfH;
+
+    if( !inCornerX || !inCornerY )
+        return false;
+
+    // Determine which corner
+    int cornerX = ( localPt.x > 0 ) ? innerHalfW : -innerHalfW;
+    int cornerY = ( localPt.y > 0 ) ? innerHalfH : -innerHalfH;
+
+    aCornerCenter = VECTOR2I( cornerX, cornerY );
+
+    // Transform corner center back to board coordinates
+    RotatePoint( aCornerCenter, -aRotation );
+    aCornerCenter += aPadPos;
+
+    return true;
+}
+
+
 /*
- * Compute the curve part points for teardrops connected to a rectangular/polygonal shape
- * The Bezier curve control points are not optimized for a special shape
+ * Compute the curve part points for teardrops connected to a rectangular/polygonal shape.
+ * For rounded rectangles, control points are computed to be tangent to corner arcs,
+ * preventing the teardrop curve from intersecting the pad's corner radius.
  */
 void TEARDROP_MANAGER::computeCurvedForRectShape( const TEARDROP_PARAMETERS& aParams,
                                                   std::vector<VECTOR2I>& aPoly, int aTdWidth,
                                                   int aTrackHalfWidth,
                                                   std::vector<VECTOR2I>& aPts,
-                                                  const VECTOR2I& aIntersection) const
+                                                  const VECTOR2I& aIntersection,
+                                                  BOARD_ITEM* aOther,
+                                                  const VECTOR2I& aOtherPos,
+                                                  PCB_LAYER_ID aLayer ) const
 {
     int maxError = m_board->GetDesignSettings().m_MaxError;
 
@@ -293,11 +563,68 @@ void TEARDROP_MANAGER::computeCurvedForRectShape( const TEARDROP_PARAMETERS& aPa
 
     VECTOR2I trackDir( aIntersection - ( aPts[0] + aPts[1] ) / 2 );
 
+    // Check if this is a rounded rectangle or oval pad (both have curved regions)
+    bool isRoundRect = false;
+    bool isOval = false;
+    int cornerRadius = 0;
+    VECTOR2I padSize;
+    EDA_ANGLE padRotation;
+
+    if( aOther && aOther->Type() == PCB_PAD_T )
+    {
+        PAD* pad = static_cast<PAD*>( aOther );
+        PAD_SHAPE shape = pad->GetShape( aLayer );
+
+        if( shape == PAD_SHAPE::ROUNDRECT )
+        {
+            isRoundRect = true;
+            cornerRadius = pad->GetRoundRectCornerRadius( aLayer );
+            padSize = pad->GetSize( aLayer );
+            padRotation = pad->GetOrientation();
+        }
+        else if( shape == PAD_SHAPE::OVAL )
+        {
+            isOval = true;
+            padSize = pad->GetSize( aLayer );
+            padRotation = pad->GetOrientation();
+        }
+    }
+
     std::vector<VECTOR2I> curve_pts;
 
-    // Note: This side is from track to pad/via
+    // Compute control points for the first Bezier curve (track point B to pad point C)
     VECTOR2I ctrl1 = aPts[1] + trackDir.Resize( side1.EuclideanNorm() / 4 );
-    VECTOR2I ctrl2 = ( aPts[2] + aIntersection ) / 2;
+    VECTOR2I ctrl2;
+
+    // Direction from pad anchor toward track (opposite of trackDir which goes pad-ward)
+    VECTOR2I towardTrack = -trackDir;
+
+    // Default control point - midpoint approach
+    ctrl2 = ( aPts[2] + aIntersection ) / 2;
+
+    if( isRoundRect && cornerRadius > 0 )
+    {
+        VECTOR2I cornerCenter;
+
+        if( isPointOnRoundedCorner( aPts[2], aOtherPos, padSize, cornerRadius,
+                                    padRotation, cornerCenter ) )
+        {
+            // Anchor is on a corner arc - use tangent-based control point
+            double bias = 0.5 * side1.EuclideanNorm();
+            ctrl2 = computeCornerTangentControlPoint( aPts[2], cornerCenter, bias, towardTrack );
+        }
+    }
+    else if( isOval )
+    {
+        VECTOR2I arcCenter;
+
+        if( isPointOnOvalEnd( aPts[2], aOtherPos, padSize, padRotation, arcCenter ) )
+        {
+            // Anchor is on a curved end - use tangent-based control point
+            double bias = 0.5 * side1.EuclideanNorm();
+            ctrl2 = computeCornerTangentControlPoint( aPts[2], arcCenter, bias, towardTrack );
+        }
+    }
 
     BEZIER_POLY( aPts[1], ctrl1, ctrl2, aPts[2] ).GetPoly( curve_pts, maxError );
 
@@ -306,10 +633,36 @@ void TEARDROP_MANAGER::computeCurvedForRectShape( const TEARDROP_PARAMETERS& aPa
 
     aPoly.push_back( aPts[3] );
 
-    // Note: This side is from pad/via to track
+    // Compute control points for second Bezier curve (pad point E to track point A)
     curve_pts.clear();
 
+    // Default control point - midpoint approach
     ctrl1 = ( aPts[4] + aIntersection ) / 2;
+
+    if( isRoundRect && cornerRadius > 0 )
+    {
+        VECTOR2I cornerCenter;
+
+        if( isPointOnRoundedCorner( aPts[4], aOtherPos, padSize, cornerRadius,
+                                    padRotation, cornerCenter ) )
+        {
+            // Anchor is on a corner arc - use tangent-based control point
+            double bias = 0.5 * side2.EuclideanNorm();
+            ctrl1 = computeCornerTangentControlPoint( aPts[4], cornerCenter, bias, towardTrack );
+        }
+    }
+    else if( isOval )
+    {
+        VECTOR2I arcCenter;
+
+        if( isPointOnOvalEnd( aPts[4], aOtherPos, padSize, padRotation, arcCenter ) )
+        {
+            // Anchor is on a curved end - use tangent-based control point
+            double bias = 0.5 * side2.EuclideanNorm();
+            ctrl1 = computeCornerTangentControlPoint( aPts[4], arcCenter, bias, towardTrack );
+        }
+    }
+
     ctrl2 = aPts[0] + trackDir.Resize( side2.EuclideanNorm() / 4 );
 
     BEZIER_POLY( aPts[4], ctrl1, ctrl2, aPts[0] ).GetPoly( curve_pts, maxError );
@@ -402,6 +755,9 @@ bool TEARDROP_MANAGER::computeAnchorPoints( const TEARDROP_PARAMETERS& aParams, 
      * C and E are points on the aViaPad ( aPts[2] and  aPts[4] )
      * D is midpoint behind the aViaPad centre ( aPts[3] )
      */
+
+    if( c_buffer.OutlineCount() == 0 )
+        return false;
 
     SHAPE_LINE_CHAIN& padpoly = c_buffer.Outline(0);
     std::vector<VECTOR2I> points = padpoly.CPoints();
@@ -597,7 +953,31 @@ bool TEARDROP_MANAGER::findAnchorPointsOnTrack( const TEARDROP_PARAMETERS& aPara
             if( connected_track == nullptr )
                 break;
 
-            // TODO: stop if angle between old and new segment is > 45 deg to avoid bad shape
+            // Reject the extension if the angle between segments is too large.
+            // Large angles cause the teardrop shape to bend sharply at the junction.
+            // The junction transition code handles bends up to ~60 degrees, so use
+            // cos(60) = 0.5 as the threshold.
+            constexpr double kMinCosForTwoSegmentExtension = 0.5;
+
+            VECTOR2D firstDir = NormalizeVector( end - ref_lenght_point );
+            VECTOR2D secondDir;
+
+            if( matchType == STARTPOINT )
+            {
+                secondDir = NormalizeVector( connected_track->GetEnd()
+                                             - connected_track->GetStart() );
+            }
+            else
+            {
+                secondDir = NormalizeVector( connected_track->GetStart()
+                                             - connected_track->GetEnd() );
+            }
+
+            double cosAngle = firstDir.x * secondDir.x + firstDir.y * secondDir.y;
+
+            if( cosAngle < kMinCosForTwoSegmentExtension )
+                break;
+
             consumed += actualTdLen;
             // actualTdLen is the new distance from new start point and the teardrop anchor point
             actualTdLen = std::min( targetLength-consumed, int( connected_track->GetLength() ) );
@@ -696,7 +1076,10 @@ bool TEARDROP_MANAGER::computeTeardropPolygon( const TEARDROP_PARAMETERS& aParam
     int track_stub_len;     // the dist between the start point and the anchor point
                             // on the track
 
-    // Note: aTrack can be modified if the initial track is too short
+    // Note: aTrack can be modified if the initial track is too short.
+    // Save the original pointer so we can detect two-segment extension.
+    PCB_TRACK* originalTrack = aTrack;
+
     if( !findAnchorPointsOnTrack( aParams, start, end, intersection, aTrack, aOther, aOtherPos,
                                   &track_stub_len ) )
     {
@@ -708,6 +1091,24 @@ bool TEARDROP_MANAGER::computeTeardropPolygon( const TEARDROP_PARAMETERS& aParam
         return false;
 
     VECTOR2D vecT = NormalizeVector(end - start);
+
+    // When spanning two segments, findAnchorPointsOnTrack replaces aTrack with the
+    // connected track. The start point becomes the junction between the two segments,
+    // which differs from intersection (where the first segment meets the pad/via edge).
+    // Use the first segment's direction for all via-side geometry so that the teardrop
+    // shape is oriented correctly relative to how the track enters the pad/via.
+    // Note: for arcs, start also moves away from intersection during arc refinement, but
+    // aTrack remains the same pointer, so arc tracks are correctly excluded here.
+    bool twoSegments = ( aTrack != originalTrack );
+
+    // vecVia is the direction the track enters the pad/via, used for via-side geometry.
+    // When the first segment is so short that the junction coincides with the pad edge
+    // intersection, start == intersection produces a zero vector whose normalization is
+    // NaN. Fall back to the second segment's direction in that case.
+    VECTOR2D vecVia = vecT;
+
+    if( twoSegments && start != intersection )
+        vecVia = NormalizeVector( start - intersection );
 
     // find the 2 points on the track, sharp end of the teardrop
     int track_halfwidth = aTrack->GetWidth() / 2;
@@ -724,35 +1125,286 @@ bool TEARDROP_MANAGER::computeTeardropPolygon( const TEARDROP_PARAMETERS& aParam
     {
         PAD* pad = static_cast<PAD*>( aOther );
 
-        if( pad->HitTest( pointA ) )
+        if( pad->HitTest( pointA, 0, layer ) )
             return false;
 
-        if( pad->HitTest( pointB ) )
+        if( pad->HitTest( pointB, 0, layer ) )
             return false;
     }
 
-    // Introduce a last point to cover the via centre to ensure it is seen as connected
-    VECTOR2I pointD = aOtherPos;
-    // add a small offset in order to have the aViaPad.m_Pos reference point inside
-    // the teardrop area, just in case...
+    // Compute pointD, the "back" point of the teardrop behind the pad/via center.
+    // For off-center track connections (where the track doesn't pass through the pad center),
+    // we project the pad center onto the track axis so the teardrop is built symmetrically
+    // about the track rather than being skewed toward the pad center.
+    int padRadius = GetWidth( aOther, layer ) / 2;
+    VECTOR2D intToPad = VECTOR2D( aOtherPos - intersection );
+    double projOnTrack = -( intToPad.x * vecVia.x + intToPad.y * vecVia.y );
+    double effectiveDist = std::max( projOnTrack, static_cast<double>( padRadius ) );
     int offset = pcbIUScale.mmToIU( 0.001 );
-    pointD += VECTOR2I( int( -vecT.x*offset), int(-vecT.y*offset) );
+
+    // For non-round pads, clamp effectiveDist so pointD stays within the pad outline.
+    // When a track enters an elongated pad at a steep angle, the projection along the
+    // track axis can extend well beyond the narrow side of the pad.
+    if( !IsRound( aOther, layer ) && aOther->Type() == PCB_PAD_T )
+    {
+        PAD* pad = static_cast<PAD*>( aOther );
+        VECTOR2I candidateD = intersection
+                              + VECTOR2I( KiROUND( -vecVia.x * ( effectiveDist + offset ) ),
+                                          KiROUND( -vecVia.y * ( effectiveDist + offset ) ) );
+
+        if( !pad->HitTest( candidateD, 0, layer ) )
+        {
+            int maxError = m_board->GetDesignSettings().m_MaxError;
+            SHAPE_POLY_SET padPoly;
+            pad->TransformShapeToPolygon( padPoly, layer, 0, maxError, ERROR_INSIDE );
+
+            SHAPE_LINE_CHAIN& padOutline = padPoly.Outline( 0 );
+            padOutline.SetClosed( true );
+
+            // Shoot a ray from just inside the pad at the entry to beyond the candidate point
+            VECTOR2I rayStart = intersection
+                                + VECTOR2I( KiROUND( -vecVia.x * offset ),
+                                            KiROUND( -vecVia.y * offset ) );
+
+            SHAPE_LINE_CHAIN::INTERSECTIONS hits;
+            padOutline.Intersect( SEG( rayStart, candidateD ), hits );
+
+            if( !hits.empty() )
+            {
+                double maxExitDist = 0;
+
+                for( const SHAPE_LINE_CHAIN::INTERSECTION& hit : hits )
+                {
+                    double d = ( hit.p - intersection ).EuclideanNorm();
+
+                    if( d > maxExitDist )
+                        maxExitDist = d;
+                }
+
+                effectiveDist = std::max( 0.0, maxExitDist - 2.0 * offset );
+            }
+        }
+    }
+    else
+    {
+        // For round pads/vias, clamp effectiveDist so pointD stays inside the pad circle.
+        // The minimum-of-padRadius floor used for projOnTrack overshoots the pad when the
+        // teardrop axis (vecVia) is not radial: e.g. a two-segment teardrop where the first
+        // segment grazes the pad tangentially produces a projection close to zero, but the
+        // floor still pushes pointD outward by padRadius along -vecVia, creating a spike.
+        // Solve for the far intersection of the ray (intersection, -vecVia) with the pad
+        // circle and use that as the upper bound.
+        double R = static_cast<double>( padRadius );
+        double cx = intToPad.x;  // (aOtherPos - intersection)
+        double cy = intToPad.y;
+        double distCenterSq = cx * cx + cy * cy;
+
+        // Quadratic for ||intersection + (-vecVia)*t - aOtherPos||^2 = R^2
+        // expands to t^2 - 2*projOnTrack*t + (distCenterSq - R^2) = 0.
+        // The far root is projOnTrack + sqrt(projOnTrack^2 - (distCenterSq - R^2)).
+        double disc = projOnTrack * projOnTrack - ( distCenterSq - R * R );
+
+        if( disc >= 0 )
+        {
+            double farEdge = projOnTrack + std::sqrt( disc );
+            double maxAllowed = std::max( 0.0, farEdge - 2.0 * offset );
+
+            if( effectiveDist > maxAllowed )
+                effectiveDist = maxAllowed;
+        }
+    }
+
+    VECTOR2I pointD = intersection + VECTOR2I( KiROUND( -vecVia.x * ( effectiveDist + offset ) ),
+                                               KiROUND( -vecVia.y * ( effectiveDist + offset ) ) );
 
     VECTOR2I pointC, pointE;     // Point on pad/via outlines
-    std::vector<VECTOR2I> pts = { pointA, pointB, pointC, pointD, pointE };
+
+    // For two-segment teardrops, compute junction edge points where the track
+    // changes direction, and use the first segment side of the junction for
+    // the convex hull anchor so that C and E are oriented to the via entry axis.
+    VECTOR2I junctionB_seg2, junctionB_seg1, junctionA_seg2, junctionA_seg1;
+
+    if( twoSegments )
+    {
+        junctionB_seg2 = start + VECTOR2I( KiROUND( vecT.y * track_halfwidth ),
+                                           KiROUND( -vecT.x * track_halfwidth ) );
+        junctionA_seg2 = start + VECTOR2I( KiROUND( -vecT.y * track_halfwidth ),
+                                           KiROUND( vecT.x * track_halfwidth ) );
+        junctionB_seg1 = start + VECTOR2I( KiROUND( vecVia.y * track_halfwidth ),
+                                           KiROUND( -vecVia.x * track_halfwidth ) );
+        junctionA_seg1 = start + VECTOR2I( KiROUND( -vecVia.y * track_halfwidth ),
+                                           KiROUND( vecVia.x * track_halfwidth ) );
+    }
+
+    // On the inside of a bend, the seg2 junction point backtracks relative to
+    // seg1 and causes self-intersection. Detect with a dot product test and skip
+    // the seg2 point on whichever side would backtrack.
+    bool skipJunctionA = false;
+    bool skipJunctionB = false;
+
+    if( twoSegments )
+    {
+        VECTOR2D transA = VECTOR2D( junctionA_seg2 - junctionA_seg1 );
+        VECTOR2D anchorDirA = VECTOR2D( pointA - junctionA_seg1 );
+        skipJunctionA = ( transA.x * anchorDirA.x + transA.y * anchorDirA.y ) < 0;
+
+        VECTOR2D transB = VECTOR2D( junctionB_seg2 - junctionB_seg1 );
+        VECTOR2D anchorDirB = VECTOR2D( pointB - junctionB_seg1 );
+        skipJunctionB = ( transB.x * anchorDirB.x + transB.y * anchorDirB.y ) < 0;
+    }
+
+    VECTOR2I anchorA = twoSegments ? junctionA_seg1 : pointA;
+    VECTOR2I anchorB = twoSegments ? junctionB_seg1 : pointB;
+
+    std::vector<VECTOR2I> pts = { anchorA, anchorB, pointC, pointD, pointE };
 
     computeAnchorPoints( aParams, aTrack->GetLayer(), aOther, aOtherPos, pts );
 
+    // For off-center track connections, the convex hull produces asymmetric anchor points
+    // (C and E at different distances from the track axis). Recompute them to be symmetric
+    // so the teardrop flares out evenly from the track on both sides.
+    if( IsRound( aOther, layer ) )
+    {
+        VECTOR2D perpVia( -vecVia.y, vecVia.x );
+
+        // Perpendicular distance from pad center to the track axis
+        VECTOR2D padOffset = VECTOR2D( aOtherPos - intersection );
+        double perpDistToCenter = padOffset.x * perpVia.x + padOffset.y * perpVia.y;
+
+        // Only apply the symmetric adjustment when the track is significantly off-center.
+        if( std::abs( perpDistToCenter ) > padRadius * 0.1 )
+        {
+            double d = std::abs( perpDistToCenter );
+
+            if( d < padRadius )
+            {
+                // The maximum symmetric half-width is limited by the shorter side, which is
+                // the distance from the track axis to the nearest circle edge (R - d).
+                double maxSymmetric = static_cast<double>( padRadius ) - d;
+
+                // Apply the configured width ratio and max width constraints
+                int preferred_width = KiROUND( GetWidth( aOther, layer ) * aParams.m_BestWidthRatio );
+                int maxHalfWidth = preferred_width / 2;
+
+                if( aParams.m_TdMaxWidth > 0 )
+                    maxHalfWidth = std::min( maxHalfWidth, aParams.m_TdMaxWidth / 2 );
+
+                double symHalfWidth = std::min( maxSymmetric,
+                                                static_cast<double>( maxHalfWidth ) );
+
+                if( symHalfWidth > track_halfwidth )
+                {
+                    VECTOR2D center = VECTOR2D( aOtherPos );
+                    double R = static_cast<double>( padRadius );
+
+                    // Find C on the circle at perpendicular distance +symHalfWidth from track.
+                    // Line: p = (perpFoot + perpVia*symHalfWidth) + t * vecVia
+                    // Intersect with circle (center, R) and pick the point closest to
+                    // the intersection point (track entry side).
+                    auto findCircleLineIntersection =
+                        [&]( double perpDist ) -> VECTOR2I
+                        {
+                            double projAlongTrack = padOffset.x * vecVia.x
+                                                  + padOffset.y * vecVia.y;
+                            VECTOR2D lineOrigin = VECTOR2D( intersection )
+                                                + vecVia * projAlongTrack
+                                                + perpVia * perpDist;
+
+                            VECTOR2D oc = lineOrigin - center;
+                            double b_coeff = oc.x * vecVia.x + oc.y * vecVia.y;
+                            double c_coeff = oc.x * oc.x + oc.y * oc.y - R * R;
+                            double disc = b_coeff * b_coeff - c_coeff;
+
+                            if( disc < 0 )
+                                return VECTOR2I( KiROUND( lineOrigin.x ),
+                                                 KiROUND( lineOrigin.y ) );
+
+                            double sqrtDisc = std::sqrt( disc );
+                            double t1 = -b_coeff - sqrtDisc;
+                            double t2 = -b_coeff + sqrtDisc;
+
+                            // Pick the point on the intersection side (closer to the track entry)
+                            VECTOR2D p1 = lineOrigin + vecVia * t1;
+                            VECTOR2D p2 = lineOrigin + vecVia * t2;
+                            VECTOR2D intPt = VECTOR2D( intersection );
+
+                            if( ( p1 - intPt ).EuclideanNorm()
+                                < ( p2 - intPt ).EuclideanNorm() )
+                            {
+                                return VECTOR2I( KiROUND( p1.x ), KiROUND( p1.y ) );
+                            }
+
+                            return VECTOR2I( KiROUND( p2.x ), KiROUND( p2.y ) );
+                        };
+
+                    // pointA is offset in +perpVia from the track axis, pointB in -perpVia
+                    // (see the VECTOR2I pointA/pointB construction above). pts[2] is C,
+                    // which lies adjacent to pointB in the teardrop walk A->B->C->D->E->A,
+                    // so it must sit on pointB's (-perpVia) side. Likewise pts[4] is E,
+                    // adjacent to pointA on the +perpVia side. Assigning the opposite signs
+                    // folds the polygon into a bowtie and produces self-intersecting edges
+                    // whenever the track is off-center enough to trigger this branch.
+                    pts[2] = findCircleLineIntersection( -symHalfWidth );
+                    pts[4] = findCircleLineIntersection( symHalfWidth );
+                }
+            }
+        }
+    }
+
     if( !aParams.m_CurvedEdges )
     {
-        aCorners = std::move( pts );
+        if( twoSegments )
+        {
+            aCorners.push_back( pointA );
+            aCorners.push_back( pointB );
+
+            if( !skipJunctionB )
+                aCorners.push_back( junctionB_seg2 );
+
+            aCorners.push_back( pts[1] );  // junctionB_seg1
+            aCorners.push_back( pts[2] );  // C
+            aCorners.push_back( pts[3] );  // D
+            aCorners.push_back( pts[4] );  // E
+            aCorners.push_back( pts[0] );  // junctionA_seg1
+
+            if( !skipJunctionA )
+                aCorners.push_back( junctionA_seg2 );
+        }
+        else
+        {
+            aCorners = std::move( pts );
+        }
+
         return true;
     }
 
     // See if we can use curved teardrop shape
     if( IsRound( aOther, layer ) )
     {
-        computeCurvedForRoundShape( aParams, aCorners, layer, track_halfwidth, vecT, aOther, aOtherPos, pts );
+        if( twoSegments )
+        {
+            std::vector<VECTOR2I> curvePoly;
+            computeCurvedForRoundShape( aParams, curvePoly, layer, track_halfwidth,
+                                        vecVia, aOther, aOtherPos, pts );
+
+            aCorners.push_back( pointB );
+
+            if( !skipJunctionB )
+                aCorners.push_back( junctionB_seg2 );
+
+            for( const VECTOR2I& pt : curvePoly )
+                aCorners.push_back( pt );
+
+            if( !skipJunctionA )
+                aCorners.push_back( junctionA_seg2 );
+
+            aCorners.push_back( pointA );
+        }
+        else
+        {
+            computeCurvedForRoundShape( aParams, aCorners, layer, track_halfwidth,
+                                        vecT, aOther, aOtherPos, pts );
+        }
     }
     else
     {
@@ -761,7 +1413,30 @@ bool TEARDROP_MANAGER::computeTeardropPolygon( const TEARDROP_PARAMETERS& aParam
         if( aParams.m_TdMaxWidth > 0 && aParams.m_TdMaxWidth < td_width )
             td_width = aParams.m_TdMaxWidth;
 
-        computeCurvedForRectShape( aParams, aCorners, td_width, track_halfwidth, pts, intersection );
+        if( twoSegments )
+        {
+            std::vector<VECTOR2I> curvePoly;
+            computeCurvedForRectShape( aParams, curvePoly, td_width, track_halfwidth, pts,
+                                       intersection, aOther, aOtherPos, layer );
+
+            aCorners.push_back( pointB );
+
+            if( !skipJunctionB )
+                aCorners.push_back( junctionB_seg2 );
+
+            for( const VECTOR2I& pt : curvePoly )
+                aCorners.push_back( pt );
+
+            if( !skipJunctionA )
+                aCorners.push_back( junctionA_seg2 );
+
+            aCorners.push_back( pointA );
+        }
+        else
+        {
+            computeCurvedForRectShape( aParams, aCorners, td_width, track_halfwidth, pts,
+                                       intersection, aOther, aOtherPos, layer );
+        }
     }
 
     return true;

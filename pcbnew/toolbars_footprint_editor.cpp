@@ -21,12 +21,14 @@
  */
 
 #include <tool/actions.h>
+#include <tool/action_menu.h>
 #include <footprint_edit_frame.h>
 #include <pcbnew_id.h>
 #include <bitmaps.h>
 #include <lset.h>
 #include <tool/action_toolbar.h>
 #include <tool/tool_manager.h>
+#include <tool/ui/toolbar_context_menu_registry.h>
 #include <tools/pcb_actions.h>
 #include <tools/pcb_selection_tool.h>
 #include <pcb_layer_box_selector.h>
@@ -49,15 +51,31 @@ std::optional<TOOLBAR_CONFIGURATION> FOOTPRINT_EDIT_TOOLBAR_SETTINGS::DefaultToo
 
     case TOOLBAR_LOC::LEFT:
         config.AppendAction( ACTIONS::toggleGrid )
+              .WithContextMenu(
+                      []( TOOL_MANAGER* aToolMgr )
+                      {
+                          PCB_SELECTION_TOOL* selTool = aToolMgr->GetTool<PCB_SELECTION_TOOL>();
+                          auto                menu = std::make_unique<ACTION_MENU>( false, selTool );
+                          menu->Add( ACTIONS::gridProperties );
+                          menu->Add( ACTIONS::gridOrigin );
+                          return menu;
+                      } )
               .AppendAction( ACTIONS::toggleGridOverrides )
               .AppendAction( PCB_ACTIONS::togglePolarCoords )
-              .AppendAction( ACTIONS::inchesUnits )
-              .AppendAction( ACTIONS::milsUnits )
-              .AppendAction( ACTIONS::millimetersUnits )
-              .AppendAction( ACTIONS::toggleCursorStyle );
+              .AppendGroup( TOOLBAR_GROUP_CONFIG( _( "Units" ) )
+                            .AddAction( ACTIONS::millimetersUnits )
+                            .AddAction( ACTIONS::inchesUnits )
+                            .AddAction( ACTIONS::milsUnits ) )
+              .AppendGroup( TOOLBAR_GROUP_CONFIG( _( "Crosshair modes" ) )
+                            .AddAction( ACTIONS::cursorSmallCrosshairs )
+                            .AddAction( ACTIONS::cursorFullCrosshairs )
+                            .AddAction( ACTIONS::cursor45Crosshairs ) );
 
         config.AppendSeparator()
-              .AppendAction( PCB_ACTIONS::toggleHV45Mode );
+              .AppendGroup( TOOLBAR_GROUP_CONFIG( _( "Line modes" ) )
+                            .AddAction( PCB_ACTIONS::lineModeFree )
+                            .AddAction( PCB_ACTIONS::lineMode90 )
+                            .AddAction( PCB_ACTIONS::lineMode45 ) );
 
         config.AppendSeparator()
               .AppendAction( PCB_ACTIONS::padDisplayMode )
@@ -72,18 +90,12 @@ std::optional<TOOLBAR_CONFIGURATION> FOOTPRINT_EDIT_TOOLBAR_SETTINGS::DefaultToo
               .AppendAction( ACTIONS::showLibraryTree )
               .AppendAction( PCB_ACTIONS::showLayersManager )
               .AppendAction( ACTIONS::showProperties );
-
-        /* TODO (ISM): Implement context menus
-        PCB_SELECTION_TOOL*          selTool = m_toolManager->GetTool<PCB_SELECTION_TOOL>();
-        std::unique_ptr<ACTION_MENU> gridMenu = std::make_unique<ACTION_MENU>( false, selTool );
-        gridMenu->Add( ACTIONS::gridProperties );
-        gridMenu->Add( ACTIONS::gridOrigin );
-        m_tbLeft->AddToolContextMenu( ACTIONS::toggleGrid, std::move( gridMenu ) );
-    */
         break;
 
     case TOOLBAR_LOC::RIGHT:
-        config.AppendAction( ACTIONS::selectionTool );
+        config.AppendGroup( TOOLBAR_GROUP_CONFIG( _( "Selection modes" ) )
+              .AddAction( ACTIONS::selectSetRect )
+              .AddAction( ACTIONS::selectSetLasso ) );
 
         config.AppendSeparator()
               .AppendAction( PCB_ACTIONS::placePad )
@@ -92,6 +104,16 @@ std::optional<TOOLBAR_CONFIGURATION> FOOTPRINT_EDIT_TOOLBAR_SETTINGS::DefaultToo
         config.AppendSeparator()
               .AppendAction( PCB_ACTIONS::drawLine )
               .AppendAction( PCB_ACTIONS::drawArc )
+              .WithContextMenu(
+                      []( TOOL_MANAGER* aToolMgr )
+                      {
+                          PCB_SELECTION_TOOL* selTool = aToolMgr->GetTool<PCB_SELECTION_TOOL>();
+                          auto menu = std::make_unique<ACTION_MENU>( false, selTool );
+                          menu->Add( ACTIONS::pointEditorArcKeepCenter, ACTION_MENU::CHECK );
+                          menu->Add( ACTIONS::pointEditorArcKeepEndpoint, ACTION_MENU::CHECK );
+                          menu->Add( ACTIONS::pointEditorArcKeepRadius, ACTION_MENU::CHECK );
+                          return menu;
+                      } )
               .AppendAction( PCB_ACTIONS::drawRectangle )
               .AppendAction( PCB_ACTIONS::drawCircle )
               .AppendAction( PCB_ACTIONS::drawPolygon )
@@ -106,29 +128,14 @@ std::optional<TOOLBAR_CONFIGURATION> FOOTPRINT_EDIT_TOOLBAR_SETTINGS::DefaultToo
                             .AddAction( PCB_ACTIONS::drawCenterDimension )
                             .AddAction( PCB_ACTIONS::drawRadialDimension )
                             .AddAction( PCB_ACTIONS::drawLeader ) )
+              .AppendAction( PCB_ACTIONS::placeBarcode )
               .AppendAction( ACTIONS::deleteTool );
 
         config.AppendSeparator()
+              .AppendAction( PCB_ACTIONS::placePoint )
               .AppendAction( PCB_ACTIONS::setAnchor )
               .AppendAction( ACTIONS::gridSetOrigin )
               .AppendAction( ACTIONS::measureTool );
-
-        /* TODO (ISM): Implement context menus
-        PCB_SELECTION_TOOL* selTool = m_toolManager->GetTool<PCB_SELECTION_TOOL>();
-
-        auto makeArcMenu = [&]()
-        {
-            std::unique_ptr<ACTION_MENU> arcMenu = std::make_unique<ACTION_MENU>( false, selTool );
-
-            arcMenu->Add( ACTIONS::pointEditorArcKeepCenter, ACTION_MENU::CHECK );
-            arcMenu->Add( ACTIONS::pointEditorArcKeepEndpoint, ACTION_MENU::CHECK );
-            arcMenu->Add( ACTIONS::pointEditorArcKeepRadius, ACTION_MENU::CHECK );
-
-            return arcMenu;
-        };
-
-        m_tbRight->AddToolContextMenu( PCB_ACTIONS::drawArc, makeArcMenu() );
-    */
         break;
 
     case TOOLBAR_LOC::TOP_MAIN:
@@ -153,13 +160,14 @@ std::optional<TOOLBAR_CONFIGURATION> FOOTPRINT_EDIT_TOOLBAR_SETTINGS::DefaultToo
         config.AppendSeparator()
               .AppendAction( PCB_ACTIONS::rotateCcw )
               .AppendAction( PCB_ACTIONS::rotateCw )
-              .AppendAction( PCB_ACTIONS::mirrorH )
               .AppendAction( PCB_ACTIONS::mirrorV )
+              .AppendAction( PCB_ACTIONS::mirrorH )
               .AppendAction( ACTIONS::group )
               .AppendAction( ACTIONS::ungroup );
 
         config.AppendSeparator()
               .AppendAction( PCB_ACTIONS::footprintProperties )
+              .AppendAction( PCB_ACTIONS::padTable )
               .AppendAction( PCB_ACTIONS::defaultPadProperties )
               .AppendAction( ACTIONS::showDatasheet )
               .AppendAction( PCB_ACTIONS::checkFootprint );

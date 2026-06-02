@@ -29,40 +29,30 @@
 #include <wx/event.h>
 #include <wx/gdicmn.h>
 #include <wx/wupdlock.h>
-#include <kiface_base.h>
 #include <pcb_edit_frame.h>
-#include <pcbnew_settings.h>
 #include <wx/string.h>
 #include <board_commit.h>
 #include <widgets/std_bitmap_button.h>
+#include <widgets/wx_progress_reporters.h>
 #include <zone.h>
-#include <pad.h>
+#include <zone_settings_bag.h>
 #include <board.h>
 #include <bitmaps.h>
 #include <string_utils.h>
 #include <zone_filler.h>
+#include <zone_utils.h>
 
-#include "dialog_zone_manager_base.h"
-#include "model_zones_overview_table.h"
-#include "panel_zone_properties.h"
+#include <zone_manager/model_zones_overview.h>
+#include <dialogs/panel_zone_properties.h>
+#include <zone_manager/zone_preview_notebook.h>
 #include "dialog_zone_manager.h"
-#include "widgets/wx_progress_reporters.h"
-#include "zone_management_base.h"
-#include "zone_manager/model_zones_overview_table.h"
-#include "zone_manager/panel_zone_gal.h"
-#include "zone_manager/zone_manager_preference.h"
-#include "zones_container.h"
-#include "pane_zone_viewer.h"
-#include "zone_manager_preference.h"
 
 
-DIALOG_ZONE_MANAGER::DIALOG_ZONE_MANAGER( PCB_BASE_FRAME* aParent, ZONE_SETTINGS* aZoneInfo ) :
+DIALOG_ZONE_MANAGER::DIALOG_ZONE_MANAGER( PCB_BASE_FRAME* aParent ) :
         DIALOG_ZONE_MANAGER_BASE( aParent ),
         m_pcbFrame( aParent ),
-        m_zoneInfo( aZoneInfo ),
-        m_zonesContainer( std::make_unique<ZONES_CONTAINER>( aParent->GetBoard() ) ),
+        m_zoneSettingsBag( aParent->GetBoard() ),
         m_priorityDragIndex( {} ),
-        m_needZoomGAL( true ),
         m_isFillingZones( false ),
         m_zoneFillComplete( false )
 {
@@ -70,29 +60,57 @@ DIALOG_ZONE_MANAGER::DIALOG_ZONE_MANAGER( PCB_BASE_FRAME* aParent, ZONE_SETTINGS
     m_sizerZoneOP->InsertSpacer( m_sizerZoneOP->GetItemCount(), 5 );
 #endif
 
+    m_btnMoveTop->SetBitmap( KiBitmapBundle( BITMAPS::small_top ) );
     m_btnMoveUp->SetBitmap( KiBitmapBundle( BITMAPS::small_up ) );
     m_btnMoveDown->SetBitmap( KiBitmapBundle( BITMAPS::small_down ) );
+    m_btnMoveBottom->SetBitmap( KiBitmapBundle( BITMAPS::small_bottom ) );
+    m_btnAutoAssign->SetBitmap( KiBitmapBundle( BITMAPS::small_sort_desc ) );
 
-    m_panelZoneProperties = new PANEL_ZONE_PROPERTIES( this, aParent, *m_zonesContainer );
-    m_sizerProperties->Add( m_panelZoneProperties, 1, wxTOP | wxEXPAND, 5 );
+    m_panelZoneProperties = new PANEL_ZONE_PROPERTIES( m_zonePanel, aParent, m_zoneSettingsBag );
+    m_sizerProperties->Add( m_panelZoneProperties, 1,  wxEXPAND, 5 );
 
-    m_zoneViewer = new PANE_ZONE_VIEWER( this, aParent );
-    m_sizerTop->Add( m_zoneViewer, 1, wxBOTTOM | wxLEFT | wxRIGHT | wxEXPAND, 5 );
+    m_zonePreviewNotebook = new ZONE_PREVIEW_NOTEBOOK( m_zonePanel, aParent );
+    m_sizerPreview->Add( m_zonePreviewNotebook, 1, wxBOTTOM | wxLEFT | wxRIGHT | wxEXPAND, 5 );
+    m_sizerPreview->Layout();
 
-    m_checkRepour->SetValue( ZONE_MANAGER_PREFERENCE::GetRepourOnClose() );
-    //m_zoneViewer->SetId( ZONE_VIEWER );
-
-    for( const auto& [k, v] : MODEL_ZONES_OVERVIEW_TABLE::GetColumnNames() )
+    for( const auto& [k, v] : MODEL_ZONES_OVERVIEW::GetColumnNames() )
     {
-        if( k == MODEL_ZONES_OVERVIEW_TABLE::LAYERS )
-            m_viewZonesOverview->AppendIconTextColumn( v, k );
+        if( k == MODEL_ZONES_OVERVIEW::LAYERS )
+            m_viewZonesOverview->AppendIconTextColumn( v, k, wxDATAVIEW_CELL_INERT, wxCOL_WIDTH_DEFAULT );
         else
-            m_viewZonesOverview->AppendTextColumn( v, k );
+            m_viewZonesOverview->AppendTextColumn( v, k, wxDATAVIEW_CELL_INERT, wxCOL_WIDTH_DEFAULT );
     }
 
-    m_modelZoneOverviewTable = new MODEL_ZONES_OVERVIEW_TABLE( m_zonesContainer->GetManagedZones(),
-                                                               aParent->GetBoard(), aParent, this );
-    m_viewZonesOverview->AssociateModel( m_modelZoneOverviewTable.get() );
+    m_modelZonesOverview = new MODEL_ZONES_OVERVIEW( this, m_pcbFrame, m_zoneSettingsBag );
+    m_viewZonesOverview->AssociateModel( m_modelZonesOverview.get() );
+    m_viewZonesOverview->SetLayoutDirection( wxLayout_LeftToRight );
+
+    m_layerFilter->Clear();
+    m_layerFilter->Append( _( "All Layers" ) );
+
+    LSET   usedLayers;
+    BOARD* board = m_pcbFrame->GetBoard();
+
+    for( ZONE* zone : m_zoneSettingsBag.GetClonedZoneList() )
+        usedLayers |= zone->GetLayerSet();
+
+    for( PCB_LAYER_ID layer : usedLayers.Seq() )
+    {
+        m_layerFilter->Append( board->GetLayerName( layer ),
+                               reinterpret_cast<void*>( static_cast<intptr_t>( layer ) ) );
+    }
+
+    m_modelZonesOverview->SetLayerFilter( UNDEFINED_LAYER );
+    m_layerFilter->SetSelection( 0 );
+
+    m_modelZonesOverview->ApplyFilter( m_filterCtrl->GetValue(), m_viewZonesOverview->GetSelection() );
+
+    if( m_modelZonesOverview->GetCount() )
+        SelectZoneTableItem( m_modelZonesOverview->GetItem( 0 ) );
+
+    Layout();
+    m_MainBoxSizer->Fit( this );
+    finishDialogSettings();
 
 #if wxUSE_DRAG_AND_DROP
     m_viewZonesOverview->EnableDragSource( wxDF_UNICODETEXT );
@@ -105,39 +123,30 @@ DIALOG_ZONE_MANAGER::DIALOG_ZONE_MANAGER( PCB_BASE_FRAME* aParent, ZONE_SETTINGS
 #endif // wxUSE_DRAG_AND_DROP
 
     Bind( EVT_ZONE_NAME_UPDATE, &DIALOG_ZONE_MANAGER::OnZoneNameUpdate, this );
+    Bind( EVT_ZONE_NET_UPDATE, &DIALOG_ZONE_MANAGER::OnZoneNetUpdate, this );
     Bind( EVT_ZONES_OVERVIEW_COUNT_CHANGE, &DIALOG_ZONE_MANAGER::OnZonesTableRowCountChange, this );
     Bind( wxEVT_CHECKBOX, &DIALOG_ZONE_MANAGER::OnCheckBoxClicked, this );
     Bind( wxEVT_IDLE, &DIALOG_ZONE_MANAGER::OnIdle, this );
+    Bind( wxEVT_CHAR_HOOK, &DIALOG_ZONE_MANAGER::OnDialogCharHook, this );
     Bind( wxEVT_BOOKCTRL_PAGE_CHANGED,
-            [this]( wxNotebookEvent& aEvent )
-            {
-                Layout();
-            },
-            m_zoneViewer->GetId() );
-
-    if( m_modelZoneOverviewTable->GetCount() )
-        SelectZoneTableItem( m_modelZoneOverviewTable->GetItem( 0 ) );
-
-    Layout();
-    m_MainBoxSizer->Fit( this );
-    finishDialogSettings();
-
-    //NOTE - Works on Windows and MacOS , need further handling in IDLE on Ubuntu
-    FitCanvasToScreen();
+          [this]( wxNotebookEvent& aEvent )
+          {
+              Layout();
+          },
+          m_zonePreviewNotebook->GetId() );
 }
 
 
 DIALOG_ZONE_MANAGER::~DIALOG_ZONE_MANAGER() = default;
 
 
-void DIALOG_ZONE_MANAGER::FitCanvasToScreen()
+bool DIALOG_ZONE_MANAGER::TransferDataToWindow()
 {
-    if( PANEL_ZONE_GAL* canvas = m_zoneViewer->GetZoneGAL() )
-        canvas->ZoomFitScreen();
+    return true;
 }
 
 
-void DIALOG_ZONE_MANAGER::PostProcessZoneViewSelectionChange( wxDataViewItem const& aItem )
+void DIALOG_ZONE_MANAGER::PostProcessZoneViewSelChange( wxDataViewItem const& aItem )
 {
     bool textCtrlHasFocus = m_filterCtrl->HasFocus();
     long filterInsertPos = m_filterCtrl->GetInsertionPoint();
@@ -146,19 +155,20 @@ void DIALOG_ZONE_MANAGER::PostProcessZoneViewSelectionChange( wxDataViewItem con
     {
         m_viewZonesOverview->Select( aItem );
         m_viewZonesOverview->EnsureVisible( aItem );
+        SelectZoneTableItem( aItem );
     }
     else
     {
-        if( m_modelZoneOverviewTable->GetCount() )
+        if( m_modelZonesOverview->GetCount() )
         {
-            wxDataViewItem first_item = m_modelZoneOverviewTable->GetItem( 0 );
+            wxDataViewItem first_item = m_modelZonesOverview->GetItem( 0 );
             m_viewZonesOverview->Select( first_item );
             m_viewZonesOverview->EnsureVisible( first_item );
-            m_zoneViewer->ActivateSelectedZone( m_modelZoneOverviewTable->GetZone( first_item ) );
+            m_zonePreviewNotebook->OnZoneSelectionChanged( m_modelZonesOverview->GetZone( first_item ) );
         }
         else
         {
-            m_zoneViewer->ActivateSelectedZone( nullptr );
+            m_zonePreviewNotebook->OnZoneSelectionChanged( nullptr );
         }
     }
 
@@ -173,9 +183,44 @@ void DIALOG_ZONE_MANAGER::PostProcessZoneViewSelectionChange( wxDataViewItem con
 void DIALOG_ZONE_MANAGER::GenericProcessChar( wxKeyEvent& aEvent )
 {
     aEvent.Skip();
+}
 
-    if( aEvent.GetKeyCode() == WXK_DOWN || aEvent.GetKeyCode() == WXK_UP )
-        Bind( wxEVT_IDLE, &DIALOG_ZONE_MANAGER::OnIdle, this );
+
+void DIALOG_ZONE_MANAGER::OnDialogCharHook( wxKeyEvent& aEvent )
+{
+    if( aEvent.GetKeyCode() == WXK_UP )
+    {
+        NavigateZoneSelection( -1 );
+    }
+    else if( aEvent.GetKeyCode() == WXK_DOWN )
+    {
+        NavigateZoneSelection( 1 );
+    }
+    else
+    {
+        aEvent.Skip();
+    }
+}
+
+
+void DIALOG_ZONE_MANAGER::NavigateZoneSelection( int aDirection )
+{
+    unsigned count = m_modelZonesOverview->GetCount();
+
+    if( count == 0 )
+        return;
+
+    wxDataViewItem current = m_viewZonesOverview->GetSelection();
+    unsigned       currentRow = 0;
+
+    if( current.IsOk() )
+        currentRow = m_modelZonesOverview->GetRow( current );
+
+    int newRow = (int) currentRow + aDirection;
+    newRow = std::max( 0, std::min( newRow, (int) count - 1 ) );
+
+    if( !current.IsOk() || (unsigned) newRow != currentRow )
+        PostProcessZoneViewSelChange( m_modelZonesOverview->GetItem( (unsigned) newRow ) );
 }
 
 
@@ -196,19 +241,12 @@ void DIALOG_ZONE_MANAGER::OnIdle( wxIdleEvent& aEvent )
     WXUNUSED( aEvent )
     m_viewZonesOverview->SetFocus();
     Unbind( wxEVT_IDLE, &DIALOG_ZONE_MANAGER::OnIdle, this );
-
-    if( !m_needZoomGAL )
-        return;
-
-    m_needZoomGAL = false;
-    FitCanvasToScreen();
 }
 
 
 void DIALOG_ZONE_MANAGER::onDialogResize( wxSizeEvent& event )
 {
     event.Skip();
-    FitCanvasToScreen();
 }
 
 
@@ -216,11 +254,8 @@ void DIALOG_ZONE_MANAGER::OnZoneSelectionChanged( ZONE* zone )
 {
     wxWindowUpdateLocker updateLock( this );
 
-    for( ZONE_SELECTION_CHANGE_NOTIFIER* i :
-         std::list<ZONE_SELECTION_CHANGE_NOTIFIER*>{ m_panelZoneProperties, m_zoneViewer } )
-    {
-        i->OnZoneSelectionChanged( zone );
-    }
+    m_panelZoneProperties->SetZone( zone );
+    m_zonePreviewNotebook->OnZoneSelectionChanged( zone );
 
     Layout();
 }
@@ -240,7 +275,7 @@ void DIALOG_ZONE_MANAGER::OnDataViewCtrlSelectionChanged( wxDataViewEvent& aEven
 
 void DIALOG_ZONE_MANAGER::SelectZoneTableItem( wxDataViewItem const& aItem )
 {
-    ZONE* zone = m_modelZoneOverviewTable->GetZone( aItem );
+    ZONE* zone = m_modelZonesOverview->GetZone( aItem );
 
     if( !zone )
         return;
@@ -251,25 +286,31 @@ void DIALOG_ZONE_MANAGER::SelectZoneTableItem( wxDataViewItem const& aItem )
 
 void DIALOG_ZONE_MANAGER::OnOk( wxCommandEvent& aEvt )
 {
-    for( ZONE_MANAGEMENT_BASE* zone_management :
-         std::list<ZONE_MANAGEMENT_BASE*>{ m_panelZoneProperties, m_zonesContainer.get() } )
-    {
-        zone_management->OnUserConfirmChange();
-    }
+    m_panelZoneProperties->TransferZoneSettingsFromWindow();
 
-    if( m_zoneInfo )
+    m_zoneSettingsBag.UpdateClonedZones();
+
+    for( const auto& [ zone, zoneClone ] : m_zoneSettingsBag.GetZonesCloneMap() )
     {
-        if( std::shared_ptr<ZONE_SETTINGS> zone = m_panelZoneProperties->GetZoneSettings() )
-            m_zoneInfo->CopyFrom( *zone, false );
+        std::map<PCB_LAYER_ID, std::shared_ptr<SHAPE_POLY_SET>> filled_zone_to_restore;
+        ZONE* internal_zone = zone; // Duplicate the zone pointer to allow capture on older MacOS (13)
+
+        zone->GetLayerSet().RunOnLayers(
+                [&]( PCB_LAYER_ID layer )
+                {
+                    std::shared_ptr<SHAPE_POLY_SET> fill = internal_zone->GetFilledPolysList( layer );
+
+                    if( fill )
+                        filled_zone_to_restore[layer] = fill;
+                } );
+
+        *zone = *zoneClone;
+
+        for( const auto& [ layer, fill ] : filled_zone_to_restore )
+            zone->SetFilledPolysList( layer, *fill );
     }
 
     aEvt.Skip();
-}
-
-
-void DIALOG_ZONE_MANAGER::OnRepourCheck( wxCommandEvent& aEvent )
-{
-    ZONE_MANAGER_PREFERENCE::SetRefillOnClose( m_checkRepour->IsChecked() );
 }
 
 
@@ -284,7 +325,7 @@ void DIALOG_ZONE_MANAGER::OnBeginDrag( wxDataViewEvent& aEvent )
     const wxDataViewItem it = aEvent.GetItem();
 
     if( it.IsOk() )
-        m_priorityDragIndex = m_modelZoneOverviewTable->GetRow( it );
+        m_priorityDragIndex = m_modelZonesOverview->GetRow( it );
 }
 
 
@@ -313,19 +354,25 @@ void DIALOG_ZONE_MANAGER::OnDrop( wxDataViewEvent& aEvent )
         return;
     }
 
-    unsigned int                  drop_index = m_modelZoneOverviewTable->GetRow( it );
-    const std::optional<unsigned> rtn =
-            m_modelZoneOverviewTable->SwapZonePriority( *m_priorityDragIndex, drop_index );
+    unsigned int                  drop_index = m_modelZonesOverview->GetRow( it );
+    const std::optional<unsigned> rtn = m_modelZonesOverview->SwapZonePriority( *m_priorityDragIndex, drop_index );
 
     if( rtn.has_value() )
     {
-        const wxDataViewItem item = m_modelZoneOverviewTable->GetItem( *rtn );
+        const wxDataViewItem item = m_modelZonesOverview->GetItem( *rtn );
+
         if( item.IsOk() )
             m_viewZonesOverview->Select( item );
     }
 }
 
 #endif // wxUSE_DRAG_AND_DROP
+
+
+void DIALOG_ZONE_MANAGER::OnMoveTopClick( wxCommandEvent& aEvent )
+{
+    MoveSelectedZonePriority( ZONE_INDEX_MOVEMENT::MOVE_TO_TOP );
+}
 
 
 void DIALOG_ZONE_MANAGER::OnMoveUpClick( wxCommandEvent& aEvent )
@@ -340,35 +387,91 @@ void DIALOG_ZONE_MANAGER::OnMoveDownClick( wxCommandEvent& aEvent )
 }
 
 
+void DIALOG_ZONE_MANAGER::OnMoveBottomClick( wxCommandEvent& aEvent )
+{
+    MoveSelectedZonePriority( ZONE_INDEX_MOVEMENT::MOVE_TO_BOTTOM );
+}
+
+
+void DIALOG_ZONE_MANAGER::OnAutoAssignClick( wxCommandEvent& aEvent )
+{
+    BOARD* board = m_pcbFrame->GetBoard();
+
+    // Save original priorities so we can restore them after copying to clones.
+    // The dialog operates on clones; originals must stay untouched until OnOk.
+    std::unordered_map<ZONE*, unsigned> savedPriorities;
+
+    for( ZONE* zone : board->Zones() )
+        savedPriorities[zone] = zone->GetAssignedPriority();
+
+    if( AutoAssignZonePriorities( board ) )
+    {
+        for( auto& [original, clone] : m_zoneSettingsBag.GetZonesCloneMap() )
+        {
+            unsigned newPri = original->GetAssignedPriority();
+            clone->SetAssignedPriority( newPri );
+            m_zoneSettingsBag.SetZonePriority( clone.get(), newPri );
+        }
+
+        PostProcessZoneViewSelChange(
+                m_modelZonesOverview->ApplyFilter( m_filterCtrl->GetValue(),
+                                                   m_viewZonesOverview->GetSelection() ) );
+    }
+
+    for( auto& [zone, priority] : savedPriorities )
+        zone->SetAssignedPriority( priority );
+}
+
+
 void DIALOG_ZONE_MANAGER::OnFilterCtrlCancel( wxCommandEvent& aEvent )
 {
-    PostProcessZoneViewSelectionChange(
-            m_modelZoneOverviewTable->ClearFilter( m_viewZonesOverview->GetSelection() ) );
+    PostProcessZoneViewSelChange( m_modelZonesOverview->ClearFilter( m_viewZonesOverview->GetSelection() ) );
     aEvent.Skip();
 }
 
 
 void DIALOG_ZONE_MANAGER::OnFilterCtrlSearch( wxCommandEvent& aEvent )
 {
-    PostProcessZoneViewSelectionChange( m_modelZoneOverviewTable->ApplyFilter(
-            aEvent.GetString(), m_viewZonesOverview->GetSelection() ) );
+    PostProcessZoneViewSelChange( m_modelZonesOverview->ApplyFilter( aEvent.GetString(),
+                                                                     m_viewZonesOverview->GetSelection() ) );
     aEvent.Skip();
 }
 
 
 void DIALOG_ZONE_MANAGER::OnFilterCtrlTextChange( wxCommandEvent& aEvent )
 {
-    PostProcessZoneViewSelectionChange( m_modelZoneOverviewTable->ApplyFilter(
-            aEvent.GetString(), m_viewZonesOverview->GetSelection() ) );
+    PostProcessZoneViewSelChange( m_modelZonesOverview->ApplyFilter( aEvent.GetString(),
+                                                                     m_viewZonesOverview->GetSelection() ) );
     aEvent.Skip();
 }
 
 
 void DIALOG_ZONE_MANAGER::OnFilterCtrlEnter( wxCommandEvent& aEvent )
 {
-    PostProcessZoneViewSelectionChange( m_modelZoneOverviewTable->ApplyFilter(
-            aEvent.GetString(), m_viewZonesOverview->GetSelection() ) );
+    PostProcessZoneViewSelChange( m_modelZonesOverview->ApplyFilter( aEvent.GetString(),
+                                                                     m_viewZonesOverview->GetSelection() ) );
     aEvent.Skip();
+}
+
+
+void DIALOG_ZONE_MANAGER::OnLayerFilterChanged( wxCommandEvent& aEvent )
+{
+    int sel = m_layerFilter->GetSelection();
+
+    if( sel <= 0 )
+    {
+        m_modelZonesOverview->SetLayerFilter( UNDEFINED_LAYER );
+    }
+    else
+    {
+        void*        data = m_layerFilter->GetClientData( sel );
+        PCB_LAYER_ID layer = static_cast<PCB_LAYER_ID>( reinterpret_cast<intptr_t>( data ) );
+        m_modelZonesOverview->SetLayerFilter( layer );
+    }
+
+    PostProcessZoneViewSelChange(
+            m_modelZonesOverview->ApplyFilter( m_filterCtrl->GetValue(),
+                                               m_viewZonesOverview->GetSelection() ) );
 }
 
 
@@ -378,46 +481,42 @@ void DIALOG_ZONE_MANAGER::OnUpdateDisplayedZonesClick( wxCommandEvent& aEvent )
         return;
 
     m_isFillingZones = true;
-    m_panelZoneProperties->TransferZoneSettingsFromWindow();
-    m_zonesContainer->FlushZoneSettingsChange();
-    m_zonesContainer->FlushPriorityChange();
+
+    if( !m_panelZoneProperties->TransferZoneSettingsFromWindow() )
+    {
+        m_isFillingZones = false;
+        return;
+    }
+
+    m_zoneSettingsBag.UpdateClonedZones();
 
     BOARD* board = m_pcbFrame->GetBoard();
     board->IncrementTimeStamp();
 
-    auto commit = std::make_unique<BOARD_COMMIT>( m_pcbFrame );
-    m_filler = std::make_unique<ZONE_FILLER>( board, commit.get() );
+    // Save the original zones before swapping so we can restore them later
+    ZONES originalZones = board->Zones();
+
+    // Do not use a commit here since we're operating on cloned zones that are not owned by the
+    // board. Using a commit would create undo entries pointing to the clones, which would cause
+    // corruption when the commit is destroyed.
+    m_filler = std::make_unique<ZONE_FILLER>( board, nullptr );
     auto reporter = std::make_unique<WX_PROGRESS_REPORTER>( this, _( "Fill All Zones" ), 5, PR_CAN_ABORT );
     m_filler->SetProgressReporter( reporter.get() );
 
     // TODO: replace these const_cast calls with a different solution that avoids mutating the
-    // container of the board.  This is relatively safe as-is because the original zones list is
+    // container of the board. This is relatively safe as-is because the original zones list is
     // swapped back in below, but still should be changed to avoid invalidating the board state
     // in case this code is refactored to be a non-modal dialog in the future.
-    const_cast<ZONES&>( board->Zones() ) = m_zonesContainer->GetClonedZoneList();
+    const_cast<ZONES&>( board->Zones() ) = m_zoneSettingsBag.GetClonedZoneList();
 
-    //NOTE - Nether revert nor commit is needed here , cause the cloned zones are not owned by
-    //       the pcb frame.
     m_zoneFillComplete = m_filler->Fill( board->Zones() );
     board->BuildConnectivity();
 
-    if( PANEL_ZONE_GAL* gal = m_zoneViewer->GetZoneGAL() )
-    {
-        gal->RedrawRatsnest();
-        gal->GetView()->UpdateItems();
-        gal->Refresh();
-        int layer = gal->GetLayer();
+    m_zonePreviewNotebook->OnZoneSelectionChanged( m_panelZoneProperties->GetZone() );
 
-        // rebuild the currently displayed zone and refresh display
-        ZONE* curr_zone = gal->GetZone();
-        gal->ActivateSelectedZone( curr_zone );
-
-        gal->OnLayerSelected( layer );
-    }
-
-    //NOTE - But the connectivity need to be rebuild, otherwise if cancelling, it may
-    //       segfault.
-    const_cast<ZONES&>( board->Zones() ) = m_zonesContainer->GetOriginalZoneList();
+    // Restore the original zones. The connectivity MUST be rebuilt to remove stale pointers to
+    // cloned zones in case of a cancel.
+    const_cast<ZONES&>( board->Zones() ) = originalZones;
     board->BuildConnectivity();
 
     m_isFillingZones = false;
@@ -426,12 +525,15 @@ void DIALOG_ZONE_MANAGER::OnUpdateDisplayedZonesClick( wxCommandEvent& aEvent )
 
 void DIALOG_ZONE_MANAGER::OnZoneNameUpdate( wxCommandEvent& aEvent )
 {
-    if( ZONE* zone = m_panelZoneProperties->GetZone(); zone != nullptr )
-    {
-        zone->SetZoneName( aEvent.GetString() );
-        m_modelZoneOverviewTable->RowChanged( m_modelZoneOverviewTable->GetRow(
-                m_modelZoneOverviewTable->GetItemByZone( zone ) ) );
-    }
+    if( ZONE* zone = m_panelZoneProperties->GetZone() )
+        m_modelZonesOverview->RowChanged( m_modelZonesOverview->GetRow( m_modelZonesOverview->GetItemByZone( zone ) ) );
+}
+
+
+void DIALOG_ZONE_MANAGER::OnZoneNetUpdate( wxCommandEvent& aEvent )
+{
+    if( ZONE* zone = m_panelZoneProperties->GetZone() )
+        m_modelZonesOverview->RowChanged( m_modelZonesOverview->GetRow( m_modelZonesOverview->GetItemByZone( zone ) ) );
 }
 
 
@@ -439,8 +541,11 @@ void DIALOG_ZONE_MANAGER::OnZonesTableRowCountChange( wxCommandEvent& aEvent )
 {
     unsigned count = aEvent.GetInt();
 
-    for( STD_BITMAP_BUTTON* btn : { m_btnMoveDown, m_btnMoveUp } )
-        btn->Enable( count == m_modelZoneOverviewTable->GetAllZonesCount() );
+    for( STD_BITMAP_BUTTON* btn : { m_btnMoveTop, m_btnMoveUp, m_btnMoveDown, m_btnMoveBottom,
+                                    m_btnAutoAssign } )
+    {
+        btn->Enable( count > 1 );
+    }
 }
 
 
@@ -449,19 +554,12 @@ void DIALOG_ZONE_MANAGER::OnCheckBoxClicked( wxCommandEvent& aEvent )
     const wxObject* sender = aEvent.GetEventObject();
 
     if( aEvent.GetEventObject() == m_checkName )
-    {
-        m_modelZoneOverviewTable->EnableFitterByName( aEvent.IsChecked() );
-    }
+        m_modelZonesOverview->EnableFitterByName( aEvent.IsChecked() );
     else if( aEvent.GetEventObject() == m_checkNet )
-    {
-        m_modelZoneOverviewTable->EnableFitterByNet( aEvent.IsChecked() );
-    }
+        m_modelZonesOverview->EnableFitterByNet( aEvent.IsChecked() );
 
     if( ( sender == m_checkName || sender == m_checkNet ) && !m_filterCtrl->IsEmpty() )
-    {
-        m_modelZoneOverviewTable->ApplyFilter( m_filterCtrl->GetValue(),
-                                               m_viewZonesOverview->GetSelection() );
-    }
+        m_modelZonesOverview->ApplyFilter( m_filterCtrl->GetValue(), m_viewZonesOverview->GetSelection() );
 }
 
 
@@ -475,13 +573,12 @@ void DIALOG_ZONE_MANAGER::MoveSelectedZonePriority( ZONE_INDEX_MOVEMENT aMove )
     if( !selectedItem.IsOk() )
         return;
 
-    const unsigned int            selectedRow = m_modelZoneOverviewTable->GetRow( selectedItem );
-    const std::optional<unsigned> new_index =
-            m_modelZoneOverviewTable->MoveZoneIndex( selectedRow, aMove );
+    const unsigned int            selectedRow = m_modelZonesOverview->GetRow( selectedItem );
+    const std::optional<unsigned> new_index = m_modelZonesOverview->MoveZoneIndex( selectedRow, aMove );
 
     if( new_index.has_value() )
     {
-        wxDataViewItem new_item = m_modelZoneOverviewTable->GetItem( *new_index );
-        PostProcessZoneViewSelectionChange( new_item );
+        wxDataViewItem new_item = m_modelZonesOverview->GetItem( *new_index );
+        PostProcessZoneViewSelChange( new_item );
     }
 }

@@ -24,7 +24,7 @@
  */
 
 #include <stack>
-#include <git2.h>
+#include <git/git_backend.h>
 
 #include <wx/regex.h>
 #include <wx/stdpaths.h>
@@ -33,7 +33,9 @@
 #include <wx/textdlg.h>
 #include <wx/timer.h>
 #include <wx/wupdlock.h>
+#include <wx/log.h>
 
+#include <settings/common_settings.h>
 #include <advanced_config.h>
 #include <bitmaps.h>
 #include <bitmap_store.h>
@@ -57,6 +59,7 @@
 #include <wx/settings.h>
 
 #include <git/git_commit_handler.h>
+#include <git/git_config_handler.h>
 #include <git/git_pull_handler.h>
 #include <git/git_push_handler.h>
 #include <git/git_resolve_conflict_handler.h>
@@ -65,7 +68,11 @@
 #include <git/git_sync_handler.h>
 #include <git/git_clone_handler.h>
 #include <git/kicad_git_compat.h>
+#include <git/git_init_handler.h>
+#include <git/git_branch_handler.h>
+#include <git/git_status_handler.h>
 #include <git/kicad_git_memory.h>
+#include <git/project_git_utils.h>
 
 #include <dialogs/git/dialog_git_repository.h>
 
@@ -95,7 +102,8 @@
 
 // list of files extensions listed in the tree project window
 // Add extensions in a compatible regex format to see others files types
-static const wxChar* s_allowedExtensionsToList[] = {
+static const wxChar* s_allowedExtensionsToList[] =
+{
     wxT( "^.*\\.pro$" ),
     wxT( "^.*\\.kicad_pro$" ),
     wxT( "^.*\\.pdf$" ),
@@ -133,7 +141,7 @@ static const wxChar* s_allowedExtensionsToList[] = {
     wxT( "^.*\\.svg$" ),           // SVG print/plot files
     wxT( "^.*\\.ps$" ),            // PostScript plot files
     wxT( "^.*\\.zip$" ),           // Zip archive files
-    wxT( "^.*\\.kicad_jobset" ),     // KiCad jobs file
+    wxT( "^.*\\.kicad_jobset" ),   // KiCad jobs file
     nullptr                        // end of list
 };
 
@@ -145,8 +153,9 @@ static const wxChar* s_allowedExtensionsToList[] = {
  */
 
 
-enum project_tree_ids {
-    ID_PROJECT_TXTEDIT,
+enum project_tree_ids
+{
+    ID_PROJECT_TXTEDIT = 8700,  // Start well above wxIDs
     ID_PROJECT_SWITCH_TO_OTHER,
     ID_PROJECT_NEWDIR,
     ID_PROJECT_OPEN_DIR,
@@ -164,7 +173,7 @@ enum project_tree_ids {
     ID_GIT_RESOLVE_CONFLICT,    // Present the user with a resolve conflicts dialog (ours/theirs/merge)
     ID_GIT_REVERT_LOCAL,        // Revert the local repository to the last commit
     ID_GIT_COMPARE,             // Compare the current project to a different branch or commit in the git repository
-    ID_GIT_REMOVE_VCS,          // Remove the git repository data from the project directory (rm .git)
+    ID_GIT_REMOVE_VCS,          // Toggle Git integration for this project (preference in kicad_prl)
     ID_GIT_ADD_TO_INDEX,        // Add a file to the git index
     ID_GIT_REMOVE_FROM_INDEX,   // Remove a file from the git index
     ID_GIT_SWITCH_BRANCH,       // Switch the local repository to a different branch
@@ -215,8 +224,7 @@ END_EVENT_TABLE()
 wxDECLARE_EVENT( UPDATE_ICONS, wxCommandEvent );
 
 PROJECT_TREE_PANE::PROJECT_TREE_PANE( KICAD_MANAGER_FRAME* parent ) :
-        wxSashLayoutWindow( parent, ID_LEFT_FRAME, wxDefaultPosition, wxDefaultSize,
-                            wxNO_BORDER | wxTAB_TRAVERSAL )
+        wxSashLayoutWindow( parent, ID_LEFT_FRAME, wxDefaultPosition, wxDefaultSize, wxNO_BORDER | wxTAB_TRAVERSAL )
 {
     m_Parent = parent;
     m_TreeProject = nullptr;
@@ -259,11 +267,15 @@ PROJECT_TREE_PANE::~PROJECT_TREE_PANE()
 
     m_gitSyncTimer.Stop();
     m_gitStatusTimer.Stop();
-    Unbind( wxEVT_TIMER, wxTimerEventHandler( PROJECT_TREE_PANE::onGitSyncTimer ), this,
-            m_gitSyncTimer.GetId() );
-    Unbind( wxEVT_TIMER, wxTimerEventHandler( PROJECT_TREE_PANE::onGitStatusTimer ), this,
-            m_gitStatusTimer.GetId() );
+    Unbind( wxEVT_TIMER, wxTimerEventHandler( PROJECT_TREE_PANE::onGitSyncTimer ), this, m_gitSyncTimer.GetId() );
+    Unbind( wxEVT_TIMER, wxTimerEventHandler( PROJECT_TREE_PANE::onGitStatusTimer ), this, m_gitStatusTimer.GetId() );
     shutdownFileWatcher();
+
+    if( m_gitSyncTask.valid() )
+        m_gitSyncTask.wait();
+
+    if( m_gitStatusIconTask.valid() )
+        m_gitStatusIconTask.wait();
 }
 
 
@@ -375,13 +387,14 @@ wxString PROJECT_TREE_PANE::GetFileExt( TREE_FILE_TYPE type )
     case TREE_FILE_TYPE::DRILL_NC:              return "nc";
     case TREE_FILE_TYPE::DRILL_XNC:             return "xnc";
     case TREE_FILE_TYPE::SVG:                   return FILEEXT::SVGFileExtension;
+    case TREE_FILE_TYPE::CSV:                   return FILEEXT::CsvFileExtension;
     case TREE_FILE_TYPE::DRAWING_SHEET:         return FILEEXT::DrawingSheetFileExtension;
     case TREE_FILE_TYPE::FOOTPRINT_FILE:        return FILEEXT::KiCadFootprintFileExtension;
     case TREE_FILE_TYPE::SCHEMATIC_LIBFILE:     return FILEEXT::LegacySymbolLibFileExtension;
     case TREE_FILE_TYPE::SEXPR_SYMBOL_LIB_FILE: return FILEEXT::KiCadSymbolLibFileExtension;
     case TREE_FILE_TYPE::DESIGN_RULES:          return FILEEXT::DesignRulesFileExtension;
     case TREE_FILE_TYPE::ZIP_ARCHIVE:           return FILEEXT::ArchiveFileExtension;
-    case TREE_FILE_TYPE::JOBSET_FILE:          return FILEEXT::KiCadJobSetFileExtension;
+    case TREE_FILE_TYPE::JOBSET_FILE:           return FILEEXT::KiCadJobSetFileExtension;
 
     case TREE_FILE_TYPE::ROOT:
     case TREE_FILE_TYPE::UNKNOWN:
@@ -414,28 +427,7 @@ std::vector<wxString> getProjects( const wxDir& dir )
 }
 
 
-static git_repository* get_git_repository_for_file( const char* filename )
-{
-    git_repository* repo = nullptr;
-    git_buf         repo_path = GIT_BUF_INIT;
 
-    // Find the repository path for the given file
-    if( git_repository_discover( &repo_path, filename, 0, NULL ) != GIT_OK )
-    {
-        wxLogTrace( traceGit, "Can't repo discover %s: %s", filename, KIGIT_COMMON::GetLastGitError() );
-        return nullptr;
-    }
-
-    KIGIT::GitBufPtr repo_path_ptr( &repo_path );
-
-    if( git_repository_open( &repo, repo_path.ptr ) != GIT_OK )
-    {
-        wxLogTrace( traceGit, "Can't open repo for %s: %s", repo_path.ptr, KIGIT_COMMON::GetLastGitError() );
-        return nullptr;
-    }
-
-    return repo;
-}
 
 
 wxTreeItemId PROJECT_TREE_PANE::addItemToProjectTree( const wxString& aName,
@@ -482,8 +474,8 @@ wxTreeItemId PROJECT_TREE_PANE::addItemToProjectTree( const wxString& aName,
             if( ext == wxT( "" ) )
                 continue;
 
-            if( reg.Compile( wxString::FromAscii( "^.*\\." ) + ext + wxString::FromAscii( "$" ),
-                             wxRE_ICASE ) && reg.Matches( aName ) )
+            if( reg.Compile( wxString::FromAscii( "^.*\\." ) + ext + wxString::FromAscii( "$" ), wxRE_ICASE )
+                    && reg.Matches( aName ) )
             {
                 type = (TREE_FILE_TYPE) i;
                 break;
@@ -494,6 +486,7 @@ wxTreeItemId PROJECT_TREE_PANE::addItemToProjectTree( const wxString& aName,
     wxString   file = wxFileNameFromPath( aName );
     wxFileName currfile( file );
     wxFileName project( m_Parent->GetProjectFileName() );
+    bool       showAllSchematics = m_TreeProject->GetGitRepo() != nullptr;
 
     // Ignore legacy projects with the same name as the current project
     if( ( type == TREE_FILE_TYPE::LEGACY_PROJECT )
@@ -502,8 +495,8 @@ wxTreeItemId PROJECT_TREE_PANE::addItemToProjectTree( const wxString& aName,
         return wxTreeItemId();
     }
 
-    if( currfile.GetExt() == GetFileExt( TREE_FILE_TYPE::LEGACY_SCHEMATIC )
-                || currfile.GetExt() == GetFileExt( TREE_FILE_TYPE::SEXPR_SCHEMATIC ) )
+    if( !showAllSchematics && ( currfile.GetExt() == GetFileExt( TREE_FILE_TYPE::LEGACY_SCHEMATIC )
+                                || currfile.GetExt() == GetFileExt( TREE_FILE_TYPE::SEXPR_SCHEMATIC ) ) )
     {
         if( aProjectNames )
         {
@@ -512,7 +505,11 @@ wxTreeItemId PROJECT_TREE_PANE::addItemToProjectTree( const wxString& aName,
         }
         else
         {
-            PROJECT_TREE_ITEM*    parentTreeItem = GetItemIdData( aParent );
+            PROJECT_TREE_ITEM* parentTreeItem = GetItemIdData( aParent );
+
+            if( !parentTreeItem )
+                return wxTreeItemId();
+
             wxDir                 parentDir( parentTreeItem->GetDir() );
             std::vector<wxString> projects = getProjects( parentDir );
 
@@ -536,8 +533,10 @@ wxTreeItemId PROJECT_TREE_PANE::addItemToProjectTree( const wxString& aName,
     }
 
     // Only show current files if both legacy and current files are present
-    if( type == TREE_FILE_TYPE::LEGACY_PROJECT || type == TREE_FILE_TYPE::JSON_PROJECT
-        || type == TREE_FILE_TYPE::LEGACY_SCHEMATIC || type == TREE_FILE_TYPE::SEXPR_SCHEMATIC )
+    if( type == TREE_FILE_TYPE::LEGACY_PROJECT
+            || type == TREE_FILE_TYPE::JSON_PROJECT
+            || type == TREE_FILE_TYPE::LEGACY_SCHEMATIC
+            || type == TREE_FILE_TYPE::SEXPR_SCHEMATIC )
     {
         kid = m_TreeProject->GetFirstChild( aParent, cookie );
 
@@ -650,11 +649,13 @@ void PROJECT_TREE_PANE::ReCreateTreePrj()
 {
     std::lock_guard<std::mutex> lock1( m_gitStatusMutex );
     std::lock_guard<std::mutex> lock2( m_gitTreeCacheMutex );
-    thread_pool& tp = GetKiCadThreadPool();
 
-    tp.wait_for_tasks();
     m_gitStatusTimer.Stop();
     m_gitSyncTimer.Stop();
+
+    if( m_TreeProject && m_TreeProject->GetGitRepo() )
+        m_TreeProject->GitCommon()->SetCancelled( true );
+
     m_gitTreeCache.clear();
     m_gitStatusIcons.clear();
 
@@ -670,7 +671,8 @@ void PROJECT_TREE_PANE::ReCreateTreePrj()
 
     if( m_TreeProject->GetGitRepo() )
     {
-        git_repository_free( m_TreeProject->GetGitRepo() );
+        git_repository* repo = m_TreeProject->GetGitRepo();
+        KIGIT::PROJECT_GIT_UTILS::RemoveVCS( repo );
         m_TreeProject->SetGitRepo( nullptr );
         m_gitIconsInitialized = false;
     }
@@ -689,13 +691,27 @@ void PROJECT_TREE_PANE::ReCreateTreePrj()
 
     bool prjOpened = fn.FileExists();
 
-    // Bind the git repository to the project tree (if it exists)
-    if( Pgm().GetCommonSettings()->m_Git.enableGit )
+    // Bind the git repository to the project tree (if it exists and not disabled for this project)
+    if( Pgm().GetCommonSettings()->m_Git.enableGit
+        && !Prj().GetLocalSettings().m_GitIntegrationDisabled )
     {
-        m_TreeProject->SetGitRepo( get_git_repository_for_file( fn.GetPath().c_str() ) );
+        m_TreeProject->SetGitRepo( KIGIT::PROJECT_GIT_UTILS::GetRepositoryForFile( fn.GetPath().c_str() ) );
 
         if( m_TreeProject->GetGitRepo() )
         {
+            // Reset the cancel flag so git operations work after project switches.
+            // EmptyTreePrj() sets this to true during shutdown.
+            m_TreeProject->GitCommon()->SetCancelled( false );
+
+            const char* canonicalWorkDir = git_repository_workdir( m_TreeProject->GetGitRepo() );
+
+            if( canonicalWorkDir )
+            {
+                wxString symlinkWorkDir = KIGIT::PROJECT_GIT_UTILS::ComputeSymlinkPreservingWorkDir(
+                        fn.GetPath(), wxString::FromUTF8( canonicalWorkDir ) );
+                m_TreeProject->GitCommon()->SetProjectDir( symlinkWorkDir );
+            }
+
             m_TreeProject->GitCommon()->SetUsername( Prj().GetLocalSettings().m_GitRepoUsername );
             m_TreeProject->GitCommon()->SetSSHKey( Prj().GetLocalSettings().m_GitSSHKey );
             m_TreeProject->GitCommon()->UpdateCurrentBranchInfo();
@@ -773,28 +789,11 @@ void PROJECT_TREE_PANE::ReCreateTreePrj()
 
 bool PROJECT_TREE_PANE::hasChangedFiles()
 {
-    git_repository* repo = m_TreeProject->GetGitRepo();
-
-    if( !repo )
+    if( !m_TreeProject->GetGitRepo() )
         return false;
 
-    git_status_options opts;
-    git_status_init_options( &opts, GIT_STATUS_OPTIONS_VERSION );
-
-    opts.show = GIT_STATUS_SHOW_INDEX_AND_WORKDIR;
-    opts.flags = GIT_STATUS_OPT_INCLUDE_UNTRACKED | GIT_STATUS_OPT_RENAMES_HEAD_TO_INDEX
-                 | GIT_STATUS_OPT_SORT_CASE_SENSITIVELY;
-
-    git_status_list* status_list = nullptr;
-
-    if( git_status_list_new( &status_list, repo, &opts ) != GIT_OK )
-    {
-        wxLogError( _( "Failed to get status list: %s" ), KIGIT_COMMON::GetLastGitError() );
-        return false;
-    }
-
-    KIGIT::GitStatusListPtr status_list_ptr( status_list );
-    return ( git_status_list_entrycount( status_list ) > 0 );
+    GIT_STATUS_HANDLER statusHandler( m_TreeProject->GitCommon() );
+    return statusHandler.HasChangedFiles();
 }
 
 
@@ -807,14 +806,6 @@ void PROJECT_TREE_PANE::onRight( wxTreeEvent& Event )
 
     std::vector<PROJECT_TREE_ITEM*> selection = GetSelectedData();
     KIGIT_COMMON* git = m_TreeProject->GitCommon();
-    wxFileName prj_dir( Prj().GetProjectPath(), wxEmptyString );
-    wxFileName git_dir( git->GetGitRootDirectory(), wxEmptyString );
-    prj_dir.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_CASE | wxPATH_NORM_DOTS
-                       | wxPATH_NORM_ENV_VARS | wxPATH_NORM_TILDE );
-    git_dir.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_CASE | wxPATH_NORM_DOTS
-                       | wxPATH_NORM_ENV_VARS | wxPATH_NORM_TILDE );
-    wxString  prj_name = prj_dir.GetFullPath();
-    wxString  git_name = git_dir.GetFullPath();
 
     bool can_switch_to_project = true;
     bool can_create_new_directory = true;
@@ -827,21 +818,18 @@ void PROJECT_TREE_PANE::onRight( wxTreeEvent& Event )
     bool vcs_has_repo    = m_TreeProject->GetGitRepo() != nullptr;
     bool vcs_can_commit  = hasChangedFiles();
     bool vcs_can_init    = !vcs_has_repo;
-    bool vcs_can_remove = vcs_has_repo && git_name.StartsWith( prj_name ); // This means the .git is a subdirectory of the project
+    bool gitIntegrationDisabled = Prj().GetLocalSettings().m_GitIntegrationDisabled;
+    // Disable/Enable is a per-project preference toggle, so it's available whenever we
+    // detected a repository for this project or integration is currently disabled.
+    bool vcs_can_remove = vcs_has_repo || gitIntegrationDisabled;
     bool vcs_can_fetch   = vcs_has_repo && git->HasPushAndPullRemote();
     bool vcs_can_push    = vcs_can_fetch && git->HasLocalCommits();
     bool vcs_can_pull    = vcs_can_fetch;
     bool vcs_can_switch  = vcs_has_repo;
     bool vcs_menu        = Pgm().GetCommonSettings()->m_Git.enableGit;
 
-    // Check if the libgit2 library has been successfully initialized
-#if ( LIBGIT2_VER_MAJOR >= 1 ) || ( LIBGIT2_VER_MINOR >= 99 )
-    int major, minor, rev;
-    bool libgit_init = ( git_libgit2_version( &major, &minor, &rev ) == GIT_OK );
-#else
-    //Work around libgit2 API change for supporting older platforms
-    bool libgit_init = true;
-#endif
+    // Check if the libgit2 library is available via backend
+    bool libgit_init = GetGitBackend() && GetGitBackend()->IsLibraryAvailable();
 
     vcs_menu &= libgit_init;
 
@@ -1076,8 +1064,17 @@ void PROJECT_TREE_PANE::onRight( wxTreeEvent& Event )
 
         vcs_submenu->AppendSeparator();
 
-        vcs_menuitem = vcs_submenu->Append( ID_GIT_REMOVE_VCS, _( "Remove Version Control" ),
-                             _( "Delete all version control files from the project directory." ) );
+        if( gitIntegrationDisabled )
+        {
+            vcs_menuitem = vcs_submenu->Append( ID_GIT_REMOVE_VCS, _( "Enable Git Integration" ),
+                                 _( "Re-enable Git integration for this project" ) );
+        }
+        else
+        {
+            vcs_menuitem = vcs_submenu->Append( ID_GIT_REMOVE_VCS, _( "Disable Git Integration" ),
+                                 _( "Disable Git integration for this project" ) );
+        }
+
         vcs_menuitem->Enable( vcs_can_remove );
 
         popup_menu.AppendSeparator();
@@ -1175,7 +1172,7 @@ void PROJECT_TREE_PANE::onIdle( wxIdleEvent& aEvent )
         FileWatcherReset();
     }
 
-    if( m_selectedItem != nullptr )
+    if( m_selectedItem != nullptr && m_TreeProject->GetRootItem().IsOk() )
     {
         // Make sure m_selectedItem still exists in the tree before activating it.
         std::vector<wxTreeItemId> validItemIds;
@@ -1368,6 +1365,11 @@ void PROJECT_TREE_PANE::onFileSystemEvent( wxFileSystemWatcherEvent& event )
     }
 
     const wxFileName& pathModified = event.GetPath();
+
+    // Ignore events from .history directory (local backup)
+    if( pathModified.GetFullPath().Contains( wxS( ".history" ) ) )
+        return;
+
     wxString subdir = pathModified.GetPath();
     wxString fn = pathModified.GetFullPath();
 
@@ -1507,8 +1509,47 @@ void PROJECT_TREE_PANE::FileWatcherReset()
     }
     else
     {
+        // Create a wxWidgets log handler to catch errors during watcher creation
+        // We need to to this because we cannot get error codes from the wxFileSystemWatcher
+        // constructor.  On Linux, if inotify cannot be initialized (usually due to resource limits),
+        // wxWidgets will throw a system error and then, we throw another error below, trying to
+        // add paths to a null watcher.  We skip this by installing a temporary log handler that
+        // catches errors during watcher creation and aborts if any error is detected.
+        class WatcherLogHandler : public wxLog
+        {
+        public:
+            explicit WatcherLogHandler( bool* err ) :
+                    m_err( err )
+            {
+                if( m_err )
+                    *m_err = false;
+            }
+
+        protected:
+            void DoLogTextAtLevel( wxLogLevel level, const wxString& text ) override
+            {
+                if( m_err && ( level == wxLOG_Error || level == wxLOG_FatalError ) )
+                    *m_err = true;
+            }
+
+        private:
+            bool* m_err;
+        };
+
+        bool watcherHasError = false;
+        WatcherLogHandler tmpLog( &watcherHasError );
+        wxLog* oldLog = wxLog::SetActiveTarget( &tmpLog );
+
         m_watcher = new wxFileSystemWatcher();
         m_watcher->SetOwner( this );
+
+        // Restore previous log handler
+        wxLog::SetActiveTarget( oldLog );
+
+        if( watcherHasError )
+        {
+            return;
+        }
     }
 
     // We can see wxString under a debugger, not a wxFileName
@@ -1579,6 +1620,13 @@ void PROJECT_TREE_PANE::FileWatcherReset()
             // we can see wxString under a debugger, not a wxFileName
             const wxString& path = itemData->GetFileName();
 
+            // Skip .history directory and its descendants (local backup)
+            if( path.Contains( wxS( ".history" ) ) )
+            {
+                kid = m_TreeProject->GetNextChild( root_id, cookie );
+                continue;
+            }
+
             wxLogTrace( tracePathsAndFiles, "%s: add '%s'\n", __func__, TO_UTF8( path ) );
 
             if( wxFileName::IsDirReadable( path ) )   // linux whines about watching protected dir
@@ -1622,32 +1670,105 @@ void PROJECT_TREE_PANE::EmptyTreePrj()
 
     m_TreeProject->DeleteAllItems();
 
-    // Remove the git repository when the project is unloaded
     if( m_TreeProject->GetGitRepo() )
     {
-        // We need to lock the mutex to ensure that no other thread is using the git repository
-        std::unique_lock<std::mutex> lock( m_TreeProject->GitCommon()->m_gitActionMutex, std::try_to_lock );
+        KIGIT_COMMON* common = m_TreeProject->GitCommon();
+        common->SetCancelled( true );
 
-        if( !lock.owns_lock() )
+        std::unique_lock<std::mutex> lock( common->m_gitActionMutex, std::try_to_lock );
+
+        constexpr auto kGraceMs = std::chrono::seconds( 2 );
+        auto           graceEnd = std::chrono::steady_clock::now() + kGraceMs;
+
+        while( !lock.owns_lock() && std::chrono::steady_clock::now() < graceEnd )
         {
-            // Block until any in-flight Git actions complete, showing a pulsing progress dialog
-            {
-                wxProgressDialog progress( _( "Please wait" ), _( "Waiting for Git operations to finish..." ),
-                                           100, this, wxPD_APP_MODAL | wxPD_AUTO_HIDE | wxPD_SMOOTH );
+            if( lock.try_lock() )
+                break;
+            std::this_thread::sleep_for( std::chrono::milliseconds( 50 ) );
+        }
 
-                // Keep trying to acquire the lock, pulsing the dialog every 100 ms
-                while ( !lock.try_lock() )
+        constexpr auto kCheckInterval = std::chrono::seconds( 30 );
+        bool           userAbandoned  = false;
+
+        while( !lock.owns_lock() && !userAbandoned )
+        {
+            auto intervalEnd = std::chrono::steady_clock::now() + kCheckInterval;
+
+            {
+                wxProgressDialog progress( _( "Please wait" ),
+                                           _( "Closing project..." ),
+                                           100, this,
+                                           wxPD_APP_MODAL | wxPD_SMOOTH );
+
+                while( !lock.try_lock()
+                       && std::chrono::steady_clock::now() < intervalEnd )
                 {
                     progress.Pulse();
-                    std::this_thread::sleep_for( std::chrono::milliseconds(100) );
-                    // allow UI events to process so dialog remains responsive
+                    std::this_thread::sleep_for( std::chrono::milliseconds( 100 ) );
                     wxYield();
                 }
             }
+
+            if( lock.owns_lock() )
+                break;
+
+            wxMessageDialog ask( this,
+                                 _( "A Git operation is still running.\n"
+                                    "Keep waiting, or abandon?" ),
+                                 _( "Git Operation Delayed" ),
+                                 wxYES_NO | wxICON_QUESTION );
+            ask.SetYesNoLabels( _( "Keep Waiting" ), _( "Abandon" ) );
+
+            if( ask.ShowModal() == wxID_NO )
+                userAbandoned = true;
         }
 
-        git_repository_free( m_TreeProject->GetGitRepo() );
-        m_TreeProject->SetGitRepo( nullptr );
+        if( userAbandoned )
+        {
+            git_repository*               orphan    = m_TreeProject->GetGitRepo();
+            std::unique_ptr<KIGIT_COMMON> oldCommon = m_TreeProject->TakeGitCommon();
+            m_TreeProject->SetGitRepo( nullptr );
+
+            // Register the cleanup thread with the orphan registry so the
+            // shutdown path can wait for it before tearing down libgit2.
+            // Cancellation has already been requested via SetCancelled() above,
+            // and progress_cb/transfer_progress_cb honour it so long-running
+            // fetches will exit with GIT_EUSER as soon as they hit a callback.
+
+            GIT_BACKEND* backend = GetGitBackend();
+            wxString     projectDir = oldCommon ? oldCommon->GetProjectDir() : wxString();
+
+            auto cleanup = [orphan, old = std::move( oldCommon )]() mutable
+                           {
+                               std::lock_guard<std::mutex> g( old->m_gitActionMutex );
+                               git_repository_free( orphan );
+                           };
+
+            bool registered = false;
+
+            if( backend )
+            {
+                std::string label = "abandon close " + projectDir.ToStdString();
+                registered = backend->OrphanRegistry().Register( label, std::move( cleanup ) );
+            }
+
+            if( !registered )
+            {
+                // Either no backend is available, or the registry has already
+                // entered shutdown.  Fall back to freeing synchronously so the
+                // repository handle is not leaked; this blocks on the git
+                // action mutex but is safe because libgit2 shutdown is gated
+                // on the same registry.
+
+                cleanup();
+            }
+        }
+        else
+        {
+            git_repository* repo = m_TreeProject->GetGitRepo();
+            KIGIT::PROJECT_GIT_UTILS::RemoveVCS( repo );
+            m_TreeProject->SetGitRepo( nullptr );
+        }
     }
 }
 
@@ -1677,7 +1798,7 @@ void PROJECT_TREE_PANE::onPaint( wxPaintEvent& event )
 
 void KICAD_MANAGER_FRAME::OnChangeWatchedPaths( wxCommandEvent& aEvent )
 {
-    m_leftWin->FileWatcherReset();
+    m_projectTreePane->FileWatcherReset();
 }
 
 
@@ -1693,106 +1814,63 @@ void PROJECT_TREE_PANE::onGitInitializeProject( wxCommandEvent& aEvent )
         return;
     }
 
-    // Check if the directory is already a git repository
-    git_repository* repo = nullptr;
-    int             error = git_repository_open( &repo, dir.mb_str() );
+    GIT_INIT_HANDLER initHandler( m_TreeProject->GitCommon() );
+    wxWindow*        topLevelParent = wxGetTopLevelParent( this );
 
-    if( error == 0 )
+    if( initHandler.IsRepository( dir ) )
     {
-        // Directory is already a git repository
-        wxWindow* topLevelParent = wxGetTopLevelParent( this );
-
         DisplayInfoMessage( topLevelParent,
                             _( "The selected directory is already a Git project." ) );
-        git_repository_free( repo );
         return;
     }
 
-    KIGIT::GitRepositoryPtr repoPtr( repo );
-    DIALOG_GIT_REPOSITORY dlg( wxGetTopLevelParent( this ), nullptr );
+    InitResult result = initHandler.InitializeRepository( dir );
+    if( result != InitResult::Success )
+    {
+        DisplayErrorMessage( m_parent, _( "Failed to initialize Git project." ),
+                             initHandler.GetErrorString() );
+        return;
+    }
 
+    m_gitLastError = GIT_ERROR_NONE;
+
+    m_TreeProject->GitCommon()->SetCancelled( false );
+
+    const char* canonicalWorkDir = git_repository_workdir( initHandler.GetRepo() );
+
+    if( canonicalWorkDir )
+    {
+        wxString symlinkWorkDir = KIGIT::PROJECT_GIT_UTILS::ComputeSymlinkPreservingWorkDir(
+                dir, wxString::FromUTF8( canonicalWorkDir ) );
+        m_TreeProject->GitCommon()->SetProjectDir( symlinkWorkDir );
+    }
+
+    DIALOG_GIT_REPOSITORY dlg( topLevelParent, initHandler.GetRepo() );
     dlg.SetTitle( _( "Set default remote" ) );
+    dlg.SetSkipButtonLabel( _( "Skip" ) );
 
     if( dlg.ShowModal() != wxID_OK )
         return;
 
-   // Directory is not a git repository
-    if( git_repository_init( &repo, dir.mb_str(), 0 ) != GIT_OK )
+    // Set up the remote
+    RemoteConfig remoteConfig;
+    remoteConfig.url = dlg.GetRepoURL();
+    remoteConfig.username = dlg.GetUsername();
+    remoteConfig.password = dlg.GetPassword();
+    remoteConfig.sshKey = dlg.GetRepoSSHPath();
+    remoteConfig.connType = dlg.GetRepoType();
+
+    if( !initHandler.SetupRemote( remoteConfig ) )
     {
-        if( m_gitLastError != git_error_last()->klass )
-        {
-            m_gitLastError = git_error_last()->klass;
-            DisplayErrorMessage( m_parent, _( "Failed to initialize Git project." ),
-                                    KIGIT_COMMON::GetLastGitError() );
-        }
-
-        return;
-    }
-    else
-    {
-        m_TreeProject->SetGitRepo( repoPtr.release() );
-        m_gitLastError = GIT_ERROR_NONE;
-    }
-
-    //Set up the git remote
-    m_TreeProject->GitCommon()->SetPassword( dlg.GetPassword() );
-    m_TreeProject->GitCommon()->SetUsername( dlg.GetUsername() );
-    m_TreeProject->GitCommon()->SetSSHKey( dlg.GetRepoSSHPath() );
-
-    git_remote* remote = nullptr;
-    wxString fullURL;
-
-    if( dlg.GetRepoType() == KIGIT_COMMON::GIT_CONN_TYPE::GIT_CONN_SSH )
-    {
-        fullURL = dlg.GetUsername() + "@" + dlg.GetRepoURL();
-    }
-    else if( dlg.GetRepoType() == KIGIT_COMMON::GIT_CONN_TYPE::GIT_CONN_HTTPS )
-    {
-        fullURL = dlg.GetRepoURL().StartsWith( "https" ) ? "https://" : "http://";
-
-        if( !dlg.GetUsername().empty() )
-        {
-            fullURL.append( dlg.GetUsername() );
-
-            if( !dlg.GetPassword().empty() )
-            {
-                fullURL.append( wxS( ":" ) );
-                fullURL.append( dlg.GetPassword() );
-            }
-
-            fullURL.append( wxS( "@" ) );
-        }
-
-        fullURL.append( dlg.GetBareRepoURL() );
-    }
-    else
-    {
-        fullURL = dlg.GetRepoURL();
-    }
-
-
-    error = git_remote_create_with_fetchspec( &remote, repo, "origin",
-                                              fullURL.ToStdString().c_str(),
-                                              "+refs/heads/*:refs/remotes/origin/*" );
-
-    if( error != GIT_OK )
-    {
-        if( m_gitLastError != git_error_last()->klass )
-        {
-            m_gitLastError = git_error_last()->klass;
-            DisplayErrorMessage( m_parent, _( "Failed to set default remote." ),
-                                 KIGIT_COMMON::GetLastGitError() );
-        }
-
+        DisplayErrorMessage( m_parent, _( "Failed to set default remote." ),
+                             initHandler.GetErrorString() );
         return;
     }
 
     m_gitLastError = GIT_ERROR_NONE;
 
     GIT_PULL_HANDLER handler( m_TreeProject->GitCommon() );
-
     handler.SetProgressReporter( std::make_unique<WX_PROGRESS_REPORTER>( this, _( "Fetch Remote" ), 1, PR_NO_ABORT ) );
-
     handler.PerformFetch();
 
     KIPLATFORM::SECRETS::StoreSecret( dlg.GetRepoURL(), dlg.GetUsername(), dlg.GetPassword() );
@@ -1860,58 +1938,23 @@ void PROJECT_TREE_PANE::onGitPushProject( wxCommandEvent& aEvent )
 }
 
 
-static int git_create_branch( git_repository* aRepo, wxString& aBranchName )
-{
-    git_oid        head_oid;
-
-    if( int error = git_reference_name_to_id( &head_oid, aRepo, "HEAD" ) != GIT_OK )
-    {
-        wxLogTrace( traceGit, "Failed to lookup HEAD reference: %s", KIGIT_COMMON::GetLastGitError() );
-        return error;
-    }
-
-    // Lookup the current commit object
-    git_commit* commit = nullptr;
-
-    if( int error = git_commit_lookup( &commit, aRepo, &head_oid ) != GIT_OK )
-    {
-        wxLogTrace( traceGit, "Failed to lookup commit: %s", KIGIT_COMMON::GetLastGitError() );
-        return error;
-    }
-
-    KIGIT::GitCommitPtr commitPtr( commit );
-    git_reference* branchRef = nullptr;
-
-    if( int error = git_branch_create( &branchRef, aRepo, aBranchName.mb_str(), commit, 0 ) != GIT_OK )
-    {
-        wxLogTrace( traceGit, "Failed to create branch: %s", KIGIT_COMMON::GetLastGitError() );
-        return error;
-    }
-
-    git_reference_free( branchRef );
-
-    return 0;
-}
-
-
 void PROJECT_TREE_PANE::onGitSwitchBranch( wxCommandEvent& aEvent )
 {
-    git_repository* repo = m_TreeProject->GetGitRepo();
-
-    if( !repo )
+    if( !m_TreeProject->GetGitRepo() )
         return;
 
+    GIT_BRANCH_HANDLER branchHandler( m_TreeProject->GitCommon() );
     wxString branchName;
 
     if( aEvent.GetId() == ID_GIT_SWITCH_BRANCH )
     {
-        DIALOG_GIT_SWITCH dlg( wxGetTopLevelParent( this ), repo );
+        DIALOG_GIT_SWITCH dlg( wxGetTopLevelParent( this ), m_TreeProject->GetGitRepo() );
 
         int retval = dlg.ShowModal();
         branchName = dlg.GetBranchName();
 
         if( retval == wxID_ADD )
-            git_create_branch( repo, branchName );
+            KIGIT::PROJECT_GIT_UTILS::CreateBranch( m_TreeProject->GetGitRepo(), branchName );
         else if( retval != wxID_OK )
             return;
     }
@@ -1926,99 +1969,77 @@ void PROJECT_TREE_PANE::onGitSwitchBranch( wxCommandEvent& aEvent )
         branchName = branches[branchIndex];
     }
 
-    // Retrieve the reference to the existing branch using libgit2
-    git_reference* branchRef = nullptr;
-
-    if( git_reference_lookup( &branchRef, repo, branchName.mb_str() ) != GIT_OK &&
-        git_reference_dwim( &branchRef, repo, branchName.mb_str() ) != GIT_OK )
+    wxLogTrace( traceGit, wxS( "onGitSwitchBranch: Switching to branch '%s'" ), branchName );
+    if( branchHandler.SwitchToBranch( branchName ) != BranchResult::Success )
     {
-        wxString errorMessage = wxString::Format( _( "Failed to lookup branch '%s': %s" ),
-                                                  branchName, KIGIT_COMMON::GetLastGitError() );
-        DisplayError( m_parent, errorMessage );
-        return;
-    }
-
-    KIGIT::GitReferencePtr branchRefPtr( branchRef );
-    const char*            branchRefName = git_reference_name( branchRef );
-    git_object*            branchObj = nullptr;
-
-    if( git_revparse_single( &branchObj, repo, branchName.mb_str() ) != 0 )
-    {
-        wxString errorMessage =
-                wxString::Format( _( "Failed to find branch head for '%s'" ), branchName );
-        DisplayError( m_parent, errorMessage );
-        return;
-    }
-
-    KIGIT::GitObjectPtr branchObjPtr( branchObj );
-
-    // Switch to the branch
-    if( git_checkout_tree( repo, branchObj, nullptr ) != 0 )
-    {
-        wxString errorMessage =
-                wxString::Format( _( "Failed to switch to branch '%s'" ), branchName );
-        DisplayError( m_parent, errorMessage );
-        return;
-    }
-
-    // Update the HEAD reference
-    if( git_repository_set_head( repo, branchRefName ) != 0 )
-    {
-        wxString errorMessage = wxString::Format(
-                _( "Failed to update HEAD reference for branch '%s'" ), branchName );
-        DisplayError( m_parent, errorMessage );
-        return;
+        DisplayError( m_parent, branchHandler.GetErrorString() );
     }
 }
 
 
 void PROJECT_TREE_PANE::onGitRemoveVCS( wxCommandEvent& aEvent )
 {
-    git_repository* repo = m_TreeProject->GetGitRepo();
+    PROJECT_LOCAL_SETTINGS& localSettings = Prj().GetLocalSettings();
 
-    if( !repo
-      || !IsOK( wxGetTopLevelParent( this ),
-                _( "Are you sure you want to remove Git tracking from this project?" ) ) )
+    // Toggle the Git integration disabled preference
+    localSettings.m_GitIntegrationDisabled = !localSettings.m_GitIntegrationDisabled;
+
+    wxLogTrace( traceGit, wxS( "onGitRemoveVCS: Git integration %s" ),
+                localSettings.m_GitIntegrationDisabled ? wxS( "disabled" ) : wxS( "enabled" ) );
+
+    if( localSettings.m_GitIntegrationDisabled )
     {
-        return;
-    }
+        // Disabling Git integration - clear the repo reference and item states
+        m_TreeProject->SetGitRepo( nullptr );
+        m_gitIconsInitialized = false;
 
-    // Remove the VCS (git) from the project directory
-    git_repository_free( repo );
-    m_TreeProject->SetGitRepo( nullptr );
+        // Clear all item states to remove git status icons
+        std::stack<wxTreeItemId> items;
+        items.push( m_TreeProject->GetRootItem() );
 
-    // Remove the .git directory
-    wxFileName fn( m_Parent->GetProjectFileName() );
-    fn.AppendDir( ".git" );
-
-    wxString errors;
-
-    if( !RmDirRecursive( fn.GetPath(), &errors ) )
-    {
-        DisplayErrorMessage( m_parent, _( "Failed to remove Git directory" ), errors );
-    }
-
-    // Clear all item states
-    std::stack<wxTreeItemId> items;
-    items.push( m_TreeProject->GetRootItem() );
-
-    while( !items.empty() )
-    {
-        wxTreeItemId current = items.top();
-        items.pop();
-
-        // Process the current item
-        m_TreeProject->SetItemState( current, wxTREE_ITEMSTATE_NONE );
-
-        wxTreeItemIdValue cookie;
-        wxTreeItemId      child = m_TreeProject->GetFirstChild( current, cookie );
-
-        while( child.IsOk() )
+        while( !items.empty() )
         {
-            items.push( child );
-            child = m_TreeProject->GetNextChild( current, cookie );
+            wxTreeItemId current = items.top();
+            items.pop();
+
+            m_TreeProject->SetItemState( current, wxTREE_ITEMSTATE_NONE );
+
+            wxTreeItemIdValue cookie;
+            wxTreeItemId      child = m_TreeProject->GetFirstChild( current, cookie );
+
+            while( child.IsOk() )
+            {
+                items.push( child );
+                child = m_TreeProject->GetNextChild( current, cookie );
+            }
         }
     }
+    else
+    {
+        // Re-enabling Git integration - try to find and connect to the repository
+        wxFileName fn( Prj().GetProjectPath() );
+        m_TreeProject->SetGitRepo( KIGIT::PROJECT_GIT_UTILS::GetRepositoryForFile( fn.GetPath().c_str() ) );
+
+        if( m_TreeProject->GetGitRepo() )
+        {
+            m_TreeProject->GitCommon()->SetCancelled( false );
+
+            const char* canonicalWorkDir = git_repository_workdir( m_TreeProject->GetGitRepo() );
+
+            if( canonicalWorkDir )
+            {
+                wxString symlinkWorkDir = KIGIT::PROJECT_GIT_UTILS::ComputeSymlinkPreservingWorkDir(
+                        fn.GetPath(), wxString::FromUTF8( canonicalWorkDir ) );
+                m_TreeProject->GitCommon()->SetProjectDir( symlinkWorkDir );
+            }
+
+            m_TreeProject->GitCommon()->SetUsername( localSettings.m_GitRepoUsername );
+            m_TreeProject->GitCommon()->SetSSHKey( localSettings.m_GitSSHKey );
+        }
+    }
+
+    // Save the preference to the project local settings file
+    localSettings.SaveToFile( Prj().GetProjectPath() );
 }
 
 
@@ -2067,13 +2088,17 @@ void PROJECT_TREE_PANE::updateGitStatusIcons()
         }
     }
 
-    if (!m_gitCurrentBranchName.empty())
+    if( !m_gitCurrentBranchName.empty() )
     {
         wxTreeItemId kid = m_TreeProject->GetRootItem();
         PROJECT_TREE_ITEM* rootItem = GetItemIdData( kid );
-        wxString filename = wxFileNameFromPath( rootItem->GetFileName() );
-        m_TreeProject->SetItemText( kid, filename + " [" + m_gitCurrentBranchName + "]" );
-        m_gitIconsInitialized = true;
+
+        if( rootItem )
+        {
+            wxString filename = wxFileNameFromPath( rootItem->GetFileName() );
+            m_TreeProject->SetItemText( kid, filename + " [" + m_gitCurrentBranchName + "]" );
+            m_gitIconsInitialized = true;
+        }
     }
 
     wxLogTrace( traceGit, wxS( "updateGitStatusIcons: Git status icons updated" ) );
@@ -2114,6 +2139,9 @@ void PROJECT_TREE_PANE::updateTreeCache()
         items.pop();
 
         PROJECT_TREE_ITEM* nextItem = GetItemIdData( kid );
+
+        if( !nextItem )
+            continue;
 
         wxString gitAbsPath = nextItem->GetFileName();
 #ifdef _WIN32
@@ -2165,17 +2193,34 @@ void PROJECT_TREE_PANE::updateGitStatusIconMap()
         return;
     }
 
-    git_repository* repo = m_TreeProject->GetGitRepo();
-
-    if( !repo )
+    if( !m_TreeProject->GetGitRepo() )
     {
         wxLogTrace( traceGit, wxS( "updateGitStatusIconMap: No git repository found" ) );
         return;
     }
 
-    // Get Current Branch
+    // Acquire the git action mutex to synchronize with EmptyTreePrj() shutdown.
+    // This ensures the repository isn't freed while we're using it.
+    std::unique_lock<std::mutex> gitLock( m_TreeProject->GitCommon()->m_gitActionMutex, std::try_to_lock );
+
+    if( !gitLock.owns_lock() )
+    {
+        wxLogTrace( traceGit, wxS( "updateGitStatusIconMap: Failed to acquire git action mutex" ) );
+        return;
+    }
+
+    // Check if cancellation was requested (e.g., during shutdown)
+    if( m_TreeProject->GitCommon()->IsCancelled() )
+    {
+        wxLogTrace( traceGit, wxS( "updateGitStatusIconMap: Cancelled" ) );
+        return;
+    }
+
+    GIT_STATUS_HANDLER statusHandler( m_TreeProject->GitCommon() );
+
+    // Set up pathspec for project files
     wxFileName         rootFilename( Prj().GetProjectFullName() );
-    wxString           repoWorkDir( git_repository_workdir( repo ) );
+    wxString           repoWorkDir = statusHandler.GetWorkingDirectory();
 
     wxFileName relative = rootFilename;
     relative.MakeRelativeTo( repoWorkDir );
@@ -2185,164 +2230,35 @@ void PROJECT_TREE_PANE::updateGitStatusIconMap()
     pathspecStr.Replace( wxS( "\\" ), wxS( "/" ) );
 #endif
 
-    const char* pathspec[] = { pathspecStr.c_str().AsChar() };
-
-    git_status_options status_options;
-    git_status_init_options( &status_options, GIT_STATUS_OPTIONS_VERSION );
-    status_options.show = GIT_STATUS_SHOW_INDEX_AND_WORKDIR;
-    status_options.flags = GIT_STATUS_OPT_INCLUDE_UNTRACKED | GIT_STATUS_OPT_INCLUDE_UNMODIFIED;
-    status_options.pathspec = { (char**) pathspec, 1 };
-
-    git_index* index = nullptr;
-
-    if( git_repository_index( &index, repo ) != GIT_OK )
-    {
-        m_gitLastError = giterr_last()->klass;
-        wxLogTrace( traceGit, wxS( "Failed to get git index: %s" ), KIGIT_COMMON::GetLastGitError() );
-        return;
-    }
-
-    KIGIT::GitIndexPtr indexPtr( index );
-    git_status_list*   status_list = nullptr;
-
-    if( git_status_list_new( &status_list, repo, &status_options ) != GIT_OK )
-    {
-        wxLogTrace( traceGit, wxS( "Failed to get git status list: %s" ), KIGIT_COMMON::GetLastGitError() );
-        return;
-    }
-
-    KIGIT::GitStatusListPtr statusListPtr( status_list );
+    // Get file status
+    auto fileStatusMap = statusHandler.GetFileStatus( pathspecStr );
     auto [localChanges, remoteChanges] = m_TreeProject->GitCommon()->GetDifferentFiles();
+    statusHandler.UpdateRemoteStatus( localChanges, remoteChanges, fileStatusMap );
 
-    size_t count = git_status_list_entrycount( status_list );
-    bool   updated = false;
+    bool updated = false;
 
-    for( size_t ii = 0; ii < count; ++ii )
+    // Update status icons based on file status
+    for( const auto& [absPath, fileStatus] : fileStatusMap )
     {
-        const git_status_entry* entry = git_status_byindex( status_list, ii );
-        std::string path( entry->head_to_index? entry->head_to_index->old_file.path
-                        : entry->index_to_workdir->old_file.path );
-
-        wxString absPath = repoWorkDir;
-        absPath << path;
-
         auto iter = m_gitTreeCache.find( absPath );
-
         if( iter == m_gitTreeCache.end() )
         {
             wxLogTrace( traceGit, wxS( "File '%s' not found in tree cache" ), absPath );
             continue;
         }
 
-        // If we are current, don't continue because we still need to check to see if the
-        // current commit is ahead/behind the remote.  If the file is modified/added/deleted,
-        // that is the main status we want to show.
-        if( entry->status & GIT_STATUS_IGNORED )
-        {
-            wxLogTrace( traceGit, wxS( "File '%s' is ignored" ), absPath );
-            auto [it, inserted] = m_gitStatusIcons.try_emplace( iter->second,
-                                        KIGIT_COMMON::GIT_STATUS::GIT_STATUS_IGNORED );
-
-            if( inserted || it->second != KIGIT_COMMON::GIT_STATUS::GIT_STATUS_IGNORED )
-                updated = true;
-
-            it->second = KIGIT_COMMON::GIT_STATUS::GIT_STATUS_IGNORED;
-        }
-        else if( entry->status & ( GIT_STATUS_INDEX_MODIFIED | GIT_STATUS_WT_MODIFIED ) )
-        {
-            wxLogTrace( traceGit, wxS( "File '%s' is modified in %s" ),
-                        absPath, ( entry->status & GIT_STATUS_INDEX_MODIFIED )? "index" : "working tree" );
-            auto [it, inserted] = m_gitStatusIcons.try_emplace( iter->second,
-                                        KIGIT_COMMON::GIT_STATUS::GIT_STATUS_MODIFIED );
-
-            if( inserted || it->second != KIGIT_COMMON::GIT_STATUS::GIT_STATUS_MODIFIED )
-                updated = true;
-
-            it->second = KIGIT_COMMON::GIT_STATUS::GIT_STATUS_MODIFIED;
-        }
-        else if( entry->status & ( GIT_STATUS_INDEX_NEW | GIT_STATUS_WT_NEW ) )
-        {
-            wxLogTrace( traceGit, wxS( "File '%s' is new in %s" ),
-                        absPath, ( entry->status & GIT_STATUS_INDEX_NEW )? "index" : "working tree" );
-            auto [it, inserted] = m_gitStatusIcons.try_emplace( iter->second,
-                                        KIGIT_COMMON::GIT_STATUS::GIT_STATUS_ADDED );
-
-            if( inserted || it->second != KIGIT_COMMON::GIT_STATUS::GIT_STATUS_ADDED )
-                updated = true;
-
-            it->second = KIGIT_COMMON::GIT_STATUS::GIT_STATUS_ADDED;
-        }
-        else if( entry->status & ( GIT_STATUS_INDEX_DELETED | GIT_STATUS_WT_DELETED ) )
-        {
-            wxLogTrace( traceGit, wxS( "File '%s' is deleted in %s" ),
-                        absPath, ( entry->status & GIT_STATUS_INDEX_DELETED )? "index" : "working tree" );
-            auto [it, inserted] = m_gitStatusIcons.try_emplace( iter->second,
-                                        KIGIT_COMMON::GIT_STATUS::GIT_STATUS_DELETED );
-
-            if( inserted || it->second != KIGIT_COMMON::GIT_STATUS::GIT_STATUS_DELETED )
-                updated = true;
-
-            it->second = KIGIT_COMMON::GIT_STATUS::GIT_STATUS_DELETED;
-        }
-        else if( localChanges.count( path ) )
-        {
-            wxLogTrace( traceGit, wxS( "File '%s' is ahead of remote" ), absPath );
-            auto [it, inserted] = m_gitStatusIcons.try_emplace( iter->second,
-                                        KIGIT_COMMON::GIT_STATUS::GIT_STATUS_AHEAD );
-
-            if( inserted || it->second != KIGIT_COMMON::GIT_STATUS::GIT_STATUS_AHEAD )
-                updated = true;
-
-            it->second = KIGIT_COMMON::GIT_STATUS::GIT_STATUS_AHEAD;
-        }
-        else if( remoteChanges.count( path ) )
-        {
-            wxLogTrace( traceGit, wxS( "File '%s' is behind remote" ), absPath );
-            auto [it, inserted] = m_gitStatusIcons.try_emplace( iter->second,
-                                        KIGIT_COMMON::GIT_STATUS::GIT_STATUS_BEHIND );
-
-            if( inserted || it->second != KIGIT_COMMON::GIT_STATUS::GIT_STATUS_BEHIND )
-                updated = true;
-
-            it->second = KIGIT_COMMON::GIT_STATUS::GIT_STATUS_BEHIND;
-        }
-        else
-        {
-            // If we are here, the file is unmodified and not ignored
-            auto [it, inserted] = m_gitStatusIcons.try_emplace( iter->second,
-                                        KIGIT_COMMON::GIT_STATUS::GIT_STATUS_CURRENT );
-
-            if( inserted || it->second != KIGIT_COMMON::GIT_STATUS::GIT_STATUS_CURRENT )
-                updated = true;
-
-            it->second = KIGIT_COMMON::GIT_STATUS::GIT_STATUS_CURRENT;
-        }
+        auto [it, inserted] = m_gitStatusIcons.try_emplace( iter->second, fileStatus.status );
+        if( inserted || it->second != fileStatus.status )
+            updated = true;
+        it->second = fileStatus.status;
     }
-
-    git_reference* currentBranchReference = nullptr;
-    int rc = git_repository_head( &currentBranchReference, repo );
-    KIGIT::GitReferencePtr currentBranchReferencePtr( currentBranchReference );
 
     // Get the current branch name
-    if( currentBranchReference )
-    {
-        m_gitCurrentBranchName = git_reference_shorthand( currentBranchReference );
-    }
-    else if( rc == GIT_EUNBORNBRANCH )
-    {
-        // TODO: couldn't immediately figure out if libgit2 can return the name of an unborn branch
-        // For now, just do nothing
-    }
-    else
-    {
-        if( giterr_last()->klass != m_gitLastError )
-            wxLogTrace( "git", "Failed to lookup current branch: %s", KIGIT_COMMON::GetLastGitError() );
-
-        m_gitLastError = giterr_last()->klass;
-    }
+    m_gitCurrentBranchName = statusHandler.GetCurrentBranchName();
 
     wxLogTrace( traceGit, wxS( "updateGitStatusIconMap: Updated git status icons" ) );
-    // If the icons are not changed, queue an event to update in the main thread
+
+    // Update UI if icons changed
     if( updated || !m_gitIconsInitialized )
     {
         CallAfter(
@@ -2366,102 +2282,60 @@ void PROJECT_TREE_PANE::onGitCommit( wxCommandEvent& aEvent )
         return;
     }
 
-    git_config* config = nullptr;
-    git_repository_config( &config, repo );
-    KIGIT::GitConfigPtr configPtr( config );
-
-    // Read relevant data from the git config
-    wxString authorName;
-    wxString authorEmail;
-
-    // Read author name
-    git_config_entry* name_c = nullptr;
-    git_config_entry* email_c = nullptr;
-    int authorNameError = git_config_get_entry( &name_c, config, "user.name" );
-    KIGIT::GitConfigEntryPtr namePtr( name_c );
-
-    if( authorNameError != 0 || name_c == nullptr )
-    {
-        authorName = Pgm().GetCommonSettings()->m_Git.authorName;
-    }
-    else
-    {
-        authorName = name_c->value;
-    }
-
-    // Read author email
-    int authorEmailError = git_config_get_entry( &email_c, config, "user.email" );
-
-    if( authorEmailError != 0 || email_c == nullptr )
-    {
-        authorEmail = Pgm().GetCommonSettings()->m_Git.authorEmail;
-    }
-    else
-    {
-        authorEmail = email_c->value;
-    }
+    // Get git configuration
+    GIT_CONFIG_HANDLER configHandler( m_TreeProject->GitCommon() );
+    GitUserConfig userConfig = configHandler.GetUserConfig();
 
     // Collect modified files in the repository
-    git_status_options status_options;
-    git_status_init_options( &status_options, GIT_STATUS_OPTIONS_VERSION );
-    status_options.show = GIT_STATUS_SHOW_INDEX_AND_WORKDIR;
-    status_options.flags = GIT_STATUS_OPT_INCLUDE_UNTRACKED;
-
-    git_status_list* status_list = nullptr;
-    git_status_list_new( &status_list, repo, &status_options );
-    KIGIT::GitStatusListPtr statusListPtr( status_list );
+    GIT_STATUS_HANDLER statusHandler( m_TreeProject->GitCommon() );
+    auto fileStatusMap = statusHandler.GetFileStatus();
 
     std::map<wxString, int> modifiedFiles;
-
-    size_t count = git_status_list_entrycount( status_list );
-
     std::set<wxString> selected_files;
 
     for( PROJECT_TREE_ITEM* item : tree_data )
     {
-        if( item->GetType() != TREE_FILE_TYPE::DIRECTORY )
-            selected_files.emplace( item->GetFileName() );
+        if( item->GetType() == TREE_FILE_TYPE::DIRECTORY )
+            continue;
+
+        wxString itemPath = item->GetFileName();
+#ifdef _WIN32
+        itemPath.Replace( wxS( "\\" ), wxS( "/" ) );
+#endif
+        selected_files.emplace( itemPath );
     }
 
-    for( size_t i = 0; i < count; ++i )
-    {
-        const git_status_entry* entry = git_status_byindex( status_list, i );
+    wxString repoWorkDir = statusHandler.GetWorkingDirectory();
 
-        // Check if the file is modified (index or workdir changes)
-        if( entry->status == GIT_STATUS_CURRENT
-            || ( entry->status & ( GIT_STATUS_CONFLICTED | GIT_STATUS_IGNORED ) ) )
+    wxString projectPath = Prj().GetProjectPath();
+#ifdef _WIN32
+    projectPath.Replace( wxS( "\\" ), wxS( "/" ) );
+#endif
+
+    for( const auto& [absPath, fileStatus] : fileStatusMap )
+    {
+        // Skip current, conflicted, or ignored files
+        if( fileStatus.status == KIGIT_COMMON::GIT_STATUS::GIT_STATUS_CURRENT
+            || fileStatus.status == KIGIT_COMMON::GIT_STATUS::GIT_STATUS_CONFLICTED
+            || fileStatus.status == KIGIT_COMMON::GIT_STATUS::GIT_STATUS_IGNORED )
         {
             continue;
         }
 
-        wxFileName fn;
-        wxString filePath;
+        wxFileName fn( absPath );
 
-        // TODO: we are kind of erasing the difference between workdir and index here,
-        // because the Commit dialog doesn't show that difference.
-        // Entry may only have a head_to_index if it was previously staged
-        if( entry->index_to_workdir )
+        // Convert to relative path for the modifiedFiles map
+        wxString relativePath = absPath;
+        if( relativePath.StartsWith( repoWorkDir ) )
         {
-            fn.Assign( entry->index_to_workdir->old_file.path );
-            fn.MakeAbsolute( git_repository_workdir( repo ) );
-            filePath = wxString( entry->index_to_workdir->old_file.path, wxConvUTF8 );
-        }
-        else if( entry->head_to_index )
-        {
-            fn.Assign( entry->head_to_index->old_file.path );
-            fn.MakeAbsolute( git_repository_workdir( repo ) );
-            filePath = wxString( entry->head_to_index->old_file.path, wxConvUTF8 );
-        }
-        else
-        {
-            wxCHECK2_MSG( false, continue, "File status with neither git_status_entry set!" );
+            relativePath = relativePath.Mid( repoWorkDir.length() );
+#ifdef _WIN32
+            relativePath.Replace( wxS( "\\" ), wxS( "/" ) );
+#endif
         }
 
         // Do not commit files outside the project directory
-        wxString projectPath = Prj().GetProjectPath();
-        wxString fileName = fn.GetFullPath();
-
-        if( !fileName.StartsWith( projectPath ) )
+        if( !absPath.StartsWith( projectPath ) )
             continue;
 
         // Skip lock files
@@ -2469,8 +2343,7 @@ void PROJECT_TREE_PANE::onGitCommit( wxCommandEvent& aEvent )
             continue;
 
         // Skip autosave, lock, and backup files
-        if( fn.GetName().StartsWith( FILEEXT::AutoSaveFilePrefix )
-            || fn.GetName().StartsWith( FILEEXT::LockFilePrefix )
+        if( fn.GetName().StartsWith( FILEEXT::LockFilePrefix )
             || fn.GetName().EndsWith( FILEEXT::BackupFileSuffix ) )
         {
             continue;
@@ -2482,27 +2355,21 @@ void PROJECT_TREE_PANE::onGitCommit( wxCommandEvent& aEvent )
 
         if( aEvent.GetId() == ID_GIT_COMMIT_PROJECT )
         {
-            modifiedFiles.emplace( filePath, entry->status );
+            modifiedFiles.emplace( relativePath, fileStatus.gitStatus );
         }
-        else if( selected_files.count( fn.GetFullPath() ) )
+        else if( selected_files.count( absPath ) )
         {
-            modifiedFiles.emplace( filePath, entry->status );
+            modifiedFiles.emplace( relativePath, fileStatus.gitStatus );
         }
     }
 
     // Create a commit dialog
-    DIALOG_GIT_COMMIT dlg( wxGetTopLevelParent( this ), repo, authorName, authorEmail,
+    DIALOG_GIT_COMMIT dlg( wxGetTopLevelParent( this ), repo, userConfig.authorName, userConfig.authorEmail,
                            modifiedFiles );
     auto              ret = dlg.ShowModal();
 
     if( ret != wxID_OK )
         return;
-
-    // Commit the changes
-    git_oid     tree_id;
-    git_tree*   tree = nullptr;
-    git_commit* parent = nullptr;
-    git_index*  index = nullptr;
 
     std::vector<wxString> files = dlg.GetSelectedFiles();
 
@@ -2518,122 +2385,18 @@ void PROJECT_TREE_PANE::onGitCommit( wxCommandEvent& aEvent )
         return;
     }
 
-    if( git_repository_index( &index, repo ) != 0 )
-    {
-        wxLogTrace( traceGit, wxString::Format( _( "Failed to get repository index: %s" ),
-                                        KIGIT_COMMON::GetLastGitError() ) );
-        return;
-    }
+    GIT_COMMIT_HANDLER commitHandler( repo );
+    auto result = commitHandler.PerformCommit( files, dlg.GetCommitMessage(),
+                                              dlg.GetAuthorName(), dlg.GetAuthorEmail() );
 
-    KIGIT::GitIndexPtr indexPtr( index );
-
-    for( wxString& file : files )
-    {
-        if( git_index_add_bypath( index, file.mb_str() ) != 0 )
-        {
-            wxMessageBox( wxString::Format( _( "Failed to add file to index: %s" ),
-                                            KIGIT_COMMON::GetLastGitError() ) );
-            return;
-        }
-    }
-
-    if( git_index_write( index ) != 0 )
-    {
-        wxLogTrace( traceGit, wxString::Format( _( "Failed to write index: %s" ),
-                                        KIGIT_COMMON::GetLastGitError() ) );
-        return;
-    }
-
-    if( git_index_write_tree( &tree_id, index ) != 0)
-    {
-        wxLogTrace( traceGit, wxString::Format( _( "Failed to write tree: %s" ),
-                                        KIGIT_COMMON::GetLastGitError() ) );
-        return;
-    }
-
-    if( git_tree_lookup( &tree, repo, &tree_id ) != 0 )
-    {
-        wxLogTrace( traceGit, wxString::Format( _( "Failed to lookup tree: %s" ),
-                                        KIGIT_COMMON::GetLastGitError() ) );
-        return;
-    }
-
-    KIGIT::GitTreePtr treePtr( tree );
-    git_reference* headRef = nullptr;
-
-    if( git_repository_head_unborn( repo ) == 0 )
-    {
-        if( git_repository_head( &headRef, repo ) != 0 )
-        {
-            wxLogTrace( traceGit, wxString::Format( _( "Failed to get HEAD reference: %s" ),
-                                            KIGIT_COMMON::GetLastGitError() ) );
-            return;
-        }
-
-        KIGIT::GitReferencePtr headRefPtr( headRef );
-
-        if( git_reference_peel( (git_object**) &parent, headRef, GIT_OBJECT_COMMIT ) != 0 )
-        {
-            wxLogTrace( traceGit, wxString::Format( _( "Failed to get commit: %s" ),
-                                            KIGIT_COMMON::GetLastGitError() ) );
-            return;
-        }
-    }
-
-    KIGIT::GitCommitPtr parentPtr( parent );
-    const wxString&     commit_msg = dlg.GetCommitMessage();
-    const wxString&     author_name = dlg.GetAuthorName();
-    const wxString&     author_email = dlg.GetAuthorEmail();
-
-    git_signature* author = nullptr;
-
-    if( git_signature_now( &author, author_name.mb_str(), author_email.mb_str() ) != 0 )
-    {
-        wxLogTrace( traceGit, wxString::Format( _( "Failed to create author signature: %s" ),
-                                        KIGIT_COMMON::GetLastGitError() ) );
-        return;
-    }
-
-    KIGIT::GitSignaturePtr authorPtr( author );
-    git_oid                oid;
-
-#if( LIBGIT2_VER_MAJOR == 1 && LIBGIT2_VER_MINOR == 8                                              \
-    && ( LIBGIT2_VER_REVISION < 2 || LIBGIT2_VER_REVISION == 3 ) )
-    /*
-        * For libgit2 versions 1.8.0, 1.8.1.               (cf19ddc52)
-        * This change was reverted for 1.8.2               (49d3fadfc, main branch)
-        * The revert for 1.8.2 was not included for 1.8.3  (which is on the maint/v1.8 branch, not main)
-        * This change was also reverted for 1.8.4          (94ba816f6, also maint/v1.8 branch)
-        *
-        * As of 1.8.4, the history is like this:
-        *
-        *  * 3f4182d15 (tag: v1.8.4, maint/v1.8)
-        *  * 94ba816f6 Revert "commit: fix const declaration"      [puts const back]
-        *  * 3353f78e8 (tag: v1.8.3)
-        *  | * 4ce872a0f (tag: v1.8.2-rc1, tag: v1.8.2)
-        *  | * 49d3fadfc Revert "commit: fix const declaration"    [puts const back]
-        *  |/
-        *  * 36f7e21ad (tag: v1.8.1)
-        *  * d74d49148 (tag: v1.8.0)
-        *  * cf19ddc52 commit: fix const declaration               [removes const]
-        */
-    git_commit* const parents[1] = { parent };
-#else
-    // For libgit2 versions older than 1.8.0, or equal to 1.8.2, or 1.8.4+
-    const git_commit* parents[1] = { parent };
-#endif
-
-    if( git_commit_create( &oid, repo, "HEAD", author, author, nullptr, commit_msg.mb_str(), tree,
-                        1, parents ) != 0 )
+    if( result != CommitResult::Success )
     {
         wxMessageBox( wxString::Format( _( "Failed to create commit: %s" ),
-                                        KIGIT_COMMON::GetLastGitError() ) );
+                                        commitHandler.GetErrorString() ) );
         return;
     }
 
-    wxLogTrace( traceGit, wxString::Format( _( "Created commit with id: %s" ),
-                                    git_oid_tostr_s( &oid ) ) );
-
+    wxLogTrace( traceGit, wxS( "Created commit" ) );
     m_gitStatusTimer.Start( 500, wxTIMER_ONE_SHOT );
 }
 
@@ -2646,29 +2409,23 @@ void PROJECT_TREE_PANE::onGitAddToIndex( wxCommandEvent& aEvent )
 
 bool PROJECT_TREE_PANE::canFileBeAddedToVCS( const wxString& aFile )
 {
-    git_index *index;
-    size_t entry_pos;
-
-    git_repository* repo = m_TreeProject->GetGitRepo();
-
-    if( !repo )
+    if( !m_TreeProject->GetGitRepo() )
         return false;
 
-    if( git_repository_index( &index, repo ) != 0 )
+    GIT_STATUS_HANDLER statusHandler( m_TreeProject->GitCommon() );
+    auto fileStatusMap = statusHandler.GetFileStatus();
+
+    // Check if file is already tracked or staged
+    for( const auto& [filePath, fileStatus] : fileStatusMap )
     {
-        wxLogTrace( traceGit, "Failed to get git index: %s", KIGIT_COMMON::GetLastGitError() );
-        return false;
+        if( filePath.EndsWith( aFile ) || filePath == aFile )
+        {
+            // File can be added if it's untracked
+            return fileStatus.status == KIGIT_COMMON::GIT_STATUS::GIT_STATUS_UNTRACKED;
+        }
     }
 
-    KIGIT::GitIndexPtr indexPtr( index );
-
-    // If we successfully find the file in the index, we may not add it to the VCS
-    if( git_index_find( &entry_pos, index, aFile.mb_str() ) == 0 )
-    {
-        wxLogTrace( traceGit, "File already in index: %s", aFile );
-        return false;
-    }
-
+    // If file not found in status, it might be addable
     return true;
 }
 
@@ -2755,25 +2512,30 @@ void PROJECT_TREE_PANE::onGitSyncTimer( wxTimerEvent& aEvent )
 
     thread_pool& tp = GetKiCadThreadPool();
 
-    tp.push_task(
-            [this]()
-            {
-                KIGIT_COMMON* gitCommon = m_TreeProject->GitCommon();
+    m_gitSyncTask = tp.submit_task( [this]()
+    {
+        KIGIT_COMMON* gitCommon = m_TreeProject->GitCommon();
 
-                if( !gitCommon )
-                {
-                    wxLogTrace( traceGit, "onGitSyncTimer: No git repository found" );
-                    return;
-                }
+        if( !gitCommon )
+        {
+            wxLogTrace( traceGit, "onGitSyncTimer: No git repository found" );
+            return;
+        }
 
-                GIT_PULL_HANDLER handler( gitCommon );
-                handler.PerformFetch();
+        // Check if cancellation was requested (e.g., during shutdown)
+        if( gitCommon->IsCancelled() )
+        {
+            wxLogTrace( traceGit, "onGitSyncTimer: Cancelled" );
+            return;
+        }
 
-                CallAfter( [this]()
-                {
-                    gitStatusTimerHandler();
-                } );
-            } );
+        GIT_PULL_HANDLER handler( gitCommon );
+        handler.PerformFetch();
+
+        // Only schedule the follow-up work if not cancelled
+        if( !gitCommon->IsCancelled() )
+            CallAfter( [this]() { gitStatusTimerHandler(); } );
+    } );
 
     if( gitSettings.updatInterval > 0 )
     {
@@ -2786,14 +2548,16 @@ void PROJECT_TREE_PANE::onGitSyncTimer( wxTimerEvent& aEvent )
 
 void PROJECT_TREE_PANE::gitStatusTimerHandler()
 {
+    // Check if git is still available and not cancelled before spawning background work
+    KIGIT_COMMON* gitCommon = m_TreeProject ? m_TreeProject->GitCommon() : nullptr;
+
+    if( !gitCommon || gitCommon->IsCancelled() )
+        return;
+
     updateTreeCache();
     thread_pool& tp = GetKiCadThreadPool();
 
-    tp.push_task(
-            [this]()
-            {
-                updateGitStatusIconMap();
-            } );
+    m_gitStatusIconTask = tp.submit_task( [this]() { updateGitStatusIconMap(); } );
 }
 
 void PROJECT_TREE_PANE::onGitStatusTimer( wxTimerEvent& aEvent )

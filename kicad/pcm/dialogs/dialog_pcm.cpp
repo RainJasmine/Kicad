@@ -36,6 +36,7 @@
 #include "widgets/wx_grid.h"
 
 #include <fstream>
+#include <kiplatform/ui.h>
 #include <launch_ext.h>
 #include <sstream>
 #include <vector>
@@ -48,9 +49,10 @@
 // Notes: These strings are static, so wxGetTranslation must be called to display the
 // transalted text
 static std::vector<std::pair<PCM_PACKAGE_TYPE, wxString>> PACKAGE_TYPE_LIST = {
-    { PT_PLUGIN, _( "Plugins (%d)" ) },
-    { PT_FAB, _( "Fabrication plugins (%d)" ) },
-    { PT_LIBRARY, _( "Libraries (%d)" ) },
+    { PT_PLUGIN,     _( "Plugins (%d)" ) },
+    { PT_FAB,        _( "Fabrication plugins (%d)" ) },
+    { PT_LIBRARY,    _( "Libraries (%d)" ) },
+    { PT_DATASOURCE, _( "Data sources (%d)" ) },
     { PT_COLORTHEME, _( "Color themes (%d)" ) },
 };
 
@@ -84,7 +86,7 @@ DIALOG_PCM::DIALOG_PCM( EDA_BASE_FRAME* parent, std::shared_ptr<PLUGIN_CONTENT_M
                                                    "from version %s to %s?" ),
                                                 aData.current_version, aVersion ),
                               _( "Confirm update" ), wxICON_QUESTION | wxYES_NO, this )
-                == wxNO )
+                    == wxNO )
             {
                 return;
             }
@@ -111,17 +113,17 @@ DIALOG_PCM::DIALOG_PCM( EDA_BASE_FRAME* parent, std::shared_ptr<PLUGIN_CONTENT_M
 
         case PPA_UPDATE:
             m_gridPendingActions->SetCellValue( row, PENDING_COL_ACTION, _( "Update" ) );
-            m_gridPendingActions->SetCellValue(
-                    row, PENDING_COL_VERSION,
-                    wxString::Format( wxT( "%s \u279C %s" ), aData.current_version, aVersion ) );
+            m_gridPendingActions->SetCellValue( row, PENDING_COL_VERSION,
+                                                wxString::Format( wxT( "%s \u279C %s" ),
+                                                                  aData.current_version,
+                                                                  aVersion ) );
             new_state = PPS_PENDING_UPDATE;
             break;
 
         case PPA_UNINSTALL:
             m_gridPendingActions->SetCellValue( row, PENDING_COL_ACTION, _( "Uninstall" ) );
-            m_gridPendingActions->SetCellValue(
-                    row, PENDING_COL_VERSION,
-                    m_pcm->GetInstalledPackageVersion( aData.package.identifier ) );
+            m_gridPendingActions->SetCellValue( row, PENDING_COL_VERSION,
+                                                m_pcm->GetInstalledPackageVersion( aData.package.identifier ) );
             new_state = PPS_PENDING_UNINSTALL;
             break;
         }
@@ -143,15 +145,14 @@ DIALOG_PCM::DIALOG_PCM( EDA_BASE_FRAME* parent, std::shared_ptr<PLUGIN_CONTENT_M
                 updatePackageState( aPackageId, aState );
             };
 
-    m_installedPanel = new PANEL_PACKAGES_VIEW( m_panelInstalledHolder, m_pcm, m_actionCallback,
-                                                m_pinCallback );
+    m_installedPanel = new PANEL_PACKAGES_VIEW( m_panelInstalledHolder, m_pcm, m_actionCallback, m_pinCallback );
     m_panelInstalledHolder->GetSizer()->Add( m_installedPanel, 1, wxEXPAND );
     m_panelInstalledHolder->Layout();
 
     for( const std::pair<PCM_PACKAGE_TYPE, wxString>& entry : PACKAGE_TYPE_LIST )
     {
-        PANEL_PACKAGES_VIEW* panel = new PANEL_PACKAGES_VIEW( m_contentNotebook, m_pcm,
-                                                              m_actionCallback, m_pinCallback );
+        PANEL_PACKAGES_VIEW* panel = new PANEL_PACKAGES_VIEW( m_contentNotebook, m_pcm, m_actionCallback,
+                                                              m_pinCallback );
         wxString             label = wxGetTranslation( entry.second );
         m_contentNotebook->AddPage( panel, wxString::Format( label, 0 ) );
         m_repositoryContentPanels.insert( { entry.first, panel } );
@@ -164,15 +165,20 @@ DIALOG_PCM::DIALOG_PCM( EDA_BASE_FRAME* parent, std::shared_ptr<PLUGIN_CONTENT_M
 
     m_dialogNotebook->SetSelection( 0 );
 
-    SetupStandardButtons( { { wxID_OK, _( "Close" ) },
-                            { wxID_APPLY, _( "Apply Pending Changes" ) },
+    SetupStandardButtons( { { wxID_OK,     _( "Close" ) },
+                            { wxID_APPLY,  _( "Apply Pending Changes" ) },
                             { wxID_CANCEL, _( "Discard Pending Changes" ) } } );
 
     Bind( wxEVT_CLOSE_WINDOW, &DIALOG_PCM::OnCloseWindow, this );
     m_sdbSizer1Cancel->Bind( wxEVT_UPDATE_UI, &DIALOG_PCM::OnUpdateEventButtons, this );
     m_sdbSizer1Apply->Bind( wxEVT_UPDATE_UI, &DIALOG_PCM::OnUpdateEventButtons, this );
 
-    setRepositoryListFromPcm();
+    // Has to be called after DIALOG_SHIM reads cached values
+    CallAfter(
+            [this]()
+            {
+                setRepositoryListFromPcm();
+            } );
 
     for( int col = 0; col < m_gridPendingActions->GetNumberCols(); col++ )
     {
@@ -199,6 +205,19 @@ DIALOG_PCM::~DIALOG_PCM()
     m_pcm->RunBackgroundUpdate();
 
     m_gridPendingActions->PopEventHandler( true );
+}
+
+
+void DIALOG_PCM::SetActivePackageType( PCM_PACKAGE_TYPE aType )
+{
+    for( size_t i = 0; i < PACKAGE_TYPE_LIST.size(); ++i )
+    {
+        if( PACKAGE_TYPE_LIST[i].first == aType )
+        {
+            m_contentNotebook->SetSelection( i );
+            break;
+        }
+    }
 }
 
 
@@ -236,8 +255,8 @@ void DIALOG_PCM::OnManageRepositoriesClicked( wxCommandEvent& event )
     std::vector<std::pair<wxString, wxString>>            dialog_data;
     std::vector<std::tuple<wxString, wxString, wxString>> repo_list = m_pcm->GetRepositoryList();
 
-    for( const std::tuple<wxString, wxString, wxString>& repo : repo_list )
-        dialog_data.push_back( std::make_pair( std::get<1>( repo ), std::get<2>( repo ) ) );
+    for( const auto& [id, url, name] : repo_list )
+        dialog_data.push_back( std::make_pair( url, name ) );
 
     dialog->SetData( dialog_data );
 
@@ -259,25 +278,40 @@ void DIALOG_PCM::OnManageRepositoriesClicked( wxCommandEvent& event )
 void DIALOG_PCM::setRepositoryListFromPcm()
 {
     std::vector<std::tuple<wxString, wxString, wxString>> repositories = m_pcm->GetRepositoryList();
+    KICAD_SETTINGS*                                       cfg = GetAppSettings<KICAD_SETTINGS>( "kicad" );
 
     m_choiceRepository->Clear();
 
-    for( const std::tuple<wxString, wxString, wxString>& entry : repositories )
-    {
-        m_choiceRepository->Append( std::get<1>( entry ),
-                                    new wxStringClientData( std::get<0>( entry ) ) );
-    }
+    for( const auto& [id, url, name] : repositories )
+        m_choiceRepository->Append( url, new wxStringClientData( id ) );
 
     if( repositories.size() > 0 )
     {
-        m_choiceRepository->SetSelection( 0 );
-        m_selectedRepositoryId = std::get<0>( repositories[0] );
+        int idx = 0;
+
+        if( cfg && !cfg->m_PcmLastSelectedRepoId.IsEmpty() )
+        {
+            auto it = std::find_if( repositories.begin(), repositories.end(),
+                                    [&cfg]( const auto& repo )
+                                    {
+                                        return std::get<0>( repo ) == cfg->m_PcmLastSelectedRepoId;
+                                    } );
+
+            if( it != repositories.end() )
+                idx = std::distance( repositories.begin(), it );
+        }
+
+        m_choiceRepository->SetSelection( idx );
+        m_selectedRepositoryId = std::get<0>( repositories[idx] );
         setRepositoryData( m_selectedRepositoryId );
     }
     else
     {
         m_selectedRepositoryId = "";
     }
+
+    if( cfg )
+        cfg->m_PcmLastSelectedRepoId = m_selectedRepositoryId;
 }
 
 
@@ -291,8 +325,9 @@ void DIALOG_PCM::OnRefreshClicked( wxCommandEvent& event )
 void DIALOG_PCM::OnInstallFromFileClicked( wxCommandEvent& event )
 {
     wxFileDialog open_file_dialog( this, _( "Install Package" ), wxEmptyString, wxEmptyString,
-                                   wxT( "Zip files (*.zip)|*.zip" ),
-                                   wxFD_OPEN | wxFD_FILE_MUST_EXIST );
+                                   wxT( "Zip files (*.zip)|*.zip" ), wxFD_OPEN | wxFD_FILE_MUST_EXIST );
+
+    KIPLATFORM::UI::AllowNetworkFileSystems( &open_file_dialog );
 
     if( open_file_dialog.ShowModal() == wxID_CANCEL )
         return;
@@ -317,6 +352,9 @@ void DIALOG_PCM::OnRepositoryChoice( wxCommandEvent& event )
     m_selectedRepositoryId = data->GetData();
 
     setRepositoryData( m_selectedRepositoryId );
+
+    if( KICAD_SETTINGS* cfg = GetAppSettings<KICAD_SETTINGS>( "kicad" ) )
+        cfg->m_PcmLastSelectedRepoId = m_selectedRepositoryId;
 }
 
 
@@ -337,6 +375,9 @@ void DIALOG_PCM::setRepositoryData( const wxString& aRepositoryId )
 
         for( const PCM_PACKAGE& pkg : packages )
         {
+            if( pkg.type == PT_INVALID )
+                continue;
+
             PACKAGE_VIEW_DATA package_data( pkg );
 
             if( m_packageBitmaps.count( package_data.package.identifier ) > 0 )
@@ -350,11 +391,15 @@ void DIALOG_PCM::setRepositoryData( const wxString& aRepositoryId )
             {
                 package_data.current_version = m_pcm->GetInstalledPackageVersion( pkg.identifier );
                 package_data.pinned = m_pcm->IsPackagePinned( pkg.identifier );
+                package_data.swig_warning = m_pcm->UsesSWIGRuntime( pkg, package_data.current_version );
+            }
+            else if( !pkg.versions.empty() )
+            {
+                package_data.swig_warning = m_pcm->UsesSWIGRuntime( pkg, pkg.versions[0].version );
             }
 
             if( package_data.state == PPS_UPDATE_AVAILABLE )
                 package_data.update_version = m_pcm->GetPackageUpdateVersion( pkg );
-
 
             for( const PENDING_ACTION& action : m_pendingActions )
             {
@@ -437,6 +482,8 @@ void DIALOG_PCM::setInstalledPackages()
 
         package_data.state = m_pcm->GetPackageState( entry.repository_id,
                                                      entry.package.identifier );
+
+        package_data.swig_warning = m_pcm->UsesSWIGRuntime( entry.package, entry.current_version );
 
         if( package_data.state == PPS_UPDATE_AVAILABLE )
             package_data.update_version = m_pcm->GetPackageUpdateVersion( entry.package );

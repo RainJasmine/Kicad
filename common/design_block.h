@@ -27,14 +27,23 @@
 
 #include <kicommon.h>
 #include <lib_id.h>
+#include <lib_tree_item.h>
 #include <json_common.h>
 
 
-class KICOMMON_API DESIGN_BLOCK
+class KICOMMON_API DESIGN_BLOCK : public LIB_TREE_ITEM
 {
 public:
+    // LIB_TREE_ITEM interface
+    LIB_ID GetLIB_ID() const override { return GetLibId(); }
+    wxString GetName() const override { return m_lib_id.GetLibItemName(); }
+    wxString GetLibNickname() const override { return m_lib_id.GetLibNickname(); }
+    wxString GetDesc() override { return GetLibDescription(); }
+    std::vector<SEARCH_TERM>& GetSearchTerms() override;
+
     void          SetLibId( const LIB_ID& aName ) { m_lib_id = aName; }
     const LIB_ID& GetLibId() const { return m_lib_id; }
+    LIB_ID& GetLibId() { return m_lib_id; }
 
     const wxString& GetLibDescription() const { return m_libDescription; }
     void            SetLibDescription( const wxString& aDesc ) { m_libDescription = aDesc; }
@@ -48,12 +57,8 @@ public:
     const wxString& GetBoardFile() const { return m_boardFile; }
     void            SetBoardFile( const wxString& aFile ) { m_boardFile = aFile; }
 
-    void SetFields( nlohmann::ordered_map<wxString, wxString>& aFields )
-    {
-        m_fields = std::move( aFields );
-    }
-
     const nlohmann::ordered_map<wxString, wxString>& GetFields() const { return m_fields; }
+    nlohmann::ordered_map<wxString, wxString>& GetFields() { return m_fields; }
 
     DESIGN_BLOCK() = default;
 
@@ -68,6 +73,7 @@ private:
     wxString m_keywords;       ///< Search keywords to find design block in library.
 
     nlohmann::ordered_map<wxString, wxString> m_fields;
+    std::vector<SEARCH_TERM> m_searchTerms;
 };
 
 #endif

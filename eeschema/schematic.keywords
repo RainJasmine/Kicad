@@ -8,6 +8,8 @@ background
 bezier
 bidirectional
 bitmap
+body_style
+body_styles
 bold
 border
 bottom
@@ -32,6 +34,7 @@ data
 date
 default
 default_instance
+demorgan
 diameter
 diamond
 directive_label
@@ -48,6 +51,7 @@ extends
 external
 exclude_from_sim
 face
+field
 fields_autoplaced
 file
 fill
@@ -75,6 +79,7 @@ instances
 inverted
 inverted_clock
 in_bom
+in_pos_files
 iref
 italic
 jumper_pin_groups
@@ -91,6 +96,7 @@ lib_symbols
 line
 line_spacing
 local
+locked
 margins
 members
 mid
@@ -168,6 +174,7 @@ unit_name
 unspecified
 uuid
 value
+variant
 version
 width
 wire

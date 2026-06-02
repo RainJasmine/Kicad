@@ -55,11 +55,23 @@ public:
 
 private:
     bool buildBoard3DShapes();
-    bool buildFootprint3DShapes( FOOTPRINT* aFootprint, VECTOR2D aOrigin, SHAPE_POLY_SET* aClipPolygon );
-    bool buildTrack3DShape( PCB_TRACK* aTrack, VECTOR2D aOrigin );
-    void buildZones3DShape( VECTOR2D aOrigin );
-    bool buildGraphic3DShape( BOARD_ITEM* aItem, VECTOR2D aOrigin );
+    bool buildFootprint3DShapes( FOOTPRINT* aFootprint, const VECTOR2D& aOrigin, SHAPE_POLY_SET* aClipPolygon );
+    bool buildTrack3DShape( PCB_TRACK* aTrack, const VECTOR2D& aOrigin );
+    void buildZones3DShape( VECTOR2D aOrigin, bool aSolderMaskOnly = false );
+    bool buildGraphic3DShape( BOARD_ITEM* aItem, const VECTOR2D& aOrigin );
     void initOutputVariant();
+
+    /**
+     * Check if a copper layer is within a backdrill layer span (inclusive).
+     * @param aLayer The layer to check
+     * @param aStartLayer The backdrill start layer
+     * @param aEndLayer The backdrill end layer
+     * @return true if the layer is within the span (inclusive)
+     */
+    bool isLayerInBackdrillSpan( PCB_LAYER_ID aLayer, PCB_LAYER_ID aStartLayer,
+                                 PCB_LAYER_ID aEndLayer ) const;
+
+    bool netFilterMatches( const wxString& netname ) const;
 
     EXPORTER_STEP_PARAMS m_params;
     std::unique_ptr<FILENAME_RESOLVER> m_resolver;

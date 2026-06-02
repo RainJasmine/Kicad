@@ -22,8 +22,7 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#ifndef SCH_ITEM_H
-#define SCH_ITEM_H
+#pragma once
 
 #include <unordered_map>
 #include <unordered_set>
@@ -31,6 +30,7 @@
 #include <set>
 
 #include <eda_item.h>
+#include <properties/property.h>
 #include <sch_sheet_path.h>
 #include <netclass.h>
 #include <stroke_params.h>
@@ -235,35 +235,63 @@ public:
      */
     SCH_ITEM* Duplicate( bool addToParentGroup, SCH_COMMIT* aCommit = nullptr, bool doClone = false ) const;
 
-    static wxString GetUnitDescription( int aUnit );
-    static wxString GetBodyStyleDescription( int aBodyStyle );
-
     virtual void SetUnit( int aUnit ) { m_unit = aUnit; }
     int GetUnit() const { return m_unit; }
-    void SetUnitProp( int aUnit );
+
+    virtual void SetUnitString( const wxString& aUnit );
+    virtual wxString GetUnitString() const;
+
+    virtual wxString GetUnitDisplayName( int aUnit, bool aLabel ) const;
+    virtual wxString GetBodyStyleDescription( int aBodyStyle, bool aLabel ) const;
 
     virtual void SetBodyStyle( int aBodyStyle ) { m_bodyStyle = aBodyStyle; }
     int  GetBodyStyle() const { return m_bodyStyle; }
-    void SetBodyStyleProp( int aBodyStyle );
+
+    virtual void SetBodyStyleProp( const wxString& aBodyStyle );
+    virtual wxString GetBodyStyleProp() const;
 
     void SetPrivate( bool aPrivate ) { m_private = aPrivate; }
     bool IsPrivate() const { return m_private; }
 
-    virtual void SetExcludedFromSim( bool aExclude ) { }
-    virtual bool GetExcludedFromSim() const { return false; }
-    bool ResolveExcludedFromSim() const;
+    bool IsLocked() const override;
+    void SetLocked( bool aLocked ) override { m_isLocked = aLocked; }
 
-    virtual void SetExcludedFromBOM( bool aExcludeFromBOM ) { }
-    virtual bool GetExcludedFromBOM() const { return false; }
-    bool ResolveExcludedFromBOM() const;
+    virtual void SetExcludedFromSim( bool aExclude, const SCH_SHEET_PATH* aInstance = nullptr,
+                                     const wxString& aVariantName = wxEmptyString ) { }
+    virtual bool GetExcludedFromSim( const SCH_SHEET_PATH* aInstance = nullptr,
+                                     const wxString& aVariantName = wxEmptyString ) const { return false; }
+    bool ResolveExcludedFromSim( const SCH_SHEET_PATH* aInstance = nullptr,
+                                 const wxString& aVariantName = wxEmptyString ) const;
 
-    virtual void SetExcludedFromBoard( bool aExcludeFromBoard ) { }
-    virtual bool GetExcludedFromBoard() const { return false; }
-    bool ResolveExcludedFromBoard() const;
+    virtual void SetExcludedFromBOM( bool aExcludeFromBOM, const SCH_SHEET_PATH* aInstance = nullptr,
+                                     const wxString& aVariantName = wxEmptyString ) { }
+    virtual bool GetExcludedFromBOM( const SCH_SHEET_PATH* aInstance = nullptr,
+                                     const wxString& aVariantName = wxEmptyString ) const { return false; }
+    bool ResolveExcludedFromBOM( const SCH_SHEET_PATH* aInstance = nullptr,
+                                 const wxString& aVariantName = wxEmptyString ) const;
 
-    virtual void SetDNP( bool aDNP ) { }
-    virtual bool GetDNP() const { return false; }
-    bool ResolveDNP() const;
+    virtual void SetExcludedFromBoard( bool aExclude, const SCH_SHEET_PATH* aInstance = nullptr,
+                                        const wxString& aVariantName = wxEmptyString ) { }
+    virtual bool GetExcludedFromBoard( const SCH_SHEET_PATH* aInstance = nullptr,
+                                       const wxString& aVariantName = wxEmptyString ) const { return false; }
+    bool ResolveExcludedFromBoard( const SCH_SHEET_PATH* aInstance = nullptr,
+                                   const wxString& aVariantName = wxEmptyString ) const;
+
+    virtual void SetExcludedFromPosFiles( bool aExclude, const SCH_SHEET_PATH* aInstance = nullptr,
+                                          const wxString& aVariantName = wxEmptyString ) { }
+    virtual bool GetExcludedFromPosFiles( const SCH_SHEET_PATH* aInstance = nullptr,
+                                          const wxString& aVariantName = wxEmptyString ) const { return false; }
+    bool ResolveExcludedFromPosFiles( const SCH_SHEET_PATH* aInstance = nullptr,
+                                      const wxString& aVariantName = wxEmptyString ) const;
+
+    virtual void SetDNP( bool aDNP, const SCH_SHEET_PATH* aInstance = nullptr,
+                         const wxString& aVariantName = wxEmptyString ) { }
+    virtual bool GetDNP( const SCH_SHEET_PATH* aInstance = nullptr,
+                         const wxString& aVariantName = wxEmptyString ) const { return false; }
+    bool ResolveDNP( const SCH_SHEET_PATH* aInstance = nullptr,
+                     const wxString& aVariantName = wxEmptyString ) const;
+
+    wxString ResolveText( const wxString& aText, const SCH_SHEET_PATH* aPath, int aDepth = 0 ) const;
 
     /**
      * Check if object is movable from the anchor point.
@@ -297,11 +325,18 @@ public:
     SYMBOL* GetParentSymbol();
 
     /**
-     * Allow items to support hypertext actions when hovered/clicked.
+     * Indicates that the item has at least one hypertext action.  This could be a URL assigned to
+     * the item as a whole, or one (or more) urls within the text of the item.
      */
-    virtual bool IsHypertext() const { return false; }
+    virtual bool HasHypertext() const { return false; }
 
-    virtual void DoHypertextAction( EDA_DRAW_FRAME* aFrame ) const { }
+    /**
+     * Indicates that a hypertext link is currently active.
+     * (Note that the default implementation here only handles the simple case.)
+     */
+    virtual bool HasHoveredHypertext() const { return HasHypertext() && IsRollover(); }
+
+    virtual void DoHypertextAction( EDA_DRAW_FRAME* aFrame, const VECTOR2I& aMousePos ) const { }
 
     /**
      * Return the layer this item is on.
@@ -314,6 +349,8 @@ public:
      */
     std::vector<int> ViewGetLayers() const override;
 
+    int GetMaxError() const;
+
     /**
      * @return the size of the "pen" that be used to draw or plot this item
      */
@@ -321,7 +358,7 @@ public:
 
     int GetEffectivePenWidth( const SCH_RENDER_SETTINGS* aSettings ) const;
 
-    const wxString& GetDefaultFont() const;
+    const wxString& GetDefaultFont( const RENDER_SETTINGS* aSettings ) const;
 
     const KIFONT::METRICS& GetFontMetrics() const;
 
@@ -372,8 +409,7 @@ public:
      */
     virtual void MirrorHorizontally( int aCenter )
     {
-        wxCHECK_MSG( false, /*void*/,
-                     wxT( "MirrorHorizontally not implemented in " ) + GetClass() );
+        wxCHECK_MSG( false, /*void*/, wxT( "MirrorHorizontally not implemented in " ) + GetClass() );
     }
 
     /**
@@ -612,6 +648,8 @@ public:
 
     virtual void SetStroke( const STROKE_PARAMS& aStroke ) { wxCHECK( false, /* void */ ); }
 
+    void GetMsgPanelInfo( EDA_DRAW_FRAME* aFrame, std::vector<MSG_PANEL_ITEM>& aList ) override;
+
     /**
      * Plot the item to \a aPlotter.
      *
@@ -639,12 +677,19 @@ public:
     void AddRuleAreaToCache( SCH_RULE_AREA* aRuleArea ) { m_rule_areas_cache.insert( aRuleArea ); }
 
     /**
+     * Remove a specific rule area from the item's cache.
+     */
+    void RemoveRuleAreaFromCache( SCH_RULE_AREA* aRuleArea ) { m_rule_areas_cache.erase( aRuleArea ); }
+
+    /**
      * Get the cache of rule areas enclosing this item.
      */
     const std::unordered_set<SCH_RULE_AREA*>& GetRuleAreaCache() const
     {
         return m_rule_areas_cache;
     }
+
+    const std::vector<wxString>* GetEmbeddedFonts() override;
 
     /**
      * The list of flags used by the #compare function.
@@ -691,8 +736,6 @@ protected:
     {
         bool operator()( const SCH_ITEM* aFirst, const SCH_ITEM* aSecond ) const;
     };
-
-    void getSymbolEditorMsgPanelInfo( EDA_DRAW_FRAME* aFrame, std::vector<MSG_PANEL_ITEM>& aList );
 
     /**
      * Provide the draw object specific comparison called by the == and < operators.
@@ -754,12 +797,11 @@ protected:
     /// Store pointers to rule areas which this item is contained within
     std::unordered_set<SCH_RULE_AREA*>                     m_rule_areas_cache;
 
+    bool                                                   m_isLocked;
+
 private:
     friend class LIB_SYMBOL;
 };
 
-#ifndef SWIG
 DECLARE_ENUM_TO_WXANY( SCH_LAYER_ID );
-#endif
 
-#endif /* SCH_ITEM_H */

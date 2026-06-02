@@ -23,8 +23,7 @@
  */
 
 
-#ifndef SYMBOL_EDITOR_CONTROL_H
-#define SYMBOL_EDITOR_CONTROL_H
+#pragma once
 
 #include <sch_base_frame.h>
 #include <tools/sch_tool_base.h>
@@ -62,7 +61,7 @@ public:
     int ExportSymbolAsSVG( const TOOL_EVENT& aEvent );
     int AddSymbolToSchematic( const TOOL_EVENT& aEvent );
 
-    int OnDeMorgan( const TOOL_EVENT& aEvent );
+    int FlattenSymbol( const TOOL_EVENT& aEvent );
 
     int ShowElectricalTypes( const TOOL_EVENT& aEvent );
     int ShowPinNumbers( const TOOL_EVENT& aEvent );
@@ -75,12 +74,14 @@ public:
 
     int ChangeUnit( const TOOL_EVENT& aEvent );
 
+    int PreviousSymbol( const TOOL_EVENT& aEvent );
+    int NextSymbol( const TOOL_EVENT& aEvent );
+
     int DdAddLibrary( const TOOL_EVENT& aEvent );
+
+    int ShowLibraryTable( const TOOL_EVENT& aEvent );
 
 private:
     ///< Set up handlers for various events.
     void setTransitions() override;
 };
-
-
-#endif // SYMBOL_EDITOR_CONTROL_H

@@ -296,8 +296,7 @@ const VECTOR2D DS_DATA_ITEM::GetStartPos( int ii ) const
 
 const VECTOR2I DS_DATA_ITEM::GetStartPosIU( int ii ) const
 {
-    VECTOR2D pos = GetStartPos( ii ) * DS_DATA_MODEL::GetTheInstance().m_WSunits2Iu;
-    return VECTOR2I( KiROUND( pos.x ), KiROUND( pos.y ) );
+    return KiROUND( GetStartPos( ii ) * DS_DATA_MODEL::GetTheInstance().m_WSunits2Iu );
 }
 
 
@@ -701,7 +700,7 @@ void DS_DATA_ITEM_TEXT::SetConstrainedTextSize()
         dummy.SetVertJustify( m_Vjustify );
         dummy.SetTextAngle( EDA_ANGLE( m_Orient, DEGREES_T ) );
 
-        BOX2I    rect = dummy.GetTextBox();
+        BOX2I    rect = dummy.GetTextBox( nullptr );
         VECTOR2D size;
         size.x = KiROUND( (int) rect.GetWidth() / FSCALE );
         size.y = KiROUND( (int) rect.GetHeight() / FSCALE );

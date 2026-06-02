@@ -29,6 +29,7 @@
 #include <pcb_plot_params.h>
 #include <pcb_plot_params_parser.h>
 #include <plotters/plotter.h>
+#include <plotters/plotter_png.h>
 #include <io/kicad/kicad_io_utils.h>
 #include <settings/color_settings.h>
 #include <lseq.h>
@@ -69,6 +70,8 @@ PCB_PLOT_PARAMS::PCB_PLOT_PARAMS()
     // we used 0.1mils for SVG step before, but nm precision is more accurate, so we use nm
     m_svgPrecision               = SVG_PRECISION_DEFAULT;
     m_svgFitPageToBoard          = false;
+    m_pngDPI                     = DEFAULT_PNG_DPI;
+    m_pngAntialias               = true;
     m_plotDrawingSheet           = false;
     m_DXFPlotMode                = FILLED;
     m_DXFPolygonMode             = true;
@@ -116,6 +119,8 @@ PCB_PLOT_PARAMS::PCB_PLOT_PARAMS()
     m_colors                     = m_default_colors.get();
 
     m_blackAndWhite              = true;
+
+    m_DXFExportAsMultiLayeredFile = false;
 }
 
 
@@ -166,6 +171,10 @@ void PCB_PLOT_PARAMS::Format( OUTPUTFORMATTER* aFormatter ) const
 
     // SVG options
     aFormatter->Print( "(svgprecision %d)", m_svgPrecision );
+
+    // PNG options
+    aFormatter->Print( "(pngdpi %d)", m_pngDPI );
+    KICAD_FORMAT::FormatBool( aFormatter, "pngantialias", m_pngAntialias );
 
     KICAD_FORMAT::FormatBool( aFormatter, "plotframeref", m_plotDrawingSheet );
     aFormatter->Print( "(mode %d)", GetDXFPlotMode() == SKETCH ? 2 : 1 );
@@ -220,23 +229,26 @@ bool PCB_PLOT_PARAMS::IsSameAs( const PCB_PLOT_PARAMS &aPcbPlotParams ) const
     if( m_plotOnAllLayersSequence != aPcbPlotParams.m_plotOnAllLayersSequence )
         return false;
 
-    if( m_useGerberProtelExtensions != aPcbPlotParams.m_useGerberProtelExtensions )
-        return false;
+    if( m_format == PLOT_FORMAT::GERBER )
+    {
+        if( m_useGerberProtelExtensions != aPcbPlotParams.m_useGerberProtelExtensions )
+            return false;
 
-    if( m_gerberDisableApertMacros != aPcbPlotParams.m_gerberDisableApertMacros )
-        return false;
+        if( m_gerberDisableApertMacros != aPcbPlotParams.m_gerberDisableApertMacros )
+            return false;
 
-    if( m_useGerberX2format != aPcbPlotParams.m_useGerberX2format )
-        return false;
+        if( m_useGerberX2format != aPcbPlotParams.m_useGerberX2format )
+            return false;
 
-    if( m_includeGerberNetlistInfo != aPcbPlotParams.m_includeGerberNetlistInfo )
-        return false;
+        if( m_includeGerberNetlistInfo != aPcbPlotParams.m_includeGerberNetlistInfo )
+            return false;
 
-    if( m_createGerberJobFile != aPcbPlotParams.m_createGerberJobFile )
-        return false;
+        if( m_createGerberJobFile != aPcbPlotParams.m_createGerberJobFile )
+            return false;
 
-    if( m_gerberPrecision != aPcbPlotParams.m_gerberPrecision )
-        return false;
+        if( m_gerberPrecision != aPcbPlotParams.m_gerberPrecision )
+            return false;
+    }
 
     if( m_dashedLineDashRatio != aPcbPlotParams.m_dashedLineDashRatio )
         return false;
@@ -247,35 +259,56 @@ bool PCB_PLOT_PARAMS::IsSameAs( const PCB_PLOT_PARAMS &aPcbPlotParams ) const
     if( m_plotDrawingSheet != aPcbPlotParams.m_plotDrawingSheet )
         return false;
 
-    if( m_DXFPlotMode != aPcbPlotParams.m_DXFPlotMode )
-        return false;
+    if( m_format == PLOT_FORMAT::DXF )
+    {
+        if( m_DXFPlotMode != aPcbPlotParams.m_DXFPlotMode )
+            return false;
 
-    if( m_DXFPolygonMode != aPcbPlotParams.m_DXFPolygonMode )
-        return false;
+        if( m_DXFPolygonMode != aPcbPlotParams.m_DXFPolygonMode )
+            return false;
 
-    if( m_DXFUnits != aPcbPlotParams.m_DXFUnits )
-        return false;
+        if( m_DXFUnits != aPcbPlotParams.m_DXFUnits )
+            return false;
+
+        if( m_DXFExportAsMultiLayeredFile != aPcbPlotParams.m_DXFExportAsMultiLayeredFile )
+            return false;
+    }
 
     if( m_svgPrecision != aPcbPlotParams.m_svgPrecision )
         return false;
 
-    if( m_useAuxOrigin != aPcbPlotParams.m_useAuxOrigin )
+    if( m_pngDPI != aPcbPlotParams.m_pngDPI )
         return false;
 
-    if( m_negative != aPcbPlotParams.m_negative )
+    if( m_pngAntialias != aPcbPlotParams.m_pngAntialias )
         return false;
 
-    if( m_PDFFrontFPPropertyPopups != aPcbPlotParams.m_PDFFrontFPPropertyPopups )
-        return false;
+    if( m_format != PLOT_FORMAT::POST )
+    {
+        if( m_useAuxOrigin != aPcbPlotParams.m_useAuxOrigin )
+            return false;
+    }
 
-    if( m_PDFBackFPPropertyPopups != aPcbPlotParams.m_PDFBackFPPropertyPopups )
-        return false;
+    if( m_format == PLOT_FORMAT::POST || m_format == PLOT_FORMAT::SVG || m_format == PLOT_FORMAT::PDF )
+    {
+        if( m_negative != aPcbPlotParams.m_negative )
+            return false;
 
-    if( m_PDFMetadata != aPcbPlotParams.m_PDFMetadata )
-        return false;
+        if( m_mirror != aPcbPlotParams.m_mirror )
+            return false;
+    }
 
-    if( m_A4Output != aPcbPlotParams.m_A4Output )
-        return false;
+    if( m_format == PLOT_FORMAT::PDF )
+    {
+        if( m_PDFFrontFPPropertyPopups != aPcbPlotParams.m_PDFFrontFPPropertyPopups )
+            return false;
+
+        if( m_PDFBackFPPropertyPopups != aPcbPlotParams.m_PDFBackFPPropertyPopups )
+            return false;
+
+        if( m_PDFMetadata != aPcbPlotParams.m_PDFMetadata )
+            return false;
+    }
 
     if( m_plotReference != aPcbPlotParams.m_plotReference )
         return false;
@@ -307,29 +340,35 @@ bool PCB_PLOT_PARAMS::IsSameAs( const PCB_PLOT_PARAMS &aPcbPlotParams ) const
     if( m_format != aPcbPlotParams.m_format )
         return false;
 
-    if( m_mirror != aPcbPlotParams.m_mirror )
-        return false;
+    if( m_format != PLOT_FORMAT::GERBER )
+    {
+        if( m_drillMarks != aPcbPlotParams.m_drillMarks )
+            return false;
 
-    if( m_drillMarks != aPcbPlotParams.m_drillMarks )
-        return false;
+        if( m_scaleSelection != aPcbPlotParams.m_scaleSelection )
+            return false;
 
-    if( m_scaleSelection != aPcbPlotParams.m_scaleSelection )
-        return false;
+        if( m_autoScale != aPcbPlotParams.m_autoScale )
+            return false;
 
-    if( m_autoScale != aPcbPlotParams.m_autoScale )
-        return false;
+        if( m_scale != aPcbPlotParams.m_scale )
+            return false;
+    }
 
-    if( m_scale != aPcbPlotParams.m_scale )
-        return false;
+    if( m_format == PLOT_FORMAT::POST )
+    {
+        if( m_A4Output != aPcbPlotParams.m_A4Output )
+            return false;
 
-    if( m_fineScaleAdjustX != aPcbPlotParams.m_fineScaleAdjustX )
-        return false;
+        if( m_fineScaleAdjustX != aPcbPlotParams.m_fineScaleAdjustX )
+            return false;
 
-    if( m_fineScaleAdjustY != aPcbPlotParams.m_fineScaleAdjustY )
-        return false;
+        if( m_fineScaleAdjustY != aPcbPlotParams.m_fineScaleAdjustY )
+            return false;
 
-    if( m_widthAdjust != aPcbPlotParams.m_widthAdjust )
-        return false;
+        if( m_widthAdjust != aPcbPlotParams.m_widthAdjust )
+            return false;
+    }
 
     if( m_textMode != aPcbPlotParams.m_textMode )
         return false;
@@ -655,6 +694,14 @@ void PCB_PLOT_PARAMS_PARSER::Parse( PCB_PLOT_PARAMS* aPcbPlotParams )
             aPcbPlotParams->m_svgPrecision = parseInt( SVG_PRECISION_MIN, SVG_PRECISION_MAX );
             break;
 
+        case T_pngdpi:
+            aPcbPlotParams->m_pngDPI = parseInt( MIN_PNG_DPI, MAX_PNG_DPI );
+            break;
+
+        case T_pngantialias:
+            aPcbPlotParams->m_pngAntialias = parseBool();
+            break;
+
         case T_svguseinch:
             parseBool();    // Unused. For compatibility
             break;
@@ -761,7 +808,7 @@ void PCB_PLOT_PARAMS_PARSER::Parse( PCB_PLOT_PARAMS* aPcbPlotParams )
         case T_outputformat:
             aPcbPlotParams->m_format = static_cast<PLOT_FORMAT>(
                     parseInt( static_cast<int>( PLOT_FORMAT::FIRST_FORMAT ),
-                            static_cast<int>( PLOT_FORMAT::LAST_FORMAT ) ) );
+                             static_cast<int>( PLOT_FORMAT::LAST_FORMAT ) ) );
             break;
 
         case T_mirror:

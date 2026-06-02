@@ -64,15 +64,9 @@ void DESIGN_BLOCK_CONTROL::AddContextMenuItems( CONDITIONAL_MENU* aMenu )
                        && !current->m_Pinned;
             };
 
-    auto isDesignBlock =
-            [this](const SELECTION& aSel )
-            {
-                return this->selIsDesignBlock(aSel);
-            };
-
     aMenu->AddItem( ACTIONS::pinLibrary, unpinnedLib, 1 );
     aMenu->AddItem( ACTIONS::unpinLibrary, pinnedLib, 1 );
-    aMenu->AddItem( ACTIONS::newLibrary, !isDesignBlock, 1 );
+    aMenu->AddItem( ACTIONS::newLibrary, SELECTION_CONDITIONS::ShowAlways, 1 );
     aMenu->AddSeparator( 2 );
 
     aMenu->AddSeparator( 400 );
@@ -118,7 +112,7 @@ int DESIGN_BLOCK_CONTROL::UnpinLibrary( const TOOL_EVENT& aEvent )
 
 int DESIGN_BLOCK_CONTROL::NewLibrary( const TOOL_EVENT& aEvent )
 {
-    if( getDesignBlockPane()->CreateNewDesignBlockLibrary() != wxEmptyString )
+    if( !getDesignBlockPane()->CreateNewDesignBlockLibrary( _( "New Design Block Library" ) ).IsEmpty() )
     {
         notifyOtherFrames();
         return 0;

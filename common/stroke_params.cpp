@@ -91,12 +91,33 @@ void STROKE_PARAMS::Stroke( const SHAPE* aShape, LINE_STYLE aLineStyle, int aWid
     case SH_RECT:
     {
         SHAPE_LINE_CHAIN outline = static_cast<const SHAPE_RECT*>( aShape )->Outline();
+        std::set<size_t> arcsHandled;
 
         for( int ii = 0; ii < outline.SegmentCount(); ++ii )
         {
-            SEG seg = outline.GetSegment( ii );
-            SHAPE_SEGMENT line( seg.A, seg.B );
-            STROKE_PARAMS::Stroke( &line, aLineStyle, aWidth, aRenderSettings, aStroker );
+            if( outline.IsArcSegment( ii ) )
+            {
+                size_t arcIndex = outline.ArcIndex( ii );
+
+                if( !arcsHandled.contains( arcIndex ) )
+                {
+                    arcsHandled.insert( arcIndex );
+                    const SHAPE_ARC& arc( outline.Arc( arcIndex ) );
+                    STROKE_PARAMS::Stroke( &arc, aLineStyle, aWidth, aRenderSettings, aStroker );
+                }
+            }
+            else
+            {
+                const SEG& seg = outline.GetSegment( ii );
+                SHAPE_SEGMENT line( seg.A, seg.B );
+                STROKE_PARAMS::Stroke( &line, aLineStyle, aWidth, aRenderSettings, aStroker );
+            }
+        }
+
+        for( int jj = 0; jj < (int) outline.ArcCount(); ++jj )
+        {
+            const SHAPE_ARC& arc( outline.Arc( jj ) );
+            STROKE_PARAMS::Stroke( &arc, aLineStyle, aWidth, aRenderSettings, aStroker );
         }
 
         break;
@@ -122,7 +143,7 @@ void STROKE_PARAMS::Stroke( const SHAPE* aShape, LINE_STYLE aLineStyle, int aWid
 
         VECTOR2D start = line->GetSeg().A;
         VECTOR2D end = line->GetSeg().B;
-        BOX2I    clip( start, VECTOR2I( KiROUND( end.x - start.x ), KiROUND( end.y - start.y ) ) );
+        BOX2I    clip( start, KiROUND( end.x - start.x, end.y - start.y ) );
         clip.Normalize();
 
         double theta = atan2( end.y - start.y, end.x - start.x );
@@ -135,8 +156,8 @@ void STROKE_PARAMS::Stroke( const SHAPE* aShape, LINE_STYLE aLineStyle, int aWid
                            start.y + strokes[ i % wrapAround ] * sin( theta ) );
 
             // Drawing each segment can be done rounded to ints.
-            VECTOR2I a( KiROUND( start.x ), KiROUND( start.y ) );
-            VECTOR2I b( KiROUND( next.x ), KiROUND( next.y ) );
+            VECTOR2I a = KiROUND( start );
+            VECTOR2I b = KiROUND( next );
 
             if( ClipLine( &clip, a.x, a.y, b.x, b.y ) )
                 break;

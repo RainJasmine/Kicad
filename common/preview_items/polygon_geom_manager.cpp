@@ -48,8 +48,8 @@ bool POLYGON_GEOM_MANAGER::AddPoint( const VECTOR2I& aPt )
         // there are enough leader points - the next
         // locked-in point is the end of the last leader
         // segment
-        m_lockedPoints.Append( m_leaderPts.CPoint( -2 ) );
-        m_lockedPoints.Append( m_leaderPts.CPoint( -1 ) );
+        m_lockedPoints.Append( m_leaderPts.CPoints()[ m_leaderPts.PointCount() - 2 ] );
+        m_lockedPoints.Append( m_leaderPts.CLastPoint() );
     }
     else
     {
@@ -165,7 +165,7 @@ static SHAPE_LINE_CHAIN build45DegLeader( const VECTOR2I& aEndPoint, const SHAPE
     if( aLastPoints.PointCount() < 1 )
         return SHAPE_LINE_CHAIN();
 
-    const VECTOR2I lastPt = aLastPoints.CPoint( -1 );
+    const VECTOR2I lastPt = aLastPoints.CLastPoint();
     const VECTOR2D endpointD = aEndPoint;
     const VECTOR2D lineVec = endpointD - lastPt;
 
@@ -174,7 +174,7 @@ static SHAPE_LINE_CHAIN build45DegLeader( const VECTOR2I& aEndPoint, const SHAPE
                 std::vector<VECTOR2I>{ lastPt, lastPt + GetVectorSnapped45( lineVec ) } );
 
     EDA_ANGLE lineA( lineVec );
-    EDA_ANGLE prevA( GetVectorSnapped45( lastPt - aLastPoints.CPoint( -2 ) ) );
+    EDA_ANGLE prevA( GetVectorSnapped45( lastPt - aLastPoints.CPoints()[ aLastPoints.PointCount() - 2 ] ) );
 
     bool vertical = std::abs( lineVec.y ) > std::abs( lineVec.x );
     bool horizontal = std::abs( lineVec.y ) < std::abs( lineVec.x );
@@ -223,9 +223,23 @@ static SHAPE_LINE_CHAIN build45DegLeader( const VECTOR2I& aEndPoint, const SHAPE
         }
     }
 
-    const VECTOR2I midInt = { KiROUND( mid.x ), KiROUND( mid.y ) };
+    const VECTOR2I midInt = KiROUND( mid.x, mid.y );
 
     return SHAPE_LINE_CHAIN( std::vector<VECTOR2I>{ lastPt, midInt, aEndPoint } );
+}
+
+static SHAPE_LINE_CHAIN build90DegLeader( const VECTOR2I& aEndPoint, const SHAPE_LINE_CHAIN& aLastPoints )
+{
+    if( aLastPoints.PointCount() < 1 )
+        return SHAPE_LINE_CHAIN();
+
+    const VECTOR2I lastPt = aLastPoints.CLastPoint();
+
+    if( lastPt.x == aEndPoint.x || lastPt.y == aEndPoint.y )
+        return SHAPE_LINE_CHAIN( std::vector<VECTOR2I>{ lastPt, aEndPoint } );
+
+    VECTOR2I mid( aEndPoint.x, lastPt.y );
+    return SHAPE_LINE_CHAIN( std::vector<VECTOR2I>{ lastPt, mid, aEndPoint } );
 }
 
 
@@ -240,6 +254,14 @@ void POLYGON_GEOM_MANAGER::updateTemporaryLines( const VECTOR2I& aEndPoint, LEAD
         {
             m_leaderPts = build45DegLeader( aEndPoint, m_lockedPoints );
             m_loopPts = build45DegLeader( aEndPoint, m_lockedPoints.Reverse() ).Reverse();
+        }
+    }
+    else if( m_leaderMode == LEADER_MODE::DEG90 || aModifier == LEADER_MODE::DEG90 )
+    {
+        if( m_lockedPoints.PointCount() > 0 )
+        {
+            m_leaderPts = build90DegLeader( aEndPoint, m_lockedPoints );
+            m_loopPts = build90DegLeader( aEndPoint, m_lockedPoints.Reverse() ).Reverse();
         }
     }
     else

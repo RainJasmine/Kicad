@@ -31,11 +31,15 @@
 #include <board_design_settings.h>
 #include <footprint.h>
 #include <pcb_group.h>
+#include <pcb_barcode.h>
 #include <pcb_dimension.h>
 #include <pcb_shape.h>
 #include <pcb_text.h>
 #include <widgets/unit_binder.h>
 #include <widgets/font_choice.h>
+#include <widgets/bitmap_button.h>
+#include <bitmaps.h>
+#include <gr_text.h>
 #include <tool/tool_manager.h>
 #include <tools/global_edit_tool.h>
 #include <tools/footprint_editor_control.h>
@@ -65,36 +69,12 @@ enum
 };
 
 
-static bool       g_modifyReferences;
-static bool       g_modifyValues;
-static bool       g_modifyOtherFootprintFields;
-static bool       g_modifyFootprintGraphics;
-static bool       g_modifyFootprintDimensions;
-static bool       g_modifyFootprintTexts;
-static bool       g_modifyBoardText;
-static bool       g_modifyBoardGraphics;
-static bool       g_filterByLayer;
-static int        g_layerFilter;
-static bool       g_filterByReference;
 static wxString   g_referenceFilter;
-static bool       g_filterByFootprint;
 static wxString   g_footprintFilter;
-static bool       g_filterSelected = false;
-static bool       g_setToSpecifiedValues = true;
 
 
 class DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS : public DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS_BASE
 {
-    PCB_BASE_EDIT_FRAME*   m_parent;
-    BOARD_DESIGN_SETTINGS* m_brdSettings;
-    PCB_SELECTION          m_selection;
-    bool                   m_isBoardEditor;
-
-    UNIT_BINDER            m_lineWidth;
-    UNIT_BINDER            m_textWidth;
-    UNIT_BINDER            m_textHeight;
-    UNIT_BINDER            m_thickness;
-
 public:
     DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS( PCB_BASE_EDIT_FRAME* parent );
     ~DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS() override;
@@ -103,6 +83,8 @@ protected:
     void onActionButtonChange( wxCommandEvent& event ) override;
     void onSpecifiedValueUpdateUI( wxUpdateUIEvent& event ) override;
     void onDimensionItemCheckbox( wxCommandEvent& aEvent ) override;
+    void onAutoTextThickness( wxCommandEvent& aEvent ) override;
+    void onTextSize( wxCommandEvent& aEvent ) override;
 
     void OnLayerFilterSelect( wxCommandEvent& event ) override
     {
@@ -122,6 +104,17 @@ protected:
 
     void visitItem( BOARD_COMMIT& aCommit, BOARD_ITEM* aItem );
     void processItem( BOARD_COMMIT& aCommit, BOARD_ITEM* aItem );
+
+private:
+    PCB_BASE_EDIT_FRAME*   m_parent;
+    BOARD_DESIGN_SETTINGS* m_brdSettings;
+    PCB_SELECTION          m_selection;
+    bool                   m_isBoardEditor;
+
+    UNIT_BINDER            m_lineWidth;
+    UNIT_BINDER            m_textWidth;
+    UNIT_BINDER            m_textHeight;
+    UNIT_BINDER            m_thickness;
 };
 
 
@@ -152,6 +145,13 @@ DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS::DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS( PCB_
         m_footprintFilter->Show( false );
     }
 
+    // Allow indeterminate state in font control and rebuild list
+    m_fontCtrl->SetHasIndeterminateChoice();
+    m_fontCtrl->RefreshFonts();
+
+    m_autoTextThickness->SetIsCheckButton();
+    m_autoTextThickness->SetBitmap( KiBitmapBundle( BITMAPS::edit_cmp_symb_links ) );
+
     m_layerFilter->SetBoardFrame( m_parent );
     m_layerFilter->SetLayersHotkeys( false );
     m_layerFilter->Resync();
@@ -165,11 +165,6 @@ DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS::DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS( PCB_
     m_grid->SetDefaultCellFont( KIUI::GetInfoFont( this ) );
     m_grid->SetDefaultRowSize( m_grid->GetDefaultRowSize() - FromDIP( 2 ) );
 
-    if( g_setToSpecifiedValues == true )
-        m_setToSpecifiedValues->SetValue( true );
-    else
-        m_setToLayerDefaults->SetValue( true );
-
     SetupStandardButtons( { { wxID_OK, _( "Apply and Close" ) },
                             { wxID_CANCEL, _( "Close" ) } } );
 
@@ -179,32 +174,11 @@ DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS::DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS( PCB_
 
 DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS::~DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS()
 {
-    g_modifyReferences = m_references->GetValue();
-    g_modifyValues = m_values->GetValue();
-    g_modifyOtherFootprintFields = m_otherFootprintFields->GetValue();
-    g_modifyFootprintGraphics = m_footprintGraphics->GetValue();
-    g_modifyFootprintDimensions = m_footprintDimensions->GetValue();
-    g_modifyFootprintTexts = m_footprintTexts->GetValue();
-
     if( m_isBoardEditor )
     {
-        g_modifyBoardText = m_boardText->GetValue();
-        g_modifyBoardGraphics = m_boardGraphics->GetValue();
-    }
-
-    g_filterByLayer = m_layerFilterOpt->GetValue();
-    g_layerFilter = m_layerFilter->GetLayerSelection();
-
-    if( m_isBoardEditor )
-    {
-        g_filterByReference = m_referenceFilterOpt->GetValue();
         g_referenceFilter = m_referenceFilter->GetValue();
-        g_filterByFootprint = m_footprintFilterOpt->GetValue();
         g_footprintFilter = m_footprintFilter->GetValue();
     }
-
-    g_filterSelected = m_selectedItemsFilter->GetValue();
-    g_setToSpecifiedValues = m_setToSpecifiedValues->GetValue();
 }
 
 
@@ -213,41 +187,22 @@ bool DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS::TransferDataToWindow()
     PCB_SELECTION_TOOL* selTool = m_parent->GetToolManager()->GetTool<PCB_SELECTION_TOOL>();
     m_selection                 = selTool->GetSelection();
 
-    m_references->SetValue( g_modifyReferences );
-    m_values->SetValue( g_modifyValues );
-    m_otherFootprintFields->SetValue( g_modifyOtherFootprintFields );
-    m_footprintGraphics->SetValue( g_modifyFootprintGraphics );
-    m_footprintDimensions->SetValue( g_modifyFootprintDimensions );
-    m_footprintTexts->SetValue( g_modifyFootprintTexts );
-
-    if( m_isBoardEditor )
-    {
-        m_boardText->SetValue( g_modifyBoardText );
-        m_boardGraphics->SetValue( g_modifyBoardGraphics );
-    }
-
-    if( m_layerFilter->SetLayerSelection( g_layerFilter ) != wxNOT_FOUND )
-        m_layerFilterOpt->SetValue( g_filterByLayer );
-
     if( m_isBoardEditor )
     {
         // SetValue() generates events, ChangeValue() does not
         m_referenceFilter->ChangeValue( g_referenceFilter );
-        m_referenceFilterOpt->SetValue( g_filterByReference );
         m_footprintFilter->ChangeValue( g_footprintFilter );
-        m_footprintFilterOpt->SetValue( g_filterByFootprint );
     }
-
-    m_selectedItemsFilter->SetValue( g_filterSelected );
 
     m_lineWidth.SetValue( INDETERMINATE_ACTION );
 
-    m_fontCtrl->Append( INDETERMINATE_ACTION );
     m_fontCtrl->SetStringSelection( INDETERMINATE_ACTION );
 
     m_textWidth.SetValue( INDETERMINATE_ACTION );
     m_textHeight.SetValue( INDETERMINATE_ACTION );
     m_thickness.SetValue( INDETERMINATE_ACTION );
+    m_autoTextThickness->Check( false );
+    m_thickness.Enable( true );
     m_bold->Set3StateValue( wxCHK_UNDETERMINED );
     m_italic->Set3StateValue( wxCHK_UNDETERMINED );
     m_keepUpright->Set3StateValue( wxCHK_UNDETERMINED );
@@ -304,12 +259,18 @@ bool DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS::TransferDataToWindow()
     SET_INT_VALUE( ROW_FAB,    COL_TEXT_THICKNESS, bds.m_TextThickness[ LAYER_CLASS_FAB ] );
     SET_INT_VALUE( ROW_OTHERS, COL_TEXT_THICKNESS, bds.m_TextThickness[ LAYER_CLASS_OTHERS ] );
 
+    attr = new wxGridCellAttr;
+    attr->SetAlignment( wxALIGN_CENTER, wxALIGN_CENTER ); \
+    m_grid->SetAttr( ROW_HEADER, COL_TEXT_ITALIC, attr ); \
     m_grid->SetCellValue(  ROW_HEADER, COL_TEXT_ITALIC, _( "Italic" ) );
     SET_BOOL_VALUE(  ROW_SILK,   COL_TEXT_ITALIC, bds.m_TextItalic[ LAYER_CLASS_SILK ] );
     SET_BOOL_VALUE(  ROW_COPPER, COL_TEXT_ITALIC, bds.m_TextItalic[ LAYER_CLASS_COPPER ] );
     SET_BOOL_VALUE(  ROW_FAB,    COL_TEXT_ITALIC, bds.m_TextItalic[ LAYER_CLASS_FAB ] );
     SET_BOOL_VALUE(  ROW_OTHERS, COL_TEXT_ITALIC, bds.m_TextItalic[ LAYER_CLASS_OTHERS ] );
 
+    attr = new wxGridCellAttr;
+    attr->SetAlignment( wxALIGN_CENTER, wxALIGN_CENTER ); \
+    m_grid->SetAttr( ROW_HEADER, COL_TEXT_UPRIGHT, attr ); \
     m_grid->SetCellValue(  ROW_HEADER, COL_TEXT_UPRIGHT, _( "Keep Upright" ) );
     SET_BOOL_VALUE(  ROW_SILK,   COL_TEXT_UPRIGHT, bds.m_TextUpright[ LAYER_CLASS_SILK ] );
     SET_BOOL_VALUE(  ROW_COPPER, COL_TEXT_UPRIGHT, bds.m_TextUpright[ LAYER_CLASS_COPPER ] );
@@ -334,7 +295,7 @@ void DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS::onActionButtonChange( wxCommandEvent&
     m_lineWidth.Enable( enable );
     m_textWidth.Enable( enable );
     m_textHeight.Enable( enable );
-    m_thickness.Enable( enable );
+    m_thickness.Enable( enable && !m_autoTextThickness->IsChecked() );
 
     m_fontLabel->Enable( enable );
     m_fontCtrl->Enable( enable );
@@ -362,14 +323,53 @@ void DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS::onDimensionItemCheckbox( wxCommandEve
 }
 
 
+void DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS::onAutoTextThickness( wxCommandEvent& aEvent )
+{
+    if( aEvent.IsChecked() )
+    {
+        m_autoTextThickness->Check( true );
+
+        wxCommandEvent dummy;
+        onTextSize( dummy );
+
+        if( m_textWidth.IsIndeterminate() || m_textHeight.IsIndeterminate() )
+            m_thickness.SetValue( _( "(auto)" ) );
+
+        m_thickness.Enable( false );
+    }
+    else
+    {
+        m_thickness.Enable( true );
+        m_thickness.SetValue( INDETERMINATE_ACTION );
+    }
+}
+
+
+void DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS::onTextSize( wxCommandEvent& aEvent )
+{
+    if( !m_autoTextThickness->IsChecked() )
+        return;
+
+    if( m_textWidth.IsIndeterminate() || m_textHeight.IsIndeterminate() )
+        return;
+
+    int  size = std::min( m_textWidth.GetValue(), m_textHeight.GetValue() );
+    bool bold = ( m_bold->Get3StateValue() == wxCHK_CHECKED );
+
+    m_thickness.SetValue( bold ? GetPenSizeForBold( size )
+                                : GetPenSizeForNormal( size ) );
+}
+
+
 void DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS::processItem( BOARD_COMMIT& aCommit, BOARD_ITEM* aItem )
 {
     aCommit.Modify( aItem );
 
     PCB_FIELD*          field = dynamic_cast<PCB_FIELD*>( aItem );
-    PCB_TEXT*           text = dynamic_cast<PCB_TEXT*>( aItem );
+    EDA_TEXT*           text = dynamic_cast<EDA_TEXT*>( aItem );
     PCB_SHAPE*          shape = dynamic_cast<PCB_SHAPE*>( aItem );
     PCB_DIMENSION_BASE* dimension = dynamic_cast<PCB_DIMENSION_BASE*>( aItem );
+    PCB_BARCODE*        barcode = dynamic_cast<PCB_BARCODE*>( aItem );
     FOOTPRINT*          parentFP = aItem->GetParentFootprint();
 
     if( m_setToSpecifiedValues->GetValue() )
@@ -380,13 +380,15 @@ void DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS::processItem( BOARD_COMMIT& aCommit, B
         if( text )
         {
             if( !m_textWidth.IsIndeterminate() )
-                text->SetTextSize( VECTOR2I( m_textWidth.GetValue(), text->GetTextSize().y ) );
+                text->SetTextSize( VECTOR2I( m_textWidth.GetIntValue(), text->GetTextSize().y ) );
 
             if( !m_textHeight.IsIndeterminate() )
-                text->SetTextSize( VECTOR2I( text->GetTextSize().x, m_textHeight.GetValue() ) );
+                text->SetTextSize( VECTOR2I( text->GetTextSize().x, m_textHeight.GetIntValue() ) );
 
-            if( !m_thickness.IsIndeterminate() )
-                text->SetTextThickness( m_thickness.GetValue() );
+            if( m_autoTextThickness->IsChecked() )
+                text->SetAutoThickness( true );
+            else if( !m_thickness.IsIndeterminate() )
+                text->SetTextThickness( m_thickness.GetIntValue() );
 
             // Must be after SetTextSize()
             if( m_bold->Get3StateValue() != wxCHK_UNDETERMINED )
@@ -417,8 +419,16 @@ void DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS::processItem( BOARD_COMMIT& aCommit, B
                     text->SetKeepUpright( m_keepUpright->GetValue() );
 
                 if( m_centerOnFP->GetValue() == wxCHK_CHECKED )
-                    text->SetTextPos( text->GetParent()->GetCenter() );
+                    text->SetTextPos( aItem->GetParent()->GetCenter() );
             }
+        }
+
+        if( barcode )
+        {
+            if( !m_textHeight.IsIndeterminate() )
+                barcode->SetTextSize( m_textHeight.GetIntValue() );
+            else if( !m_textWidth.IsIndeterminate() )
+                barcode->SetTextSize( m_textWidth.GetIntValue() );
         }
 
         if( field )
@@ -432,46 +442,17 @@ void DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS::processItem( BOARD_COMMIT& aCommit, B
             if( shape )
             {
                 STROKE_PARAMS stroke = shape->GetStroke();
-                stroke.SetWidth( m_lineWidth.GetValue() );
+                stroke.SetWidth( m_lineWidth.GetIntValue() );
                 shape->SetStroke( stroke );
             }
 
             if( dimension )
-                dimension->SetLineThickness( m_lineWidth.GetValue() );
+                dimension->SetLineThickness( m_lineWidth.GetIntValue() );
         }
     }
     else
     {
-        PCB_LAYER_ID layer = aItem->GetLayer();
-
-        if( text )
-        {
-            text->SetTextSize( m_brdSettings->GetTextSize( layer ) );
-            text->SetTextThickness( m_brdSettings->GetTextThickness( layer ) );
-            text->SetItalic( m_brdSettings->GetTextItalic( layer ) );
-
-            if( parentFP )
-                text->SetKeepUpright( m_brdSettings->GetTextUpright( layer ) );
-        }
-
-        if( shape )
-        {
-            STROKE_PARAMS stroke = shape->GetStroke();
-            stroke.SetWidth( m_brdSettings->GetLineThickness( layer ) );
-            shape->SetStroke( stroke );
-        }
-
-        if( dimension )
-        {
-            dimension->SetLineThickness( m_brdSettings->GetLineThickness( layer ) );
-            dimension->SetUnitsMode( m_brdSettings->m_DimensionUnitsMode );
-            dimension->SetUnitsFormat( m_brdSettings->m_DimensionUnitsFormat );
-            dimension->SetPrecision( m_brdSettings->m_DimensionPrecision );
-            dimension->SetSuppressZeroes( m_brdSettings->m_DimensionSuppressZeroes );
-            dimension->SetTextPositionMode( m_brdSettings->m_DimensionTextPosition );
-            dimension->SetKeepTextAligned( m_brdSettings->m_DimensionKeepTextAligned );
-            dimension->Update();    // refresh text & geometry
-        }
+        aItem->StyleFromSettings( *m_brdSettings, false );
     }
 }
 
@@ -492,10 +473,10 @@ void DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS::visitItem( BOARD_COMMIT& aCommit, BOA
         {
             candidate = ( candidate->GetParentGroup() ? candidate->GetParentGroup()->AsEdaItem() : nullptr );
 
-            while( candidate && !candidate->IsSelected() )
+            while( candidate && !candidate->IsSelected() && candidate->GetParentGroup() )
                 candidate = candidate->GetParentGroup()->AsEdaItem();
 
-            if( !candidate )
+            if( !candidate || !candidate->IsSelected() )
                 return;
         }
     }
@@ -555,6 +536,8 @@ bool DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS::TransferDataFromWindow()
 
         for( PCB_FIELD* field : fp->GetFields() )
         {
+            wxCHECK2( field, continue );
+
             if( field->IsReference() )
                 continue;
 
@@ -585,12 +568,22 @@ bool DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS::TransferDataFromWindow()
                 else if( m_values->GetValue() && textItem->GetText() == wxT( "${VALUE}" ) )
                     visitItem( commit, boardItem );
             }
+            else if( itemType == PCB_TABLE_T )
+            {
+                boardItem->RunOnChildren(
+                        [&]( BOARD_ITEM* child )
+                        {
+                            if( child->Type() == PCB_TABLECELL_T && m_footprintTexts->GetValue() )
+                                visitItem( commit, child );
+                        },
+                        RECURSE_MODE::NO_RECURSE );
+            }
             else if( BaseType( itemType ) == PCB_DIMENSION_T )
             {
                 if( m_footprintDimensions->GetValue() )
                     visitItem( commit, boardItem );
             }
-            else if( itemType == PCB_SHAPE_T )
+            else if( itemType == PCB_SHAPE_T || itemType == PCB_BARCODE_T )
             {
                 if( m_footprintGraphics->GetValue() )
                     visitItem( commit, boardItem );
@@ -610,12 +603,22 @@ bool DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS::TransferDataFromWindow()
                 if( m_boardText->GetValue() )
                     visitItem( commit, boardItem );
             }
+            else if( itemType == PCB_TABLE_T )
+            {
+                boardItem->RunOnChildren(
+                        [&]( BOARD_ITEM* child )
+                        {
+                            if( child->Type() == PCB_TABLECELL_T && m_boardText->GetValue() )
+                                visitItem( commit, child );
+                        },
+                        RECURSE_MODE::NO_RECURSE );
+            }
             else if( BaseType( itemType ) == PCB_DIMENSION_T )
             {
                 if( m_boardDimensions->GetValue() )
                     visitItem( commit, boardItem );
             }
-            else if( itemType == PCB_SHAPE_T )
+            else if( itemType == PCB_SHAPE_T || itemType == PCB_BARCODE_T )
             {
                 if( m_boardGraphics->GetValue() )
                     visitItem( commit, boardItem );

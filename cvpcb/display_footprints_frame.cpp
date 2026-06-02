@@ -31,7 +31,7 @@
 #include <confirm.h>
 #include <settings/cvpcb_settings.h>
 #include <footprint_editor_settings.h>
-#include <fp_lib_table.h>
+#include <footprint_library_adapter.h>
 #include <id.h>
 #include <kiface_base.h>
 #include <lib_id.h>
@@ -42,6 +42,7 @@
 #include <pgm_base.h>
 #include <reporter.h>
 #include <settings/settings_manager.h>
+#include <widgets/wx_infobar.h>
 #include <tool/action_toolbar.h>
 #include <tool/common_tools.h>
 #include <tool/tool_dispatcher.h>
@@ -49,6 +50,7 @@
 #include <tool/zoom_tool.h>
 #include <cvpcb_mainframe.h>
 #include <display_footprints_frame.h>
+#include <string_utils.h>
 #include <tools/cvpcb_actions.h>
 #include <tools/pcb_actions.h>
 #include <tools/pcb_editor_conditions.h>  // Shared conditions with other Pcbnew frames
@@ -135,6 +137,7 @@ DISPLAY_FOOTPRINTS_FRAME::DISPLAY_FOOTPRINTS_FRAME( KIWAY* aKiway, wxWindow* aPa
     m_auimgr.AddPane( m_messagePanel, EDA_PANE().Messages().Name( wxS( "MsgPanel" ) )
                       .Bottom().Layer( 6 ) );
 
+    RestoreAuiLayout();
     FinishAUIInitialization();
 
     auto& galOpts = GetGalDisplayOptions();
@@ -197,11 +200,6 @@ void DISPLAY_FOOTPRINTS_FRAME::setupUIConditions()
     mgr->SetConditions( ACTIONS::measureTool,          CHECK( cond.CurrentTool( ACTIONS::measureTool ) ) );
 
     mgr->SetConditions( ACTIONS::toggleGrid,           CHECK( cond.GridVisible() ) );
-    mgr->SetConditions( ACTIONS::toggleCursorStyle,    CHECK( cond.FullscreenCursor() ) );
-
-    mgr->SetConditions( ACTIONS::millimetersUnits,     CHECK( cond.Units( EDA_UNITS::MM ) ) );
-    mgr->SetConditions( ACTIONS::inchesUnits,          CHECK( cond.Units( EDA_UNITS::INCH ) ) );
-    mgr->SetConditions( ACTIONS::milsUnits,            CHECK( cond.Units( EDA_UNITS::MILS ) ) );
 
     mgr->SetConditions( PCB_ACTIONS::showPadNumbers,   CHECK( cond.PadNumbersDisplay() ) );
     mgr->SetConditions( PCB_ACTIONS::padDisplayMode,   CHECK( !cond.PadFillDisplay() ) );
@@ -239,10 +237,11 @@ void DISPLAY_FOOTPRINTS_FRAME::SaveSettings( APP_SETTINGS_BASE* aCfg )
 
 WINDOW_SETTINGS* DISPLAY_FOOTPRINTS_FRAME::GetWindowSettings( APP_SETTINGS_BASE* aCfg )
 {
-    static WINDOW_SETTINGS defaultCfg;
+    if( CVPCB_SETTINGS* cfg = GetAppSettings<CVPCB_SETTINGS>( "cvpcb" ) )
+        return &cfg->m_FootprintViewer;
 
-    CVPCB_SETTINGS* cfg = GetAppSettings<CVPCB_SETTINGS>( "cvpcb" );
-    return cfg ? &cfg->m_FootprintViewer : &defaultCfg;
+    wxFAIL_MSG( wxT( "DISPLAY_FOOTPRINTS_FRAME not running with CVPCB_SETTINGS" ) );
+    return &aCfg->m_Window;     // non-null fail-safe
 }
 
 
@@ -254,10 +253,13 @@ PCB_VIEWERS_SETTINGS_BASE* DISPLAY_FOOTPRINTS_FRAME::GetViewerSettingsBase() con
 
 MAGNETIC_SETTINGS* DISPLAY_FOOTPRINTS_FRAME::GetMagneticItemsSettings()
 {
-    static MAGNETIC_SETTINGS defaultCfg;
+    static MAGNETIC_SETTINGS fallback;
 
-    CVPCB_SETTINGS* cfg = GetAppSettings<CVPCB_SETTINGS>( "cvpcb" );
-    return cfg ? &cfg->m_FootprintViewerMagneticSettings : &defaultCfg;
+    if( CVPCB_SETTINGS* cfg = GetAppSettings<CVPCB_SETTINGS>( "cvpcb" ) )
+        return &cfg->m_FootprintViewerMagneticSettings;
+
+    wxFAIL_MSG( wxT( "DISPLAY_FOOTPRINTS_FRAME not running with CVPCB_SETTINGS" ) );
+    return &fallback;
 }
 
 
@@ -282,11 +284,10 @@ FOOTPRINT* DISPLAY_FOOTPRINTS_FRAME::GetFootprint( const wxString& aFootprintNam
     wxString libNickname = From_UTF8( fpid.GetLibNickname().c_str() );
     wxString fpName      = From_UTF8( fpid.GetLibItemName().c_str() );
 
-    FP_LIB_TABLE* fpTable = PROJECT_PCB::PcbFootprintLibs( &Prj() );
-    wxASSERT( fpTable );
+    FOOTPRINT_LIBRARY_ADAPTER* adapter = PROJECT_PCB::FootprintLibAdapter( &Prj() );
 
     // See if the library requested is in the library table
-    if( !fpTable->HasLibrary( libNickname ) )
+    if( !adapter->HasLibrary( libNickname ) )
     {
         aReporter.Report( wxString::Format( _( "Library '%s' is not in the footprint library table." ),
                                             libNickname ),
@@ -295,7 +296,7 @@ FOOTPRINT* DISPLAY_FOOTPRINTS_FRAME::GetFootprint( const wxString& aFootprintNam
     }
 
     // See if the footprint requested is in the library
-    if( !fpTable->FootprintExists( libNickname, fpName ) )
+    if( !adapter->FootprintExists( libNickname, fpName ) )
     {
         aReporter.Report( wxString::Format( _( "Footprint '%s' not found." ), aFootprintName ),
                           RPT_SEVERITY_ERROR );
@@ -304,12 +305,12 @@ FOOTPRINT* DISPLAY_FOOTPRINTS_FRAME::GetFootprint( const wxString& aFootprintNam
 
     try
     {
-        if( const FOOTPRINT* fp = fpTable->GetEnumeratedFootprint( libNickname, fpName ) )
-            footprint = static_cast<FOOTPRINT*>( fp->Duplicate( IGNORE_PARENT_GROUP ) );
+        footprint = adapter->LoadFootprint( libNickname, fpName, false );
     }
     catch( const IO_ERROR& ioe )
     {
-        DisplayErrorMessage( this, _( "Error loading footprint" ), ioe.What() );
+        aReporter.Report( wxString::Format( _( "Error loading footprint: %s" ), ioe.What() ),
+                          RPT_SEVERITY_ERROR );
         return nullptr;
     }
 

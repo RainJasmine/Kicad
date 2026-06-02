@@ -31,7 +31,7 @@
 #include <core/minoptmax.h>
 #include <layer_ids.h>
 #include <lset.h>
-#include <netclass.h>
+#include <eda_units.h>
 #include <zones.h>
 #include <libeval_compiler/libeval_compiler.h>
 #include <wx/intl.h>
@@ -41,6 +41,12 @@ class BOARD_ITEM;
 class PCBEXPR_UCODE;
 class DRC_CONSTRAINT;
 class DRC_RULE_CONDITION;
+
+namespace kiapi::board
+{
+    class CustomRule;
+    class CustomRuleConstraint;
+}
 
 
 enum DRC_CONSTRAINT_T
@@ -78,23 +84,42 @@ enum DRC_CONSTRAINT_T
     PHYSICAL_HOLE_CLEARANCE_CONSTRAINT,
     ASSERTION_CONSTRAINT,
     CONNECTION_WIDTH_CONSTRAINT,
-    TRACK_ANGLE_CONSTRAINT
+    TRACK_ANGLE_CONSTRAINT,
+    VIA_DANGLING_CONSTRAINT,
+    BRIDGED_MASK_CONSTRAINT,
+    SOLDER_MASK_SLIVER_CONSTRAINT
 };
 
 
 enum DRC_DISALLOW_T
 {
-    DRC_DISALLOW_VIAS        = (1 << 0),
-    DRC_DISALLOW_MICRO_VIAS  = (1 << 1),
-    DRC_DISALLOW_BB_VIAS     = (1 << 2),
-    DRC_DISALLOW_TRACKS      = (1 << 3),
-    DRC_DISALLOW_PADS        = (1 << 4),
-    DRC_DISALLOW_ZONES       = (1 << 5),
-    DRC_DISALLOW_TEXTS       = (1 << 6),
-    DRC_DISALLOW_GRAPHICS    = (1 << 7),
-    DRC_DISALLOW_HOLES       = (1 << 8),
-    DRC_DISALLOW_FOOTPRINTS  = (1 << 9)
+    DRC_DISALLOW_THROUGH_VIAS = (1 << 0),
+    DRC_DISALLOW_MICRO_VIAS   = (1 << 1),
+    DRC_DISALLOW_BLIND_VIAS   = (1 << 2),
+    DRC_DISALLOW_BURIED_VIAS  = (1 << 3),
+    DRC_DISALLOW_TRACKS       = (1 << 4),
+    DRC_DISALLOW_PADS         = (1 << 5),
+    DRC_DISALLOW_ZONES        = (1 << 6),
+    DRC_DISALLOW_TEXTS        = (1 << 7),
+    DRC_DISALLOW_GRAPHICS     = (1 << 8),
+    DRC_DISALLOW_HOLES        = (1 << 9),
+    DRC_DISALLOW_FOOTPRINTS   = (1 << 10)
 };
+
+
+enum class DRC_IMPLICIT_SOURCE
+{
+    NONE,
+    BOARD_SETUP_CONSTRAINT,
+    BARCODE_DEFAULTS,
+    KEEPOUT,
+    NET_CLASS,
+    TUNING_PROFILE
+};
+
+
+constexpr int DRC_DISALLOW_VIAS = DRC_DISALLOW_THROUGH_VIAS;
+constexpr int DRC_DISALLOW_BB_VIAS = DRC_DISALLOW_BLIND_VIAS | DRC_DISALLOW_BURIED_VIAS;
 
 
 class DRC_RULE
@@ -113,16 +138,28 @@ public:
     void AddConstraint( DRC_CONSTRAINT& aConstraint );
     std::optional<DRC_CONSTRAINT> FindConstraint( DRC_CONSTRAINT_T aType );
 
+    static wxString FormatRuleFromProto( const kiapi::board::CustomRule& aRule,
+                                                  wxString* aErrorText = nullptr );
+
+    bool IsImplicit() const { return m_implicitSource != DRC_IMPLICIT_SOURCE::NONE; }
+
+    void SetImplicitSource( const DRC_IMPLICIT_SOURCE aImplicitSource ) { m_implicitSource = aImplicitSource; }
+
+    DRC_IMPLICIT_SOURCE GetImplicitSource() const { return m_implicitSource; }
+
 public:
     bool                        m_Unary;
-    bool                        m_Implicit;
     KIID                        m_ImplicitItemId;
+    BOARD_ITEM*                 m_ImplicitItem;
     wxString                    m_Name;
     wxString                    m_LayerSource;
     LSET                        m_LayerCondition;
     DRC_RULE_CONDITION*         m_Condition;
     std::vector<DRC_CONSTRAINT> m_Constraints;
     SEVERITY                    m_Severity;
+
+private:
+    DRC_IMPLICIT_SOURCE m_implicitSource;
 };
 
 
@@ -169,7 +206,7 @@ public:
     {
         if( m_parentRule )
         {
-            if( m_parentRule->m_Implicit )
+            if( m_parentRule->IsImplicit() )
                 return m_parentRule->m_Name;
             else
                 return wxString::Format( _( "rule '%s'" ), m_parentRule->m_Name );
@@ -196,6 +233,8 @@ public:
     }
 
     void SetOptionsFromOther( const DRC_CONSTRAINT& aOther ) { m_options = aOther.m_options; }
+
+    void ToProto( kiapi::board::CustomRuleConstraint& aProto ) const;
 
 public:
     DRC_CONSTRAINT_T    m_Type;

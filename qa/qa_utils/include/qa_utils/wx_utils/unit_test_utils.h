@@ -31,12 +31,14 @@
 
 #include <qa_utils/wx_utils/wx_assert.h>
 
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <set>
+#include <vector>
 
 #include <wx/gdicmn.h>
-
+#include <wx/string.h>
 
 
 template<class T>
@@ -134,6 +136,57 @@ std::ostream& boost_test_print_type( std::ostream& os, std::pair<K, V> const& aP
 }
 
 } // namespace std
+
+
+//-----------------------------------------------------------------------------+
+// Boost.Test printing helpers for wx types / wide string literals
+//-----------------------------------------------------------------------------+
+
+// C++20 removed operator<<(ostream&, const wchar_t*) (P1423R3), which breaks wxString streaming
+// via implicit wchar_t* conversion in Boost.Test's lazy_ostream (used by BOOST_TEST_CONTEXT,
+// BOOST_TEST_MESSAGE, BOOST_CHECK_MESSAGE, and BOOST_FAIL).
+inline std::ostream& boost_test_print_type( std::ostream& os, const wxString& v )
+{
+#if wxUSE_UNICODE
+    os << v.ToUTF8().data();
+#else
+    os << v.c_str();
+#endif
+    return os;
+}
+
+
+// Wide string literal arrays
+template <std::size_t N>
+std::ostream& boost_test_print_type( std::ostream& os, const wchar_t ( &ws )[N] )
+{
+    wxString tmp( ws );
+#if wxUSE_UNICODE
+    os << tmp.ToUTF8().data();
+#else
+    os << tmp;
+#endif
+    return os;
+}
+
+
+namespace boost { namespace test_tools { namespace tt_detail {
+
+template<std::size_t N>
+struct print_log_value<wchar_t[ N ]>
+{
+    void operator()( std::ostream& os, const wchar_t (&ws)[ N ] )
+    {
+        wxString tmp( ws );
+#if wxUSE_UNICODE
+        os << tmp.ToUTF8().data();
+#else
+        os << tmp;
+#endif
+    }
+};
+
+}}} // namespace boost::test_tools::tt_detail
 
 
 /**
@@ -261,7 +314,7 @@ bool CollectionHasNoDuplicates( const T& aCollection )
  * A named data-driven test case.
  *
  * Inherit from this class to provide a printable name for a data-driven test case.
- * (you can also not use this class and provide you own name printer).
+ * (you can also not use this class and provide your own name printer).
  */
 struct NAMED_CASE
 {
@@ -278,10 +331,12 @@ struct NAMED_CASE
 /**
  * A test macro to check a wxASSERT is thrown.
  *
- * This only happens in DEBUG builds, so prevent test failures in Release builds
- * by using this macro.
+ * wxCHECK/wxASSERT only fire when wxDEBUG_LEVEL > 0, so the macro must key off
+ * that rather than KiCad's own DEBUG define. QABUILD defines neither DEBUG nor
+ * NDEBUG but is still built against a wxWidgets with assertions enabled, so the
+ * previous #ifdef DEBUG gate silently skipped checks in that configuration.
  */
-#ifdef DEBUG
+#if wxDEBUG_LEVEL > 0
 #define CHECK_WX_ASSERT( STATEMENT ) BOOST_CHECK_THROW( STATEMENT, KI_TEST::WX_ASSERT_ERROR );
 #else
 #define CHECK_WX_ASSERT( STATEMENT )
@@ -298,6 +353,16 @@ struct NAMED_CASE
 std::string GetEeschemaTestDataDir();
 
 std::string GetTestDataRootDir();
+
+/**
+ * Load the contents of a file into a vector of bytes.
+ *
+ * If this fails, it throws a std::runtime_error with a descriptive message.
+ *
+ * @param aFilePath the path to the file to load
+ * @param aLoadBytes the number of bytes to load, or all bytes if not specified
+ */
+std::vector<uint8_t> LoadBinaryData( const std::string& aFilePath, std::optional<size_t> aLoadBytes = std::nullopt );
 
 void SetMockConfigDir();
 

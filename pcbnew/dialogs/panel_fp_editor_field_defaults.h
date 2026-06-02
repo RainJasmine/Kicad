@@ -19,8 +19,6 @@
 
 #pragma once
 
-#include <memory>
-
 #include <panel_fp_editor_field_defaults_base.h>
 
 class BOARD_DESIGN_SETTINGS;
@@ -32,7 +30,7 @@ class UNITS_PROVIDER;
 class PANEL_FP_EDITOR_FIELD_DEFAULTS : public PANEL_FP_EDITOR_FIELD_DEFAULTS_BASE
 {
 public:
-    PANEL_FP_EDITOR_FIELD_DEFAULTS( wxWindow* aParent, UNITS_PROVIDER* aUnitsProvider );
+    PANEL_FP_EDITOR_FIELD_DEFAULTS( wxWindow* aParent );
     ~PANEL_FP_EDITOR_FIELD_DEFAULTS() override;
 
     bool Show( bool aShow ) override;
@@ -49,6 +47,5 @@ private:
     void loadFPSettings( const FOOTPRINT_EDITOR_SETTINGS* aCfg );
 
 private:
-    UNITS_PROVIDER*        m_unitProvider;
     BOARD_DESIGN_SETTINGS& m_designSettings;
 };

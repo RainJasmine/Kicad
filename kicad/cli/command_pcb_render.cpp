@@ -44,6 +44,7 @@
 
 #define ARG_SIDE "--side"
 #define ARG_PRESET "--preset"
+#define ARG_USE_BOARD_STACKUP_COLORS "--use-board-stackup-colors"
 #define ARG_PAN "--pan"
 #define ARG_PIVOT "--pivot"
 #define ARG_ROTATE "--rotate"
@@ -212,8 +213,9 @@ static bool getColorOrIntensity( const std::string& aInput, VECTOR3D& aOutput )
 
 CLI::PCB_RENDER_COMMAND::PCB_RENDER_COMMAND() : COMMAND( "render" )
 {
-    addCommonArgs( true, true, false, false );
+    addCommonArgs( true, true, IO_TYPE::FILE, IO_TYPE::FILE );
     addDefineArg();
+    addVariantsArg();
 
     m_argParser.add_description(
             UTF8STDSTR( _( "Renders the PCB in 3D view to PNG or JPEG image" ) ) );
@@ -259,10 +261,14 @@ CLI::PCB_RENDER_COMMAND::PCB_RENDER_COMMAND() : COMMAND( "render" )
                                                  FOLLOW_PCB,
                                                  FOLLOW_PLOT_SETTINGS ) ) );
 
+    m_argParser.add_argument( ARG_USE_BOARD_STACKUP_COLORS )
+            .default_value( true )
+            .help( UTF8STDSTR( _( "Colors defined in board stackup override those in preset" ) ) );
+
     m_argParser.add_argument( ARG_FLOOR )
             .flag()
             .help( UTF8STDSTR( _( "Enables floor, shadows and post-processing, even if disabled in "
-                                  "quality preset" ) ) );
+                                  "quality setting" ) ) );
 
     m_argParser.add_argument( ARG_PERSPECTIVE )
             .flag()
@@ -300,12 +306,12 @@ CLI::PCB_RENDER_COMMAND::PCB_RENDER_COMMAND() : COMMAND( "render" )
             .default_value( std::string( "" ) )
             .metavar( "COLOR" )
             .help( UTF8STDSTR( _( "Bottom light intensity, format 'R,G,B' or a single number, range: 0-1" ) ) );
-    
+
     m_argParser.add_argument( ARG_LIGHT_SIDE )
             .default_value( std::string( "" ) )
             .metavar( "COLOR" )
             .help( UTF8STDSTR( _( "Side lights intensity, format 'R,G,B' or a single number, range: 0-1" ) ) );
-    
+
     m_argParser.add_argument( ARG_LIGHT_CAMERA )
             .default_value( std::string( "" ) )
             .metavar( "COLOR" )
@@ -327,6 +333,9 @@ int CLI::PCB_RENDER_COMMAND::doPerform( KIWAY& aKiway )
     renderJob->m_filename = m_argInput;
     renderJob->SetVarOverrides( m_argDefineVars );
 
+    if( !m_argVariantNames.empty() )
+        renderJob->m_variant = m_argVariantNames.front();
+
     renderJob->m_appearancePreset = m_argParser.get<std::string>( ARG_PRESET );
 
     if( renderJob->m_appearancePreset == std::string(wxString(LEGACY_PRESET_FLAG).ToUTF8().data()) )
@@ -334,6 +343,8 @@ int CLI::PCB_RENDER_COMMAND::doPerform( KIWAY& aKiway )
         wxFprintf( stderr, _( "Invalid preset\n" ) );
         return EXIT_CODES::ERR_ARGS;
     }
+
+    renderJob->m_useBoardStackupColors = m_argParser.get<bool>( ARG_USE_BOARD_STACKUP_COLORS );
 
     renderJob->m_width = m_argParser.get<int>( ARG_WIDTH );
     renderJob->m_height = m_argParser.get<int>( ARG_HEIGHT );

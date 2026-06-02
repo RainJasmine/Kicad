@@ -153,6 +153,13 @@ void SCH_DESIGN_BLOCK_PANE::UpdateCheckboxes()
 }
 
 
+void SCH_DESIGN_BLOCK_PANE::ProjectChanged()
+{
+    // Project change will blow up the default project; re-create any active preview canvas
+    m_chooserPanel->GetPreviewWidget()->DisplayDesignBlock( GetSelectedDesignBlock( true, true ) );
+}
+
+
 FILEDLG_IMPORT_SHEET_CONTENTS::FILEDLG_IMPORT_SHEET_CONTENTS( EESCHEMA_SETTINGS* aSettings ) :
         m_cbRepeatedPlacement( nullptr ), m_cbPlaceAsGroup( nullptr ), m_cbPlaceAsSheet( nullptr ),
         m_cbKeepAnnotations( nullptr )
@@ -173,6 +180,10 @@ void FILEDLG_IMPORT_SHEET_CONTENTS::TransferDataFromCustomControls()
 
 void FILEDLG_IMPORT_SHEET_CONTENTS::AddCustomControls( wxFileDialogCustomize& customizer )
 {
+#ifdef __WXMAC__
+        customizer.AddStaticText( wxT( "\n\n" ) );  // Increase height of static box
+#endif
+
     m_cbRepeatedPlacement = customizer.AddCheckBox( REPEATED_PLACEMENT );
     m_cbRepeatedPlacement->SetValue( m_settings->m_DesignBlockChooserPanel.repeated_placement );
     m_cbPlaceAsGroup = customizer.AddCheckBox( PLACE_AS_GROUP );

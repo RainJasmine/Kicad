@@ -90,7 +90,7 @@ protected:
      * Precondition: aItem is known to have property aProperty
      * @return true if conversion succeeded
      */
-    bool getItemValue( EDA_ITEM* aItem, PROPERTY_BASE* aProperty, wxVariant& aValue );
+    virtual bool getItemValue( EDA_ITEM* aItem, PROPERTY_BASE* aProperty, wxVariant& aValue );
 
     /**
      * Processes a selection and determines whether the given property should be available or not
@@ -101,20 +101,30 @@ protected:
      * @param aWritable will be set to whether or not the property can be written for the selection
      * @return true if the property is available for all the items in the selection
      */
-    bool extractValueAndWritability( const SELECTION& aSelection, PROPERTY_BASE* aProperty,
-                                     wxVariant& aValue, bool& aWritable );
+    bool extractValueAndWritability( const SELECTION& aSelection, const wxString& aPropName,
+                                     wxVariant& aValue, bool& aWritable, wxPGChoices& aChoices );
 
 public:
     int                         m_SuppressGridChangeEvents;
 
 protected:
-    std::vector<PROPERTY_BASE*> m_displayed;
+    std::vector<PROPERTY_BASE*> m_displayed;    // no ownership of pointers
     wxPropertyGrid*             m_grid;
     EDA_BASE_FRAME*             m_frame;
     wxStaticText*               m_caption;
 
     /// Proportion of the grid column splitter that is used for the key column (0.0 - 1.0)
     float m_splitter_key_proportion;
+};
+
+class SUPPRESS_GRID_CHANGED_EVENTS
+{
+public:
+    SUPPRESS_GRID_CHANGED_EVENTS( PROPERTIES_PANEL* aPanel );
+    ~SUPPRESS_GRID_CHANGED_EVENTS();
+
+private:
+    PROPERTIES_PANEL* m_panel;
 };
 
 #endif /* PROPERTIES_PANEL_H */

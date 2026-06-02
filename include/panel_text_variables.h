@@ -21,8 +21,7 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#ifndef _PANEL_TEXT_VARIABLES_H_
-#define _PANEL_TEXT_VARIABLES_H_
+#pragma once
 
 #include <../common/dialogs/panel_text_variables_base.h>
 #include <wx/valtext.h>
@@ -31,7 +30,6 @@
 #include <memory>
 
 class PROJECT;
-class WX_GRID_AUTOSIZER;
 
 
 class PANEL_TEXT_VARIABLES: public PANEL_TEXT_VARIABLES_BASE
@@ -67,8 +65,4 @@ private:
     int                          m_errorCol;
 
     wxTextValidator              m_nameValidator;
-
-    std::unique_ptr<WX_GRID_AUTOSIZER> m_autoSizer;
 };
-
-#endif    // _PANEL_TEXT_VARIABLES_H_

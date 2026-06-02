@@ -34,7 +34,6 @@ set( COMMON_SRCS
     ../../../pcbnew/drc/drc_rule_condition.cpp
     ../../../pcbnew/drc/drc_rule_parser.cpp
     ../../../pcbnew/drc/drc_test_provider.cpp
-    ../../../pcbnew/drc/drc_test_provider_clearance_base.cpp
     ../../../pcbnew/drc/drc_test_provider_creepage.cpp
     ../../../pcbnew/drc/drc_test_provider_copper_clearance.cpp
     ../../../pcbnew/drc/drc_test_provider_hole_to_hole.cpp
@@ -55,6 +54,7 @@ set( COMMON_SRCS
     ../../../pcbnew/drc/drc_engine.cpp
     ../../../pcbnew/drc/drc_item.cpp
     ../../../pcbnew/board_stackup_manager/stackup_predefined_prms.cpp
+    mock_pcb_tuning_pattern.cpp    
     pns_log_file.cpp
     pns_log_player.cpp
     pns_test_debug_decorator.cpp
@@ -114,11 +114,11 @@ target_link_libraries( pns_debug_tool
     nanosvg
     idf3
     pcbcommon
+    markdown_lib
     3d-viewer
     ${PCBNEW_IO_LIBRARIES}
     ${wxWidgets_LIBRARIES}
     ${GDI_PLUS_LIBRARIES}
-    ${PYTHON_LIBRARIES}
     Boost::headers
     ${PCBNEW_EXTRA_LIBS}    # -lrt must follow Boost
 )
@@ -138,11 +138,11 @@ target_link_libraries( qa_pns_regressions
     nanosvg
     idf3
     pcbcommon
+    markdown_lib
     3d-viewer
     ${PCBNEW_IO_LIBRARIES}
     ${wxWidgets_LIBRARIES}
     ${GDI_PLUS_LIBRARIES}
-    ${PYTHON_LIBRARIES}
     Boost::headers
     ${PCBNEW_EXTRA_LIBS}    # -lrt must follow Boost
 )

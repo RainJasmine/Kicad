@@ -31,6 +31,7 @@
 #include <atomic>
 #include <cstdio>
 #include <deque>                        // for deque
+#include <functional>
 #include <iosfwd>                       // for string, stringstream
 #include <memory>
 #include <mutex>
@@ -67,6 +68,9 @@
 class SHAPE_POLY_SET : public SHAPE
 {
 public:
+    /// Callback that submits a unit of work for asynchronous execution.
+    typedef std::function<void( std::function<void()> )> TASK_SUBMITTER;
+
     /// represents a single polygon outline with holes. The first entry is the outline,
     /// the remaining (if any), are the holes
     /// N.B. SWIG only supports typedef, so avoid c++ 'using' keyword
@@ -160,6 +164,22 @@ public:
 
         TRIANGULATED_POLYGON& operator=( const TRIANGULATED_POLYGON& aOther );
 
+        // Move assignment operator.
+        TRIANGULATED_POLYGON& operator=( TRIANGULATED_POLYGON&& aOther ) noexcept
+        {
+            if( this != &aOther )
+            {
+                m_sourceOutline = aOther.m_sourceOutline;
+                m_triangles = std::move( aOther.m_triangles );
+                m_vertices = std::move( aOther.m_vertices );
+
+                for( TRI& tri : m_triangles )
+                    tri.parent = this;
+            }
+
+            return *this;
+        }
+
         void AddTriangle( int a, int b, int c );
 
         void AddVertex( const VECTOR2I& aP )
@@ -240,8 +260,7 @@ public:
          */
         bool IsEndContour() const
         {
-            return m_currentVertex + 1 ==
-                    m_poly->CPolygon( m_currentPolygon )[m_currentContour].PointCount();
+            return m_currentVertex + 1 == m_poly->CPolygon( m_currentPolygon )[m_currentContour].PointCount();
         }
 
         /**
@@ -280,8 +299,7 @@ public:
             if( m_iterateHoles )
             {
                 // If the last vertex of the contour was reached, advance the contour index
-                if( m_currentVertex >=
-                    m_poly->CPolygon( m_currentPolygon )[m_currentContour].PointCount() )
+                if( m_currentVertex >= m_poly->CPolygon( m_currentPolygon )[m_currentContour].PointCount() )
                 {
                     m_currentVertex = 0;
                     m_currentContour++;
@@ -535,20 +553,34 @@ public:
 
     SHAPE_POLY_SET& operator=( const SHAPE_POLY_SET& aOther );
 
+    // Move assignment operator
+    SHAPE_POLY_SET& operator=( SHAPE_POLY_SET&& aOther ) noexcept
+    {
+        if (this != &aOther)
+        {
+            SHAPE::operator=( aOther );
+
+            m_polys = std::move( aOther.m_polys );
+            m_triangulatedPolys = std::move( aOther.m_triangulatedPolys );
+
+            m_hash = aOther.m_hash;
+            m_hashValid.store( aOther.m_hashValid.load() );
+            m_triangulationValid.store( aOther.m_triangulationValid );
+        }
+
+        return *this;
+    }
+
     /**
      * Build a polygon triangulation, needed to draw a polygon on OpenGL and in some
-     * other calculations
-     * @param aPartition = true to created a trinagulation in a partition on a grid
-     * false to create a more basic triangulation of the polygons
-     * Note
-     * in partition calculations the grid size is hard coded to 1e7.
-     * This is a good value for Pcbnew: 1cm, in internal units.
-     * But not good for Gerbview (1e7 = 10cm), however using a partition is not useful.
-     * @param aSimplify = force the algorithm to simplify the POLY_SET before triangulating
+     * other calculations.
+     * @param aSimplify when true, simplify the polygon set before triangulating
+     * @param aSubmitter optional callback for parallel triangulation of partition leaves
      */
-    virtual void CacheTriangulation( bool aPartition = true, bool aSimplify = false )
+    virtual void CacheTriangulation( bool aSimplify = false,
+                                     const TASK_SUBMITTER& aSubmitter = {} )
     {
-        cacheTriangulation( aPartition, aSimplify, nullptr );
+        cacheTriangulation( aSimplify, nullptr, aSubmitter );
     }
     bool IsTriangulationUpToDate() const;
 
@@ -713,8 +745,7 @@ public:
     /// Returns the number of holes in a given outline
     int HoleCount( int aOutline ) const
     {
-        if( ( aOutline < 0 ) || ( aOutline >= (int) m_polys.size() )
-          || ( m_polys[aOutline].size() < 2 ) )
+        if( aOutline < 0 || aOutline >= (int) m_polys.size() || m_polys[aOutline].size() < 2 )
             return 0;
 
         // the first polygon in m_polys[aOutline] is the main contour,
@@ -1064,8 +1095,13 @@ public:
     void InflateWithLinkedHoles( int aFactor, CORNER_STRATEGY aCornerStrategy, int aMaxError );
 
     /// Convert a set of polygons with holes to a single outline with "slits"/"fractures"
-    /// connecting the outer ring to the inner holes
-    void Fracture();
+    /// connecting the outer ring to the inner holes.
+    ///
+    /// @param aSimplify when true (default), run Simplify() first to remove overlapping
+    ///                  holes and degenerate geometry via Clipper2 Union. Set to false when
+    ///                  the input is known to be well-formed (e.g. imported fill data) to
+    ///                  avoid the expensive boolean operation.
+    void Fracture( bool aSimplify = true );
 
     /// Convert a single outline slitted ("fractured") polygon into a set ouf outlines
     /// with holes.
@@ -1449,9 +1485,12 @@ public:
     const std::vector<SEG> GenerateHatchLines( const std::vector<double>& aSlopes, int aSpacing,
                                                int aLineLength ) const;
 
+    void Scale( double aScaleFactorX, double aScaleFactorY, const VECTOR2I& aCenter );
+
 protected:
-    void cacheTriangulation( bool aPartition, bool aSimplify,
-                             std::vector<std::unique_ptr<TRIANGULATED_POLYGON>>* aHintData );
+    void cacheTriangulation( bool aSimplify,
+                             std::vector<std::unique_ptr<TRIANGULATED_POLYGON>>* aHintData,
+                             const TASK_SUBMITTER& aSubmitter = {} );
 
 private:
     enum DROP_TRIANGULATION_FLAG { SINGLETON };
@@ -1474,6 +1513,27 @@ private:
 
     void inflateLine2( const SHAPE_LINE_CHAIN& aLine, int aAmount, int aCircleSegCount,
                        CORNER_STRATEGY aCornerStrategy, bool aSimplify = false );
+
+    void splitCollinearOutlines();
+
+    /**
+     * Split outline segments at vertices that lie on them (self-touching polygons).
+     *
+     * This handles the case where a polygon vertex lies on a non-adjacent segment,
+     * creating a "pinch point" where the polygon touches itself. By inserting the
+     * vertex into the segment, the polygon can be properly processed by boolean
+     * operations.
+     */
+    void splitSelfTouchingOutlines();
+
+    /**
+     * Check if two line segments are collinear and overlap.
+     *
+     * @param aSegA First line segment
+     * @param aSegB Second line segment
+     * @return true if segments are collinear and overlap
+     */
+    bool isExteriorWaist( const SEG& aSegA, const SEG& aSegB ) const;
 
     /**
      * This is the engine to execute all polygon boolean transforms (AND, OR, ... and polygon
@@ -1545,7 +1605,10 @@ protected:
 
 private:
     HASH_128 m_hash;
-    bool     m_hashValid = false;
+    std::atomic<bool> m_hashValid = false;
+
+    HASH_128 m_failedHash;
+    std::atomic<bool> m_failedHashValid = false;
 };
 
 #endif // __SHAPE_POLY_SET_H

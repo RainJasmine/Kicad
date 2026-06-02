@@ -116,7 +116,11 @@ public:
     /// @copydoc ITEM::Clone()
     virtual LINE* Clone() const override;
 
+    // Copy operator
     LINE& operator=( const LINE& aOther );
+
+    // Move assignment operator
+    LINE& operator=( LINE&& aOther ) noexcept;
 
     bool IsLinkedChecked() const
     {
@@ -144,6 +148,7 @@ public:
 
     ///< Return the \a aIdx-th point of the line.
     const VECTOR2I& CPoint( int aIdx ) const { return m_line.CPoint( aIdx ); }
+    const VECTOR2I& CLastPoint() const { return m_line.CLastPoint(); }
     const SEG CSegment( int aIdx ) const { return m_line.CSegment( aIdx ); }
 
     ///< Set line width.
@@ -212,6 +217,19 @@ public:
     virtual void Mark( int aMarker ) const override;
     virtual void Unmark( int aMarker = -1 ) const override;
     virtual int Marker() const override;
+
+    virtual VECTOR2I Anchor( int n ) const override
+    {
+        if( m_line.PointCount() < 1 )
+            return VECTOR2I();
+
+        return ( n == 0 ) ? m_line.CPoint( 0 ) : m_line.CPoint( -1 );
+    }
+
+    virtual int AnchorCount() const override
+    {
+        return ( m_line.PointCount() >= 2 ) ? 2 : m_line.PointCount();
+    }
 
     void SetBlockingObstacle( ITEM* aObstacle ) { m_blockingObstacle = aObstacle; }
     ITEM* GetBlockingObstacle() const { return m_blockingObstacle; }

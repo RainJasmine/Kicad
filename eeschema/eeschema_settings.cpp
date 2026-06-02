@@ -33,6 +33,7 @@
 #include <settings/common_settings.h>
 #include <settings/json_settings_internals.h>
 #include <settings/parameters.h>
+#include <settings/color_settings.h>
 #include <settings/settings_manager.h>
 #include <settings/aui_settings.h>
 #include <wx/config.h>
@@ -119,6 +120,7 @@ const wxAuiPaneInfo& defaultSchSelectionFilterPaneInfo( wxWindow* aWindow )
             .TopDockable( false )
             .BottomDockable( false )
             .CloseButton( true )
+            // Fixed-size pane; -1 for MinSize height is required
             .MinSize( aWindow->FromDIP( wxSize( 180, -1 ) ) )
             .BestSize( aWindow->FromDIP( wxSize( 180, -1 ) ) )
             .Show( true );
@@ -149,56 +151,47 @@ const wxAuiPaneInfo& defaultDesignBlocksPaneInfo( wxWindow* aWindow )
 }
 
 
+const wxAuiPaneInfo& defaultRemoteSymbolPaneInfo( wxWindow* aWindow )
+{
+    static wxAuiPaneInfo paneInfo;
+
+    paneInfo.Name( EDA_DRAW_FRAME::RemoteSymbolPaneName() )
+            .Caption( _( "Remote Symbols" ) )
+            .CaptionVisible( true )
+            .PaneBorder( true )
+            .Right().Layer( 3 ).Position( 3 )
+            .TopDockable( false )
+            .BottomDockable( false )
+            .CloseButton( true )
+            .MinSize( aWindow->FromDIP( wxSize( 240, 60 ) ) )
+            .BestSize( aWindow->FromDIP( wxSize( 300, 200 ) ) )
+            .FloatingSize( aWindow->FromDIP( wxSize( 800, 600 ) ) )
+            .FloatingPosition( aWindow->FromDIP( wxPoint( 80, 220 ) ) )
+            .Show( false );
+
+    return paneInfo;
+}
+
+
 EESCHEMA_SETTINGS::EESCHEMA_SETTINGS() :
         APP_SETTINGS_BASE( "eeschema", eeschemaSchemaVersion ),
         m_Appearance(),
-        m_AutoplaceFields(),
         m_Drawing(),
-        m_FindReplaceExtra(),
         m_Input(),
+        m_AutoplaceFields(),
+        m_Selection(),
         m_PageSettings(),
         m_AnnotatePanel(),
         m_BomPanel(),
         m_FieldEditorPanel(),
         m_LibViewPanel(),
         m_NetlistPanel(),
-        m_PlotPanel(),
         m_SymChooserPanel(),
-        m_ImportGraphics(),
-        m_Selection(),
+        m_FindReplaceExtra(),
+        m_ERCDialog(),
         m_Simulator(),
         m_RescueNeverShow( false )
 {
-    m_params.emplace_back( new PARAM<wxString>( "appearance.edit_symbol_visible_columns",
-            &m_Appearance.edit_symbol_visible_columns, "0 1 2 3 4 5 6 7" ) );
-
-    m_params.emplace_back( new PARAM<int>( "appearance.edit_symbol_width",
-            &m_Appearance.edit_symbol_width, -1 ) );
-
-    m_params.emplace_back( new PARAM<int>( "appearance.edit_symbol_height",
-            &m_Appearance.edit_symbol_height, -1 ) );
-
-    m_params.emplace_back( new PARAM<wxString>( "appearance.edit_sheet_visible_columns",
-            &m_Appearance.edit_sheet_visible_columns, "0 1 2 3 4 5 6 7" ) );
-
-    m_params.emplace_back( new PARAM<int>( "appearance.edit_sheet_width",
-            &m_Appearance.edit_sheet_width, -1 ) );
-
-    m_params.emplace_back( new PARAM<int>( "appearance.edit_sheet_height",
-            &m_Appearance.edit_sheet_height, -1 ) );
-
-    m_params.emplace_back( new PARAM<wxString>( "appearance.edit_label_visible_columns",
-            &m_Appearance.edit_label_visible_columns, "0 1 2 3 4 5 6 7" ) );
-
-    m_params.emplace_back( new PARAM<int>( "appearance.edit_label_width",
-            &m_Appearance.edit_label_width, -1 ) );
-
-    m_params.emplace_back( new PARAM<int>( "appearance.edit_label_height",
-            &m_Appearance.edit_label_height, -1 ) );
-
-    m_params.emplace_back( new PARAM<int>( "appearance.erc_severities",
-            &m_Appearance.erc_severities, RPT_SEVERITY_ERROR | RPT_SEVERITY_WARNING ) );
-
     m_params.emplace_back( new PARAM<bool>( "appearance.footprint_preview",
             &m_Appearance.footprint_preview, true ) );
 
@@ -247,8 +240,7 @@ EESCHEMA_SETTINGS::EESCHEMA_SETTINGS() :
     m_params.emplace_back( new PARAM<bool>( "appearance.show_sexpr_file_convert_warning",
             &m_Appearance.show_sexpr_file_convert_warning, true ) );
 
-    m_params.emplace_back(
-            new PARAM<bool>( "appearance.show_sheet_filename_case_sensitivity_dialog",
+    m_params.emplace_back( new PARAM<bool>( "appearance.show_sheet_filename_case_sensitivity_dialog",
             &m_Appearance.show_sheet_filename_case_sensitivity_dialog, true ) );
 
     m_params.emplace_back( new PARAM<bool>( "aui.show_schematic_hierarchy",
@@ -277,6 +269,18 @@ EESCHEMA_SETTINGS::EESCHEMA_SETTINGS() :
 
     m_params.emplace_back( new PARAM<int>( "aui.design_blocks_panel_float_height",
             &m_AuiPanels.design_blocks_panel_float_height, -1 ) );
+
+    m_params.emplace_back( new PARAM<bool>( "aui.remote_symbol_show",
+            &m_AuiPanels.remote_symbol_show, false ) );
+
+    m_params.emplace_back( new PARAM<int>( "aui.remote_symbol_panel_docked_width",
+            &m_AuiPanels.remote_symbol_panel_docked_width, -1 ) );
+
+    m_params.emplace_back( new PARAM<int>( "aui.remote_symbol_panel_float_width",
+            &m_AuiPanels.remote_symbol_panel_float_width, -1 ) );
+
+    m_params.emplace_back( new PARAM<int>( "aui.remote_symbol_panel_float_height",
+            &m_AuiPanels.remote_symbol_panel_float_height, -1 ) );
 
     m_params.emplace_back( new PARAM<bool>( "aui.schematic_hierarchy_float",
             &m_AuiPanels.schematic_hierarchy_float, false ) );
@@ -308,6 +312,9 @@ EESCHEMA_SETTINGS::EESCHEMA_SETTINGS() :
     m_params.emplace_back( new PARAM<wxSize>( "aui.net_nav_panel_float_size",
             &m_AuiPanels.net_nav_panel_float_size, wxSize( 200, 200 ) ) );
 
+    m_params.emplace_back( new PARAM<bool>( "aui.net_nav_search_mode_wildcard",
+            &m_AuiPanels.net_nav_search_mode_wildcard, true ) );
+
     m_params.emplace_back( new PARAM<bool>( "aui.show_properties",
             &m_AuiPanels.show_properties, true ) );
 
@@ -325,6 +332,23 @@ EESCHEMA_SETTINGS::EESCHEMA_SETTINGS() :
 
     m_params.emplace_back( new PARAM<bool>( "autoplace_fields.align_to_grid",
             &m_AutoplaceFields.align_to_grid, true ) );
+
+    m_params.emplace_back( new PARAM<wxString>( "remote_symbols.destination_dir",
+            &m_RemoteSymbol.destination_dir,
+            REMOTE_PROVIDER_SETTINGS::DefaultDestinationDir() ) );
+
+    m_params.emplace_back( new PARAM<wxString>( "remote_symbols.library_prefix",
+            &m_RemoteSymbol.library_prefix,
+            REMOTE_PROVIDER_SETTINGS::DefaultLibraryPrefix() ) );
+
+    m_params.emplace_back( new PARAM<bool>( "remote_symbols.add_to_global_table",
+            &m_RemoteSymbol.add_to_global_table, false ) );
+
+    m_params.emplace_back( new PARAM<wxString>( "remote_symbols.last_used_provider_id",
+            &m_RemoteSymbol.last_used_provider_id, wxEmptyString ) );
+
+    m_params.emplace_back( new PARAM_LIST<REMOTE_PROVIDER_ENTRY>( "remote_symbols.providers",
+            &m_RemoteSymbol.providers, {} ) );
 
     m_params.emplace_back( new PARAM<int>( "drawing.default_bus_thickness",
             &m_Drawing.default_bus_thickness, DEFAULT_BUS_WIDTH_MILS ) );
@@ -356,8 +380,8 @@ EESCHEMA_SETTINGS::EESCHEMA_SETTINGS() :
     m_params.emplace_back( new PARAM<wxString>( "drawing.field_names",
             &m_Drawing.field_names, "" ) );
 
-    m_params.emplace_back( new PARAM<int>( "drawing.line_mode", &m_Drawing.line_mode,
-                                           LINE_MODE::LINE_MODE_90 ) );
+    m_params.emplace_back( new PARAM<int>( "drawing.line_mode",
+            &m_Drawing.line_mode, LINE_MODE::LINE_MODE_90 ) );
 
     m_params.emplace_back( new PARAM<int>( "editing.arc_edit_mode",
             reinterpret_cast<int*>( &m_Drawing.arc_edit_mode ),
@@ -375,12 +399,8 @@ EESCHEMA_SETTINGS::EESCHEMA_SETTINGS() :
     m_params.emplace_back( new PARAM<COLOR4D>( "drawing.default_sheet_background_color",
             &m_Drawing.default_sheet_background_color, COLOR4D::UNSPECIFIED ) );
 
-    m_params.emplace_back( new PARAM_ENUM<POWER_SYMBOLS>(
-            "drawing.new_power_symbols", &m_Drawing.new_power_symbols, POWER_SYMBOLS::DEFAULT,
-            POWER_SYMBOLS::DEFAULT, POWER_SYMBOLS::LOCAL ) );
-
-    m_params.emplace_back( new PARAM_LIST<double>( "drawing.junction_size_mult_list",
-            &m_Drawing.junction_size_mult_list, { 0.0, 1.7, 4.0, 6.0, 9.0, 12.0 } ) );
+    m_params.emplace_back( new PARAM_ENUM<POWER_SYMBOLS>( "drawing.new_power_symbols",
+            &m_Drawing.new_power_symbols, POWER_SYMBOLS::DEFAULT, POWER_SYMBOLS::DEFAULT, POWER_SYMBOLS::LOCAL ) );
 
     m_params.emplace_back( new PARAM<int>( "drawing.junction_size_choice",
             &m_Drawing.junction_size_choice, 3 ) );
@@ -389,20 +409,22 @@ EESCHEMA_SETTINGS::EESCHEMA_SETTINGS() :
             &m_Drawing.hop_over_size_choice, 0 ) );
 
     m_params.emplace_back( new PARAM<bool>( "find_replace.search_all_fields",
-                                            &m_FindReplaceExtra.search_all_fields, false ) );
+            &m_FindReplaceExtra.search_all_fields, false ) );
 
     m_params.emplace_back( new PARAM<bool>( "find_replace.search_all_pins",
-                                            &m_FindReplaceExtra.search_all_pins, false ) );
+            &m_FindReplaceExtra.search_all_pins, false ) );
 
     m_params.emplace_back( new PARAM<bool>( "find_replace.search_current_sheet_only",
-                                            &m_FindReplaceExtra.search_current_sheet_only,
-                                            false ) );
+            &m_FindReplaceExtra.search_current_sheet_only, false ) );
 
     m_params.emplace_back( new PARAM<bool>( "find_replace.replace_references",
-                                            &m_FindReplaceExtra.replace_references, false ) );
+            &m_FindReplaceExtra.replace_references, false ) );
 
     m_params.emplace_back( new PARAM<bool>( "input.drag_is_move",
             &m_Input.drag_is_move, false ) );
+
+    m_params.emplace_back( new PARAM<bool>( "input.allow_unconstrained_pin_swaps",
+            &m_Input.allow_unconstrained_pin_swaps, false ) );
 
     m_params.emplace_back( new PARAM<bool>( "input.esc_clears_net_highlight",
             &m_Input.esc_clears_net_highlight, true ) );
@@ -428,14 +450,17 @@ EESCHEMA_SETTINGS::EESCHEMA_SETTINGS() :
     m_params.emplace_back( new PARAM<double>( "selection.highlight_netclass_colors_alpha",
             &m_Selection.highlight_netclass_colors_alpha, 0.6, 0, 1 ) );
 
+    m_params.emplace_back( new PARAM<int>( "selection.drag_net_collision_width",
+            &m_Selection.drag_net_collision_width, 4, 1, 50 ) );
+
     m_params.emplace_back( new PARAM<bool>( "annotation.automatic",
             &m_AnnotatePanel.automatic, true ) );
 
     m_params.emplace_back( new PARAM<bool>( "annotation.recursive",
             &m_AnnotatePanel.recursive, true ) );
 
-    m_params.emplace_back( new PARAM<int>( "annotation.method",
-            &m_AnnotatePanel.method, 0, 0, 2 ) );
+    m_params.emplace_back( new PARAM<bool>( "annotation.regroup_units",
+            &m_AnnotatePanel.regroup_units, false ) );
 
     m_params.emplace_back( new PARAM<int>( "annotation.scope",
             &m_AnnotatePanel.scope, 0, 0, 2 ) );
@@ -446,8 +471,6 @@ EESCHEMA_SETTINGS::EESCHEMA_SETTINGS() :
     m_params.emplace_back( new PARAM<int>( "annotation.messages_filter",
             &m_AnnotatePanel.messages_filter, -1 ) );
 
-    m_params.emplace_back( new PARAM<int>( "annotation.sort_order",
-            &m_AnnotatePanel.sort_order, 0, 0, 1 ) );
 
     m_params.emplace_back( new PARAM<wxString>( "bom.selected_plugin",
             &m_BomPanel.selected_plugin, "" ) );
@@ -524,114 +547,64 @@ EESCHEMA_SETTINGS::EESCHEMA_SETTINGS() :
             &m_PageSettings.export_comment9, false ) );
 
     m_params.emplace_back( new PARAM_MAP<int>( "field_editor.field_widths",
-                                               &m_FieldEditorPanel.field_widths, {} ) );
-
-    m_params.emplace_back( new PARAM<int>( "field_editor.width", &m_FieldEditorPanel.width, 0 ) );
-
-    m_params.emplace_back( new PARAM<int>( "field_editor.height", &m_FieldEditorPanel.height, 0 ) );
-
-    m_params.emplace_back( new PARAM<int>( "field_editor.page", &m_FieldEditorPanel.page, 0 ) );
+            &m_FieldEditorPanel.field_widths, {} ) );
 
     m_params.emplace_back( new PARAM<wxString>( "field_editor.export_filename",
-                                                &m_FieldEditorPanel.export_filename, wxT( "" ) ) );
+            &m_FieldEditorPanel.export_filename, wxT( "" ) ) );
 
     m_params.emplace_back( new PARAM<int>( "field_editor.selection_mode",
-                                           &m_FieldEditorPanel.selection_mode, 0 ) );
+            &m_FieldEditorPanel.selection_mode, 0 ) );
 
-    m_params.emplace_back( new PARAM<int>( "field_editor.scope", &m_FieldEditorPanel.scope, 0 ) );
+    m_params.emplace_back( new PARAM<int>( "field_editor.sash_pos",
+            &m_FieldEditorPanel.sash_pos, 400 ) );
 
-    m_params.emplace_back( new PARAM<bool>( "plot.background_color",
-            &m_PlotPanel.background_color, false ) );
+    m_params.emplace_back( new PARAM<int>( "field_editor.variant_sash_pos",
+            &m_FieldEditorPanel.variant_sash_pos, 500 ) );
 
-    m_params.emplace_back( new PARAM<bool>( "plot.color",
-            &m_PlotPanel.color, true ) );
+    m_params.emplace_back( new PARAM<bool>( "field_editor.sidebar_collapsed",
+            &m_FieldEditorPanel.sidebar_collapsed, false ) );
 
-    m_params.emplace_back( new PARAM<wxString>( "plot.color_theme",
-            &m_PlotPanel.color_theme, DEFAULT_THEME ) );
-
-    m_params.emplace_back( new PARAM<int>( "plot.format",
-            &m_PlotPanel.format, 0 ) );
-
-    m_params.emplace_back( new PARAM<bool>( "plot.frame_reference",
-            &m_PlotPanel.frame_reference, true ) );
-
-    m_params.emplace_back( new PARAM<bool>( "plot.pdf_property_popups",
-            &m_PlotPanel.pdf_property_popups, true ) );
-
-    m_params.emplace_back( new PARAM<bool>( "plot.pdf_hierarchical_links",
-            &m_PlotPanel.pdf_hierarchical_links, true ) );
-
-    m_params.emplace_back( new PARAM<bool>( "plot.pdf_metadata",
-            &m_PlotPanel.pdf_metadata, true ) );
-
-    m_params.emplace_back( new PARAM<bool>( "plot.other_open_file_after_plot",
-            &m_PlotPanel.open_file_after_plot, false ) );
-
-    m_params.emplace_back( new PARAM<int>( "simulator.window.pos_x",
-            &m_Simulator.window.state.pos_x, 0 ) );
-
-    m_params.emplace_back( new PARAM<int>( "simulator.window.pos_y",
-            &m_Simulator.window.state.pos_y, 0 ) );
-
-    m_params.emplace_back( new PARAM<int>( "simulator.window.size_x",
-            &m_Simulator.window.state.size_x, 500 ) );
-
-    m_params.emplace_back( new PARAM<int>( "simulator.window.size_y",
-            &m_Simulator.window.state.size_y, 400 ) );
-
-    m_params.emplace_back( new PARAM<unsigned int>( "simulator.window.display",
-            &m_Simulator.window.state.display, 0 ) );
-
-    m_params.emplace_back( new PARAM<bool>( "simulator.window.maximized",
-            &m_Simulator.window.state.maximized, false ) );
-
-    m_params.emplace_back( new PARAM<wxString>( "simulator.window.perspective",
-            &m_Simulator.window.perspective, "" ) );
+    addParamsForWindow( &m_Simulator.window, "simulator.window", 500, 400 );
 
     m_params.emplace_back( new PARAM<int>( "simulator.plot_panel_width",
-        &m_Simulator.view.plot_panel_width, 0 ) );
+            &m_Simulator.view.plot_panel_width, 0 ) );
 
     m_params.emplace_back( new PARAM<int>( "simulator.plot_panel_height",
-        &m_Simulator.view.plot_panel_height, 0 ) );
+            &m_Simulator.view.plot_panel_height, 0 ) );
 
     m_params.emplace_back( new PARAM<int>( "simulator.signal_panel_height",
-        &m_Simulator.view.signal_panel_height, 0 ) );
+            &m_Simulator.view.signal_panel_height, 0 ) );
 
     m_params.emplace_back( new PARAM<int>( "simulator.cursors_panel_height",
-        &m_Simulator.view.cursors_panel_height, 0 ) );
+            &m_Simulator.view.cursors_panel_height, 0 ) );
 
     m_params.emplace_back( new PARAM<int>( "simulator.measurements_panel_height",
-        &m_Simulator.view.measurements_panel_height, 0 ) );
+            &m_Simulator.view.measurements_panel_height, 0 ) );
 
     m_params.emplace_back( new PARAM<bool>( "simulator.white_background",
-        &m_Simulator.view.white_background, false ) );
+            &m_Simulator.view.white_background, false ) );
 
-    m_params.emplace_back( new PARAM_ENUM<SIM_MOUSE_WHEEL_ACTION>(
-            "simulator.mouse_wheel_actions.vertical_unmodified",
+    m_params.emplace_back( new PARAM_ENUM<SIM_MOUSE_WHEEL_ACTION>( "simulator.mouse_wheel_actions.vertical_unmodified",
             &m_Simulator.preferences.mouse_wheel_actions.vertical_unmodified,
             SIM_MOUSE_WHEEL_ACTION::ZOOM, SIM_MOUSE_WHEEL_ACTION::NONE,
             SIM_MOUSE_WHEEL_ACTION::ZOOM_VERTICALLY ) );
 
-    m_params.emplace_back( new PARAM_ENUM<SIM_MOUSE_WHEEL_ACTION>(
-            "simulator.mouse_wheel_actions.vertical_with_ctrl",
+    m_params.emplace_back( new PARAM_ENUM<SIM_MOUSE_WHEEL_ACTION>( "simulator.mouse_wheel_actions.vertical_with_ctrl",
             &m_Simulator.preferences.mouse_wheel_actions.vertical_with_ctrl,
             SIM_MOUSE_WHEEL_ACTION::PAN_LEFT_RIGHT, SIM_MOUSE_WHEEL_ACTION::NONE,
             SIM_MOUSE_WHEEL_ACTION::ZOOM_VERTICALLY ) );
 
-    m_params.emplace_back( new PARAM_ENUM<SIM_MOUSE_WHEEL_ACTION>(
-            "simulator.mouse_wheel_actions.vertical_with_shift",
+    m_params.emplace_back( new PARAM_ENUM<SIM_MOUSE_WHEEL_ACTION>( "simulator.mouse_wheel_actions.vertical_with_shift",
             &m_Simulator.preferences.mouse_wheel_actions.vertical_with_shift,
             SIM_MOUSE_WHEEL_ACTION::PAN_UP_DOWN, SIM_MOUSE_WHEEL_ACTION::NONE,
             SIM_MOUSE_WHEEL_ACTION::ZOOM_VERTICALLY ) );
 
-    m_params.emplace_back( new PARAM_ENUM<SIM_MOUSE_WHEEL_ACTION>(
-            "simulator.mouse_wheel_actions.vertical_with_alt",
+    m_params.emplace_back( new PARAM_ENUM<SIM_MOUSE_WHEEL_ACTION>( "simulator.mouse_wheel_actions.vertical_with_alt",
             &m_Simulator.preferences.mouse_wheel_actions.vertical_with_alt,
             SIM_MOUSE_WHEEL_ACTION::NONE, SIM_MOUSE_WHEEL_ACTION::NONE,
             SIM_MOUSE_WHEEL_ACTION::ZOOM_VERTICALLY ) );
 
-    m_params.emplace_back( new PARAM_ENUM<SIM_MOUSE_WHEEL_ACTION>(
-            "simulator.mouse_wheel_actions.horizontal",
+    m_params.emplace_back( new PARAM_ENUM<SIM_MOUSE_WHEEL_ACTION>( "simulator.mouse_wheel_actions.horizontal",
             &m_Simulator.preferences.mouse_wheel_actions.horizontal, SIM_MOUSE_WHEEL_ACTION::NONE,
             SIM_MOUSE_WHEEL_ACTION::NONE, SIM_MOUSE_WHEEL_ACTION::ZOOM_VERTICALLY ) );
 
@@ -650,56 +623,25 @@ EESCHEMA_SETTINGS::EESCHEMA_SETTINGS() :
     m_params.emplace_back( new PARAM<int>( "symbol_chooser.sort_mode",
             &m_SymChooserPanel.sort_mode, 0 ) );
 
-    m_params.emplace_back( new PARAM<bool>( "symbol_chooser.keep_symbol",
-            &m_SymChooserPanel.keep_symbol, false ) );
+    m_params.emplace_back( new PARAM<bool>( "ERC.crossprobe",
+            &m_ERCDialog.crossprobe, true ) );
 
-    m_params.emplace_back( new PARAM<bool>( "symbol_chooser.place_all_units",
-            &m_SymChooserPanel.place_all_units, true ) );
+    m_params.emplace_back( new PARAM<bool>( "ERC.scroll_on_crossprobe",
+            &m_ERCDialog.scroll_on_crossprobe, true ) );
 
-    m_params.emplace_back( new PARAM<bool>( "import_graphics.interactive_placement",
-            &m_ImportGraphics.interactive_placement, true ) );
+    m_params.emplace_back( new PARAM<bool>( "ERC.show_all_errors",
+            &m_ERCDialog.show_all_errors, false ) );
 
-    m_params.emplace_back( new PARAM<int>( "import_graphics.line_width_units",
-            &m_ImportGraphics.dxf_line_width_units, 0 ) );
+    m_params.emplace_back( new PARAM<bool>( "change_symbols.update_references",
+            &m_ChangeSymbols.updateReferences, false ) );
 
-    m_params.emplace_back( new PARAM<double>( "import_graphics.line_width",
-            &m_ImportGraphics.dxf_line_width, 0.2 ) );
-
-    m_params.emplace_back( new PARAM<int>( "import_graphics.origin_units",
-            &m_ImportGraphics.origin_units, 0 ) );
-
-    m_params.emplace_back( new PARAM<double>( "import_graphics.origin_x",
-            &m_ImportGraphics.origin_x, 0 ) );
-
-    m_params.emplace_back( new PARAM<double>( "import_graphics.origin_y",
-            &m_ImportGraphics.origin_y, 0 ) );
-
-    m_params.emplace_back( new PARAM<int>( "import_graphics.dxf_units",
-            &m_ImportGraphics.dxf_units, 0 ) );
+    m_params.emplace_back( new PARAM<bool>( "change_symbols.update_values",
+            &m_ChangeSymbols.updateValues, false ) );
 
     m_params.emplace_back( new PARAM<bool>( "system.never_show_rescue_dialog",
             &m_RescueNeverShow, false ) );
 
-    m_params.emplace_back( new PARAM<int>( "lib_view.window.pos_x",
-            &m_LibViewPanel.window.state.pos_x, 0 ) );
-
-    m_params.emplace_back( new PARAM<int>( "lib_view.window.pos_y",
-            &m_LibViewPanel.window.state.pos_y, 0 ) );
-
-    m_params.emplace_back( new PARAM<int>( "lib_view.window.size_x",
-            &m_LibViewPanel.window.state.size_x, 500 ) );
-
-    m_params.emplace_back( new PARAM<int>( "lib_view.window.size_y",
-            &m_LibViewPanel.window.state.size_y, 400 ) );
-
-    m_params.emplace_back( new PARAM<unsigned int>( "lib_view.window.display",
-            &m_LibViewPanel.window.state.display, 0 ) );
-
-    m_params.emplace_back( new PARAM<bool>( "lib_view.window.maximized",
-            &m_LibViewPanel.window.state.maximized, false ) );
-
-    m_params.emplace_back( new PARAM<wxString>( "lib_view.window.perspective",
-            &m_LibViewPanel.window.perspective, "" ) );
+    addParamsForWindow( &m_LibViewPanel.window, "lib_view.window", 500, 400 );
 
     m_params.emplace_back( new PARAM<int>( "lib_view.lib_list_width",
             &m_LibViewPanel.lib_list_width, 150 ) );
@@ -764,50 +706,41 @@ bool EESCHEMA_SETTINGS::MigrateFromLegacy( wxConfigBase* aCfg )
         Set( gridSizePtr,  1 );
     }
 
-    ret &= fromLegacy<bool>( aCfg, "FootprintPreview",   "appearance.footprint_preview" );
-    ret &= fromLegacy<bool>( aCfg, "NavigatorStaysOpen", "appearance.navigator_stays_open" );
-    ret &= fromLegacy<bool>( aCfg, "PrintSheetReferenceAndTitleBlock",
-            "appearance.print_sheet_reference" );
-    ret &= fromLegacy<bool>( aCfg, "ShowHiddenPins",     "appearance.show_hidden_pins" );
-    ret &= fromLegacy<bool>( aCfg, "ShowIllegalSymbolLibDialog",
-            "appearance.show_illegal_symbol_lib_dialog" );
-    ret &= fromLegacy<bool>( aCfg, "ShowPageLimits",     "appearance.show_page_limits" );
-    ret &= fromLegacy<bool>( aCfg, "ShowSheetFileNameCaseSensitivityDlg",
-            "appearance.show_sheet_filename_case_sensitivity_dialog" );
+    ret &= fromLegacy<bool>( aCfg, "FootprintPreview",                    "appearance.footprint_preview" );
+    ret &= fromLegacy<bool>( aCfg, "NavigatorStaysOpen",                  "appearance.navigator_stays_open" );
+    ret &= fromLegacy<bool>( aCfg, "PrintSheetReferenceAndTitleBlock",    "appearance.print_sheet_reference" );
+    ret &= fromLegacy<bool>( aCfg, "ShowHiddenPins",                      "appearance.show_hidden_pins" );
+    ret &= fromLegacy<bool>( aCfg, "ShowIllegalSymbolLibDialog",          "appearance.show_illegal_symbol_lib_dialog" );
+    ret &= fromLegacy<bool>( aCfg, "ShowPageLimits",                      "appearance.show_page_limits" );
+    ret &= fromLegacy<bool>( aCfg, "ShowSheetFileNameCaseSensitivityDlg", "appearance.show_sheet_filename_case_sensitivity_dialog" );
 
-    ret &= fromLegacy<bool>( aCfg, "AutoplaceFields",     "autoplace_fields.enable" );
-    ret &= fromLegacy<bool>( aCfg, "AutoplaceJustify",    "autoplace_fields.allow_rejustify" );
-    ret &= fromLegacy<bool>( aCfg, "AutoplaceAlign",      "autoplace_fields.align_to_grid" );
+    ret &= fromLegacy<bool>( aCfg, "AutoplaceFields",          "autoplace_fields.enable" );
+    ret &= fromLegacy<bool>( aCfg, "AutoplaceJustify",         "autoplace_fields.allow_rejustify" );
+    ret &= fromLegacy<bool>( aCfg, "AutoplaceAlign",           "autoplace_fields.align_to_grid" );
 
-    ret &= fromLegacy<int>(  aCfg, "DefaultBusWidth",      "drawing.default_bus_thickness" );
-    ret &= fromLegacy<int>(  aCfg, "DefaultJunctionSize",  "drawing.default_junction_size" );
-    ret &= fromLegacy<int>(  aCfg, "DefaultDrawLineWidth", "drawing.default_line_thickness" );
-    ret &= fromLegacy<int>(  aCfg, "RepeatStepX",          "drawing.default_repeat_offset_x" );
-    ret &= fromLegacy<int>(  aCfg, "RepeatStepY",          "drawing.default_repeat_offset_y" );
-    ret &= fromLegacy<int>(  aCfg, "DefaultWireWidth",     "drawing.default_wire_thickness" );
-    ret &= fromLegacyString( aCfg, "FieldNames",           "drawing.field_names" );
-    ret &= fromLegacy<bool>( aCfg, "HorizVertLinesOnly",   "drawing.line_mode" );
-    ret &= fromLegacy<int>(  aCfg, "RepeatLabelIncrement", "drawing.repeat_label_increment" );
+    ret &= fromLegacy<int>(  aCfg, "DefaultBusWidth",          "drawing.default_bus_thickness" );
+    ret &= fromLegacy<int>(  aCfg, "DefaultJunctionSize",      "drawing.default_junction_size" );
+    ret &= fromLegacy<int>(  aCfg, "DefaultDrawLineWidth",     "drawing.default_line_thickness" );
+    ret &= fromLegacy<int>(  aCfg, "RepeatStepX",              "drawing.default_repeat_offset_x" );
+    ret &= fromLegacy<int>(  aCfg, "RepeatStepY",              "drawing.default_repeat_offset_y" );
+    ret &= fromLegacy<int>(  aCfg, "DefaultWireWidth",         "drawing.default_wire_thickness" );
+    ret &= fromLegacyString( aCfg, "FieldNames",               "drawing.field_names" );
+    ret &= fromLegacy<bool>( aCfg, "HorizVertLinesOnly",       "drawing.line_mode" );
+    ret &= fromLegacy<int>(  aCfg, "RepeatLabelIncrement",     "drawing.repeat_label_increment" );
 
-    ret &= fromLegacy<bool>( aCfg, "DragActionIsMove",     "input.drag_is_move" );
+    ret &= fromLegacy<bool>( aCfg, "DragActionIsMove",         "input.drag_is_move" );
 
-    ret &= fromLegacy<int>(  aCfg, "SelectionThickness",      "selection.thickness" );
-    ret &= fromLegacy<bool>( aCfg, "SelectionDrawChildItems", "selection.draw_selected_children" );
-    ret &= fromLegacy<bool>( aCfg, "SelectionFillShapes",     "selection.fill_shapes" );
-    ret &= fromLegacy<bool>( aCfg, "SelectPinSelectSymbolOpt",
-            "selection.select_pin_selects_symbol" );
+    ret &= fromLegacy<int>(  aCfg, "SelectionThickness",       "selection.thickness" );
+    ret &= fromLegacy<bool>( aCfg, "SelectionDrawChildItems",  "selection.draw_selected_children" );
+    ret &= fromLegacy<bool>( aCfg, "SelectionFillShapes",      "selection.fill_shapes" );
+    ret &= fromLegacy<bool>( aCfg, "SelectPinSelectSymbolOpt", "selection.select_pin_selects_symbol" );
 
-    ret &= fromLegacy<int>(  aCfg, "AnnotateAlgoOption",      "annotation.method" );
-    ret &= fromLegacy<int>(  aCfg, "AnnotateFilterMsg",       "annotation.messages_filter" );
-    ret &= fromLegacy<int>(  aCfg, "AnnotateSortOption",      "annotation.sort_order" );
+    ret &= fromLegacy<int>(  aCfg, "AnnotateFilterMsg",        "annotation.messages_filter" );
 
-    ret &= fromLegacyString( aCfg, "bom_plugin_selected",     "bom.selected_plugin" );
-    ret &= fromLegacyString( aCfg, "bom_plugins",             "bom.plugins" );
+    ret &= fromLegacyString( aCfg, "bom_plugin_selected",      "bom.selected_plugin" );
+    ret &= fromLegacyString( aCfg, "bom_plugins",              "bom.plugins" );
 
     migrateBomSettings();
-
-    ret &= fromLegacyString( aCfg, "SymbolFieldsShownColumns",
-            "edit_sch_component.visible_columns" );
 
     ret &= fromLegacy<bool>( aCfg, "PageSettingsExportRevision", "page_settings.export_revision" );
     ret &= fromLegacy<bool>( aCfg, "PageSettingsExportDate",     "page_settings.export_date" );
@@ -925,8 +858,6 @@ bool EESCHEMA_SETTINGS::MigrateFromLegacy( wxConfigBase* aCfg )
     ret &= fromLegacy<int>(  aCfg, "SymbolChooserVSashPosition", "symbol_chooser.sash_pos_v" );
     ret &= fromLegacy<int>(  aCfg, "SymbolChooserWidth",         "symbol_chooser.width" );
     ret &= fromLegacy<int>(  aCfg, "SymbolChooserHeight",        "symbol_chooser.height" );
-    ret &= fromLegacy<bool>( aCfg, "SymbolChooserKeepSymbol",    "symbol_chooser.keep_symbol" );
-    ret &= fromLegacy<bool>( aCfg, "SymbolChooserUseUnits",      "symbol_chooser.place_all_units" );
 
     const std::string vlf = "ViewlibFrame";
     ret &= fromLegacy<bool>( aCfg, vlf + "Maximized",            "lib_view.window.maximized" );

@@ -23,10 +23,46 @@
 
 #include "reference_image.h"
 
+#include <string>
+
 #include <wx/debug.h>
+#include <wx/mstream.h>
 
 #include <bitmap_base.h>
 #include <geometry/geometry_utils.h>
+
+
+static bool compareImages( const BITMAP_BASE& aLeft, const BITMAP_BASE& aRight )
+{
+    const wxImage* leftImage = aLeft.GetImageData();
+    const wxImage* rightImage = aRight.GetImageData();
+
+    if( !leftImage || !rightImage )
+        return leftImage == rightImage;
+
+    wxMemoryOutputStream leftStream;
+    wxMemoryOutputStream rightStream;
+
+    if( !aLeft.SaveImageData( leftStream ) || !aRight.SaveImageData( rightStream ) )
+        return false;
+
+    size_t leftSize = leftStream.GetSize();
+    size_t rightSize = rightStream.GetSize();
+
+    if( leftSize != rightSize )
+        return false;
+
+    if( leftSize == 0 )
+        return true;
+
+    std::string leftData( leftSize, '\0' );
+    std::string rightData( rightSize, '\0' );
+
+    leftStream.CopyTo( leftData.data(), leftSize );
+    rightStream.CopyTo( rightData.data(), rightSize );
+
+    return leftData == rightData;
+}
 
 
 REFERENCE_IMAGE::REFERENCE_IMAGE( const EDA_IU_SCALE& aIuScale ) :
@@ -94,10 +130,7 @@ bool REFERENCE_IMAGE::operator==( const REFERENCE_IMAGE& aOther ) const
     if( m_bitmapBase->GetScale() != aOther.m_bitmapBase->GetScale() )
         return false;
 
-    if( m_bitmapBase->GetImageID() != aOther.m_bitmapBase->GetImageID() )
-        return false;
-
-    if( m_bitmapBase->GetImageData() != aOther.m_bitmapBase->GetImageData() )
+    if( !compareImages( *m_bitmapBase, *aOther.m_bitmapBase ) )
         return false;
 
     return true;
@@ -120,10 +153,7 @@ double REFERENCE_IMAGE::Similarity( const REFERENCE_IMAGE& aOther ) const
     if( m_bitmapBase->GetScale() != aOther.m_bitmapBase->GetScale() )
         similarity *= 0.9;
 
-    if( m_bitmapBase->GetImageID() != aOther.m_bitmapBase->GetImageID() )
-        similarity *= 0.9;
-
-    if( m_bitmapBase->GetImageData() != aOther.m_bitmapBase->GetImageData() )
+    if( !compareImages( *m_bitmapBase, *aOther.m_bitmapBase ) )
         similarity *= 0.9;
 
     return similarity;
@@ -258,9 +288,9 @@ void REFERENCE_IMAGE::Rotate( const VECTOR2I& aCenter, const EDA_ANGLE& aAngle )
 
     norm.Normalize();
 
-    // each call to m_bitmapBase->Rotate() rotates 90 degrees CCW
+    // each call to m_bitmapBase->Rotate() rotates 90 degrees
     for( double ang = 45.0; ang < norm.AsDegrees(); ang += 90.0 )
-        m_bitmapBase->Rotate( false );
+        m_bitmapBase->Rotate( true );
 }
 
 
@@ -297,6 +327,35 @@ bool REFERENCE_IMAGE::SetImage( const wxImage& aImage )
     }
 
     return false;
+}
+
+
+void REFERENCE_IMAGE::PackToBytes( std::string& aOutputBytes ) const
+{
+    wxMemoryOutputStream imageStream;
+
+    if( m_bitmapBase->GetImageData() && m_bitmapBase->SaveImageData( imageStream ) )
+    {
+        size_t size = imageStream.GetSize();
+
+        if( size > 0 )
+        {
+            aOutputBytes.resize( size );
+            imageStream.CopyTo( aOutputBytes.data(), size );
+        }
+    }
+}
+
+
+bool REFERENCE_IMAGE::UnpackFromBytes( const std::string& aInputBytes )
+{
+    if( aInputBytes.empty() )
+        return false;
+
+    wxMemoryBuffer imageBuffer;
+    imageBuffer.AppendData( aInputBytes.data(), aInputBytes.size() );
+
+    return ReadImageFile( imageBuffer );
 }
 
 

@@ -26,6 +26,7 @@
 #include <board_item.h>             // class BOARD_ITEM
 
 #include <footprint.h>
+#include <netinfo.h>
 #include <pad.h>
 #include <pcb_track.h>
 #include <pcb_marker.h>
@@ -59,7 +60,9 @@ const std::vector<KICAD_T> GENERAL_COLLECTOR::AllBoardItems = {
     PCB_FOOTPRINT_T,        // in m_footprints
     PCB_GROUP_T,            // in m_groups
     PCB_ZONE_T,             // in m_zones
-    PCB_GENERATOR_T         // in m_generators
+    PCB_POINT_T,            // in m_points
+    PCB_GENERATOR_T,        // in m_generators
+    PCB_BARCODE_T,          // in m_drawings
 };
 
 
@@ -76,13 +79,15 @@ const std::vector<KICAD_T> GENERAL_COLLECTOR::BoardLevelItems = {
     PCB_DIM_RADIAL_T,
     PCB_DIM_LEADER_T,
     PCB_TARGET_T,
+    PCB_POINT_T,
     PCB_VIA_T,
     PCB_ARC_T,
     PCB_TRACE_T,
     PCB_FOOTPRINT_T,
     PCB_GROUP_T,
     PCB_ZONE_T,
-    PCB_GENERATOR_T
+    PCB_GENERATOR_T,
+    PCB_BARCODE_T
 };
 
 
@@ -115,7 +120,9 @@ const std::vector<KICAD_T> GENERAL_COLLECTOR::FootprintItems = {
     PCB_PAD_T,
     PCB_ZONE_T,
     PCB_GROUP_T,
-    PCB_REFERENCE_IMAGE_T
+    PCB_POINT_T,
+    PCB_REFERENCE_IMAGE_T,
+    PCB_BARCODE_T
 };
 
 
@@ -156,6 +163,7 @@ INSPECT_RESULT GENERAL_COLLECTOR::Inspect( EDA_ITEM* aTestItem, void* aTestData 
     PCB_FIELD*          field       = nullptr;
     PCB_TEXT*           text        = nullptr;
     PCB_DIMENSION_BASE* dimension   = nullptr;
+    PCB_SHAPE*          shape       = nullptr;
 
     switch( aTestItem->Type() )
     {
@@ -194,13 +202,28 @@ INSPECT_RESULT GENERAL_COLLECTOR::Inspect( EDA_ITEM* aTestItem, void* aTestData 
 
     case PCB_ZONE_T:
         zone = static_cast<ZONE*>( aTestItem );
+
+        if( m_Guide->IgnoreNoNets() && zone->GetNetCode() == NETINFO_LIST::UNCONNECTED )
+            return INSPECT_RESULT::CONTINUE;
+
         boardItem = zone;
         break;
 
-    case PCB_TEXTBOX_T:
     case PCB_SHAPE_T:
+        shape = static_cast<PCB_SHAPE*>( aTestItem );
+
+        if( m_Guide->IgnoreNoNets() && shape->GetNetCode() == NETINFO_LIST::UNCONNECTED )
+            return INSPECT_RESULT::CONTINUE;
+
+        boardItem = shape;
+        break;
+
+    case PCB_TEXTBOX_T:
     case PCB_TABLE_T:
     case PCB_TABLECELL_T:
+        if( m_Guide->IgnoreNoNets() )
+            return INSPECT_RESULT::CONTINUE;
+
         boardItem = static_cast<BOARD_ITEM*>( aTestItem );
         break;
 
@@ -209,15 +232,28 @@ INSPECT_RESULT GENERAL_COLLECTOR::Inspect( EDA_ITEM* aTestItem, void* aTestData 
     case PCB_DIM_RADIAL_T:
     case PCB_DIM_ORTHOGONAL_T:
     case PCB_DIM_LEADER_T:
+        if( m_Guide->IgnoreNoNets() )
+            return INSPECT_RESULT::CONTINUE;
+
         dimension = static_cast<PCB_DIMENSION_BASE*>( aTestItem );
         boardItem = dimension;
         break;
 
     case PCB_TARGET_T:
+        if( m_Guide->IgnoreNoNets() )
+            return INSPECT_RESULT::CONTINUE;
+
+        boardItem = static_cast<BOARD_ITEM*>( aTestItem );
+        break;
+
+    case PCB_POINT_T:
         boardItem = static_cast<BOARD_ITEM*>( aTestItem );
         break;
 
     case PCB_FIELD_T:
+        if( m_Guide->IgnoreNoNets() )
+            return INSPECT_RESULT::CONTINUE;
+
         field = static_cast<PCB_FIELD*>( aTestItem );
 
         if( !field->IsVisible() )
@@ -232,6 +268,9 @@ INSPECT_RESULT GENERAL_COLLECTOR::Inspect( EDA_ITEM* aTestItem, void* aTestData 
         KI_FALLTHROUGH;
 
     case PCB_TEXT_T:
+        if( m_Guide->IgnoreNoNets() )
+            return INSPECT_RESULT::CONTINUE;
+
         text = static_cast<PCB_TEXT*>( aTestItem );
         boardItem = text;
 
@@ -246,6 +285,13 @@ INSPECT_RESULT GENERAL_COLLECTOR::Inspect( EDA_ITEM* aTestItem, void* aTestData 
                 return INSPECT_RESULT::CONTINUE;
         }
 
+        break;
+
+    case PCB_BARCODE_T:
+        if( m_Guide->IgnoreNoNets() )
+            return INSPECT_RESULT::CONTINUE;
+
+        boardItem = static_cast<BOARD_ITEM*>( aTestItem );
         break;
 
     case PCB_FOOTPRINT_T:
@@ -324,7 +370,7 @@ INSPECT_RESULT GENERAL_COLLECTOR::Inspect( EDA_ITEM* aTestItem, void* aTestData 
         auto type = via->GetViaType();
 
         if( ( m_Guide->IgnoreThroughVias() && type == VIATYPE::THROUGH )
-                || ( m_Guide->IgnoreBlindBuriedVias() && type == VIATYPE::BLIND_BURIED )
+                || ( m_Guide->IgnoreBlindBuriedVias() && ( type == VIATYPE::BLIND || type == VIATYPE::BURIED ) )
                 || ( m_Guide->IgnoreMicroVias() && type == VIATYPE::MICROVIA ) )
         {
             return INSPECT_RESULT::CONTINUE;
@@ -347,7 +393,7 @@ INSPECT_RESULT GENERAL_COLLECTOR::Inspect( EDA_ITEM* aTestItem, void* aTestData 
         {
             if( zone->HitTestForCorner( m_refPos, accuracy * 2 ) || zone->HitTestForEdge( m_refPos, accuracy ) )
             {
-                Append( aTestItem );
+                Append( zone );
                 return INSPECT_RESULT::CONTINUE;
             }
             else if( !m_Guide->IgnoreZoneFills() )
@@ -356,7 +402,7 @@ INSPECT_RESULT GENERAL_COLLECTOR::Inspect( EDA_ITEM* aTestItem, void* aTestData 
                 {
                     if( m_Guide->IsLayerVisible( layer ) && zone->HitTestFilledArea( layer, m_refPos ) )
                     {
-                        Append( aTestItem );
+                        Append( zone );
                         return INSPECT_RESULT::CONTINUE;
                     }
                 }
@@ -366,15 +412,15 @@ INSPECT_RESULT GENERAL_COLLECTOR::Inspect( EDA_ITEM* aTestItem, void* aTestData 
         {
             if( footprint->HitTest( m_refPos, accuracy ) && footprint->HitTestAccurate( m_refPos, accuracy ) )
             {
-                Append( aTestItem );
+                Append( footprint );
                 return INSPECT_RESULT::CONTINUE;
             }
         }
         else if( pad || via )
         {
-            if( aTestItem->HitTest( m_refPos, accuracy ) )
+            if( boardItem->HitTest( m_refPos, accuracy ) )
             {
-                Append( aTestItem );
+                Append( boardItem );
                 return INSPECT_RESULT::CONTINUE;
             }
         }
@@ -391,9 +437,9 @@ INSPECT_RESULT GENERAL_COLLECTOR::Inspect( EDA_ITEM* aTestItem, void* aTestData 
                     accuracy = KiROUND( accuracy * 1.5 );
                 }
 
-                if( aTestItem->HitTest( m_refPos, accuracy ) )
+                if( boardItem->HitTest( m_refPos, accuracy ) )
                 {
-                    Append( aTestItem );
+                    Append( boardItem );
                     return INSPECT_RESULT::CONTINUE;
                 }
             }
@@ -418,7 +464,7 @@ INSPECT_RESULT GENERAL_COLLECTOR::Inspect( EDA_ITEM* aTestItem, void* aTestData 
         {
             if( zone->HitTestForCorner( m_refPos, accuracy * 2 ) || zone->HitTestForEdge( m_refPos, accuracy ) )
             {
-                Append2nd( aTestItem );
+                Append2nd( zone );
                 return INSPECT_RESULT::CONTINUE;
             }
             else if( !m_Guide->IgnoreZoneFills() )
@@ -427,7 +473,7 @@ INSPECT_RESULT GENERAL_COLLECTOR::Inspect( EDA_ITEM* aTestItem, void* aTestData 
                 {
                     if( m_Guide->IsLayerVisible( layer ) && zone->HitTestFilledArea( layer, m_refPos ) )
                     {
-                        Append2nd( aTestItem );
+                        Append2nd( zone );
                         return INSPECT_RESULT::CONTINUE;
                     }
                 }
@@ -440,15 +486,15 @@ INSPECT_RESULT GENERAL_COLLECTOR::Inspect( EDA_ITEM* aTestItem, void* aTestData 
 
             if( footprint->HitTest( m_refPos, accuracy ) && footprint->HitTestAccurate( m_refPos, accuracy ) )
             {
-                Append2nd( aTestItem );
+                Append2nd( footprint );
                 return INSPECT_RESULT::CONTINUE;
             }
         }
         else if( pad || via )
         {
-            if( aTestItem->HitTest( m_refPos, accuracy ) )
+            if( boardItem->HitTest( m_refPos, accuracy ) )
             {
-                Append2nd( aTestItem );
+                Append2nd( boardItem );
                 return INSPECT_RESULT::CONTINUE;
             }
         }
@@ -461,9 +507,9 @@ INSPECT_RESULT GENERAL_COLLECTOR::Inspect( EDA_ITEM* aTestItem, void* aTestData 
                 accuracy = KiROUND( accuracy * 1.5 );
             }
 
-            if( aTestItem->HitTest( m_refPos, accuracy ) )
+            if( boardItem->HitTest( m_refPos, accuracy ) )
             {
-                Append2nd( aTestItem );
+                Append2nd( boardItem );
                 return INSPECT_RESULT::CONTINUE;
             }
         }

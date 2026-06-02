@@ -21,9 +21,12 @@
 
 #include <deque>
 #include <cassert>
-#include <math/box2.h>
 
 #include <wx/log.h>
+
+#include <math/box2.h>
+
+#include <board_item.h>
 
 #include "pns_arc.h"
 #include "pns_line.h"
@@ -92,9 +95,6 @@ SHOVE::ROOT_LINE_ENTRY* SHOVE::replaceLine( LINE& aOld, LINE& aNew, bool aInclud
                                             : *changed_area;
         }
     }
-
-    int old_sc = aOld.SegmentCount();
-    int old_lc = aOld.LinkCount();
 
     if( aOld.EndsWithVia() )
     {
@@ -186,7 +186,7 @@ int SHOVE::getClearance( const ITEM* aA, const ITEM* aB ) const
 void SHOVE::sanityCheck( LINE* aOld, LINE* aNew )
 {
     assert( aOld->CPoint( 0 ) == aNew->CPoint( 0 ) );
-    assert( aOld->CPoint( -1 ) == aNew->CPoint( -1 ) );
+    assert( aOld->CLastPoint() == aNew->CLastPoint() );
 }
 
 
@@ -236,17 +236,33 @@ LINE SHOVE::assembleLine( const LINKED_ITEM* aSeg, int* aIndex, bool aPreCleanup
 // concept of orientation of an open curve, so we use some primitive heuristics: if the shoved
 // line wraps around the start of the "pusher", it's likely shoved in wrong direction.
 
-// Update: there's no concept of an orientation of an open curve, but nonetheless Tom's dumb
-// as.... (censored)
-// Two open curves put together make a closed polygon... Tom should learn high school geometry!
+// Update: there's no concept of an orientation of an open curve...
+// Update 2: Tom has learnt a bit more geometry and understood we may need another
+// heuristic/external hint here: We've always assumed it's the last point of the head line is the
+// "pusher", but dragging a trace corner (instead of routing)
 bool SHOVE::checkShoveDirection( const LINE& aCurLine, const LINE& aObstacleLine,
                                  const LINE& aShovedLine ) const
 {
-    SHAPE_LINE_CHAIN::POINT_INSIDE_TRACKER checker( aCurLine.CPoint( 0) );
+    auto root = findRootLine( aCurLine );
+
+    bool loneVia = aCurLine.PointCount() == 0 && aCurLine.EndsWithVia();
+    VECTOR2I cp = loneVia ? aCurLine.Via().Pos() : aCurLine.CPoint( 0);
+
+    // head is reversed (first vertex being the pusher - as in segment endpoint dragging)
+    // take the last point as the checker instead.
+    if( root && ( root->policy & SHP_REVERSED ) && !loneVia )
+    {
+        cp = aCurLine.CPoint( -1 );
+    }
+
+    SHAPE_LINE_CHAIN::POINT_INSIDE_TRACKER checker( cp );
     checker.AddPolyline( aObstacleLine.CLine() );
     checker.AddPolyline( aShovedLine.CLine().Reverse() );
 
     bool inside = checker.IsInside();
+
+    PNS_DBG( Dbg(), AddPoint, cp, YELLOW, 100000,
+        wxString::Format( "chkdir %d", inside?1:0 ) );
 
     return !inside;
 }
@@ -283,18 +299,21 @@ bool SHOVE::shoveLineFromLoneVia( const LINE& aCurLine, const LINE& aObstacleLin
     if( ! aObstacleLine.Walkaround( hull, path_ccw, false ) )
         return false;
 
-    const SHAPE_LINE_CHAIN& shortest = path_ccw.Length() < path_cw.Length() ? path_ccw : path_cw;
+    aResultLine.SetShape( path_cw );
 
-    if( shortest.PointCount() < 2 )
+    if( !checkShoveDirection( aCurLine, aObstacleLine, aResultLine ) )
+    {
+        aResultLine.SetShape( path_ccw );
+    }
+
+    if( aResultLine.CLine().PointCount() < 2 )
         return false;
 
-    if( aObstacleLine.CPoint( -1 ) != shortest.CPoint( -1 ) )
+    if( aObstacleLine.CLastPoint() != aResultLine.CLine().CLastPoint() )
         return false;
 
-    if( aObstacleLine.CPoint( 0 ) != shortest.CPoint( 0 ) )
+    if( aObstacleLine.CPoint( 0 ) != aResultLine.CLine().CPoint( 0 ) )
         return false;
-
-    aResultLine.SetShape( shortest );
 
     if( aResultLine.Collide( &aCurLine, m_currentNode, aResultLine.Layer() ) )
         return false;
@@ -360,9 +379,9 @@ bool SHOVE::shoveLineToHullSet( const LINE& aCurLine, const LINE& aObstacleLine,
                 return nearestP;
             };
 
-            int      minDist0, minDist1, minhull0, minhull1 ;
+            int      minDist0, minDist1, minhull0 = -1, minhull1 = -1;
             VECTOR2I p0 = minDistP( l.CPoint( 0 ), minDist0, minhull0 );
-            VECTOR2I p1 = minDistP( l.CPoint( -1 ), minDist1, minhull1 );
+            VECTOR2I p1 = minDistP( l.CLastPoint(), minDist1, minhull1 );
 
             PNS_DBG( Dbg(), Message, wxString::Format( "mindists : %d %d hulls %d %d\n", minDist0, minDist1, minhull0, minhull1 ) );
 
@@ -437,7 +456,7 @@ bool SHOVE::shoveLineToHullSet( const LINE& aCurLine, const LINE& aObstacleLine,
             continue;
         }
 
-        if( path.CPoint( -1 ) != obs.CPoint( -1 ) || path.CPoint( 0 ) != obs.CPoint( 0 ) )
+        if( path.CLastPoint() != obs.CLastPoint() || path.CPoint( 0 ) != obs.CPoint( 0 ) )
         {
             PNS_DBG( Dbg(), Message, wxString::Format( wxT( "attempt %d fail vend-start\n" ),
                                                        attempt ) );
@@ -494,6 +513,7 @@ bool SHOVE::shoveLineToHullSet( const LINE& aCurLine, const LINE& aObstacleLine,
 }
 
 
+
 /*
  * Push aObstacleLine line away from aCurLine by the clearance distance, and return the result in
  * aResultLine.
@@ -511,7 +531,7 @@ bool SHOVE::ShoveObstacleLine( const LINE& aCurLine, const LINE& aObstacleLine,
     if( aObstacleLine.PointCount() >= 2 )
     {
         jtStart = m_currentNode->FindJoint( aObstacleLine.CPoint( 0 ), &aObstacleLine );
-        jtEnd = m_currentNode->FindJoint( aObstacleLine.CPoint( -1 ), &aObstacleLine );
+        jtEnd = m_currentNode->FindJoint( aObstacleLine.CLastPoint(), &aObstacleLine );
     }
 
     if( jtStart )
@@ -632,18 +652,6 @@ SHOVE::SHOVE_STATUS SHOVE::onCollidingSegment( LINE& aCurrent, SEGMENT* aObstacl
 
     bool shoveOK = ShoveObstacleLine( aCurrent, obstacleLine, shovedLine );
 
-    const double extensionWalkThreshold = 1.0;
-
-    double obsLen = obstacleLine.CLine().Length();
-    double shovedLen = shovedLine.CLine().Length();
-    double extensionFactor = 0.0;
-
-    if( obsLen != 0.0f )
-        extensionFactor = shovedLen / obsLen - 1.0;
-
-    //if( extensionFactor > extensionWalkThreshold )
-      //  return SH_TRY_WALK;
-
     assert( obstacleLine.LayersOverlap( &shovedLine ) );
 
     if( Dbg() )
@@ -667,7 +675,7 @@ SHOVE::SHOVE_STATUS SHOVE::onCollidingSegment( LINE& aCurrent, SEGMENT* aObstacl
 
         if( !pushLineStack( shovedLine ) )
             return SH_INCOMPLETE;
-        
+
         return SH_OK;
     }
 
@@ -928,8 +936,6 @@ NODE* SHOVE::reduceSpringback( const ITEM_SET& aHeadSet )
 
         if( !obs && !spTag.m_locked )
         {
-            int i;
-
             PNS_DBG( Dbg(), Message, wxString::Format( "pop-sp node=%p depth=%d", spTag.m_node, spTag.m_node->Depth() ) );
 
             pruneRootLines( spTag.m_node );
@@ -949,7 +955,7 @@ NODE* SHOVE::reduceSpringback( const ITEM_SET& aHeadSet )
 
     SPRINGBACK_TAG& spTag = m_nodeStack.back();
 
-    for( int i = 0; i < spTag.m_draggedVias.size(); i++ )
+    for( int i = 0; i < (int) spTag.m_draggedVias.size(); i++ )
     {
         if (spTag.m_draggedVias[i].valid)
         {
@@ -1094,7 +1100,7 @@ SHOVE::SHOVE_STATUS SHOVE::pushOrShoveVia( VIA* aVia, const VECTOR2I& aForce, in
             lp.second.ClearLinks();
             lp.second.DragCorner( p0_pushed, lp.second.CLine().Find( p0 ) );
             lp.second.Line().Simplify2();
-            draggedLines.push_back( lp );
+            draggedLines.push_back( std::move( lp ) );
         }
     }
 
@@ -1172,7 +1178,6 @@ SHOVE::SHOVE_STATUS SHOVE::onCollidingVia( ITEM* aCurrent, VIA* aObstacleVia, OB
 
     int clearance = getClearance( aCurrent, aObstacleVia );
     VECTOR2I mtv;
-    int rank = -1;
 
     bool lineCollision = false;
     bool viaCollision = false;
@@ -1201,7 +1206,7 @@ SHOVE::SHOVE_STATUS SHOVE::onCollidingVia( ITEM* aCurrent, VIA* aObstacleVia, OB
             PNS_DBG( Dbg(), AddItem, &currentLine->Via(), LIGHTRED, 10000, wxT( "current-line-via" ) );
         }
 
-        PNS_DBG( Dbg(), AddItem, vtmp.Clone(), LIGHTRED, 100000, wxT( "orig-via" ) );
+        PNS_DBG( Dbg(), AddItem, &vtmp, LIGHTRED, 100000, wxT( "orig-via" ) );
 
         lineCollision = vtmp.Shape( layer )->Collide( currentLine->Shape( -1 ),
                                                         clearance + currentLine->Width() / 2,
@@ -1274,7 +1279,8 @@ SHOVE::SHOVE_STATUS SHOVE::onReverseCollidingVia( LINE& aCurrent, VIA* aObstacle
 
         int clearance = getClearance( &aCurrent.Via(), aObstacleVia );
 
-        SHAPE_LINE_CHAIN hull = aObstacleVia->Hull( clearance, aCurrent.Width(), layer );
+        const SHAPE_LINE_CHAIN& hull = m_currentNode->GetRuleResolver()->HullCache(
+                aObstacleVia, clearance, aCurrent.Width(), layer );
 
         bool epInsideHull = hull.PointInside( p0 );
 
@@ -1383,8 +1389,6 @@ SHOVE::SHOVE_STATUS SHOVE::onReverseCollidingVia( LINE& aCurrent, VIA* aObstacle
 
 void SHOVE::unwindLineStack( const LINKED_ITEM* aSeg )
 {
-    int d = 0;
-
     for( std::vector<LINE>::iterator i = m_lineStack.begin(); i != m_lineStack.end() ; )
     {
         if( i->ContainsLink( aSeg ) )
@@ -1421,8 +1425,6 @@ void SHOVE::unwindLineStack( const LINKED_ITEM* aSeg )
         {
             i++;
         }
-
-        d++;
     }
 
     for( std::vector<LINE>::iterator i = m_optimizerQueue.begin(); i != m_optimizerQueue.end() ; )
@@ -1469,7 +1471,7 @@ bool SHOVE::pushLineStack( const LINE& aL, bool aKeepCurrentOnTop )
         m_lineStack.push_back( aL );
     }
 
-    
+
     pruneLineFromOptimizerQueue( aL );
     m_optimizerQueue.push_back( aL );
 
@@ -1479,7 +1481,6 @@ bool SHOVE::pushLineStack( const LINE& aL, bool aKeepCurrentOnTop )
 
 bool SHOVE::pruneLineFromOptimizerQueue( const LINE& aLine )
 {
-    int pre = m_optimizerQueue.size();
     for( std::vector<LINE>::iterator i = m_optimizerQueue.begin(); i != m_optimizerQueue.end(); )
     {
         bool found = false;
@@ -1600,9 +1601,9 @@ bool SHOVE::patchTadpoleVia( ITEM* nearest, LINE& current )
     if (current.CLine().PointCount() < 1 )
         return false;
 
-//    PNS_DBG(Dbg(), Message, wxString::Format( "cp %d %d", current.CLine().CPoint(-1).x, current.CLine().CPoint(-1).y ) );
+//    PNS_DBG(Dbg(), Message, wxString::Format( "cp %d %d", current.CLine().CLastPoint().x, current.CLine().CLastPoint().y ) );
 
-    auto jtViaEnd = m_currentNode->FindJoint( current.CLine().CPoint(-1), &current );
+    auto jtViaEnd = m_currentNode->FindJoint( current.CLine().CLastPoint(), &current );
 
 //    PNS_DBG(Dbg(), Message, wxString::Format( "jt %p",  jtViaEnd ) );
 
@@ -1938,7 +1939,7 @@ OPT_BOX2I SHOVE::totalAffectedArea() const
 }
 
 
-SHOVE::ROOT_LINE_ENTRY* SHOVE::findRootLine( const LINE& aLine )
+SHOVE::ROOT_LINE_ENTRY* SHOVE::findRootLine( const LINE& aLine ) const
 {
         for( const LINKED_ITEM* link : aLine.Links() )
         {
@@ -1951,7 +1952,7 @@ SHOVE::ROOT_LINE_ENTRY* SHOVE::findRootLine( const LINE& aLine )
         return nullptr;
 }
 
-SHOVE::ROOT_LINE_ENTRY* SHOVE::findRootLine( const LINKED_ITEM *aItem )
+SHOVE::ROOT_LINE_ENTRY* SHOVE::findRootLine( const LINKED_ITEM *aItem ) const
 {
         auto it = m_rootLineHistory.find( aItem->Uid() );
 
@@ -2078,15 +2079,13 @@ void SHOVE::runOptimizer( NODE* aNode )
 
     std::set<const ITEM*> itemsChk;
 
-    auto iface = Router()->GetInterface();
-
     for( int pass = 0; pass < n_passes; pass++ )
     {
         std::reverse( m_optimizerQueue.begin(), m_optimizerQueue.end() );
 
         PNS_DBG( Dbg(), Message, wxString::Format( wxT( "optimize %d lines, pass %d"), (int)m_optimizerQueue.size(), (int)pass ) );
 
-        for( int i = 0; i < m_optimizerQueue.size(); i++ )
+        for( int i = 0; i < (int) m_optimizerQueue.size(); i++ )
         {
             LINE& lineToOpt = m_optimizerQueue[i];
             LINE* rootLine = nullptr;
@@ -2112,7 +2111,7 @@ void SHOVE::runOptimizer( NODE* aNode )
                   //  PNS_DBG( Dbg(), AddItem, rootLine, RED, 0, wxT( "shove-root-opt" ) );
 
                 replaceLine( lineToOpt, optimized, false, aNode );
-                m_optimizerQueue[i] = optimized; // keep links in the lines in the queue up to date
+                m_optimizerQueue[i] = std::move( optimized ); // keep links in the lines in the queue up to date
 
                 //PNS_DBG( Dbg(), AddShape, &optimized.CLine(), GREEN, 0, wxT( "shove-post-opt" ) );
             }
@@ -2246,6 +2245,7 @@ void SHOVE::ClearHeads()
 void SHOVE::AddHeads( const LINE& aHead,  int aPolicy )
 {
     m_headLines.push_back( SHOVE::HEAD_LINE_ENTRY( aHead, aPolicy ) );
+    SetShovePolicy( aHead, aPolicy );
 }
 
 
@@ -2255,7 +2255,7 @@ void SHOVE::AddHeads( VIA_HANDLE aHead, VECTOR2I aNewPos, int aPolicy )
     ent.viaNewPos = aNewPos;
     ent.prevVia = aHead;
     ent.theVia = aHead;
-    m_headLines.push_back( ent );
+    m_headLines.push_back( std::move( ent ) );
 }
 
 void removeHead( NODE *aNode, LINE& head )
@@ -2269,8 +2269,6 @@ void removeHead( NODE *aNode, LINE& head )
 
 void SHOVE::removeHeads()
 {
-    auto iface = Router()->GetInterface();
-
     NODE::ITEM_VECTOR removed, added;
 
     m_currentNode->GetUpdatedItems( removed, added );
@@ -2423,29 +2421,13 @@ SHOVE::SHOVE_STATUS SHOVE::Run()
     m_currentNode = parent->Branch();
     m_currentNode->ClearRanks();
 
-
-
-
-
-
     //nodeStats( Dbg(), m_currentNode, "right-after-branch" );
 
     auto iface = Router()->GetInterface();
 
-    //    for ( auto& hq : m_headLines )
-    //      if( hq.oldHead )
-    //        m_currentNode->Remove( *hq.oldHead );
-
-
     // Push the via to its new location
     for( auto& headLineEntry : m_headLines )
     {
-        //if( rootEntry->line ) // head already processed in previous steps
-        //{
-        //  PNS_DBG( Dbg(), Message, wxString::Format( "RL found" ) );
-
-        //continue;
-        //}
         m_currentNode->ClearRanks();
 
         if( headLineEntry.theVia )
@@ -2501,7 +2483,7 @@ SHOVE::SHOVE_STATUS SHOVE::Run()
 		        m_currentNode->LockJoint( head.CPoint( 0 ), &head, true );
 
 		    if( !head.EndsWithVia() )
-		        m_currentNode->LockJoint( head.CPoint( -1 ), &head, true );
+		        m_currentNode->LockJoint( head.CLastPoint(), &head, true );
             }
 
             SetShovePolicy( head, headLineEntry.policy );
@@ -2599,6 +2581,11 @@ SHOVE::SHOVE_STATUS SHOVE::Run()
             }
         }
 
+	// NODE's destructor invalidates all linked items in the LINEs stored in the stack/queue
+	// Erase them first to avoid a use-after-free issue.
+        m_lineStack.clear();
+        m_optimizerQueue.clear();
+
         pruneRootLines( m_currentNode );
 
         delete m_currentNode;
@@ -2660,4 +2647,3 @@ const VIA_HANDLE SHOVE::GetModifiedHeadVia( int aIndex ) const
 
 
 }
-

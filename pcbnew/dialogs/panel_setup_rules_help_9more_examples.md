@@ -127,11 +127,11 @@
         (condition "A.isPlated() && A.Hole_Size_X != A.Hole_Size_Y"))
 
 
-    # Allow blind/buried to micro-via hole-to-hole violations when it is known that
-    # the fab will mechanically drill blind/buried via holes -before- laser drilling 
+    # Allow blind to micro-via hole-to-hole violations when it is known that
+    # the fab will mechanically drill blind via holes -before- laser drilling
     # micro-vias.
     (rule hole_to_hole_uvia_exclusion
-        (condition "A.Via_Type == 'Blind/buried' && B.Via_Type == 'Micro'")
+        (condition "A.Via_Type == 'Blind' && B.Via_Type == 'Micro'")
         (constraint hole_to_hole)
         (severity ignore))
 
@@ -147,3 +147,9 @@
         (constraint solder_paste_abs_margin (opt -50mm))
         (condition "A.Do_not_Populate"))
 
+
+    # Allow solder mask bridging under guard ring mask apertures
+    (rule guard_ring_bridging
+        (constraint bridged_mask)
+        (condition "A.intersectsArea('guard_ring')")
+        (severity ignore))

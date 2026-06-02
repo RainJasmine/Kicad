@@ -857,7 +857,12 @@ bool COMPILER::generateUCode( UCODE* aCode, CONTEXT* aPreflightContext )
         case TR_OP_FUNC_CALL:
             // Function call's uop was generated inside TR_STRUCT_REF
             if( !node->uop )
-                reportError( CST_CODEGEN,  _( "Unknown parent of function parameters" ), node->srcPos );
+            {
+                // This function call is bare so we don't know who to apply it to
+                // Set a safe default value to exit gracefully with an error
+                reportError( CST_CODEGEN, _( "Unknown parent of function parameters" ), node->srcPos );
+                node->SetUop( TR_UOP_PUSH_VALUE, 0.0, EDA_UNITS::UNSCALED );
+            }
 
             node->isTerminal = true;
             break;
@@ -1095,7 +1100,6 @@ bool COMPILER::generateUCode( UCODE* aCode, CONTEXT* aPreflightContext )
             {
                 stack.push_back( node->leaf[0] );
                 node->leaf[0]->isVisited = true;
-                continue;
             }
             else if( node->leaf[1] && !node->leaf[1]->isVisited )
             {
@@ -1152,11 +1156,26 @@ void UOP::Exec( CONTEXT* ctx )
     }
 
     case TR_UOP_PUSH_VALUE:
-        ctx->Push( m_value.get() );
+        // String literals contain a wxString whose internal mb_str cache is mutated by
+        // ToUTF8/utf8_str. DRC evaluates compiled rules from many threads concurrently,
+        // so push a per-thread copy to avoid racing on that cache.
+        if( m_value && m_value->GetType() == VT_STRING )
+        {
+            VALUE* copy = ctx->AllocValue();
+            copy->Set( *m_value );
+            ctx->Push( copy );
+        }
+        else
+        {
+            ctx->Push( m_value.get() );
+        }
+
         return;
 
     case TR_OP_METHOD_CALL:
-        m_func( ctx, m_ref.get() );
+        if( m_func )
+            m_func( ctx, m_ref.get() );
+
         return;
 
     default:
@@ -1317,9 +1336,8 @@ VALUE* UCODE::Run( CONTEXT* ctx )
     }
     catch(...)
     {
-        // rules which fail outright should not be fired
-        std::unique_ptr<VALUE> temp_false = std::make_unique<VALUE>( 0 );
-        return ctx->StoreValue( temp_false.get() );
+        // rules which fail outright should not be fired; return 0/false
+        return ctx->StoreValue( new VALUE( 0 ) );
     }
 
     if( ctx->SP() == 1 )
@@ -1335,8 +1353,7 @@ VALUE* UCODE::Run( CONTEXT* ctx )
         wxASSERT( ctx->SP() == 1 );
 
         // non-well-formed rules should not be fired on a release build
-        std::unique_ptr<VALUE> temp_false = std::make_unique<VALUE>( 0 );
-        return ctx->StoreValue( temp_false.get() );
+        return ctx->StoreValue( new VALUE( 0 ) );
     }
 }
 

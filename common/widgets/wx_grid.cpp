@@ -28,10 +28,12 @@
 #include <wx/event.h> // Needed for textentry.h on MSW
 #include <wx/textentry.h>
 
-#include <widgets/grid_icon_text_helpers.h>
+#include <widgets/indicator_icon.h>
+#include <widgets/grid_text_helpers.h>
 #include <widgets/wx_grid.h>
 #include <widgets/ui_common.h>
 #include <algorithm>
+#include <vector>
 #include <core/kicad_algo.h>
 #include <gal/color4d.h>
 #include <kiplatform/ui.h>
@@ -76,8 +78,7 @@ wxGridCellAttr* WX_GRID_TABLE_BASE::enhanceAttr( wxGridCellAttr* aInputAttr, int
 
 void WX_GRID::CellEditorSetMargins( wxTextEntryBase* aEntry )
 {
-    // This is consistent with wxGridCellTextEditor. But works differently across platforms or
-    // course.
+    // This is consistent with wxGridCellTextEditor. But works differently across platforms of course.
     aEntry->SetMargins( 0, 0 );
 }
 
@@ -202,13 +203,12 @@ private:
 };
 
 
-WX_GRID::WX_GRID( wxWindow *parent, wxWindowID id, const wxPoint& pos, const wxSize& size,
-                  long style, const wxString& name ) :
+WX_GRID::WX_GRID( wxWindow *parent, wxWindowID id, const wxPoint& pos, const wxSize& size, long style,
+                  const wxString& name ) :
         wxGrid( parent, id, pos, size, style, name ),
         m_weOwnTable( false )
 {
-    // Grids with comboboxes need a bit of extra height; other grids look better if they're
-    // consistent.
+    // Grids with comboboxes need a bit of extra height; other grids look better if they're consistent.
     SetDefaultRowSize( GetDefaultRowSize() + FromDIP( 4 ) );
 
     SetDefaultCellOverflow( false );
@@ -216,6 +216,8 @@ WX_GRID::WX_GRID( wxWindow *parent, wxWindowID id, const wxPoint& pos, const wxS
     // Make sure the GUI font scales properly
     SetDefaultCellFont( KIUI::GetControlFont( this ) );
     SetLabelFont( KIUI::GetControlFont( this ) );
+
+    m_rowIconProvider = new ROW_ICON_PROVIDER( KIUI::c_IndicatorSizeDIP, this );
 
     Connect( wxEVT_DPI_CHANGED, wxDPIChangedEventHandler( WX_GRID::onDPIChanged ), nullptr, this );
     Connect( wxEVT_GRID_EDITOR_SHOWN, wxGridEventHandler( WX_GRID::onCellEditorShown ), nullptr, this );
@@ -228,6 +230,8 @@ WX_GRID::~WX_GRID()
     if( m_weOwnTable )
         DestroyTable( GetTable() );
 
+    delete m_rowIconProvider;
+
     Disconnect( wxEVT_GRID_EDITOR_SHOWN, wxGridEventHandler( WX_GRID::onCellEditorShown ), nullptr, this );
     Disconnect( wxEVT_GRID_EDITOR_HIDDEN, wxGridEventHandler( WX_GRID::onCellEditorHidden ), nullptr, this );
     Disconnect( wxEVT_DPI_CHANGED, wxDPIChangedEventHandler( WX_GRID::onDPIChanged ), nullptr, this );
@@ -236,16 +240,42 @@ WX_GRID::~WX_GRID()
 
 void WX_GRID::onDPIChanged(wxDPIChangedEvent& aEvt)
 {
-    CallAfter( [&]()
-               {
-                   wxGrid::SetColLabelSize( wxGRID_AUTOSIZE );
-               } );
+    // Workaround for wxWidgets bug where hidden column widths (stored as negative values)
+    // are not scaled during DPI changes, corrupting the internal m_colRights array.
+    // https://github.com/wxWidgets/wxWidgets/issues/26079
+    // Fix is to re-hide all hidden columns after the DPI change completes, which forces
+    // wxGrid to recalculate the column geometry correctly.
 
-    /// This terrible hack is a way to avoid the incredibly disruptive resizing of grids that
-    /// happens on Macs when moving a window between monitors of different DPIs.
-#ifndef __WXMAC__
+    std::vector<int> hiddenCols;
+
+    for( int col = 0; col < GetNumberCols(); ++col )
+    {
+        if( !IsColShown( col ) )
+            hiddenCols.push_back( col );
+    }
+
     aEvt.Skip();
-#endif
+
+    if( !hiddenCols.empty() )
+    {
+        CallAfter(
+                [this, hiddenCols]()
+                {
+                    for( int col : hiddenCols )
+                    {
+                        ShowCol( col );
+                        HideCol( col );
+                    }
+
+                    ForceRefresh();
+                } );
+    }
+
+    CallAfter(
+            [this]()
+            {
+                wxGrid::SetColLabelSize( wxGRID_AUTOSIZE );
+            } );
 }
 
 
@@ -296,7 +326,7 @@ void WX_GRID::SetTable( wxGridTableBase* aTable, bool aTakeOwnership )
 
     delete[] formBuilderColWidths;
 
-    EnableAlternateRowColors( Pgm().GetCommonSettings()->m_Appearance.grid_striping );
+    EnableAlternateRowColors( Pgm().GetCommonSettings() && Pgm().GetCommonSettings()->m_Appearance.grid_striping );
 
     Connect( wxEVT_GRID_COL_MOVE, wxGridEventHandler( WX_GRID::onGridColMove ), nullptr, this );
     Connect( wxEVT_GRID_SELECT_CELL, wxGridEventHandler( WX_GRID::onGridCellSelect ), nullptr, this );
@@ -309,8 +339,7 @@ void WX_GRID::EnableAlternateRowColors( bool aEnable )
 {
     wxGridTableBase* table = wxGrid::GetTable();
 
-    wxCHECK_MSG( table, /* void */,
-                 "Tried to enable alternate row colors without a table assigned to the grid" );
+    wxCHECK_MSG( table, /* void */, "Tried to enable alternate row colors without a table assigned to the grid" );
 
     if( aEnable )
     {
@@ -347,6 +376,17 @@ void WX_GRID::onGridCellSelect( wxGridEvent& aEvent )
         {
             SelectBlock( 0, col, GetNumberRows() - 1, col, false );
         }
+
+#ifdef __WXMSW__
+        // On Windows with wxWidgets 3.3+, the selection highlight can be drawn incorrectly
+        // on the first selection if the grid hasn't been fully laid out yet. Force a single
+        // deferred refresh after the first selection to ensure correct rendering.
+        if( !m_firstSelectionRefreshDone )
+        {
+            m_firstSelectionRefreshDone = true;
+            CallAfter( [this]() { ForceRefresh(); } );
+        }
+#endif
     }
 }
 
@@ -388,7 +428,8 @@ void WX_GRID::onCellEditorHidden( wxGridEvent& aEvent )
 
         if( cellEditor )
         {
-            if( GRID_CELL_MARK_AS_NULLABLE* nullable = dynamic_cast<GRID_CELL_MARK_AS_NULLABLE*>( cellEditor ) )
+            if( const GRID_CELL_NULLABLE_INTERFACE* nullable =
+                        dynamic_cast<GRID_CELL_NULLABLE_INTERFACE*>( cellEditor ) )
                 isNullable = nullable->IsNullable();
 
             cellEditor->DecRef();
@@ -423,8 +464,7 @@ void WX_GRID::onCellEditorHidden( wxGridEvent& aEvent )
                             }
                             else
                             {
-                                val = unitsProvider->OptionalValueFromString( m_eval->Result(),
-                                                                              cellDataType );
+                                val = unitsProvider->OptionalValueFromString( m_eval->Result(), cellDataType );
                             }
 
                             evalValue = unitsProvider->StringFromOptionalValue( val, true, cellDataType );
@@ -497,7 +537,7 @@ void WX_GRID::ShowHideColumns( const wxString& shownColumns )
     for( int i = 0; i < GetNumberCols(); ++i )
         HideCol( i );
 
-    wxStringTokenizer shownTokens( shownColumns );
+    wxStringTokenizer shownTokens( shownColumns, " \t\r\n", wxTOKEN_STRTOK );
 
     while( shownTokens.HasMoreTokens() )
     {
@@ -506,18 +546,6 @@ void WX_GRID::ShowHideColumns( const wxString& shownColumns )
 
         if( colNumber >= 0 && colNumber < GetNumberCols() )
             ShowCol( (int) colNumber );
-    }
-}
-
-
-void WX_GRID::ShowHideColumns( const std::bitset<64>& aShownColumns )
-{
-    for( int ii = 0; ii < GetNumberCols(); ++ ii )
-    {
-        if( aShownColumns[ii] )
-            ShowCol( ii );
-        else
-            HideCol( ii );
     }
 }
 
@@ -531,8 +559,7 @@ void WX_GRID::DrawCornerLabel( wxDC& dc )
 
     static WX_GRID_CORNER_HEADER_RENDERER rend;
 
-    // It is reported that we need to erase the background to avoid display
-    // artifacts, see #12055.
+    // It is reported that we need to erase the background to avoid display artifacts; see #12055.
     {
         wxDCBrushChanger setBrush( dc, m_colLabelWin->GetBackgroundColour() );
         wxDCPenChanger   setPen( dc, m_colLabelWin->GetBackgroundColour() );
@@ -555,8 +582,7 @@ void WX_GRID::DrawColLabel( wxDC& dc, int col )
 
     static WX_GRID_COLUMN_HEADER_RENDERER rend;
 
-    // It is reported that we need to erase the background to avoid display
-    // artifacts, see #12055.
+    // It is reported that we need to erase the background to avoid display artifacts; see #12055.
     {
         wxDCBrushChanger setBrush( dc, m_colLabelWin->GetBackgroundColour() );
         wxDCPenChanger   setPen( dc, m_colLabelWin->GetBackgroundColour() );
@@ -591,8 +617,7 @@ void WX_GRID::DrawRowLabel( wxDC& dc, int row )
 
     static WX_GRID_ROW_HEADER_RENDERER rend;
 
-    // It is reported that we need to erase the background to avoid display
-    // artifacts, see #12055.
+    // It is reported that we need to erase the background to avoid display artifacts; see #12055.
     {
         wxDCBrushChanger setBrush( dc, m_colLabelWin->GetBackgroundColour() );
         wxDCPenChanger   setPen( dc, m_colLabelWin->GetBackgroundColour() );
@@ -694,6 +719,179 @@ bool WX_GRID::CommitPendingChanges( bool aQuietMode )
 }
 
 
+void WX_GRID::OnAddRow( const std::function<std::pair<int, int>()>& aAdder )
+{
+    if( !CommitPendingChanges() )
+        return;
+
+    auto [row, editCol] = aAdder();
+
+    // wx documentation is wrong, SetGridCursor does not make visible.
+    SetFocus();
+    MakeCellVisible( row, std::max( editCol, 0 ) );
+    SetGridCursor( row, std::max( editCol, 0 ) );
+
+    if( editCol >= 0 )
+    {
+        EnableCellEditControl( true );
+        ShowCellEditControl();
+    }
+}
+
+
+void WX_GRID::OnDeleteRows( const std::function<void( int row )>& aDeleter )
+{
+    OnDeleteRows(
+            []( int row )
+            {
+                return true;
+            },
+            aDeleter );
+}
+
+
+void WX_GRID::OnDeleteRows( const std::function<bool( int row )>& aFilter,
+                            const std::function<void( int row )>& aDeleter )
+{
+    wxArrayInt selectedRows = GetSelectedRows();
+
+    auto addSelectedRow = [&]( int row )
+    {
+        for( size_t i = 0; i < selectedRows.size(); ++i )
+        {
+            if( selectedRows[i] == row )
+                return;
+        }
+
+        selectedRows.push_back( row );
+    };
+
+    wxGridCellCoordsArray topLeft = GetSelectionBlockTopLeft();
+    wxGridCellCoordsArray botRight = GetSelectionBlockBottomRight();
+
+    for( size_t i = 0; i < std::min( topLeft.Count(), botRight.Count() ); ++i )
+    {
+        for( int row = topLeft[i].GetRow(); row <= botRight[i].GetRow(); ++row )
+            addSelectedRow( row );
+    }
+
+    wxGridCellCoordsArray cells = GetSelectedCells();
+
+    for( size_t i = 0; i < cells.Count(); ++i )
+        addSelectedRow( cells[i].GetRow() );
+
+    if( selectedRows.empty() && GetGridCursorRow() >= 0 )
+        selectedRows.push_back( GetGridCursorRow() );
+
+    if( selectedRows.empty() )
+        return;
+
+    for( int row : selectedRows )
+    {
+        if( !aFilter( row ) )
+            return;
+    }
+
+    if( !CommitPendingChanges() )
+        return;
+
+    // Reverse sort so deleting a row doesn't change the indexes of the other rows.
+    selectedRows.Sort(
+            []( int* first, int* second )
+            {
+                return *second - *first;
+            } );
+
+    int nextSelRow = selectedRows.back() - 1;
+
+    if( nextSelRow >= 0 )
+    {
+        GoToCell( nextSelRow, GetGridCursorCol() );
+        SetGridCursor( nextSelRow, GetGridCursorCol() );
+    }
+
+    for( int row : selectedRows )
+        aDeleter( row );
+}
+
+
+void WX_GRID::SwapRows( int aRowA, int aRowB )
+{
+    for( int col = 0; col < GetNumberCols(); ++col )
+    {
+        wxString temp = GetCellValue( aRowA, col );
+        SetCellValue( aRowA, col, GetCellValue( aRowB, col ) );
+        SetCellValue( aRowB, col, temp );
+    }
+}
+
+
+void WX_GRID::OnMoveRowUp( const std::function<void( int row )>& aMover )
+{
+    OnMoveRowUp(
+            []( int row )
+            {
+                return true;
+            },
+            aMover );
+}
+
+
+void WX_GRID::OnMoveRowUp( const std::function<bool( int row )>& aFilter,
+                           const std::function<void( int row )>& aMover )
+{
+    if( !CommitPendingChanges() )
+        return;
+
+    int i = GetGridCursorRow();
+
+    if( i > 0 && aFilter( i ) )
+    {
+        aMover( i );
+
+        SetGridCursor( i - 1, GetGridCursorCol() );
+        MakeCellVisible( GetGridCursorRow(), GetGridCursorCol() );
+    }
+    else
+    {
+        wxBell();
+    }
+}
+
+
+void WX_GRID::OnMoveRowDown( const std::function<void( int row )>& aMover )
+{
+    OnMoveRowDown(
+            []( int row )
+            {
+                return true;
+            },
+            aMover );
+}
+
+
+void WX_GRID::OnMoveRowDown( const std::function<bool( int row )>& aFilter,
+                             const std::function<void( int row )>& aMover )
+{
+    if( !CommitPendingChanges() )
+        return;
+
+    int i = GetGridCursorRow();
+
+    if( i + 1 < GetNumberRows() && aFilter( i ) )
+    {
+        aMover( i );
+
+        SetGridCursor( i + 1, GetGridCursorCol() );
+        MakeCellVisible( GetGridCursorRow(), GetGridCursorCol() );
+    }
+    else
+    {
+        wxBell();
+    }
+}
+
+
 void WX_GRID::SetUnitsProvider( UNITS_PROVIDER* aProvider, int aCol )
 {
     m_unitsProviders[ aCol ] = aProvider;
@@ -767,7 +965,14 @@ void WX_GRID::SetUnitValue( int aRow, int aCol, int aValue )
 
 void WX_GRID::SetOptionalUnitValue( int aRow, int aCol, std::optional<int> aValue )
 {
-    SetCellValue( aRow, aCol, getUnitsProvider( aCol )->StringFromOptionalValue( aValue, true ) );
+    EDA_DATA_TYPE cellDataType;
+
+    if( m_autoEvalColsUnits.contains( aCol ) )
+        cellDataType = m_autoEvalColsUnits[aCol].second;
+    else
+        cellDataType = EDA_DATA_TYPE::DISTANCE;
+
+    SetCellValue( aRow, aCol, getUnitsProvider( aCol )->StringFromOptionalValue( aValue, true, cellDataType ) );
 }
 
 
@@ -853,4 +1058,90 @@ std::pair<EDA_UNITS, EDA_DATA_TYPE> WX_GRID::getColumnUnits( const int aCol ) co
 
     // Legacy - default always DISTANCE
     return { getUnitsProvider( aCol )->GetUserUnits(), EDA_DATA_TYPE::DISTANCE };
+}
+
+
+void WX_GRID::SetupColumnAutosizer( int aFlexibleCol )
+{
+    const int colCount = GetNumberCols();
+
+    for( int ii = 0; ii < GetNumberCols(); ++ii )
+        m_autosizedCols[ii] = GetColSize( ii );
+
+    m_flexibleCol = aFlexibleCol;
+
+    wxASSERT_MSG( m_flexibleCol < colCount, "Flexible column index does not exist in grid" );
+
+    Bind( wxEVT_UPDATE_UI,
+          [this]( wxUpdateUIEvent& aEvent )
+          {
+              RecomputeGridWidths();
+              aEvent.Skip();
+          } );
+
+    Bind( wxEVT_SIZE,
+          [this]( wxSizeEvent& aEvent )
+          {
+              onSizeEvent( aEvent );
+              aEvent.Skip();
+          } );
+
+    // Handles the case when the user changes the cell content to be longer than the current column size
+    Bind( wxEVT_GRID_CELL_CHANGED,
+          [this]( wxGridEvent& aEvent )
+          {
+              m_gridWidthsDirty = true;
+              aEvent.Skip();
+          } );
+}
+
+
+void WX_GRID::RecomputeGridWidths()
+{
+    if( m_gridWidthsDirty )
+    {
+        const int width = GetSize().GetX() - wxSystemSettings::GetMetric( wxSYS_VSCROLL_X );
+
+        std::optional<int> flexibleMinWidth;
+
+        for( const auto& [colIndex, minWidth] : m_autosizedCols )
+        {
+            if( GetColSize( colIndex ) != 0 )
+            {
+                AutoSizeColumn( colIndex );
+                const int colSize = GetColSize( colIndex );
+
+                int minWidthScaled = FromDIP( minWidth );
+                SetColSize( colIndex, std::max( minWidthScaled, colSize ) );
+
+                if( colIndex == m_flexibleCol )
+                    flexibleMinWidth = minWidthScaled;
+            }
+        }
+
+        // Gather all the widths except the flexi one
+        int nonFlexibleWidth = 0;
+
+        for( int i = 0; i < GetNumberCols(); ++i )
+        {
+            if( i != m_flexibleCol )
+                nonFlexibleWidth += GetColSize( i );
+        }
+
+        if( GetColSize( m_flexibleCol ) != 0 )
+            SetColSize( m_flexibleCol, std::max( flexibleMinWidth.value_or( 0 ), width - nonFlexibleWidth ) );
+
+        // Store the state for next time
+        m_gridWidth = GetSize().GetX();
+        m_gridWidthsDirty = false;
+    }
+}
+
+
+void WX_GRID::onSizeEvent( wxSizeEvent& aEvent )
+{
+    const int width = aEvent.GetSize().GetX();
+
+    if( width != m_gridWidth )
+        m_gridWidthsDirty = true;
 }

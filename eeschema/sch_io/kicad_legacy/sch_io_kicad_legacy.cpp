@@ -60,8 +60,8 @@
 #include <sch_io/kicad_legacy/sch_io_kicad_legacy_helpers.h>
 #include <sch_screen.h>
 #include <schematic.h>
-#include <symbol_library.h>
-#include <symbol_lib_table.h>
+#include <libraries/legacy_symbol_library.h>
+#include <libraries/symbol_library_adapter.h>
 #include <eeschema_id.h>       // for MAX_UNIT_COUNT_PER_PACKAGE definition
 #include <tool/selection.h>
 #include <wildcards_and_files_ext.h>
@@ -151,13 +151,13 @@ SCH_SHEET* SCH_IO_KICAD_LEGACY::LoadSchematicFile( const wxString& aFileName, SC
         }
 
         if( m_path.IsEmpty() )
-            m_path = aSchematic->Prj().GetProjectPath();
+            m_path = aSchematic->Project().GetProjectPath();
 
         wxLogTrace( traceSchLegacyPlugin, "Normalized append path \"%s\".", m_path );
     }
     else
     {
-        m_path = aSchematic->Prj().GetProjectPath();
+        m_path = aSchematic->Project().GetProjectPath();
     }
 
     m_currentPath.push( m_path );
@@ -424,7 +424,7 @@ void SCH_IO_KICAD_LEGACY::loadPageSettings( LINE_READER& aReader, SCH_SCREEN* aS
     int pagew = parseInt( aReader, line, &line );
     int pageh = parseInt( aReader, line, &line );
 
-    if( buf == PAGE_INFO::Custom )
+    if( pageInfo.GetType() == PAGE_SIZE_TYPE::User )
     {
         pageInfo.SetWidthMils( pagew );
         pageInfo.SetHeightMils( pageh );
@@ -612,8 +612,7 @@ SCH_SHEET* SCH_IO_KICAD_LEGACY::loadSheet( LINE_READER& aReader )
                 case 'T': sheetPin->SetSide( SHEET_SIDE::TOP );    break;
                 case 'B': sheetPin->SetSide( SHEET_SIDE::BOTTOM ); break;
                 case 'L': sheetPin->SetSide( SHEET_SIDE::LEFT );   break;
-                default:
-                    SCH_PARSE_ERROR( "invalid sheet pin side", aReader, line );
+                default:  SCH_PARSE_ERROR( "invalid sheet pin side", aReader, line );
                 }
 
                 VECTOR2I position;
@@ -1131,11 +1130,13 @@ SCH_SYMBOL* SCH_IO_KICAD_LEGACY::loadSymbol( LINE_READER& aReader )
             wxString libName;
             size_t pos = 2;                               // "X" plus ' ' space character.
             wxString utf8Line = wxString::FromUTF8( line );
-            wxStringTokenizer tokens( utf8Line, " \r\n\t" );
+            wxStringTokenizer tokens( utf8Line, " \t\r\n" );
 
             if( tokens.CountTokens() < 2 )
+            {
                 THROW_PARSE_ERROR( "invalid symbol library definition", aReader.GetSource(),
                                    aReader.Line(), aReader.LineNumber(), pos );
+            }
 
             libName = tokens.GetNextToken();
             libName.Replace( "~", " " );
@@ -1470,7 +1471,8 @@ SCH_SYMBOL* SCH_IO_KICAD_LEGACY::loadSymbol( LINE_READER& aReader )
 std::shared_ptr<BUS_ALIAS> SCH_IO_KICAD_LEGACY::loadBusAlias( LINE_READER& aReader,
                                                               SCH_SCREEN* aScreen )
 {
-    auto busAlias = std::make_shared<BUS_ALIAS>( aScreen );
+    // BUS_ALIAS does not take a SCH_SCREEN* in its constructor; create a default instance
+    auto busAlias = std::make_shared<BUS_ALIAS>();
     const char* line = aReader.Line();
 
     wxCHECK( strCompare( "BusAlias", line, &line ), nullptr );
@@ -1485,7 +1487,7 @@ std::shared_ptr<BUS_ALIAS> SCH_IO_KICAD_LEGACY::loadBusAlias( LINE_READER& aRead
         parseUnquotedString( buf, aReader, line, &line, true );
 
         if( !buf.IsEmpty() )
-            busAlias->Members().emplace_back( buf );
+            busAlias->AddMember( buf );
     }
 
     return busAlias;
@@ -1512,6 +1514,7 @@ void SCH_IO_KICAD_LEGACY::SaveSchematicFile( const wxString& aFileName, SCH_SHEE
     m_out = &formatter;     // no ownership
 
     Format( aSheet );
+    formatter.Finish();
 
     aSheet->GetScreen()->SetFileExists( true );
 }
@@ -1541,7 +1544,7 @@ void SCH_IO_KICAD_LEGACY::Format( SCH_SHEET* aSheet )
     const TITLE_BLOCK& tb = screen->GetTitleBlock();
     const PAGE_INFO& page = screen->GetPageSettings();
 
-    m_out->Print( 0, "$Descr %s %d %d%s\n", TO_UTF8( page.GetType() ),
+    m_out->Print( 0, "$Descr %s %d %d%s\n", TO_UTF8( page.GetTypeAsString() ),
                   (int)page.GetWidthMils(),
                   (int)page.GetHeightMils(),
                   !page.IsCustom() && page.IsPortrait() ? " portrait" : "" );
@@ -1561,9 +1564,6 @@ void SCH_IO_KICAD_LEGACY::Format( SCH_SHEET* aSheet )
     m_out->Print( 0, "Comment8 %s\n", EscapedUTF8( tb.GetComment( 7 ) ).c_str() );
     m_out->Print( 0, "Comment9 %s\n", EscapedUTF8( tb.GetComment( 8 ) ).c_str() );
     m_out->Print( 0, "$EndDescr\n" );
-
-    for( const std::shared_ptr<BUS_ALIAS>& alias : screen->GetBusAliases() )
-        saveBusAlias( alias );
 
     // Enforce item ordering
     auto cmp = []( const SCH_ITEM* a, const SCH_ITEM* b ) { return *a < *b; };
@@ -2118,8 +2118,7 @@ void SCH_IO_KICAD_LEGACY::EnumerateSymbolLib( wxArrayString&    aSymbolNameList,
                                               const wxString&   aLibraryPath,
                                               const std::map<std::string, UTF8>* aProperties )
 {
-    bool powerSymbolsOnly = ( aProperties &&
-                              aProperties->find( SYMBOL_LIB_TABLE::PropPowerSymsOnly ) != aProperties->end() );
+    bool powerSymbolsOnly = ( aProperties && aProperties->contains( SYMBOL_LIBRARY_ADAPTER::PropPowerSymsOnly ) );
 
     cacheLib( aLibraryPath, aProperties  );
 
@@ -2134,11 +2133,10 @@ void SCH_IO_KICAD_LEGACY::EnumerateSymbolLib( wxArrayString&    aSymbolNameList,
 
 
 void SCH_IO_KICAD_LEGACY::EnumerateSymbolLib( std::vector<LIB_SYMBOL*>& aSymbolList,
-                                              const wxString&   aLibraryPath,
-                                            const std::map<std::string, UTF8>* aProperties )
+                                              const wxString& aLibraryPath,
+                                              const std::map<std::string, UTF8>* aProperties )
 {
-    bool powerSymbolsOnly = ( aProperties &&
-                              aProperties->find( SYMBOL_LIB_TABLE::PropPowerSymsOnly ) != aProperties->end() );
+    bool powerSymbolsOnly = ( aProperties && aProperties->contains( SYMBOL_LIBRARY_ADAPTER::PropPowerSymsOnly ) );
 
     cacheLib( aLibraryPath, aProperties );
 

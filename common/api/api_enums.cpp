@@ -19,14 +19,23 @@
 
 #include <api/api_enums.h>
 #include <import_export.h>
+#include <api/common/types/base_types.pb.h>
 #include <api/common/types/enums.pb.h>
+#include <api/board/board.pb.h>
 #include <api/board/board_types.pb.h>
+#include <api/schematic/schematic_jobs.pb.h>
 #include <api/schematic/schematic_types.pb.h>
 
 #include <core/typeinfo.h>
+#include <eda_shape.h>
 #include <font/text_attributes.h>
+#include <jobs/job_export_sch_netlist.h>
+#include <jobs/job_export_sch_plot.h>
 #include <layer_ids.h>
+#include <page_info.h>
+#include <pin_type.h>
 #include <stroke_params.h>
+#include <widgets/report_severity.h>
 
 using namespace kiapi;
 using namespace kiapi::common;
@@ -39,6 +48,7 @@ KICAD_T FromProtoEnum( types::KiCadObjectType aValue )
     case types::KiCadObjectType::KOT_PCB_FOOTPRINT:         return PCB_FOOTPRINT_T;
     case types::KiCadObjectType::KOT_PCB_PAD:               return PCB_PAD_T;
     case types::KiCadObjectType::KOT_PCB_SHAPE:             return PCB_SHAPE_T;
+    case types::KiCadObjectType::KOT_PCB_BARCODE:           return PCB_BARCODE_T;
     case types::KiCadObjectType::KOT_PCB_REFERENCE_IMAGE:   return PCB_REFERENCE_IMAGE_T;
     case types::KiCadObjectType::KOT_PCB_FIELD:             return PCB_FIELD_T;
     case types::KiCadObjectType::KOT_PCB_GENERATOR:         return PCB_GENERATOR_T;
@@ -99,6 +109,7 @@ types::KiCadObjectType ToProtoEnum( KICAD_T aValue )
     case PCB_FOOTPRINT_T:        return types::KiCadObjectType::KOT_PCB_FOOTPRINT;
     case PCB_PAD_T:              return types::KiCadObjectType::KOT_PCB_PAD;
     case PCB_SHAPE_T:            return types::KiCadObjectType::KOT_PCB_SHAPE;
+    case PCB_BARCODE_T:          return types::KiCadObjectType::KOT_PCB_BARCODE;
     case PCB_REFERENCE_IMAGE_T:  return types::KiCadObjectType::KOT_PCB_REFERENCE_IMAGE;
     case PCB_FIELD_T:            return types::KiCadObjectType::KOT_PCB_FIELD;
     case PCB_GENERATOR_T:        return types::KiCadObjectType::KOT_PCB_GENERATOR;
@@ -372,27 +383,89 @@ board::types::BoardLayer ToProtoEnum( PCB_LAYER_ID aValue )
 
 
 template<>
-SCH_LAYER_ID FromProtoEnum( schematic::types::SchematicLayer aValue )
+JOB_PAGE_SIZE FromProtoEnum( schematic::jobs::SchematicJobPageSize aValue )
 {
     switch( aValue )
     {
-
+    case schematic::jobs::SchematicJobPageSize::SJPS_AUTO: return JOB_PAGE_SIZE::PAGE_SIZE_AUTO;
+    case schematic::jobs::SchematicJobPageSize::SJPS_A4:   return JOB_PAGE_SIZE::PAGE_SIZE_A4;
+    case schematic::jobs::SchematicJobPageSize::SJPS_A:    return JOB_PAGE_SIZE::PAGE_SIZE_A;
+    case schematic::jobs::SchematicJobPageSize::SJPS_UNKNOWN:
     default:
-        wxCHECK_MSG( false, SCH_LAYER_ID_START,
-                     "Unhandled case in FromProtoEnum<schematic::types::SchematicLayer>" );
+        wxCHECK_MSG( false, JOB_PAGE_SIZE::PAGE_SIZE_AUTO,
+                     "Unhandled case in FromProtoEnum<schematic::jobs::SchematicJobPageSize>" );
     }
 }
 
 
 template<>
-schematic::types::SchematicLayer ToProtoEnum( SCH_LAYER_ID aValue )
+schematic::jobs::SchematicJobPageSize ToProtoEnum( JOB_PAGE_SIZE aValue )
 {
     switch( aValue )
     {
-
+    case JOB_PAGE_SIZE::PAGE_SIZE_AUTO: return schematic::jobs::SchematicJobPageSize::SJPS_AUTO;
+    case JOB_PAGE_SIZE::PAGE_SIZE_A4:   return schematic::jobs::SchematicJobPageSize::SJPS_A4;
+    case JOB_PAGE_SIZE::PAGE_SIZE_A:    return schematic::jobs::SchematicJobPageSize::SJPS_A;
     default:
-        wxCHECK_MSG( false, schematic::types::SchematicLayer::SL_UNKNOWN,
-                     "Unhandled case in ToProtoEnum<SCH_LAYER_ID>");
+        wxCHECK_MSG( false, schematic::jobs::SchematicJobPageSize::SJPS_UNKNOWN,
+                     "Unhandled case in ToProtoEnum<JOB_PAGE_SIZE>" );
+    }
+}
+
+
+template<>
+JOB_EXPORT_SCH_NETLIST::FORMAT FromProtoEnum( schematic::jobs::SchematicNetlistFormat aValue )
+{
+    switch( aValue )
+    {
+    case schematic::jobs::SchematicNetlistFormat::SNF_KICAD_XML:
+        return JOB_EXPORT_SCH_NETLIST::FORMAT::KICADXML;
+    case schematic::jobs::SchematicNetlistFormat::SNF_KICAD_SEXPR:
+        return JOB_EXPORT_SCH_NETLIST::FORMAT::KICADSEXPR;
+    case schematic::jobs::SchematicNetlistFormat::SNF_ORCAD_PCB2:
+        return JOB_EXPORT_SCH_NETLIST::FORMAT::ORCADPCB2;
+    case schematic::jobs::SchematicNetlistFormat::SNF_CADSTAR:
+        return JOB_EXPORT_SCH_NETLIST::FORMAT::CADSTAR;
+    case schematic::jobs::SchematicNetlistFormat::SNF_SPICE:
+        return JOB_EXPORT_SCH_NETLIST::FORMAT::SPICE;
+    case schematic::jobs::SchematicNetlistFormat::SNF_SPICE_MODEL:
+        return JOB_EXPORT_SCH_NETLIST::FORMAT::SPICEMODEL;
+    case schematic::jobs::SchematicNetlistFormat::SNF_PADS:
+        return JOB_EXPORT_SCH_NETLIST::FORMAT::PADS;
+    case schematic::jobs::SchematicNetlistFormat::SNF_ALLEGRO:
+        return JOB_EXPORT_SCH_NETLIST::FORMAT::ALLEGRO;
+    case schematic::jobs::SchematicNetlistFormat::SNF_UNKNOWN:
+    default:
+        wxCHECK_MSG( false, JOB_EXPORT_SCH_NETLIST::FORMAT::KICADXML,
+                     "Unhandled case in FromProtoEnum<schematic::jobs::SchematicNetlistFormat>" );
+    }
+}
+
+
+template<>
+schematic::jobs::SchematicNetlistFormat ToProtoEnum( JOB_EXPORT_SCH_NETLIST::FORMAT aValue )
+{
+    switch( aValue )
+    {
+    case JOB_EXPORT_SCH_NETLIST::FORMAT::KICADXML:
+        return schematic::jobs::SchematicNetlistFormat::SNF_KICAD_XML;
+    case JOB_EXPORT_SCH_NETLIST::FORMAT::KICADSEXPR:
+        return schematic::jobs::SchematicNetlistFormat::SNF_KICAD_SEXPR;
+    case JOB_EXPORT_SCH_NETLIST::FORMAT::ORCADPCB2:
+        return schematic::jobs::SchematicNetlistFormat::SNF_ORCAD_PCB2;
+    case JOB_EXPORT_SCH_NETLIST::FORMAT::CADSTAR:
+        return schematic::jobs::SchematicNetlistFormat::SNF_CADSTAR;
+    case JOB_EXPORT_SCH_NETLIST::FORMAT::SPICE:
+        return schematic::jobs::SchematicNetlistFormat::SNF_SPICE;
+    case JOB_EXPORT_SCH_NETLIST::FORMAT::SPICEMODEL:
+        return schematic::jobs::SchematicNetlistFormat::SNF_SPICE_MODEL;
+    case JOB_EXPORT_SCH_NETLIST::FORMAT::PADS:
+        return schematic::jobs::SchematicNetlistFormat::SNF_PADS;
+    case JOB_EXPORT_SCH_NETLIST::FORMAT::ALLEGRO:
+        return schematic::jobs::SchematicNetlistFormat::SNF_ALLEGRO;
+    default:
+        wxCHECK_MSG( false, schematic::jobs::SchematicNetlistFormat::SNF_UNKNOWN,
+                     "Unhandled case in ToProtoEnum<JOB_EXPORT_SCH_NETLIST::FORMAT>" );
     }
 }
 
@@ -470,13 +543,14 @@ LINE_STYLE FromProtoEnum( types::StrokeLineStyle aValue )
 {
     switch( aValue )
     {
+    case types::StrokeLineStyle::SLS_UNKNOWN:
     case types::StrokeLineStyle::SLS_DEFAULT:    return LINE_STYLE::DEFAULT;
     case types::StrokeLineStyle::SLS_SOLID:      return LINE_STYLE::SOLID;
     case types::StrokeLineStyle::SLS_DASH:       return LINE_STYLE::DASH;
     case types::StrokeLineStyle::SLS_DOT:        return LINE_STYLE::DOT;
     case types::StrokeLineStyle::SLS_DASHDOT:    return LINE_STYLE::DASHDOT;
     case types::StrokeLineStyle::SLS_DASHDOTDOT: return LINE_STYLE::DASHDOTDOT;
-    case types::StrokeLineStyle::SLS_UNKNOWN:
+
     default:
         wxCHECK_MSG( false, LINE_STYLE::DEFAULT,
                      "Unhandled case in FromProtoEnum<types::StrokeLineStyle>" );
@@ -498,5 +572,192 @@ types::StrokeLineStyle ToProtoEnum( LINE_STYLE aValue )
     default:
         wxCHECK_MSG( false, types::StrokeLineStyle::SLS_UNKNOWN,
                      "Unhandled case in ToProtoEnum<LINE_STYLE>");
+    }
+}
+
+
+template<>
+FILL_T FromProtoEnum( types::GraphicFillType aValue )
+{
+    switch( aValue )
+    {
+    case types::GraphicFillType::GFT_UNFILLED:                          return FILL_T::NO_FILL;
+    case types::GraphicFillType::GFT_FILLED:                            return FILL_T::FILLED_SHAPE;
+    case types::GraphicFillType::GFT_FILLED_WITH_COLOR:                 return FILL_T::FILLED_WITH_COLOR;
+    case types::GraphicFillType::GFT_FILLED_WITH_BACKGROUND_BODY_COLOR: return FILL_T::FILLED_WITH_BG_BODYCOLOR;
+    case types::GraphicFillType::GFT_HATCH:                             return FILL_T::HATCH;
+    case types::GraphicFillType::GFT_REVERSE_HATCH:                     return FILL_T::REVERSE_HATCH;
+    case types::GraphicFillType::GFT_CROSS_HATCH:                       return FILL_T::CROSS_HATCH;
+    case types::GraphicFillType::GFT_UNKNOWN:
+    default:
+        wxCHECK_MSG( false, FILL_T::NO_FILL,
+                     "Unhandled case in FromProtoEnum<types::GraphicFillType>" );
+    }
+}
+
+
+template<>
+types::GraphicFillType ToProtoEnum( FILL_T aValue )
+{
+    switch( aValue )
+    {
+    case FILL_T::NO_FILL:                   return types::GraphicFillType::GFT_UNFILLED;
+    case FILL_T::FILLED_SHAPE:              return types::GraphicFillType::GFT_FILLED;
+    case FILL_T::FILLED_WITH_COLOR:         return types::GraphicFillType::GFT_FILLED_WITH_COLOR;
+    case FILL_T::FILLED_WITH_BG_BODYCOLOR:  return types::GraphicFillType::GFT_FILLED_WITH_BACKGROUND_BODY_COLOR;
+    case FILL_T::HATCH:                     return types::GraphicFillType::GFT_HATCH;
+    case FILL_T::REVERSE_HATCH:             return types::GraphicFillType::GFT_REVERSE_HATCH;
+    case FILL_T::CROSS_HATCH:               return types::GraphicFillType::GFT_CROSS_HATCH;
+    default:
+        wxCHECK_MSG( false, types::GraphicFillType::GFT_UNKNOWN,
+                     "Unhandled case in ToProtoEnum<FILL_T>" );
+    }
+}
+
+
+template<>
+ELECTRICAL_PINTYPE FromProtoEnum( types::ElectricalPinType aValue )
+{
+    switch( aValue )
+    {
+    case types::ElectricalPinType::EPT_INPUT:           return ELECTRICAL_PINTYPE::PT_INPUT;
+    case types::ElectricalPinType::EPT_OUTPUT:          return ELECTRICAL_PINTYPE::PT_OUTPUT;
+    case types::ElectricalPinType::EPT_BIDIRECTIONAL:   return ELECTRICAL_PINTYPE::PT_BIDI;
+    case types::ElectricalPinType::EPT_TRISTATE:        return ELECTRICAL_PINTYPE::PT_TRISTATE;
+    case types::ElectricalPinType::EPT_PASSIVE:         return ELECTRICAL_PINTYPE::PT_PASSIVE;
+    case types::ElectricalPinType::EPT_FREE:            return ELECTRICAL_PINTYPE::PT_NIC;
+    case types::ElectricalPinType::EPT_UNSPECIFIED:     return ELECTRICAL_PINTYPE::PT_UNSPECIFIED;
+    case types::ElectricalPinType::EPT_POWER_INPUT:     return ELECTRICAL_PINTYPE::PT_POWER_IN;
+    case types::ElectricalPinType::EPT_POWER_OUTPUT:    return ELECTRICAL_PINTYPE::PT_POWER_OUT;
+    case types::ElectricalPinType::EPT_OPEN_COLLECTOR:  return ELECTRICAL_PINTYPE::PT_OPENCOLLECTOR;
+    case types::ElectricalPinType::EPT_OPEN_EMITTER:    return ELECTRICAL_PINTYPE::PT_OPENEMITTER;
+    case types::ElectricalPinType::EPT_NO_CONNECT:      return ELECTRICAL_PINTYPE::PT_NC;
+    case types::ElectricalPinType::EPT_UNKNOWN:
+    default:
+        wxCHECK_MSG( false, ELECTRICAL_PINTYPE::PT_UNSPECIFIED,
+                     "Unhandled case in FromProtoEnum<types::ElectricalPinType>" );
+    }
+}
+
+
+template<>
+types::ElectricalPinType ToProtoEnum( ELECTRICAL_PINTYPE aValue )
+{
+    switch( aValue )
+    {
+    case ELECTRICAL_PINTYPE::PT_INPUT:         return types::ElectricalPinType::EPT_INPUT;
+    case ELECTRICAL_PINTYPE::PT_OUTPUT:        return types::ElectricalPinType::EPT_OUTPUT;
+    case ELECTRICAL_PINTYPE::PT_BIDI:          return types::ElectricalPinType::EPT_BIDIRECTIONAL;
+    case ELECTRICAL_PINTYPE::PT_TRISTATE:      return types::ElectricalPinType::EPT_TRISTATE;
+    case ELECTRICAL_PINTYPE::PT_PASSIVE:       return types::ElectricalPinType::EPT_PASSIVE;
+    case ELECTRICAL_PINTYPE::PT_NIC:           return types::ElectricalPinType::EPT_FREE;
+    case ELECTRICAL_PINTYPE::PT_UNSPECIFIED:   return types::ElectricalPinType::EPT_UNSPECIFIED;
+    case ELECTRICAL_PINTYPE::PT_POWER_IN:      return types::ElectricalPinType::EPT_POWER_INPUT;
+    case ELECTRICAL_PINTYPE::PT_POWER_OUT:     return types::ElectricalPinType::EPT_POWER_OUTPUT;
+    case ELECTRICAL_PINTYPE::PT_OPENCOLLECTOR: return types::ElectricalPinType::EPT_OPEN_COLLECTOR;
+    case ELECTRICAL_PINTYPE::PT_OPENEMITTER:   return types::ElectricalPinType::EPT_OPEN_EMITTER;
+    case ELECTRICAL_PINTYPE::PT_NC:            return types::ElectricalPinType::EPT_NO_CONNECT;
+    // Inherit shouldn't be serialized, it's an internal flag
+    case ELECTRICAL_PINTYPE::PT_INHERIT:
+    default:
+        wxCHECK_MSG( false, types::ElectricalPinType::EPT_UNKNOWN,
+                     "Unhandled case in ToProtoEnum<ELECTRICAL_PINTYPE>");
+    }
+}
+
+
+template<>
+types::RuleSeverity ToProtoEnum( SEVERITY aValue )
+{
+    switch( aValue )
+    {
+    case RPT_SEVERITY_WARNING:   return types::RuleSeverity::RS_WARNING;
+    case RPT_SEVERITY_ERROR:     return types::RuleSeverity::RS_ERROR;
+    case RPT_SEVERITY_EXCLUSION: return types::RuleSeverity::RS_EXCLUSION;
+    case RPT_SEVERITY_IGNORE:    return types::RuleSeverity::RS_IGNORE;
+    case RPT_SEVERITY_INFO:      return types::RuleSeverity::RS_INFO;
+    case RPT_SEVERITY_ACTION:    return types::RuleSeverity::RS_ACTION;
+    case RPT_SEVERITY_DEBUG:     return types::RuleSeverity::RS_DEBUG;
+    case RPT_SEVERITY_UNDEFINED: return types::RuleSeverity::RS_UNDEFINED;
+    default:
+        wxCHECK_MSG( false, types::RuleSeverity::RS_UNDEFINED,
+                     "Unhandled case in ToProtoEnum<SEVERITY>");
+    }
+}
+
+
+template<>
+SEVERITY FromProtoEnum( types::RuleSeverity aValue )
+{
+    switch( aValue )
+    {
+    case types::RuleSeverity::RS_WARNING:   return RPT_SEVERITY_WARNING;
+    case types::RuleSeverity::RS_ERROR:     return RPT_SEVERITY_ERROR;
+    case types::RuleSeverity::RS_EXCLUSION: return RPT_SEVERITY_EXCLUSION;
+    case types::RuleSeverity::RS_IGNORE:    return RPT_SEVERITY_IGNORE;
+    case types::RuleSeverity::RS_INFO:      return RPT_SEVERITY_INFO;
+    case types::RuleSeverity::RS_ACTION:    return RPT_SEVERITY_ACTION;
+    case types::RuleSeverity::RS_DEBUG:     return RPT_SEVERITY_DEBUG;
+    case types::RuleSeverity::RS_UNKNOWN:
+    default:
+        return RPT_SEVERITY_UNDEFINED;
+    }
+}
+
+
+template<>
+PAGE_SIZE_TYPE FromProtoEnum( types::PageSize aValue )
+{
+    switch( aValue )
+    {
+    case types::PageSize::PS_A5:         return PAGE_SIZE_TYPE::A5;
+    case types::PageSize::PS_A4:         return PAGE_SIZE_TYPE::A4;
+    case types::PageSize::PS_A3:         return PAGE_SIZE_TYPE::A3;
+    case types::PageSize::PS_A2:         return PAGE_SIZE_TYPE::A2;
+    case types::PageSize::PS_A1:         return PAGE_SIZE_TYPE::A1;
+    case types::PageSize::PS_A0:         return PAGE_SIZE_TYPE::A0;
+    case types::PageSize::PS_ANSI_A:     return PAGE_SIZE_TYPE::A;
+    case types::PageSize::PS_ANSI_B:     return PAGE_SIZE_TYPE::B;
+    case types::PageSize::PS_ANSI_C:     return PAGE_SIZE_TYPE::C;
+    case types::PageSize::PS_ANSI_D:     return PAGE_SIZE_TYPE::D;
+    case types::PageSize::PS_ANSI_E:     return PAGE_SIZE_TYPE::E;
+    case types::PageSize::PS_GERBER:     return PAGE_SIZE_TYPE::GERBER;
+    case types::PageSize::PS_US_LETTER:  return PAGE_SIZE_TYPE::USLetter;
+    case types::PageSize::PS_US_LEGAL:   return PAGE_SIZE_TYPE::USLegal;
+    case types::PageSize::PS_US_LEDGER:  return PAGE_SIZE_TYPE::USLedger;
+    case types::PageSize::PS_USER:       return PAGE_SIZE_TYPE::User;
+
+    case types::PageSize::PS_UNKNOWN:
+    default:
+        wxCHECK_MSG( false, PAGE_SIZE_TYPE::A3,
+                     "Unhandled case in FromProtoEnum<types::PageSize>" );
+    }
+}
+
+
+template<>
+types::PageSize ToProtoEnum( PAGE_SIZE_TYPE aValue )
+{
+    switch( aValue )
+    {
+    case PAGE_SIZE_TYPE::A5:        return types::PageSize::PS_A5;
+    case PAGE_SIZE_TYPE::A4:        return types::PageSize::PS_A4;
+    case PAGE_SIZE_TYPE::A3:        return types::PageSize::PS_A3;
+    case PAGE_SIZE_TYPE::A2:        return types::PageSize::PS_A2;
+    case PAGE_SIZE_TYPE::A1:        return types::PageSize::PS_A1;
+    case PAGE_SIZE_TYPE::A0:        return types::PageSize::PS_A0;
+    case PAGE_SIZE_TYPE::A:         return types::PageSize::PS_ANSI_A;
+    case PAGE_SIZE_TYPE::B:         return types::PageSize::PS_ANSI_B;
+    case PAGE_SIZE_TYPE::C:         return types::PageSize::PS_ANSI_C;
+    case PAGE_SIZE_TYPE::D:         return types::PageSize::PS_ANSI_D;
+    case PAGE_SIZE_TYPE::E:         return types::PageSize::PS_ANSI_E;
+    case PAGE_SIZE_TYPE::GERBER:    return types::PageSize::PS_GERBER;
+    case PAGE_SIZE_TYPE::USLetter: return types::PageSize::PS_US_LETTER;
+    case PAGE_SIZE_TYPE::USLegal:   return types::PageSize::PS_US_LEGAL;
+    case PAGE_SIZE_TYPE::USLedger:  return types::PageSize::PS_US_LEDGER;
+    case PAGE_SIZE_TYPE::User:      return types::PageSize::PS_USER;
+    default:
+        wxCHECK_MSG( false, types::PageSize::PS_UNKNOWN,
+                     "Unhandled case in ToProtoEnum<PAGE_SIZE_TYPE>" );
     }
 }
