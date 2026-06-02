@@ -832,6 +832,7 @@ GAL_SET GAL_SET::DefaultVisible()
 }
 
 
+#ifndef SWIG // Skip SWIG generators for the iterators because it requires a default constructor
 // Custom iterators for Copper and Non-Copper layers
 
 LSET::copper_layers_iterator::copper_layers_iterator( const BASE_SET& set, size_t index ) :
@@ -963,3 +964,5 @@ LSET& LSET::ClearUserDefinedLayers()
 
     return *this;
 }
+
+#endif

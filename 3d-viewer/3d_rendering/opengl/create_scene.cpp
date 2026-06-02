@@ -24,7 +24,6 @@
  */
 
 #include "render_3d_opengl.h"
-#include "../3d_placeholder_utils.h"
 #include <board.h>
 #include <footprint.h>
 #include <layer_range.h>
@@ -38,7 +37,6 @@
 #include <footprint_library_adapter.h>
 #include <eda_3d_viewer_frame.h>
 #include <project_pcb.h>
-#include <geometry/shape_poly_set.h>
 
 
 void RENDER_3D_OPENGL::addObjectTriangles( const FILLED_CIRCLE_2D* aCircle,
@@ -687,139 +685,11 @@ void RENDER_3D_OPENGL::backfillPostMachine()
 }
 
 
-void RENDER_3D_OPENGL::renderExtrudedBodies()
-{
-    if( !m_boardAdapter.GetBoard() )
-        return;
-
-    const float biuTo3d = m_boardAdapter.BiuTo3dUnits();
-
-    for( FOOTPRINT* fp : m_boardAdapter.GetBoard()->Footprints() )
-    {
-        if( !fp->HasExtrudedBody() )
-            continue;
-
-        const EXTRUDED_3D_BODY* body = fp->GetExtrudedBody();
-
-        if( !body->m_show || !m_boardAdapter.IsFootprintShown( fp ) )
-            continue;
-
-        SHAPE_POLY_SET outline;
-
-        if( !GetExtrusionOutline( fp, outline ) )
-            continue;
-
-        if( outline.OutlineCount() == 0 )
-            continue;
-
-        outline.Simplify();
-
-        VECTOR2I fpPos = fp->GetPosition();
-        ApplyExtrusionTransform( outline, body, fpPos );
-
-        bool  isBack = fp->IsFlipped();
-        float boardSurfaceZ = m_boardAdapter.GetFootprintZPos( isBack );
-        float standoff3d = body->m_standoff * biuTo3d;
-        float bodyThickness = ( body->m_height - body->m_standoff ) * biuTo3d * body->m_scale.z;
-        float zOffset3d = pcbIUScale.mmToIU( body->m_offset.z ) * biuTo3d;
-
-        float zBot, zTop;
-
-        if( !isBack )
-        {
-            zBot = boardSurfaceZ + standoff3d + zOffset3d;
-            zTop = zBot + bodyThickness;
-        }
-        else
-        {
-            zTop = boardSurfaceZ - standoff3d - zOffset3d;
-            zBot = zTop - bodyThickness;
-        }
-
-        CONTAINER_2D triContainer;
-        ConvertPolygonToTriangles( outline, triContainer, biuTo3d, *fp );
-
-        const LIST_OBJECT2D& triList = triContainer.GetList();
-
-        if( triList.empty() )
-            continue;
-
-        TRIANGLE_DISPLAY_LIST* layerTri = new TRIANGLE_DISPLAY_LIST( triList.size() );
-
-        for( const OBJECT_2D* obj : triList )
-        {
-            const TRIANGLE_2D* tri = static_cast<const TRIANGLE_2D*>( obj );
-            addTopAndBottomTriangles( layerTri, tri->GetP1(), tri->GetP2(), tri->GetP3(), zTop, zBot );
-        }
-
-        layerTri->AddToMiddleContours( outline, zBot, zTop, biuTo3d, false );
-
-        OPENGL_RENDER_LIST* renderList = new OPENGL_RENDER_LIST( *layerTri, m_circleTexture, zTop, zBot );
-
-        m_triangles.push_back( layerTri );
-        m_extrudedBodyLists[fp] = renderList;
-
-        // Create metallic pin extrusions for THT pads
-        // Start from opposite board side to standoff height
-        if( standoff3d > 0.0f )
-        {
-            SHAPE_POLY_SET pinPoly;
-
-            if( GetExtrusionPinOutline( fp, pinPoly ) )
-            {
-                ApplyExtrusionTransform( pinPoly, body, fpPos );
-
-                float oppositeSurfaceZ = m_boardAdapter.GetFootprintZPos( !isBack );
-                float protrusion = 1.0f * pcbIUScale.IU_PER_MM * biuTo3d;
-                float pinZBot, pinZTop;
-
-                if( !isBack )
-                {
-                    pinZBot = oppositeSurfaceZ - protrusion;
-                    pinZTop = boardSurfaceZ + standoff3d;
-                }
-                else
-                {
-                    pinZTop = oppositeSurfaceZ + protrusion;
-                    pinZBot = boardSurfaceZ - standoff3d;
-                }
-
-                CONTAINER_2D pinTriContainer;
-                ConvertPolygonToTriangles( pinPoly, pinTriContainer, biuTo3d, *fp );
-
-                const LIST_OBJECT2D& pinTriList = pinTriContainer.GetList();
-
-                if( !pinTriList.empty() )
-                {
-                    TRIANGLE_DISPLAY_LIST* pinLayerTri = new TRIANGLE_DISPLAY_LIST( pinTriList.size() );
-
-                    for( const OBJECT_2D* obj : pinTriList )
-                    {
-                        const TRIANGLE_2D* tri = static_cast<const TRIANGLE_2D*>( obj );
-                        addTopAndBottomTriangles( pinLayerTri, tri->GetP1(), tri->GetP2(), tri->GetP3(), pinZTop,
-                                                  pinZBot );
-                    }
-
-                    pinLayerTri->AddToMiddleContours( pinPoly, pinZBot, pinZTop, biuTo3d, false );
-
-                    OPENGL_RENDER_LIST* pinRenderList =
-                            new OPENGL_RENDER_LIST( *pinLayerTri, m_circleTexture, pinZTop, pinZBot );
-
-                    m_triangles.push_back( pinLayerTri );
-                    m_extrudedPadLists[fp] = pinRenderList;
-                }
-            }
-        }
-    }
-}
-
-
 void RENDER_3D_OPENGL::reload( REPORTER* aStatusReporter, REPORTER* aWarningReporter )
 {
     m_reloadRequested = false;
 
     freeAllLists();
-    createPlaceholderModel();
 
     OBJECT_2D_STATS::Instance().ResetStats();
 
@@ -1067,8 +937,6 @@ void RENDER_3D_OPENGL::reload( REPORTER* aStatusReporter, REPORTER* aWarningRepo
         aStatusReporter->Report( _( "Loading 3D models..." ) );
 
     load3dModels( aStatusReporter );
-
-    renderExtrudedBodies();
 
     if( aStatusReporter )
     {

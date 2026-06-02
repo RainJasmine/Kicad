@@ -33,6 +33,7 @@
 #include <bitmaps.h>
 #include <bitmap_store.h>
 #include <dialog_shim.h>
+#include <dialogs/dialog_autosave_recovery.h>
 #include <dialogs/git/panel_git_repos.h>
 #include <dialogs/panel_common_settings.h>
 #include <dialogs/panel_mouse_settings.h>
@@ -413,32 +414,45 @@ void EDA_BASE_FRAME::onAutoSaveTimer( wxTimerEvent& aEvent )
 }
 
 
-void EDA_BASE_FRAME::CheckForAutosaveFiles( const wxString& aProjectPath )
+static wxString buildRecoveredFileName( const wxFileName& aSrcFn, const wxDateTime& aStamp )
+{
+    wxString stamp = aStamp.IsValid() ? aStamp.Format( wxS( "%Y-%m-%d_%H%M%S" ) ) : wxString( wxS( "unknown-time" ) );
+
+    wxFileName recovered( aSrcFn );
+    recovered.SetName( aSrcFn.GetName() + wxS( ".recovered." ) + stamp );
+
+    int seq = 1;
+
+    while( recovered.FileExists() )
+    {
+        recovered.SetName( aSrcFn.GetName() + wxS( ".recovered." ) + stamp + wxString::Format( wxS( ".%d" ), seq++ ) );
+    }
+
+    return recovered.GetFullPath();
+}
+
+
+void EDA_BASE_FRAME::CheckForAutosaveFiles( const wxString& aProjectPath, const std::vector<wxString>& aExtensions )
 {
     COMMON_SETTINGS* cs = Pgm().GetCommonSettings();
 
     if( cs->m_Backup.format != BACKUP_FORMAT::ZIP )
         return;
 
-    auto stale = Kiway().LocalHistory().FindStaleAutosaveFiles( aProjectPath );
+    auto stale = Kiway().LocalHistory().FindStaleAutosaveFiles( aProjectPath, aExtensions );
 
     if( stale.empty() )
         return;
 
-    wxString fileList;
+    DIALOG_AUTOSAVE_RECOVERY dlg( this, stale );
+    dlg.ShowModal();
 
-    for( const auto& [autosavePath, srcPath] : stale )
-        fileList << wxS( "    " ) << wxFileName( srcPath ).GetFullName() << wxS( "\n" );
+    auto selected = dlg.GetSelectedStale();
 
-    wxString msg = wxString::Format( _( "Auto-saved file(s) exist that are newer than the saved "
-                                        "project files:\n\n%s\nRecover the auto-saved data?" ),
-                                     fileList );
-
-    int answer = wxMessageBox( msg, _( "Auto-Save Recovery" ), wxYES_NO | wxICON_QUESTION, this );
-
-    if( answer == wxYES )
+    switch( dlg.GetChoice() )
     {
-        for( const auto& [autosavePath, srcPath] : stale )
+    case AUTOSAVE_RECOVERY_CHOICE::RESTORE:
+        for( const auto& [autosavePath, srcPath] : selected )
         {
             if( !wxCopyFile( autosavePath, srcPath, true ) )
             {
@@ -448,11 +462,38 @@ void EDA_BASE_FRAME::CheckForAutosaveFiles( const wxString& aProjectPath )
 
             wxRemoveFile( autosavePath );
         }
-    }
-    else
-    {
-        // User declined; clear the autosave files so we don't re-prompt next time.
-        Kiway().LocalHistory().RemoveAutosaveFiles( aProjectPath );
+        break;
+
+    case AUTOSAVE_RECOVERY_CHOICE::KEEP_CURRENT:
+        for( const auto& [autosavePath, srcPath] : selected )
+        {
+            if( wxFileExists( autosavePath ) )
+                wxRemoveFile( autosavePath );
+        }
+        break;
+
+    case AUTOSAVE_RECOVERY_CHOICE::KEEP_BOTH:
+        for( const auto& [autosavePath, srcPath] : selected )
+        {
+            wxFileName autosaveFn( autosavePath );
+            wxFileName srcFn( srcPath );
+            wxDateTime stamp = autosaveFn.FileExists() ? autosaveFn.GetModificationTime() : wxDateTime::Now();
+
+            wxString target = buildRecoveredFileName( srcFn, stamp );
+
+            if( !wxCopyFile( autosavePath, target, true ) )
+            {
+                wxLogError( _( "Failed to write recovered file '%s'." ), target );
+                continue;
+            }
+
+            wxRemoveFile( autosavePath );
+        }
+        break;
+
+    case AUTOSAVE_RECOVERY_CHOICE::CANCEL:
+        // Leave all autosaves on disk so the dialog can offer them again next open.
+        break;
     }
 }
 

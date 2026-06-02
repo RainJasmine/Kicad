@@ -112,9 +112,6 @@ public:
      */
     bool SetImage( const wxImage& aImage );
 
-    void PackToBytes( std::string& aOutputBytes ) const;
-    bool UnpackFromBytes( const std::string& aInputBytes );
-
     void SwapData( REFERENCE_IMAGE& aItem );
 
     /**

@@ -166,10 +166,8 @@ bool PCB_IO_ALLEGRO::LoadBoardFromData( const uint8_t* aData, size_t aSize, BOAR
 
     wxLogTrace( traceAllegroPerf, wxT( "Phase 1 (binary parse): %.3f ms" ), phaseTimer.msecs() ); //format:allow
 
-    REPORTER& reporter = m_reporter ? *m_reporter : NULL_REPORTER::GetInstance();
-
     // Import Phase 2: turn the C++ structs into the KiCad BOARD
-    ALLEGRO::BOARD_BUILDER builder( *brdDb, aBoard, reporter, m_progressReporter, m_layer_mapping_handler );
+    ALLEGRO::BOARD_BUILDER builder( *brdDb, aBoard, *m_reporter, m_progressReporter, m_layer_mapping_handler );
 
     phaseTimer.Start();
     const bool phase2Ok = builder.BuildBoard();
@@ -180,7 +178,7 @@ bool PCB_IO_ALLEGRO::LoadBoardFromData( const uint8_t* aData, size_t aSize, BOAR
     if( !phase2Ok )
     {
         wxLogTrace( wxT( "KICAD_ALLEGRO" ), "Phase 2 board construction failed" );
-        reporter.Report( _( "Failed to build board from Allegro data" ), RPT_SEVERITY_ERROR );
+        m_reporter->Report( _( "Failed to build board from Allegro data" ), RPT_SEVERITY_ERROR );
         return false;
     }
 

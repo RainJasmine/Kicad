@@ -161,10 +161,6 @@ FOOTPRINT::FOOTPRINT( const FOOTPRINT& aFootprint ) :
     m_privateLayers    = aFootprint.m_privateLayers;
 
     m_3D_Drawings      = aFootprint.m_3D_Drawings;
-
-    if( aFootprint.m_extrudedBody )
-        m_extrudedBody = std::make_unique<EXTRUDED_3D_BODY>( *aFootprint.m_extrudedBody );
-
     m_initial_comments = aFootprint.m_initial_comments ? new wxArrayString( *aFootprint.m_initial_comments )
                                                        : nullptr;
 
@@ -347,7 +343,7 @@ void FOOTPRINT::Serialize( google::protobuf::Any &aContainer ) const
 
     types::Footprint* def = footprint.mutable_definition();
 
-    kiapi::common::PackLibId( def->mutable_id(), GetFPID() );
+    def->mutable_id()->CopyFrom( kiapi::common::LibIdToProto( GetFPID() ) );
     // anchor?
     def->mutable_attributes()->set_description( GetLibDescription().ToUTF8() );
     def->mutable_attributes()->set_keywords( GetKeywords().ToUTF8() );
@@ -452,7 +448,7 @@ bool FOOTPRINT::Deserialize( const google::protobuf::Any &aContainer )
     if( !aContainer.UnpackTo( &footprint ) )
         return false;
 
-    SetUuidDirect( KIID( footprint.id().value() ) );
+    const_cast<KIID&>( m_Uuid ) = KIID( footprint.id().value() );
     SetPosition( VECTOR2I( footprint.position().x_nm(), footprint.position().y_nm() ) );
     SetOrientationDegrees( footprint.orientation().value_degrees() );
     SetLayer( FromProtoEnum<PCB_LAYER_ID, types::BoardLayer>( footprint.layer() ) );
@@ -517,7 +513,7 @@ bool FOOTPRINT::Deserialize( const google::protobuf::Any &aContainer )
     SetAllowSolderMaskBridges( footprint.attributes().allow_soldermask_bridges() );
 
     // Definition
-    SetFPID( kiapi::common::UnpackLibId( footprint.definition().id() ) );
+    SetFPID( kiapi::common::LibIdFromProto( footprint.definition().id() ) );
     // TODO: how should anchor be handled?
     SetLibDescription( footprint.definition().attributes().description() );
     SetKeywords( footprint.definition().attributes().keywords() );
@@ -550,8 +546,6 @@ bool FOOTPRINT::Deserialize( const google::protobuf::Any &aContainer )
     }
 
     SetLocalZoneConnection( FromProtoEnum<ZONE_CONNECTION>( overrides.zone_connection() ) );
-
-    m_netTiePadGroups.clear();
 
     for( const types::NetTieDefinition& netTieMsg : footprint.definition().net_ties() )
     {
@@ -604,7 +598,22 @@ bool FOOTPRINT::Deserialize( const google::protobuf::Any &aContainer )
 
     // If this footprint is on a board, uncache all items before clearing
     if( BOARD* board = GetBoard() )
-        board->UncacheChildrenById( this );
+    {
+        for( PAD* pad : m_pads )
+            board->UncacheItemById( pad->m_Uuid );
+
+        for( BOARD_ITEM* item : m_drawings )
+            board->UncacheItemById( item->m_Uuid );
+
+        for( ZONE* zone : m_zones )
+            board->UncacheItemById( zone->m_Uuid );
+
+        for( PCB_GROUP* group : m_groups )
+            board->UncacheItemById( group->m_Uuid );
+
+        for( PCB_POINT* point : m_points )
+            board->UncacheItemById( point->m_Uuid );
+    }
 
     Pads().clear();
     GraphicalItems().clear();
@@ -819,7 +828,7 @@ bool FOOTPRINT::FixUuids()
     {
         if( item->m_Uuid == niluuid )
         {
-            item->ResetUuidDirect();
+            const_cast<KIID&>( item->m_Uuid ) = KIID();
             changed = true;
         }
     }
@@ -856,7 +865,25 @@ FOOTPRINT& FOOTPRINT::operator=( FOOTPRINT&& aOther )
 
     // If this footprint is on a board, uncache all items before deleting them
     if( BOARD* board = GetBoard() )
-        board->UncacheChildrenById( this );
+    {
+        for( PCB_FIELD* field : m_fields )
+            board->UncacheItemById( field->m_Uuid );
+
+        for( PAD* pad : m_pads )
+            board->UncacheItemById( pad->m_Uuid );
+
+        for( ZONE* zone : m_zones )
+            board->UncacheItemById( zone->m_Uuid );
+
+        for( BOARD_ITEM* item : m_drawings )
+            board->UncacheItemById( item->m_Uuid );
+
+        for( PCB_GROUP* group : m_groups )
+            board->UncacheItemById( group->m_Uuid );
+
+        for( PCB_POINT* point : m_points )
+            board->UncacheItemById( point->m_Uuid );
+    }
 
     // Move the fields
     for( PCB_FIELD* field : m_fields )
@@ -936,7 +963,6 @@ FOOTPRINT& FOOTPRINT::operator=( FOOTPRINT&& aOther )
 
     // Copy auxiliary data
     m_3D_Drawings      = aOther.m_3D_Drawings;
-    m_extrudedBody = std::move( aOther.m_extrudedBody );
     m_libDescription   = aOther.m_libDescription;
     m_keywords         = aOther.m_keywords;
     m_privateLayers    = aOther.m_privateLayers;
@@ -985,7 +1011,25 @@ FOOTPRINT& FOOTPRINT::operator=( const FOOTPRINT& aOther )
 
     // If this footprint is on a board, uncache all items before deleting them
     if( BOARD* board = GetBoard() )
-        board->UncacheChildrenById( this );
+    {
+        for( PCB_FIELD* field : m_fields )
+            board->UncacheItemById( field->m_Uuid );
+
+        for( PAD* pad : m_pads )
+            board->UncacheItemById( pad->m_Uuid );
+
+        for( ZONE* zone : m_zones )
+            board->UncacheItemById( zone->m_Uuid );
+
+        for( BOARD_ITEM* item : m_drawings )
+            board->UncacheItemById( item->m_Uuid );
+
+        for( PCB_GROUP* group : m_groups )
+            board->UncacheItemById( group->m_Uuid );
+
+        for( PCB_POINT* point : m_points )
+            board->UncacheItemById( point->m_Uuid );
+    }
 
     std::map<EDA_ITEM*, EDA_ITEM*> ptrMap;
 
@@ -1079,12 +1123,6 @@ FOOTPRINT& FOOTPRINT::operator=( const FOOTPRINT& aOther )
 
     // Copy auxiliary data
     m_3D_Drawings   = aOther.m_3D_Drawings;
-
-    if( aOther.m_extrudedBody )
-        m_extrudedBody = std::make_unique<EXTRUDED_3D_BODY>( *aOther.m_extrudedBody );
-    else
-        m_extrudedBody.reset();
-
     m_libDescription = aOther.m_libDescription;
     m_keywords      = aOther.m_keywords;
     m_privateLayers = aOther.m_privateLayers;
@@ -1477,9 +1515,8 @@ void FOOTPRINT::Add( BOARD_ITEM* aBoardItem, ADD_MODE aMode, bool aSkipConnectiv
     aBoardItem->SetParent( this );
 
     // If this footprint is on a board, update the board's item-by-id cache
-    // Skip caching for copy-constructed footprints (inherited board ptr but not a real member).
-    if( BOARD* board = GetBoard(); board && board->IsItemIndexedById( this ) )
-        board->CacheItemSubtreeById( aBoardItem );
+    if( BOARD* board = GetBoard() )
+        board->CacheItemById( aBoardItem );
 
     InvalidateGeometryCaches();
 }
@@ -1581,8 +1618,8 @@ void FOOTPRINT::Remove( BOARD_ITEM* aBoardItem, REMOVE_MODE aMode )
     }
 
     // If this footprint is on a board, update the board's item-by-id cache
-    if( BOARD* board = GetBoard(); board && board->IsItemIndexedById( this ) )
-        board->UncacheItemSubtreeById( aBoardItem );
+    if( BOARD* board = GetBoard() )
+        board->UncacheItemById( aBoardItem->m_Uuid );
 
     aBoardItem->SetFlags( STRUCT_DELETED );
 
@@ -2529,63 +2566,6 @@ unsigned FOOTPRINT::GetUniquePadCount( INCLUDE_NPTH_T aIncludeNPTH ) const
 }
 
 
-unsigned FOOTPRINT::GetNumberedPadCount() const
-{
-    // A pad number is "electrical" (i.e. maps to a schematic pin) when it is either:
-    //   - purely numeric:           "1", "42"
-    //   - BGA / alphanumeric style: up to two leading letters followed by digits, e.g.
-    //                               "A1", "B12", "AA3", "AB10"
-    // Mounting-pad designators such as "MP" do not end in a digit typically
-    // and are intentionally excluded.
-    auto isElectricalPadNumber = []( const wxString& num ) -> bool
-    {
-        if( num.IsEmpty() )
-            return false;
-
-        // Walk past an optional alphabetic prefix of at most two characters.
-        size_t i = 0;
-        while( i < num.size() && wxIsalpha( num[i] ) )
-            ++i;
-
-        // Prefix must be 0–2 letters; anything longer is not a pin number.
-        if( i > 2 )
-            return false;
-
-        // The remainder must be non-empty and consist entirely of digits.
-        if( i == num.size() )
-            return false;   // no digits at all (e.g. "MP", "GND")
-
-        for( size_t j = i; j < num.size(); ++j )
-        {
-            if( !wxIsdigit( num[j] ) )
-                return false;
-        }
-
-        return true;
-    };
-
-    std::set<wxString> counted;
-
-    for( const PAD* pad : m_pads )
-    {
-        // Must be on at least one copper layer.
-        if( ( pad->GetLayerSet() & LSET::AllCuMask() ).none() )
-            continue;
-
-        // Skip NPTH (mechanical holes).
-        if( pad->GetAttribute() == PAD_ATTRIB::NPTH )
-            continue;
-
-        const wxString& num = pad->GetNumber();
-
-        if( isElectricalPadNumber( num ) )
-            counted.insert( num );
-    }
-
-    return static_cast<unsigned>( counted.size() );
-}
-
-
 void FOOTPRINT::Add3DModel( FP_3DMODEL* a3DModel )
 {
     if( nullptr == a3DModel )
@@ -2593,21 +2573,6 @@ void FOOTPRINT::Add3DModel( FP_3DMODEL* a3DModel )
 
     if( !a3DModel->m_Filename.empty() )
         m_3D_Drawings.push_back( *a3DModel );
-}
-
-
-EXTRUDED_3D_BODY& FOOTPRINT::EnsureExtrudedBody()
-{
-    if( !m_extrudedBody )
-        m_extrudedBody = std::make_unique<EXTRUDED_3D_BODY>();
-
-    return *m_extrudedBody;
-}
-
-
-void FOOTPRINT::SetExtrudedBody( std::unique_ptr<EXTRUDED_3D_BODY> aBody )
-{
-    m_extrudedBody = std::move( aBody );
 }
 
 
@@ -2815,7 +2780,8 @@ std::vector<int> FOOTPRINT::ViewGetLayers() const
         break;
     }
 
-    layers.push_back( LAYER_CONFLICTS_SHADOW );
+    if( IsConflicting() )
+        layers.push_back( LAYER_CONFLICTS_SHADOW );
 
     // If there are no pads, and only drawings on a silkscreen layer, then report the silkscreen
     // layer as well so that the component can be edited with the silkscreen layer
@@ -3022,10 +2988,6 @@ void FOOTPRINT::Flip( const VECTOR2I& aCentre, FLIP_DIRECTION aFlipDirection )
         m_courtyard_cache->front_hash = m_courtyard_cache->front.GetHash();
     }
 
-    // Flip the extrusion source layer to match the new side.
-    if( m_extrudedBody && m_extrudedBody->m_layer != UNDEFINED_LAYER )
-        m_extrudedBody->m_layer = GetBoard()->FlipLayer( m_extrudedBody->m_layer );
-
     if( m_geometry_cache )
         m_geometry_cache->hull.Mirror( m_pos, FLIP_DIRECTION::TOP_BOTTOM );
 
@@ -3182,7 +3144,7 @@ BOARD_ITEM* FOOTPRINT::Duplicate( bool addToParentGroup, BOARD_COMMIT* aCommit )
 
     dupe->RunOnChildren( [&]( BOARD_ITEM* child )
                             {
-                                child->ResetUuidDirect();
+                                const_cast<KIID&>( child->m_Uuid ) = KIID();
                             },
                             RECURSE_MODE::RECURSE );
 
@@ -3200,7 +3162,7 @@ BOARD_ITEM* FOOTPRINT::DuplicateItem( bool addToParentGroup, BOARD_COMMIT* aComm
     case PCB_PAD_T:
     {
         PAD* new_pad = new PAD( *static_cast<const PAD*>( aItem ) );
-        new_pad->ResetUuidDirect();
+        const_cast<KIID&>( new_pad->m_Uuid ) = KIID();
 
         if( addToFootprint )
             m_pads.push_back( new_pad );
@@ -3212,7 +3174,7 @@ BOARD_ITEM* FOOTPRINT::DuplicateItem( bool addToParentGroup, BOARD_COMMIT* aComm
     case PCB_ZONE_T:
     {
         ZONE* new_zone = new ZONE( *static_cast<const ZONE*>( aItem ) );
-        new_zone->ResetUuidDirect();
+        const_cast<KIID&>( new_zone->m_Uuid ) = KIID();
 
         if( addToFootprint )
             m_zones.push_back( new_zone );
@@ -3224,7 +3186,7 @@ BOARD_ITEM* FOOTPRINT::DuplicateItem( bool addToParentGroup, BOARD_COMMIT* aComm
     case PCB_POINT_T:
     {
         PCB_POINT* new_point = new PCB_POINT( *static_cast<const PCB_POINT*>( aItem ) );
-        new_point->ResetUuidDirect();
+        const_cast<KIID&>( new_point->m_Uuid ) = KIID();
 
         if( addToFootprint )
             m_points.push_back( new_point );
@@ -3237,7 +3199,7 @@ BOARD_ITEM* FOOTPRINT::DuplicateItem( bool addToParentGroup, BOARD_COMMIT* aComm
     case PCB_TEXT_T:
     {
         PCB_TEXT* new_text = new PCB_TEXT( *static_cast<const PCB_TEXT*>( aItem ) );
-        new_text->ResetUuidDirect();
+        const_cast<KIID&>( new_text->m_Uuid ) = KIID();
 
         if( aItem->Type() == PCB_FIELD_T )
         {
@@ -3260,7 +3222,7 @@ BOARD_ITEM* FOOTPRINT::DuplicateItem( bool addToParentGroup, BOARD_COMMIT* aComm
     case PCB_SHAPE_T:
     {
         PCB_SHAPE* new_shape = new PCB_SHAPE( *static_cast<const PCB_SHAPE*>( aItem ) );
-        new_shape->ResetUuidDirect();
+        const_cast<KIID&>( new_shape->m_Uuid ) = KIID();
 
         if( addToFootprint )
             Add( new_shape );
@@ -3272,7 +3234,7 @@ BOARD_ITEM* FOOTPRINT::DuplicateItem( bool addToParentGroup, BOARD_COMMIT* aComm
     case PCB_BARCODE_T:
     {
         PCB_BARCODE* new_barcode = new PCB_BARCODE( *static_cast<const PCB_BARCODE*>( aItem ) );
-        new_barcode->ResetUuidDirect();
+        const_cast<KIID&>( new_barcode->m_Uuid ) = KIID();
 
         if( addToFootprint )
             Add( new_barcode );
@@ -3284,7 +3246,7 @@ BOARD_ITEM* FOOTPRINT::DuplicateItem( bool addToParentGroup, BOARD_COMMIT* aComm
     case PCB_REFERENCE_IMAGE_T:
     {
         PCB_REFERENCE_IMAGE* new_image = new PCB_REFERENCE_IMAGE( *static_cast<const PCB_REFERENCE_IMAGE*>( aItem ) );
-        new_image->ResetUuidDirect();
+        const_cast<KIID&>( new_image->m_Uuid ) = KIID();
 
         if( addToFootprint )
             Add( new_image );
@@ -3296,7 +3258,7 @@ BOARD_ITEM* FOOTPRINT::DuplicateItem( bool addToParentGroup, BOARD_COMMIT* aComm
     case PCB_TEXTBOX_T:
     {
         PCB_TEXTBOX* new_textbox = new PCB_TEXTBOX( *static_cast<const PCB_TEXTBOX*>( aItem ) );
-        new_textbox->ResetUuidDirect();
+        const_cast<KIID&>( new_textbox->m_Uuid ) = KIID();
 
         if( addToFootprint )
             Add( new_textbox );
@@ -3720,7 +3682,7 @@ void FOOTPRINT::BuildCourtyardCaches( OUTLINE_ERROR_HANDLER* aErrorHandler )
         // polygons.
         m_courtyard_cache->front.Inflate( -maxError, CORNER_STRATEGY::CHAMFER_ACUTE_CORNERS, maxError );
 
-        m_courtyard_cache->front.CacheTriangulation();
+        m_courtyard_cache->front.CacheTriangulation( false );
         auto max = std::max_element( front_width_histogram.begin(), front_width_histogram.end(),
                                      []( const std::pair<int, int>& a, const std::pair<int, int>& b )
                                      {
@@ -3749,7 +3711,7 @@ void FOOTPRINT::BuildCourtyardCaches( OUTLINE_ERROR_HANDLER* aErrorHandler )
         // Touching courtyards, or courtyards -at- the clearance distance are legal.
         m_courtyard_cache->back.Inflate( -maxError, CORNER_STRATEGY::CHAMFER_ACUTE_CORNERS, maxError );
 
-        m_courtyard_cache->back.CacheTriangulation();
+        m_courtyard_cache->back.CacheTriangulation( false );
         auto max = std::max_element( back_width_histogram.begin(), back_width_histogram.end(),
                                      []( const std::pair<int, int>& a, const std::pair<int, int>& b )
                                      {

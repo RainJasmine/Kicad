@@ -30,10 +30,13 @@
 
 #include <gal/color4d.h>
 #include <kicommon.h>
+#include <macros_swig.h>
 #include <stroke_params.h>
 #include <api/serializable.h>
 
 using KIGFX::COLOR4D;
+
+DECL_SET_FOR_SWIG( STRINGSET, wxString )
 
 /**
  * A collection of nets and the parameters used to route or test these nets.

@@ -87,32 +87,6 @@ void LIBGIT_BACKEND::Init()
 
 void LIBGIT_BACKEND::Shutdown()
 {
-    // Wait for any abandoned git cleanup threads to finish before tearing
-    // down libgit2.  A worker still inside libgit2 (for example, blocked on
-    // recv() under git_remote_fetch) would otherwise race teardown and
-    // invoke undefined behaviour.  Five seconds is long enough to cover a
-    // transport error timeout but short enough to avoid a perceptibly slow
-    // exit when the remote is truly unreachable.
-
-    constexpr auto kOrphanJoinTimeout = std::chrono::seconds( 5 );
-    size_t         stuck = m_orphanRegistry.JoinAll( kOrphanJoinTimeout );
-
-    if( stuck > 0 )
-    {
-        wxLogTrace( traceGit,
-                    "LIBGIT_BACKEND::Shutdown(): %zu orphan git thread(s) "
-                    "did not finish within %lld ms; skipping libgit2 shutdown",
-                    stuck,
-                    static_cast<long long>( kOrphanJoinTimeout.count() ) );
-
-        // A stuck worker is still executing inside libgit2.  Calling
-        // git_libgit2_shutdown() now would free state the worker is actively
-        // reading.  Leave libgit2 initialised and let the OS reclaim
-        // resources when the process exits.
-
-        return;
-    }
-
     git_libgit2_shutdown();
 }
 
@@ -309,14 +283,11 @@ PushResult LIBGIT_BACKEND::Push( GIT_PUSH_HANDLER* aHandler )
 
     PushResult result = PushResult::Success;
 
-    wxString    remoteName = common->GetRemoteNameOrDefault();
-    std::string remoteNameUtf8 = remoteName.utf8_string();
     git_remote* remote = nullptr;
 
-    if( git_remote_lookup( &remote, aHandler->GetRepo(), remoteNameUtf8.c_str() ) != 0 )
+    if( git_remote_lookup( &remote, aHandler->GetRepo(), "origin" ) != 0 )
     {
-        aHandler->AddErrorString( wxString::Format( _( "Could not lookup remote '%s'" ),
-                                                    remoteName ) );
+        aHandler->AddErrorString( _( "Could not lookup remote" ) );
         return PushResult::Error;
     }
 
@@ -784,16 +755,12 @@ bool LIBGIT_BACKEND::PerformFetch( GIT_PULL_HANDLER* aHandler, bool aSkipLock )
         return false;
     }
 
-    wxString    remoteName = aHandler->GetCommon()->GetRemoteNameOrDefault();
-    std::string remoteNameUtf8 = remoteName.utf8_string();
     git_remote* remote = nullptr;
 
-    if( git_remote_lookup( &remote, aHandler->GetRepo(), remoteNameUtf8.c_str() ) != 0 )
+    if( git_remote_lookup( &remote, aHandler->GetRepo(), "origin" ) != 0 )
     {
-        wxLogTrace( traceGit, "GIT_PULL_HANDLER::PerformFetch() - Failed to lookup remote '%s'",
-                    remoteName );
-        aHandler->AddErrorString( wxString::Format( _( "Could not lookup remote '%s'" ),
-                                                    remoteName ) );
+        wxLogTrace( traceGit, "GIT_PULL_HANDLER::PerformFetch() - Failed to lookup remote 'origin'" );
+        aHandler->AddErrorString( wxString::Format( _( "Could not lookup remote '%s'" ), "origin" ) );
         return false;
     }
 
@@ -814,8 +781,8 @@ bool LIBGIT_BACKEND::PerformFetch( GIT_PULL_HANDLER* aHandler, bool aSkipLock )
     {
         wxString errorMsg = KIGIT_COMMON::GetLastGitError();
         wxLogTrace( traceGit, "GIT_PULL_HANDLER::PerformFetch() - Failed to connect to remote: %s", errorMsg );
-        aHandler->AddErrorString( wxString::Format( _( "Could not connect to remote '%s': %s" ),
-                                                    remoteName, errorMsg ) );
+        aHandler->AddErrorString( wxString::Format( _( "Could not connect to remote '%s': %s" ), "origin",
+                                                    errorMsg ) );
         return false;
     }
 
@@ -827,8 +794,8 @@ bool LIBGIT_BACKEND::PerformFetch( GIT_PULL_HANDLER* aHandler, bool aSkipLock )
     {
         wxString errorMsg = KIGIT_COMMON::GetLastGitError();
         wxLogTrace( traceGit, "GIT_PULL_HANDLER::PerformFetch() - Failed to fetch from remote: %s", errorMsg );
-        aHandler->AddErrorString( wxString::Format( _( "Could not fetch data from remote '%s': %s" ),
-                                                    remoteName, errorMsg ) );
+        aHandler->AddErrorString( wxString::Format( _( "Could not fetch data from remote '%s': %s" ), "origin",
+                                                    errorMsg ) );
         return false;
     }
 

@@ -294,10 +294,6 @@ BOOST_AUTO_TEST_CASE( StringFunctions )
         { "@{afterfirst(\"hello.world.txt\", \".\")}", "world.txt", false },
         { "@{afterlast(\"hello.world.txt\", \".\")}", "txt", false },
         { "@{beforefirst(${text}, \" \")}", "Hello", false },
-
-        { "@{replace(\"Hello World\", \"l\", \"L\")}", "HeLLo WorLd", false },
-        { "@{replace(\"Hello World\", \"llo\", \"y there\")}", "Hey there World", false },
-        { "@{replace(${text}, \"l\", \"L\")}", "HeLLo WorLd", false },
     };
 
     for( const auto& testCase : cases )

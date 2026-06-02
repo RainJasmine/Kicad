@@ -517,7 +517,7 @@ TOOL_ACTION SCH_ACTIONS::placeNoConnect( TOOL_ACTION_ARGS()
         .Scope( AS_GLOBAL )
         .DefaultHotkey( 'Q' )
         .LegacyHotkeyName( "Add No Connect Flag" )
-        .FriendlyName( _( "Place/Remove No Connect Flags" ) )
+        .FriendlyName( _( "Place No Connect Flags" ) )
         .ToolbarState( TOOLBAR_STATE::TOGGLE )
         .Icon( BITMAPS::noconn )
         .Flags( AF_ACTIVATE )
@@ -824,27 +824,6 @@ TOOL_ACTION SCH_ACTIONS::swapUnitLabels( TOOL_ACTION_ARGS()
         .FriendlyName( _( "Swap Unit Labels" ) )
         .Tooltip( _( "Swap labels between selected units" ) )
         .Icon( BITMAPS::swap ) );
-
-TOOL_ACTION SCH_ACTIONS::toggleLock( TOOL_ACTION_ARGS()
-        .Name( "eeschema.InteractiveEdit.toggleLock" )
-        .Scope( AS_GLOBAL )
-        .FriendlyName( _( "Toggle Lock" ) )
-        .Tooltip( _( "Lock or unlock selected items" ) )
-        .Icon( BITMAPS::lock_unlock ) );
-
-TOOL_ACTION SCH_ACTIONS::lock( TOOL_ACTION_ARGS()
-        .Name( "eeschema.InteractiveEdit.lock" )
-        .Scope( AS_GLOBAL )
-        .FriendlyName( _( "Lock" ) )
-        .Tooltip( _( "Prevent items from being moved and/or resized on the canvas" ) )
-        .Icon( BITMAPS::locked ) );
-
-TOOL_ACTION SCH_ACTIONS::unlock( TOOL_ACTION_ARGS()
-        .Name( "eeschema.InteractiveEdit.unlock" )
-        .Scope( AS_GLOBAL )
-        .FriendlyName( _( "Unlock" ) )
-        .Tooltip( _( "Allow items to be moved and/or resized on the canvas" ) )
-        .Icon( BITMAPS::unlocked ) );
 
 TOOL_ACTION SCH_ACTIONS::properties( TOOL_ACTION_ARGS()
         .Name( "eeschema.InteractiveEdit.properties" )
@@ -1802,7 +1781,7 @@ TOOL_ACTION SCH_ACTIONS::removeVariant( TOOL_ACTION_ARGS()
         .FriendlyName( _( "Remove Design Variant..." ) )
         .Tooltip( _( "Remove an existing design variant from the schematic." ) ) );
 
-TOOL_ACTION SCH_ACTIONS::editVariantDescription( TOOL_ACTION_ARGS()
+TOOL_ACTION SCH_ACTIONS::editVariantDescription( TOOL_ACTION_ARGS()                                                   
         .Name( "eeschema.EditorControl.editVariantDescription" )
         .Scope( AS_GLOBAL )
         .FriendlyName( _( "Edit Variant Description..." ) )

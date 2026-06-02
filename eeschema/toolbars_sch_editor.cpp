@@ -32,6 +32,7 @@
 #include <bitmaps.h>
 #include <eeschema_id.h>
 #include <pgm_base.h>
+#include <python_scripting.h>
 #include <tool/action_menu.h>
 #include <tool/tool_manager.h>
 #include <settings/common_settings.h>
@@ -216,8 +217,6 @@ std::optional<TOOLBAR_CONFIGURATION> SCH_EDIT_TOOLBAR_SETTINGS::DefaultToolbarCo
         // TODO (ISM): Move this to individual actions for each script
         config.AppendControl( ACTION_TOOLBAR_CONTROLS::ipcScripting );
 
-        config.AppendControl( ACTION_TOOLBAR_CONTROLS::overrideLocks );
-
         break;
     }
 
@@ -254,6 +253,8 @@ void SCH_EDIT_FRAME::configureToolbars()
     auto pluginControlFactory =
             [this]( ACTION_TOOLBAR* aToolbar )
             {
+                // Add scripting console and API plugins
+                bool scriptingAvailable = SCRIPTING::IsWxAvailable();
 
 #ifdef KICAD_IPC_API
                 bool haveApiPlugins = Pgm().GetCommonSettings()->m_Api.enable_server
@@ -262,10 +263,12 @@ void SCH_EDIT_FRAME::configureToolbars()
                 bool haveApiPlugins = false;
 #endif
 
-                if( haveApiPlugins )
+                if( scriptingAvailable || haveApiPlugins )
                 {
                     aToolbar->AddScaledSeparator( aToolbar->GetParent() );
-                    AddApiPluginTools( aToolbar );
+
+                    if( haveApiPlugins )
+                        AddApiPluginTools( aToolbar );
                 }
             };
 

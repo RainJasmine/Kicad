@@ -143,9 +143,9 @@ if( APPLE )
         )
 
     set_target_properties( pcb_calculator PROPERTIES INSTALL_RPATH
-            "@executable_path/../Frameworks" )
+            "@executable_path/../Frameworks;@executable_path/../Frameworks/Python.framework" )
     set_target_properties( pcb_calculator_kiface PROPERTIES INSTALL_RPATH
-            "@executable_path/../Frameworks" )
+            "@executable_path/../Frameworks;@executable_path/../Frameworks/Python.framework" )
     set_target_properties( pcb_calculator_kiface PROPERTIES BUILD_WITH_INSTALL_RPATH 1 )
 
     # put individual bundle outside of main bundle as a first step

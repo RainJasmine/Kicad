@@ -66,6 +66,7 @@ public:
     void OnShowErrorsButtonClick( wxCommandEvent& event ) override;
 
 private:
+    void onPluginAvailabilityChanged( wxCommandEvent& aEvt );
 
     enum GRID_COLUMNS
     {
@@ -82,6 +83,5 @@ private:
 
     void SwapRows( int aRowA, int aRowB );
     void SelectRow( int aRow );
-    void onPluginAvailabilityChanged( wxCommandEvent& aEvt );
 };
 

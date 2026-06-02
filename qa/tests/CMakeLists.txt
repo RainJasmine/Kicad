@@ -48,31 +48,35 @@ elseif ( MSVC )
     set( EXTRA_PYTEST_ENVIRONMENT "FONTCONFIG_PATH=${CMAKE_SOURCE_DIR}/qa/resources/windows/fonts/" )
 endif()
 
-# Use pytest-xdist for parallel CLI test execution when available
-execute_process(
-    COMMAND ${PYTHON_EXECUTABLE} -c "import xdist"
-    RESULT_VARIABLE PYTEST_XDIST_RESULT
-    OUTPUT_QUIET
-    ERROR_QUIET
+if( NOT (MSVC AND CMAKE_BUILD_TYPE STREQUAL "Debug") )
+# qa_python will never work under MSVC + Debug because we only have the Release mode python.exe
+# but the kicad binaries are linked to the debug mode python
+# Test that runs the QA tests through scripting
+add_test(NAME qa_python
+    COMMAND ${PYTHON_EXECUTABLE} -m pytest ${CMAKE_CURRENT_SOURCE_DIR}/pcbnewswig ${PYTEST_ARGS_QAPYTHON}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-if( PYTEST_XDIST_RESULT EQUAL 0 )
-    set( PYTEST_PARALLEL_ARGS -n auto )
-    message( STATUS "pytest-xdist found, qa_cli tests will run in parallel" )
-else()
-    set( PYTEST_PARALLEL_ARGS "" )
-    message( STATUS "pytest-xdist not found, qa_cli tests will run sequentially" )
+set_tests_properties( qa_python
+    PROPERTIES
+        ENVIRONMENT "PYTHONPATH=${CMAKE_BINARY_DIR}/pcbnew;${PYTHON_QA_PATH};${EXTRA_PYTEST_ENVIRONMENT}"
+)
+
+setup_qa_env( qa_python )
 endif()
 
 add_test(NAME qa_cli
-    COMMAND ${PYTHON_EXECUTABLE} -m pytest ${PYTEST_PARALLEL_ARGS}
-            ${CMAKE_CURRENT_SOURCE_DIR}/cli ${PYTEST_ARGS_QACLI}
+    COMMAND ${PYTHON_EXECUTABLE} -m pytest ${CMAKE_CURRENT_SOURCE_DIR}/cli ${PYTEST_ARGS_QACLI}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 set_tests_properties( qa_cli
     PROPERTIES
-        ENVIRONMENT "KICAD_CLI=$<TARGET_FILE:kicad-cli>;PYTHONPATH=${CMAKE_BINARY_DIR}/pcbnew;${PYTHON_QA_PATH};${EXTRA_PYTEST_ENVIRONMENT}"
+        ENVIRONMENT "PYTHONPATH=${CMAKE_BINARY_DIR}/pcbnew;${PYTHON_QA_PATH};${EXTRA_PYTEST_ENVIRONMENT}"
 )
 
 setup_qa_env( qa_cli )
+
+# Target to install python dependencies for QA via pip
+add_custom_target( qa_python_deps
+        COMMAND ${PYTHON_EXECUTABLE} -m pip install -r ${CMAKE_CURRENT_SOURCE_DIR}/requirements.txt )

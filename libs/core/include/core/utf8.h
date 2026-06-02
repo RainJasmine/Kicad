@@ -219,6 +219,7 @@ public:
     std::string::const_iterator begin()         const   { return m_s.begin(); }
     std::string::const_iterator end()           const   { return m_s.end(); }
 
+#ifndef SWIG
     /**
      * uni_iter
      * is a non-mutating iterator that walks through unicode code points in the UTF8 encoded
@@ -324,6 +325,7 @@ public:
      * @return the count of bytes consumed.
      */
     static int uni_forward( const unsigned char* aSequence, unsigned* aResult = nullptr );
+#endif  // SWIG
 
 protected:
     std::string m_s;

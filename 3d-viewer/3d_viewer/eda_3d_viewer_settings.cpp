@@ -408,7 +408,6 @@ EDA_3D_VIEWER_SETTINGS::EDA_3D_VIEWER_SETTINGS() :
                                             &m_Render.use_board_editor_copper_colors, false ) );
     m_params.emplace_back( new PARAM<bool>( "render.preview_show_board_body",
                                             &m_Render.preview_show_board_body, true ) );
-    m_params.emplace_back( new PARAM<bool>( "render.show_missing_models", &m_Render.show_missing_models, false ) );
     m_params.emplace_back( new PARAM<bool>( "camera.animation_enabled",
                                             &m_Camera.animation_enabled, true ) );
     m_params.emplace_back( new PARAM<int>( "camera.moving_speed_multiplier",

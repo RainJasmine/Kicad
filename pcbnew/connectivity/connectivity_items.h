@@ -437,7 +437,7 @@ private:
     SHAPE_LINE_CHAIN                    m_outline;       ///< Cached copy of the zone outline
     ///< Owned deep copies of triangulated polygons (includes vertex storage that TRI references)
     std::vector<std::unique_ptr<SHAPE_POLY_SET::TRIANGULATED_POLYGON>> m_triangulatedPolys;
-    KIRTREE::DYNAMIC_RTREE<const SHAPE*, int, 2> m_rTree;
+    RTree<const SHAPE*, int, 2, double> m_rTree;
 };
 
 

@@ -40,7 +40,6 @@
 #include <zone.h>
 #include <footprint_library_adapter.h>
 #include "step_pcb_model.h"
-#include <3d_rendering/3d_placeholder_utils.h>
 
 #include <pgm_base.h>
 #include <reporter.h>
@@ -80,14 +79,14 @@ protected:
 #if OCC_VERSION_HEX < OCC_VERSION_MIN
     virtual void Send( const TCollection_ExtendedString& theString,
                        const Message_Gravity theGravity,
-                       const Standard_Boolean theToPutEol ) const override
+                       const bool theToPutEol ) const override
     {
         Send( TCollection_AsciiString( theString ), theGravity, theToPutEol );
     }
 
     virtual void Send( const TCollection_AsciiString& theString,
                        const Message_Gravity theGravity,
-                       const Standard_Boolean theToPutEol ) const override
+                       const bool theToPutEol ) const override
 #else
     virtual void send( const TCollection_AsciiString& theString,
                        const Message_Gravity theGravity ) const override
@@ -649,62 +648,6 @@ bool EXPORTER_STEP::buildFootprint3DShapes( FOOTPRINT* aFootprint, const VECTOR2
                                 RPT_SEVERITY_WARNING );
         }
 
-    }
-
-    if( aFootprint->HasExtrudedBody() && aFootprint->GetExtrudedBody()->m_show )
-    {
-        const EXTRUDED_3D_BODY* body = aFootprint->GetExtrudedBody();
-        SHAPE_POLY_SET          outline;
-
-        if( GetExtrusionOutline( aFootprint, outline ) && outline.OutlineCount() > 0 )
-        {
-            VECTOR2I fpPos = aFootprint->GetPosition();
-            ApplyExtrusionTransform( outline, body, fpPos );
-
-            bool   bottomSide = aFootprint->GetLayer() == B_Cu;
-            double standoff = pcbIUScale.IUTomm( body->m_standoff ) + body->m_offset.z;
-            double bodyThickness = pcbIUScale.IUTomm( body->m_height - body->m_standoff ) * body->m_scale.z;
-            double height = standoff + bodyThickness;
-
-            KIGFX::COLOR4D c = body->m_color;
-
-            if( c == KIGFX::COLOR4D::UNSPECIFIED )
-                c = EXTRUDED_3D_BODY::GetDefaultColor( body->m_material );
-
-            uint32_t colorKey = EXTRUDED_3D_BODY::PackColorKey( c );
-
-            try
-            {
-                if( m_pcbModel->AddExtrudedBody( outline, bottomSide, standoff, height, aOrigin, colorKey,
-                                                 body->m_material, aFootprint->GetReference() ) )
-                {
-                    hasdata = true;
-                }
-            }
-            catch( const Standard_Failure& e )
-            {
-                m_reporter->Report( wxString::Format( _( "Could not add extruded body for %s.\n"
-                                                         "OpenCASCADE error: %s\n" ),
-                                                      aFootprint->GetReference(), e.GetMessageString() ),
-                                    RPT_SEVERITY_WARNING );
-            }
-
-            // Add metallic pin extrusions for through-hole pads
-            if( standoff > 0.0 )
-            {
-                try
-                {
-                    m_pcbModel->AddExtrudedPins( aFootprint, bottomSide, standoff, aOrigin );
-                }
-                catch( const Standard_Failure& e )
-                {
-                    m_reporter->Report( wxString::Format( _( "Could not add extruded pins for %s.\n"
-                                                             "OpenCASCADE error: %s\n" ),
-                                                          aFootprint->GetReference(), e.GetMessageString() ),
-                                        RPT_SEVERITY_WARNING );
-                }
-            }
-        }
     }
 
     return hasdata;

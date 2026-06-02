@@ -285,6 +285,46 @@ bool EDA_DRAW_FRAME::LockFile( const wxString& aFileName )
 }
 
 
+void EDA_DRAW_FRAME::ScriptingConsoleEnableDisable()
+{
+    KIWAY_PLAYER* frame = Kiway().Player( FRAME_PYTHON, false );
+
+    wxRect  rect = GetScreenRect();
+    wxPoint center = rect.GetPosition() + rect.GetSize() / 2;
+
+    if( !frame )
+    {
+        frame = Kiway().Player( FRAME_PYTHON, true, Kiway().GetTop() );
+
+        // If we received an error in the CTOR due to Python-ness, don't crash
+        if( !frame )
+            return;
+
+        if( !frame->IsVisible() )
+            frame->Show( true );
+
+        // On Windows, Raise() does not bring the window on screen, when iconized
+        if( frame->IsIconized() )
+            frame->Iconize( false );
+
+        frame->Raise();
+        frame->SetPosition( center - frame->GetSize() / 2 );
+
+        return;
+    }
+
+    frame->Show( !frame->IsVisible() );
+    frame->SetPosition( center - frame->GetSize() / 2 );
+}
+
+
+bool EDA_DRAW_FRAME::IsScriptingConsoleVisible()
+{
+    KIWAY_PLAYER* frame = Kiway().Player( FRAME_PYTHON, false );
+    return frame && frame->IsVisible();
+}
+
+
 void EDA_DRAW_FRAME::unitsChangeRefresh()
 {
     // Notify all tools the units have changed

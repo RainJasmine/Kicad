@@ -35,6 +35,7 @@ KINNG_REQUEST_SERVER::KINNG_REQUEST_SERVER( const std::string& aSocketUrl ) :
         m_socketUrl( aSocketUrl ),
         m_callback()
 {
+    Start();
 }
 
 
@@ -52,11 +53,7 @@ bool KINNG_REQUEST_SERVER::Running() const
 
 bool KINNG_REQUEST_SERVER::Start()
 {
-    if( m_thread.joinable() )
-        return true;
-
     m_shutdown.store( false );
-    m_pendingReply.clear();
     m_thread = std::thread( [&]() { listenThread(); } );
     return true;
 }
@@ -114,23 +111,15 @@ void KINNG_REQUEST_SERVER::listenThread()
 
     nng_socket_set_ms( socket, NNG_OPT_RECVTIMEO, 500 );
 
-    retCode = nng_listener_start( listener, 0 );
-
-    if( retCode != 0 )
-    {
-        wxLogTrace( TraceNng,
-                    wxString::Format( wxS( "Got error code %d from nng_listener_start!" ),
-                                      retCode ) );
-        nng_close( socket );
-        return;
-    }
+    nng_listener_start( listener, 0 );
 
     wxLogTrace( TraceNng, wxS( "KINNG_REQUEST_SERVER listener has started" ) );
 
     while( !m_shutdown.load() )
     {
         char*    buf = nullptr;
-        size_t   sz = 0;
+        size_t   sz;
+        uint64_t val;
 
         retCode = nng_recv( socket, &buf, &sz, NNG_FLAG_ALLOC );
 
@@ -139,26 +128,19 @@ void KINNG_REQUEST_SERVER::listenThread()
 
         if( retCode != 0 )
         {
-            if( buf )
-                nng_free( buf, sz );
-
+            nng_free( buf, sz );
             wxLogTrace( TraceNng,
                         wxString::Format( wxS( "Got error code %d from nngc_recv!" ), retCode ) );
             break;
         }
 
         m_sharedMessage.assign( buf, sz );
-        nng_free( buf, sz );
-        buf = nullptr;
 
         if( m_callback )
             m_callback( &m_sharedMessage );
 
         std::unique_lock<std::mutex> lock( m_mutex );
-        m_replyReady.wait( lock, [&]() { return m_shutdown.load() || !m_pendingReply.empty(); } );
-
-        if( m_shutdown.load() )
-            break;
+        m_replyReady.wait( lock, [&]() { return !m_pendingReply.empty(); } );
 
         retCode = nng_send( socket, const_cast<std::string::value_type*>( m_pendingReply.c_str() ),
                             m_pendingReply.length(), 0 );
@@ -168,6 +150,7 @@ void KINNG_REQUEST_SERVER::listenThread()
             wxLogTrace( TraceNng,
                         wxString::Format( wxS( "Got error code %d from nng_send!" ), retCode ) );
         }
+
         m_pendingReply.clear();
     }
 

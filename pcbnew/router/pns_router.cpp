@@ -96,10 +96,8 @@ void ROUTER::SyncWorld()
 {
     ClearWorld();
 
-    m_world = std::make_unique<NODE>();
-    m_world->BeginBulkAdd();
+    m_world = std::make_unique<NODE>( );
     m_iface->SyncWorld( m_world.get() );
-    m_world->FinalizeBulkAdd();
     m_world->FixupVirtualVias();
 }
 

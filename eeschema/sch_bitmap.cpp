@@ -38,9 +38,8 @@
 #include <sch_draw_panel.h>
 #include <settings/color_settings.h>
 #include <trigo.h>
-#include <api/api_utils.h>
-#include <api/schematic/schematic_types.pb.h>
 
+#include <wx/mstream.h>
 #include <properties/property.h>
 #include <properties/property_mgr.h>
 
@@ -118,53 +117,6 @@ void SCH_BITMAP::SetPosition( const VECTOR2I& aPosition )
 void SCH_BITMAP::Move( const VECTOR2I& aMoveVector )
 {
     SetPosition( GetPosition() + aMoveVector );
-}
-
-
-void SCH_BITMAP::Serialize( google::protobuf::Any& aContainer ) const
-{
-    using namespace kiapi::common;
-
-    kiapi::schematic::types::SchematicImage image;
-
-    image.mutable_id()->set_value( m_Uuid.AsStdString() );
-    PackVector2( *image.mutable_position(), m_referenceImage.GetPosition(), schIUScale );
-    PackVector2( *image.mutable_transform_origin_offset(), m_referenceImage.GetTransformOriginOffset(), schIUScale );
-
-    image.mutable_image_scale()->set_value( m_referenceImage.GetImageScale() );
-    image.set_locked( IsLocked() ? types::LockedState::LS_LOCKED : types::LockedState::LS_UNLOCKED );
-
-    m_referenceImage.PackToBytes( *image.mutable_image_data() );
-
-    aContainer.PackFrom( image );
-}
-
-
-bool SCH_BITMAP::Deserialize( const google::protobuf::Any& aContainer )
-{
-    using namespace kiapi::common;
-
-    kiapi::schematic::types::SchematicImage image;
-
-    if( !aContainer.UnpackTo( &image ) )
-        return false;
-
-    const_cast<KIID&>( m_Uuid ) = KIID( image.id().value() );
-
-    if( !image.image_data().empty() )
-    {
-        if( !m_referenceImage.UnpackFromBytes( image.image_data() ) )
-            return false;
-    }
-
-    if( image.has_image_scale() )
-        m_referenceImage.SetImageScale( image.image_scale().value() );
-
-    SetPosition( UnpackVector2( image.position(), schIUScale ) );
-    m_referenceImage.SetTransformOriginOffset( UnpackVector2( image.transform_origin_offset(), schIUScale ) );
-
-    SetLocked( image.locked() == types::LockedState::LS_LOCKED );
-    return true;
 }
 
 

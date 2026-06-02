@@ -64,8 +64,6 @@ public:
     static SELECTION_CONDITION MultipleSymbolsOrPower;
     static SELECTION_CONDITION AllPins;
     static SELECTION_CONDITION AllPinsOrSheetPins;
-    static SELECTION_CONDITION HasLockedItems;
-    static SELECTION_CONDITION HasUnlockedItems;
 };
 
 
@@ -227,12 +225,6 @@ public:
                         const std::vector<SCH_ITEM*>& items );
 
     SCH_SELECTION_FILTER_OPTIONS& GetFilter() { return m_filter; }
-
-    /**
-     * Remove locked items from the current selection.
-     * Used by tools that should not operate on locked items (move, rotate, delete, etc.)
-     */
-    void FilterSelectionForLockedItems();
 
 protected:
     SELECTION& selection() override { return m_selection; }

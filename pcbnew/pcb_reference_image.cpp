@@ -44,6 +44,7 @@
 #include <trigo.h>
 
 #include <string>
+#include <wx/mstream.h>
 #include <google/protobuf/any.pb.h>
 #include <properties/property.h>
 #include <properties/property_mgr.h>
@@ -191,7 +192,21 @@ void PCB_REFERENCE_IMAGE::Serialize( google::protobuf::Any& aContainer ) const
     refImage.set_locked( IsLocked() ? kiapi::common::types::LockedState::LS_LOCKED
                                     : kiapi::common::types::LockedState::LS_UNLOCKED );
 
-    m_referenceImage.PackToBytes( *refImage.mutable_image_data() );
+    wxMemoryOutputStream imageStream;
+
+    if( m_referenceImage.GetImage().GetImageData()
+        && m_referenceImage.GetImage().SaveImageData( imageStream ) )
+    {
+        size_t size = imageStream.GetSize();
+
+        if( size > 0 )
+        {
+            std::string encoded;
+            encoded.resize( size );
+            imageStream.CopyTo( encoded.data(), size );
+            refImage.set_image_data( encoded );
+        }
+    }
 
     aContainer.PackFrom( refImage );
 }
@@ -206,14 +221,17 @@ bool PCB_REFERENCE_IMAGE::Deserialize( const google::protobuf::Any& aContainer )
     if( !aContainer.UnpackTo( &refImage ) )
         return false;
 
-    SetUuidDirect( KIID( refImage.id().value() ) );
+    const_cast<KIID&>( m_Uuid ) = KIID( refImage.id().value() );
     SetLayer( FromProtoEnum<PCB_LAYER_ID, BoardLayer>( refImage.layer() ) );
     SetPosition( kiapi::common::UnpackVector2( refImage.position() ) );
     m_referenceImage.SetTransformOriginOffset( kiapi::common::UnpackVector2( refImage.transform_origin_offset() ) );
 
     if( !refImage.image_data().empty() )
     {
-        if( !m_referenceImage.UnpackFromBytes( refImage.image_data() ) )
+        wxMemoryBuffer imageBuffer;
+        imageBuffer.AppendData( refImage.image_data().data(), refImage.image_data().size() );
+
+        if( !m_referenceImage.ReadImageFile( imageBuffer ) )
             return false;
     }
 

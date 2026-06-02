@@ -987,18 +987,6 @@ public:
      */
     bool m_ZoneFillIterativeRefill;
 
-    /**
-     * Router test case directory.
-     * 
-     * Directory where the router stores the test cases (the '0' key dump)
-     * Used to make creating test cases easier (a simple dialog instead of manually copying files)
-     * 
-     * Setting name: "RouterTestCaseDirectory"
-     * Valid values: directory name
-     * Default value: ""
-     */
-    wxString m_RouterTestCaseDirectory;
-
     wxString m_traceMasks; ///< Trace masks for wxLogTrace, loaded from the config file.
     ///@}
 

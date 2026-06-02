@@ -92,7 +92,7 @@ public:
     EDA_ITEM* GetLink() const { return m_link; }
 
     KIID GetGroupId() const { return m_groupId; }
-    std::vector<KIID> GetGroupMembers() const { return m_groupMembers; }
+    KIID_VECT_LIST GetGroupMembers() const { return m_groupMembers; }
 
     BASE_SCREEN* GetScreen() const { return m_screen; }
 
@@ -112,7 +112,7 @@ private:
                                         * copy of an active item) and m_Link points the active
                                         * item in schematic */
     KIID           m_groupId;          /* Id of the parent group */
-    std::vector<KIID> m_groupMembers;  /* Ids of the members of a group */
+    KIID_VECT_LIST m_groupMembers;     /* Ids of the members of a group */
 
     BASE_SCREEN*   m_screen;           /* For new and deleted items the screen the item should
                                         * be added to/removed from. */

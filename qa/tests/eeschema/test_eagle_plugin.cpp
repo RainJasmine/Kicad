@@ -40,6 +40,8 @@
 #include <wx/stdpaths.h>
 #include <libraries/library_manager.h>
 
+#include "eeschema_test_utils.h"
+
 /**
  * Checks that the SCH_IO manager finds the Eagle plugin
  */

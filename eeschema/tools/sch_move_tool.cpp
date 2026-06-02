@@ -874,16 +874,6 @@ bool SCH_MOVE_TOOL::doMoveSelection( const TOOL_EVENT& aEvent, SCH_COMMIT* aComm
                 evt->SetPassEvent( false );
                 restore_state = true;
             }
-            else if( m_mode == BREAK || m_mode == SLICE )
-            {
-                // preprocessBreakOrSliceSelection() split the wire before any motion arrived,
-                // so cancel must roll those edits back.  Activations still pass through so the
-                // requested tool starts.
-                if( !evt->IsActivate() )
-                    evt->SetPassEvent( false );
-
-                restore_state = true;
-            }
 
             clearNewDragLines();
 
@@ -979,13 +969,6 @@ bool SCH_MOVE_TOOL::doMoveSelection( const TOOL_EVENT& aEvent, SCH_COMMIT* aComm
     if( restore_state )
     {
         m_selectionTool->RemoveItemsFromSel( &m_dragAdditions, QUIET_MODE );
-
-        // Clear the split-segment selection that preprocessBreakOrSliceSelection() built
-        // before the caller's Revert() runs.  Revert() rebuilds selection from the screen,
-        // so leaving the splits selected keeps the restored wire hidden until the next
-        // selection refresh.
-        if( m_mode == BREAK || m_mode == SLICE )
-            m_toolMgr->RunAction( ACTIONS::selectionClear );
     }
     else
     {
@@ -1075,8 +1058,6 @@ SCH_SELECTION& SCH_MOVE_TOOL::prepareSelection( bool& aUnselect )
     // looking for the stuff under mouse cursor (i.e. KiCad old-style hover selection).
     SCH_SELECTION& selection = m_selectionTool->RequestSelection( SCH_COLLECTOR::MovableItems, true );
     aUnselect = selection.IsHover();
-
-    m_selectionTool->FilterSelectionForLockedItems();
 
     return selection;
 }
@@ -2635,9 +2616,6 @@ int SCH_MOVE_TOOL::AlignToGrid( const TOOL_EVENT& aEvent )
 {
     EE_GRID_HELPER    grid( m_toolMgr);
     SCH_SELECTION&    selection = m_selectionTool->RequestSelection( SCH_COLLECTOR::MovableItems );
-
-    m_selectionTool->FilterSelectionForLockedItems();
-
     GRID_HELPER_GRIDS selectionGrid = grid.GetSelectionGrid( selection );
     SCH_COMMIT        commit( m_toolMgr );
 

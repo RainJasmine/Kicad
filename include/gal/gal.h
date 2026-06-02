@@ -21,8 +21,12 @@
 
 #include <import_export.h>
 
-#if defined( GAL_DLL )
-	#define GAL_API APIEXPORT
+#ifndef SWIG
+	#if defined( GAL_DLL )
+		#define GAL_API APIEXPORT
+	#else
+		#define GAL_API APIIMPORT
+	#endif
 #else
-	#define GAL_API APIIMPORT
+#define GAL_API
 #endif

@@ -45,6 +45,7 @@
 #include <connectivity/connectivity_data.h>
 #include <connectivity/topo_match.h>
 #include <algorithm>
+#include <pcbnew_scripting_helpers.h>
 #include <pcb_track.h>
 #include <tool/tool_manager.h>
 #include <tools/pcb_picker_tool.h>
@@ -1087,7 +1088,7 @@ bool MULTICHANNEL_TOOL::copyRuleAreaContents( RULE_AREA* aRefArea, RULE_AREA* aT
 
     SHAPE_POLY_SET refPoly;
     refPoly.AddOutline( refOutline );
-    refPoly.CacheTriangulation();
+    refPoly.CacheTriangulation( false );
 
     SHAPE_POLY_SET targetPoly;
 
@@ -1095,7 +1096,7 @@ bool MULTICHANNEL_TOOL::copyRuleAreaContents( RULE_AREA* aRefArea, RULE_AREA* aT
     newTargetOutline.Rotate( rot, VECTOR2( 0, 0 ) );
     newTargetOutline.Move( disp );
     targetPoly.AddOutline( newTargetOutline );
-    targetPoly.CacheTriangulation();
+    targetPoly.CacheTriangulation( false );
 
     std::shared_ptr<CONNECTIVITY_DATA> connectivity = board()->GetConnectivity();
     std::map<EDA_GROUP*, EDA_GROUP*>   groupMap;

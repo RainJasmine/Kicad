@@ -130,8 +130,6 @@ void EDA_3D_VIEWER_FRAME::doReCreateMenuBar()
 
     prefsMenu->Add( EDA_3D_ACTIONS::toggleRaytacing, ACTION_MENU::CHECK );
 
-    prefsMenu->Add( EDA_3D_ACTIONS::toggleShowMissingModels, ACTION_MENU::CHECK );
-
     prefsMenu->Add( ACTIONS::openPreferences );
 
     prefsMenu->Add( _( "Reset to Default Settings" ), ID_MENU3D_RESET_DEFAULTS, BITMAPS::tools );

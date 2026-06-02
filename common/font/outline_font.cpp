@@ -571,7 +571,7 @@ VECTOR2I OUTLINE_FONT::getTextAsGlyphsUnlocked( BOX2I* aBBox,
 
             if( glyphData.m_TriangulationData.empty() )
             {
-                glyph->CacheTriangulation();
+                glyph->CacheTriangulation( false, false );
                 glyphData.m_TriangulationData = glyph->GetTriangulationData();
             }
             else

@@ -622,8 +622,7 @@ public:
      * Create a list of triangles that "fill" the solid areas used for instance to draw
      * these solid areas on OpenGL.
      */
-    void CacheTriangulation( PCB_LAYER_ID aLayer = UNDEFINED_LAYER,
-                             const SHAPE_POLY_SET::TASK_SUBMITTER& aSubmitter = {} );
+    void CacheTriangulation( PCB_LAYER_ID aLayer = UNDEFINED_LAYER );
 
     /**
      * Set the list of filled polygons.
@@ -940,9 +939,11 @@ protected:
 };
 
 
+#ifndef SWIG
 DECLARE_ENUM_TO_WXANY( ZONE_CONNECTION )
 DECLARE_ENUM_TO_WXANY( ZONE_FILL_MODE )
 DECLARE_ENUM_TO_WXANY( ISLAND_REMOVAL_MODE )
 DECLARE_ENUM_TO_WXANY( PLACEMENT_SOURCE_T )
+#endif
 
 #endif  // ZONE_H

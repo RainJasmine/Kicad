@@ -123,7 +123,7 @@ PAD::PAD( const PAD& aOther ) :
 {
     PAD::operator=( aOther );
 
-    SetUuidDirect( aOther.m_Uuid );
+    const_cast<KIID&>( m_Uuid ) = aOther.m_Uuid;
 }
 
 
@@ -222,7 +222,7 @@ bool PAD::Deserialize( const google::protobuf::Any &aContainer )
     if( !aContainer.UnpackTo( &pad ) )
         return false;
 
-    SetUuidDirect( KIID( pad.id().value() ) );
+    const_cast<KIID&>( m_Uuid ) = KIID( pad.id().value() );
     SetPosition( kiapi::common::UnpackVector2( pad.position() ) );
     UnpackNet( pad.net() );
     SetLocked( pad.locked() == kiapi::common::types::LockedState::LS_LOCKED );
@@ -2401,7 +2401,7 @@ double PAD::ViewGetLOD( int aLayer, const KIGFX::VIEW* aView ) const
     const BOARD*         board = GetBoard();
 
     // Meta control for hiding all pads
-    if( !aView->IsLayerVisibleCached( LAYER_PADS ) )
+    if( !aView->IsLayerVisible( LAYER_PADS ) )
         return LOD_HIDE;
 
     // Handle Render tab switches

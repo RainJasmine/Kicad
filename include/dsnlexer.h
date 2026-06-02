@@ -33,6 +33,7 @@
 
 #include <richio.h>
 
+#ifndef SWIG
 /**
  * Hold a keyword string and its unique integer token.
  */
@@ -41,6 +42,7 @@ struct KICOMMON_API KEYWORD
     const char* name;       ///< unique keyword.
     int         token;      ///< a zero based index into an array of KEYWORDs
 };
+#endif // SWIG
 
 // something like this macro can be used to help initialize a KEYWORD table.
 // see SPECCTRA_DB::keywords[] as an example.
@@ -475,6 +477,8 @@ public:
         return curOffset + 1;
     }
 
+#ifndef SWIG
+
 protected:
     void init();
 
@@ -578,6 +582,7 @@ protected:
     const KEYWORD*      keywords;               ///< Table sorted by CMake for bsearch().
     unsigned            keywordCount;           ///< Count of keywords table.
     const KEYWORD_MAP*  keywordsLookup;         ///< Fast, specialized "C string" hashtable.
+#endif // SWIG
 };
 
 #endif  // DSNLEXER_H_

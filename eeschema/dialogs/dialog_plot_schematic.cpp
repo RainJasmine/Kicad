@@ -145,14 +145,7 @@ bool DIALOG_PLOT_SCHEMATIC::TransferDataToWindow()
         case SCH_PLOT_FORMAT::PDF:  m_plotFormatOpt->SetSelection( 1 ); break;
         case SCH_PLOT_FORMAT::SVG:  m_plotFormatOpt->SetSelection( 2 ); break;
         case SCH_PLOT_FORMAT::DXF:  m_plotFormatOpt->SetSelection( 3 ); break;
-        case SCH_PLOT_FORMAT::PNG:  m_plotFormatOpt->SetSelection( 4 ); break;
         case SCH_PLOT_FORMAT::HPGL: /* no longer supported */           break;
-        }
-
-        if( JOB_EXPORT_SCH_PLOT_PNG* pngJob = dynamic_cast<JOB_EXPORT_SCH_PLOT_PNG*>( m_job ) )
-        {
-            m_pngDPI->SetValue( pngJob->m_dpi );
-            m_pngAntialias->SetValue( pngJob->m_antialias );
         }
 
         // And then hide it
@@ -242,7 +235,6 @@ PLOT_FORMAT DIALOG_PLOT_SCHEMATIC::getPlotFileFormat()
     case 1: return PLOT_FORMAT::PDF;
     case 2: return PLOT_FORMAT::SVG;
     case 3: return PLOT_FORMAT::DXF;
-    case 4: return PLOT_FORMAT::PNG;
     }
 }
 
@@ -251,8 +243,7 @@ void DIALOG_PLOT_SCHEMATIC::onColorMode( wxCommandEvent& aEvent )
 {
     bool backgroundColorAvailable = getPlotFileFormat() == PLOT_FORMAT::POST
                                     || getPlotFileFormat() == PLOT_FORMAT::PDF
-                                    || getPlotFileFormat() == PLOT_FORMAT::SVG
-                                    || getPlotFileFormat() == PLOT_FORMAT::PNG;
+                                    || getPlotFileFormat() == PLOT_FORMAT::SVG;
 
     m_colorThemeLabel->Enable( getModeColor() );
     m_colorTheme->Enable( getModeColor() );
@@ -305,13 +296,7 @@ void DIALOG_PLOT_SCHEMATIC::onPlotFormatSelection( wxCommandEvent& event )
 
     m_paperSizeOption->SetSelection( m_paperSizeOption->GetSelection() );
 
-    m_defaultLineWidth.Enable( fmt == PLOT_FORMAT::POST || fmt == PLOT_FORMAT::PDF
-                               || fmt == PLOT_FORMAT::SVG || fmt == PLOT_FORMAT::PNG );
-
-    m_sizerPNGOptions->GetStaticBox()->Show( fmt == PLOT_FORMAT::PNG );
-    m_sizerPNGOptions->Show( fmt == PLOT_FORMAT::PNG );
-
-    Layout();
+    m_defaultLineWidth.Enable( fmt == PLOT_FORMAT::POST || fmt == PLOT_FORMAT::PDF || fmt == PLOT_FORMAT::SVG );
 
     wxCommandEvent dummy;
     onColorMode( dummy );
@@ -353,12 +338,6 @@ void DIALOG_PLOT_SCHEMATIC::OnPlotAll( wxCommandEvent& event )
         if( !m_job->m_variant.IsEmpty() )
             m_job->m_variantNames.push_back( m_job->m_variant );
 
-        if( JOB_EXPORT_SCH_PLOT_PNG* pngJob = dynamic_cast<JOB_EXPORT_SCH_PLOT_PNG*>( m_job ) )
-        {
-            pngJob->m_dpi = m_pngDPI->GetValue();
-            pngJob->m_antialias = m_pngAntialias->GetValue();
-        }
-
         event.Skip(); // Allow normal close action
     }
 }
@@ -391,8 +370,6 @@ void DIALOG_PLOT_SCHEMATIC::plotSchematic( bool aPlotAll )
 
     // Select the DXF file unit
     plotOpts.m_DXF_File_Unit = m_DXF_plotUnits->GetSelection() == 0 ? DXF_UNITS::INCH : DXF_UNITS::MM;
-    plotOpts.m_pngDPI = m_pngDPI->GetValue();
-    plotOpts.m_pngAntialias = m_pngAntialias->GetValue();
     plotOpts.m_variant = getSelectedVariant();
     schPlotter->Plot( getPlotFileFormat(), plotOpts, &renderSettings, &m_MessagesBox->Reporter() );
 

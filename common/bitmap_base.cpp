@@ -113,21 +113,14 @@ void BITMAP_BASE::ensureBitmapUpToDate() const
 void BITMAP_BASE::updatePPI()
 {
     // Todo: eventually we need to support dpi / scaling in both dimensions
-    //
-    // PNG stores resolution as pixels-per-meter in the pHYs chunk. wxWidgets converts this
-    // to pixels-per-cm as a floating-point string (e.g., 3780 PPM -> "37.8" px/cm).
-    // GetOptionInt() would truncate "37.8" to 37 before the * 2.54 multiply, causing ~2%
-    // error for common resolutions. ToCDouble is locale-independent unlike wxAtof.
-    wxString resStr = m_originalImage->GetOption( wxIMAGE_OPTION_RESOLUTIONX );
-    double dpiX = 0.0;
-    resStr.ToCDouble( &dpiX );
+    int dpiX = m_originalImage->GetOptionInt( wxIMAGE_OPTION_RESOLUTIONX );
 
-    if( dpiX > 1.0 )
+    if( dpiX > 1 )
     {
         if( m_originalImage->GetOptionInt( wxIMAGE_OPTION_RESOLUTIONUNIT ) == wxIMAGE_RESOLUTION_CM )
             m_ppi = KiROUND( dpiX * 2.54 );
         else
-            m_ppi = KiROUND( dpiX );
+            m_ppi = dpiX;
     }
 }
 
@@ -522,11 +515,10 @@ void BITMAP_BASE::Rotate( bool aRotateCCW )
 {
     if( m_image )
     {
-        // wxImage::Rotate90() clears resolution metadata, so preserve it.
-        // Use string form to avoid truncating fractional pixels/cm values.
-        wxString resX = m_image->GetOption( wxIMAGE_OPTION_RESOLUTIONX );
-        wxString resY = m_image->GetOption( wxIMAGE_OPTION_RESOLUTIONY );
-        int      unit = m_image->GetOptionInt( wxIMAGE_OPTION_RESOLUTIONUNIT );
+        // wxImage::Rotate90() clears resolution metadata, so preserve it
+        int resX = m_image->GetOptionInt( wxIMAGE_OPTION_RESOLUTIONX );
+        int resY = m_image->GetOptionInt( wxIMAGE_OPTION_RESOLUTIONY );
+        int unit = m_image->GetOptionInt( wxIMAGE_OPTION_RESOLUTIONUNIT );
 
         // wxImage::Rotate90 parameter is "clockwise", so invert for CCW rotation
         *m_image = m_image->Rotate90( !aRotateCCW );

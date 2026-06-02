@@ -329,8 +329,6 @@ enum GAL_LAYER_ID: int
     LAYER_PAGE_LIMITS,             ///< Color for drawing the page extents (visibility stored in
                                    ///< PCBNEW_SETTINGS::m_ShowPageLimits)
 
-    LAYER_DRC_HIGHLIGHTED,          ///< Color for highlighted DRC markers.
-
     /// Virtual layers for stacking zones and tracks on a given copper layer.
     LAYER_ZONE_START,
     LAYER_ZONE_END = LAYER_ZONE_START + PCB_LAYER_ID_COUNT,

@@ -30,7 +30,6 @@
 #include <sch_sheet_path.h>
 #include <list>
 #include <memory>
-#include <set>
 #include <unordered_map>
 
 class SCH_SHEET;

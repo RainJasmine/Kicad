@@ -122,7 +122,7 @@ bool PCB_SHAPE::Deserialize( const google::protobuf::Any &aContainer )
     m_proxyItem = false;
     m_endsSwapped = false;
 
-    SetUuidDirect( KIID( msg.id().value() ) );
+    const_cast<KIID&>( m_Uuid ) = KIID( msg.id().value() );
     SetLocked( msg.locked() == types::LS_LOCKED );
     SetLayer( FromProtoEnum<PCB_LAYER_ID, BoardLayer>( msg.layer() ) );
     UnpackNet( msg.net() );
@@ -638,7 +638,7 @@ double PCB_SHAPE::ViewGetLOD( int aLayer, const KIGFX::VIEW* aView ) const
     if( aLayer == LAYER_LOCKED_ITEM_SHADOW )
     {
         // Hide shadow if the main layer is not shown
-        if( !aView->IsLayerVisibleCached( m_layer ) )
+        if( !aView->IsLayerVisible( m_layer ) )
             return LOD_HIDE;
 
         // Hide shadow on dimmed tracks
@@ -656,10 +656,10 @@ double PCB_SHAPE::ViewGetLOD( int aLayer, const KIGFX::VIEW* aView ) const
         if( !IsFrontLayer( checkLayer ) && !IsBackLayer( checkLayer ) )
             checkLayer = parent->GetLayer();
 
-        if( IsFrontLayer( checkLayer ) && !aView->IsLayerVisibleCached( LAYER_FOOTPRINTS_FR ) )
+        if( IsFrontLayer( checkLayer ) && !aView->IsLayerVisible( LAYER_FOOTPRINTS_FR ) )
             return LOD_HIDE;
 
-        if( IsBackLayer( checkLayer ) && !aView->IsLayerVisibleCached( LAYER_FOOTPRINTS_BK ) )
+        if( IsBackLayer( checkLayer ) && !aView->IsLayerVisible( LAYER_FOOTPRINTS_BK ) )
             return LOD_HIDE;
     }
 

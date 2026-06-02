@@ -31,17 +31,6 @@ using TCP = TRANSLINE_PARAMETERS;
 
 void COUPLED_MICROSTRIP::Analyse()
 {
-    UpdateDielectricModel();
-
-    const double f = GetParameter( TCP::FREQUENCY );
-    const double rawEpsR = GetParameter( TCP::EPSILONR );
-    const double rawTanD = GetParameter( TCP::TAND );
-
-    // Overlay dispersed values so helpers reading EPSILONR / TAND via GetParameter
-    // pick them up.  Raw inputs are restored before return.
-    SetParameter( TCP::EPSILONR, GetDispersedEpsilonR( f ) );
-    SetParameter( TCP::TAND, GetDispersedTanDelta( f ) );
-
     // Compute thickness corrections
     delta_u_thickness();
 
@@ -51,43 +40,11 @@ void COUPLED_MICROSTRIP::Analyse()
     // Impedances for even- and odd-mode
     Z0_even_odd();
 
-    // Apply the soldermask cover correction to both modes before dispersion and loss
-    // consume the static quantities.  Same Wan-Hoorfar 2000 Delta q factor as microstrip;
-    // the even/odd split is preserved because each mode's static eps_eff picks up its own
-    // correction.  Z0 for each mode scales by sqrt(uncoated/coated) so the homogeneous
-    // reference impedance remains consistent with the new eps_eff.
-    const double dispersedEpsR = GetParameter( TCP::EPSILONR );
-    const double dispersedTanD = GetParameter( TCP::TAND );
-    const double uOverH = GetParameter( TCP::PHYS_WIDTH ) / GetParameter( TCP::H );
-
-    const auto [ erEvenCoated, tanDEvenCoated ] =
-            ApplySoldermaskCorrection( er_eff_e_0, dispersedTanD, dispersedEpsR, uOverH, f );
-    const auto [ erOddCoated, tanDOddCoated ] =
-            ApplySoldermaskCorrection( er_eff_o_0, dispersedTanD, dispersedEpsR, uOverH, f );
-
-    if( erEvenCoated != er_eff_e_0 )
-    {
-        Z0_e_0 *= std::sqrt( er_eff_e_0 / erEvenCoated );
-        er_eff_e_0 = erEvenCoated;
-    }
-
-    if( erOddCoated != er_eff_o_0 )
-    {
-        Z0_o_0 *= std::sqrt( er_eff_o_0 / erOddCoated );
-        er_eff_o_0 = erOddCoated;
-    }
-
     // Calculate freq dependence of er_eff_e, er_eff_o
     er_eff_freq();
 
     // Calculate frequency  dependence of Z0e, Z0o */
     Z0_dispersion();
-
-    // Swap in the mask-blended tan delta for losses.  Even and odd modes differ only by
-    // eps_eff, which has already been corrected, so using the odd-mode blended value for
-    // both is a second-order refinement; average them to avoid biasing either mode.
-    const double tanDBlended = 0.5 * ( tanDEvenCoated + tanDOddCoated );
-    SetParameter( TCP::TAND, tanDBlended );
 
     // Calculate losses
     attenuation();
@@ -97,9 +54,6 @@ void COUPLED_MICROSTRIP::Analyse()
 
     // Calculate diff impedance
     diff_impedance();
-
-    SetParameter( TCP::EPSILONR, rawEpsR );
-    SetParameter( TCP::TAND, rawTanD );
 }
 
 
@@ -670,26 +624,17 @@ void COUPLED_MICROSTRIP::line_angle()
 
 void COUPLED_MICROSTRIP::diff_impedance()
 {
-    // Differential impedance of a coupled pair driven in odd mode is exactly twice the
-    // odd-mode characteristic impedance (Pozar, "Microwave Engineering" 4th ed., §7.6).
+    // Note that differential impedance is exactly twice the odd mode impedance.
     // Odd mode is not the same as single-ended impedance, so avoid approximations found
-    // on websites that use static single ended impedance as the starting point.
-    // Read the dispersed Z0_O left by Z0_dispersion() rather than the static Z0_o_0 so
-    // Zdiff tracks frequency above a few GHz where Kirschning-Jansen raises the odd-mode
-    // impedance by several percent.
+    // on websites that use static single ended impedance as the starting point
 
-    Zdiff = 2.0 * GetParameter( TCP::Z0_O );
+    Zdiff = 2 * Z0_o_0;
 }
 
 
 /*
- * Z0_dispersion() - calculate frequency dependency of characteristic impedances.
- *
- * Kirschning & Jansen, "Accurate Wide-Range Design Equations for the Frequency-Dependent
- * Characteristic of Parallel Coupled Microstrip Lines", IEEE Trans. MTT 32(1):83-90,
- * Jan. 1984 (errata: MTT 33(3):288, Mar. 1985).  The Q_0..Q_29 closed-form chain below
- * implements the dispersive even- and odd-mode impedance correction tables from that
- * paper.
+ * Z0_dispersion() - calculate frequency dependency of characteristic
+ * impedances
  */
 void COUPLED_MICROSTRIP::Z0_dispersion()
 {

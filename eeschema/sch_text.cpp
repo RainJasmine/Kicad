@@ -24,11 +24,7 @@
  */
 
 #include "markup_parser.h"
-#include <google/protobuf/any.pb.h>
-
 #include <advanced_config.h>
-#include <api/api_utils.h>
-#include <api/schematic/schematic_types.pb.h>
 #include <base_units.h>
 #include <pgm_base.h>
 #include <sch_edit_frame.h>
@@ -74,50 +70,6 @@ SCH_TEXT::SCH_TEXT( const SCH_TEXT& aText ) :
         EDA_TEXT( aText )
 {
     m_excludedFromSim = aText.m_excludedFromSim;
-}
-
-
-void SCH_TEXT::Serialize( google::protobuf::Any& aContainer ) const
-{
-    using namespace kiapi::common;
-
-    kiapi::schematic::types::SchematicText text;
-
-    text.mutable_id()->set_value( m_Uuid.AsStdString() );
-    text.set_locked( IsLocked() ? types::LockedState::LS_LOCKED : types::LockedState::LS_UNLOCKED );
-    text.set_exclude_from_sim( GetExcludedFromSim() );
-
-    google::protobuf::Any any;
-    EDA_TEXT::Serialize( any, schIUScale );
-    any.UnpackTo( text.mutable_text() );
-
-    PackVector2( *text.mutable_text()->mutable_position(), GetPosition(), schIUScale );
-
-    aContainer.PackFrom( text );
-}
-
-
-bool SCH_TEXT::Deserialize( const google::protobuf::Any& aContainer )
-{
-    using namespace kiapi::common;
-
-    kiapi::schematic::types::SchematicText text;
-
-    if( !aContainer.UnpackTo( &text ) )
-        return false;
-
-    const_cast<KIID&>( m_Uuid ) = KIID( text.id().value() );
-    SetLocked( text.locked() == types::LockedState::LS_LOCKED );
-    SetExcludedFromSim( text.exclude_from_sim() );
-
-    google::protobuf::Any any;
-    any.PackFrom( text.text() );
-
-    if( !EDA_TEXT::Deserialize( any, schIUScale ) )
-        return false;
-
-    SetPosition( UnpackVector2( text.text().position(), schIUScale ) );
-    return true;
 }
 
 

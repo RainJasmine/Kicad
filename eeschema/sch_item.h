@@ -253,9 +253,6 @@ public:
     void SetPrivate( bool aPrivate ) { m_private = aPrivate; }
     bool IsPrivate() const { return m_private; }
 
-    bool IsLocked() const override;
-    void SetLocked( bool aLocked ) override { m_isLocked = aLocked; }
-
     virtual void SetExcludedFromSim( bool aExclude, const SCH_SHEET_PATH* aInstance = nullptr,
                                      const wxString& aVariantName = wxEmptyString ) { }
     virtual bool GetExcludedFromSim( const SCH_SHEET_PATH* aInstance = nullptr,
@@ -797,11 +794,11 @@ protected:
     /// Store pointers to rule areas which this item is contained within
     std::unordered_set<SCH_RULE_AREA*>                     m_rule_areas_cache;
 
-    bool                                                   m_isLocked;
-
 private:
     friend class LIB_SYMBOL;
 };
 
+#ifndef SWIG
 DECLARE_ENUM_TO_WXANY( SCH_LAYER_ID );
+#endif
 

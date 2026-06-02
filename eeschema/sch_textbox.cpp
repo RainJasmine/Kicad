@@ -21,11 +21,7 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#include <google/protobuf/any.pb.h>
-
 #include <advanced_config.h>
-#include <api/api_enums.h>
-#include <api/api_utils.h>
 #include <base_units.h>
 #include <pgm_base.h>
 #include <sch_edit_frame.h>
@@ -46,7 +42,6 @@
 #include <markup_parser.h>
 #include <properties/property.h>
 #include <properties/property_mgr.h>
-#include <api/schematic/schematic_types.pb.h>
 
 
 SCH_TEXTBOX::SCH_TEXTBOX( SCH_LAYER_ID aLayer, int aLineWidth, FILL_T aFillType, const wxString& aText,
@@ -79,147 +74,6 @@ SCH_TEXTBOX::SCH_TEXTBOX( const SCH_TEXTBOX& aText ) :
     m_marginTop = aText.m_marginTop;
     m_marginRight = aText.m_marginRight;
     m_marginBottom = aText.m_marginBottom;
-}
-
-
-void SCH_TEXTBOX::Serialize( google::protobuf::Any& aContainer ) const
-{
-    using namespace kiapi::common;
-
-    kiapi::schematic::types::SchematicTextBox textBox;
-
-    textBox.mutable_id()->set_value( m_Uuid.AsStdString() );
-    textBox.set_locked( IsLocked() ? types::LockedState::LS_LOCKED : types::LockedState::LS_UNLOCKED );
-    textBox.set_exclude_from_sim( GetExcludedFromSim() );
-    PackDistance( *textBox.mutable_margin_left(), GetMarginLeft(), schIUScale );
-    PackDistance( *textBox.mutable_margin_top(), GetMarginTop(), schIUScale );
-    PackDistance( *textBox.mutable_margin_right(), GetMarginRight(), schIUScale );
-    PackDistance( *textBox.mutable_margin_bottom(), GetMarginBottom(), schIUScale );
-
-    types::TextBox& text = *textBox.mutable_textbox();
-    PackVector2( *text.mutable_top_left(), GetPosition(), schIUScale );
-    PackVector2( *text.mutable_bottom_right(), GetEnd(), schIUScale );
-    text.set_text( GetText().ToUTF8() );
-
-    types::TextAttributes* attrs = text.mutable_attributes();
-
-    if( GetFont() )
-        attrs->set_font_name( GetFont()->GetName().ToUTF8() );
-
-    attrs->set_horizontal_alignment( ToProtoEnum<GR_TEXT_H_ALIGN_T, types::HorizontalAlignment>( GetHorizJustify() ) );
-    attrs->set_vertical_alignment( ToProtoEnum<GR_TEXT_V_ALIGN_T, types::VerticalAlignment>( GetVertJustify() ) );
-    attrs->mutable_angle()->set_value_degrees( GetTextAngleDegrees() );
-    attrs->set_line_spacing( GetLineSpacing() );
-    PackDistance( *attrs->mutable_stroke_width(), GetTextThickness(), schIUScale );
-    attrs->set_italic( IsItalic() );
-    attrs->set_bold( IsBold() );
-    attrs->set_underlined( GetAttributes().m_Underlined );
-    attrs->set_mirrored( IsMirrored() );
-    attrs->set_multiline( IsMultilineAllowed() );
-    attrs->set_keep_upright( IsKeepUpright() );
-    PackVector2( *attrs->mutable_size(), GetTextSize(), schIUScale );
-
-    if( GetTextColor() != COLOR4D::UNSPECIFIED )
-        PackColor( *attrs->mutable_color(), GetTextColor() );
-
-    types::StrokeAttributes* stroke = textBox.mutable_graphic_attributes()->mutable_stroke();
-    PackDistance( *stroke->mutable_width(), GetStroke().GetWidth(), schIUScale );
-    stroke->set_style( ToProtoEnum<LINE_STYLE, types::StrokeLineStyle>( GetStroke().GetLineStyle() ) );
-
-    if( GetStroke().GetColor() != COLOR4D::UNSPECIFIED )
-        PackColor( *stroke->mutable_color(), GetStroke().GetColor() );
-
-    types::GraphicFillAttributes* fill = textBox.mutable_graphic_attributes()->mutable_fill();
-    fill->set_fill_type( ToProtoEnum<FILL_T, types::GraphicFillType>( GetFillMode() ) );
-
-    if( GetFillColor() != COLOR4D::UNSPECIFIED )
-        PackColor( *fill->mutable_color(), GetFillColor() );
-
-    aContainer.PackFrom( textBox );
-}
-
-
-bool SCH_TEXTBOX::Deserialize( const google::protobuf::Any& aContainer )
-{
-    using namespace kiapi::common;
-
-    kiapi::schematic::types::SchematicTextBox textBox;
-
-    if( !aContainer.UnpackTo( &textBox ) )
-        return false;
-
-    const_cast<KIID&>( m_Uuid ) = KIID( textBox.id().value() );
-    SetLocked( textBox.locked() == types::LockedState::LS_LOCKED );
-    SetExcludedFromSim( textBox.exclude_from_sim() );
-    SetPosition( UnpackVector2( textBox.textbox().top_left(), schIUScale ) );
-    SetEnd( UnpackVector2( textBox.textbox().bottom_right(), schIUScale ) );
-    SetText( wxString::FromUTF8( textBox.textbox().text() ) );
-
-    if( textBox.has_margin_left() )
-        SetMarginLeft( UnpackDistance( textBox.margin_left(), schIUScale ) );
-
-    if( textBox.has_margin_top() )
-        SetMarginTop( UnpackDistance( textBox.margin_top(), schIUScale ) );
-
-    if( textBox.has_margin_right() )
-        SetMarginRight( UnpackDistance( textBox.margin_right(), schIUScale ) );
-
-    if( textBox.has_margin_bottom() )
-        SetMarginBottom( UnpackDistance( textBox.margin_bottom(), schIUScale ) );
-
-    if( textBox.textbox().has_attributes() )
-    {
-        TEXT_ATTRIBUTES attrs = GetAttributes();
-
-        attrs.m_Bold = textBox.textbox().attributes().bold();
-        attrs.m_Italic = textBox.textbox().attributes().italic();
-        attrs.m_Underlined = textBox.textbox().attributes().underlined();
-        attrs.m_Mirrored = textBox.textbox().attributes().mirrored();
-        attrs.m_Multiline = textBox.textbox().attributes().multiline();
-        attrs.m_KeepUpright = textBox.textbox().attributes().keep_upright();
-        attrs.m_Size = UnpackVector2( textBox.textbox().attributes().size(), schIUScale );
-
-        if( textBox.textbox().attributes().has_color() )
-            attrs.m_Color = UnpackColor( textBox.textbox().attributes().color() );
-        else
-            attrs.m_Color = COLOR4D::UNSPECIFIED;
-
-        if( !textBox.textbox().attributes().font_name().empty() )
-        {
-            attrs.m_Font = KIFONT::FONT::GetFont( wxString::FromUTF8( textBox.textbox().attributes().font_name() ),
-                                                  attrs.m_Bold, attrs.m_Italic );
-        }
-
-        attrs.m_Angle = EDA_ANGLE( textBox.textbox().attributes().angle().value_degrees(), DEGREES_T );
-        attrs.m_LineSpacing = textBox.textbox().attributes().line_spacing();
-        attrs.m_StrokeWidth = UnpackDistance( textBox.textbox().attributes().stroke_width(), schIUScale );
-        attrs.m_Halign = FromProtoEnum<GR_TEXT_H_ALIGN_T, types::HorizontalAlignment>(
-                textBox.textbox().attributes().horizontal_alignment() );
-        attrs.m_Valign = FromProtoEnum<GR_TEXT_V_ALIGN_T, types::VerticalAlignment>(
-                textBox.textbox().attributes().vertical_alignment() );
-
-        SetAttributes( attrs );
-    }
-
-    if( textBox.has_graphic_attributes() )
-    {
-        if( textBox.graphic_attributes().stroke().has_color() )
-            m_stroke.SetColor( UnpackColor( textBox.graphic_attributes().stroke().color() ) );
-        else
-            m_stroke.SetColor( COLOR4D::UNSPECIFIED );
-
-        if( textBox.graphic_attributes().fill().has_color() )
-            SetFillColor( UnpackColor( textBox.graphic_attributes().fill().color() ) );
-        else
-            SetFillColor( COLOR4D::UNSPECIFIED );
-
-        SetWidth( UnpackDistance( textBox.graphic_attributes().stroke().width(), schIUScale ) );
-        SetLineStyle(
-                FromProtoEnum<LINE_STYLE, types::StrokeLineStyle>( textBox.graphic_attributes().stroke().style() ) );
-        SetFillMode( FromProtoEnum<FILL_T, types::GraphicFillType>( textBox.graphic_attributes().fill().fill_type() ) );
-    }
-
-    return true;
 }
 
 

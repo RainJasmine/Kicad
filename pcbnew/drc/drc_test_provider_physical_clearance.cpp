@@ -164,8 +164,6 @@ bool DRC_TEST_PROVIDER_PHYSICAL_CLEARANCE::Run()
                 return true;
             } );
 
-    m_itemTree.Build();
-
     std::unordered_map<PTR_PTR_CACHE_KEY, LSET> checkedPairs;
     progressDelta = 100;
     ii = 0;

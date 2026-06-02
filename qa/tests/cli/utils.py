@@ -71,7 +71,6 @@ def _get_cached_kicad_major_version() -> int:
 
 
 def run_and_capture( command: list[str] ) -> Tuple[ str, str, int ]:
-    command = [str( c ) for c in command]
     logger.info("Executing command \"%s\"", " ".join( command ))
 
     env = {}
@@ -144,8 +143,7 @@ def image_is_blank( image_path: str ) -> bool:
     return sum == 0
 
 
-def images_are_equal( image1_path: str, image2_path: str, diff_handler: Optional[Callable[[str], None]] = None,
-                      erosion_pixels: int = 1 ) -> bool:
+def images_are_equal( image1_path: str, image2_path: str, diff_handler: Optional[Callable[[str], None]] = None ) -> bool:
     # Note: if modifying this function - please add new tests for it in test_utils.py
 
     image1 = Image.open( image1_path )
@@ -164,6 +162,7 @@ def images_are_equal( image1_path: str, image2_path: str, diff_handler: Optional
     retval = True
 
     if sum != 0.0:
+        # Images are not identical - lets allow 1 pixel error difference (for curved edges)
         diff_multi_bands = diff.split()
         binary_multi_bands = []
 
@@ -176,8 +175,7 @@ def images_are_equal( image1_path: str, image2_path: str, diff_handler: Optional
         for i in range( 1, len( binary_multi_bands ) ):
             binary_result = ImageChops.logical_or( binary_result, binary_multi_bands[i] )
 
-        filter_size = 2 * erosion_pixels + 1
-        eroded_result = binary_result.copy().filter( ImageFilter.MinFilter( filter_size ) )
+        eroded_result = binary_result.copy().filter( ImageFilter.MinFilter( 3 ) ) # erode once (trim 1 pixel)
 
         eroded_result_sum = np.sum( np.asarray( eroded_result ) )
         retval = eroded_result_sum == 0
@@ -240,60 +238,71 @@ def svgs_are_equivalent( svg_generated_path: str, svg_source_path: str, comparis
     return images_are_equal( png_generated , png_source, diff_handler )
 
 
-def gerbers_are_equivalent( gerber_generated_path: str, gerber_source_path: str,
-                            diff_handler: Optional[Callable[[str], None]] = None,
-                            max_diff_percent: float = 0.0 ) -> bool:
+def gerbers_are_equivalent( gerber_generated_path : str, gerber_source_path : str, comparison_dpi : int,
+                            originInches :  Tuple[float, float],
+                            windowsizeInches :  Tuple[float, float],
+                            diff_handler: Optional[Callable[[str], None]] = None ) -> bool:
 
-    stdout, stderr, exitcode = run_and_capture( [kicad_cli(), "gerber", "diff",
-                                                 "--format", "json",
-                                                 "--no-align",
-                                                 gerber_generated_path, gerber_source_path] )
+    # Calculate tiles required
+    noTilesRowsCols = np.array( [1,1] )
+    increaseRow = True
+    tileSizeInches=np.array( windowsizeInches ) / noTilesRowsCols
 
-    if exitcode != 0:
-        logger.error( "Gerber diff command failed (exit code %d): %s", exitcode, stderr )
-        return False
+    while( np.prod( tileSizeInches * comparison_dpi ) > Image.MAX_IMAGE_PIXELS // 2 ):
+        if increaseRow:
+            noTilesRowsCols[0]+=1
+        else:
+            noTilesRowsCols[1]+=1
 
+        increaseRow=not increaseRow
+        tileSizeInches=np.array( windowsizeInches ) / noTilesRowsCols
+
+
+    gerberGeneratedIsBlank=True
+    gerberSourceIsBlank=True
+    gerbersAreEqual=True
+
+    for row in range( noTilesRowsCols[0] ):
+        for col in range( noTilesRowsCols[1] ):
+            tileOrigin=np.array( originInches ) + ( np.array( [row,col] ) * tileSizeInches )
+            tile_name=f"R{row}C{col}"
+            png_generated, png_source = get_png_paths( gerber_generated_path, gerber_source_path, tile_name )
+
+            convert_gerber_to_png( gerber_generated_path, png_generated, comparison_dpi, tileOrigin, tileSizeInches )
+            convert_gerber_to_png( gerber_source_path,    png_source,    comparison_dpi, tileOrigin, tileSizeInches )
+
+            gerberGeneratedIsBlank = gerberGeneratedIsBlank and image_is_blank( png_generated )
+            gerberSourceIsBlank = gerberSourceIsBlank and image_is_blank( png_source )
+
+            if( not images_are_equal( png_generated, png_source, diff_handler ) ):
+                gerbersAreEqual = False
+
+    assert( not gerberGeneratedIsBlank )
+    assert( not gerberSourceIsBlank )    # make sure test case is generated correctly
+
+    return gerbersAreEqual
+
+
+def convert_gerber_to_png( gerber_path : str, png_path : str, dpi : int,
+                           originInches :  Tuple[float, float],
+                           windowsizeInches :  Tuple[float, float] ):
+
+    originStr="{:.2f}".format(originInches[0]) + "x" + "{:.2f}".format(originInches[1])
+    windowsizeInchesStr="{:.2f}".format(windowsizeInches[0]) + "x" + "{:.2f}".format(windowsizeInches[1])
+
+    stdout, stderr, exitcode = run_and_capture(["gerbv", "--export=png", f"--dpi={dpi}",
+                                                f"--origin={originStr}",
+                                                f"--window_inch={windowsizeInchesStr}",
+                                                f"--output={png_path}",
+                                                "--foreground=#FFFFFF", "--background=#000000",
+                                                gerber_path
+                                                ])
+
+
+def is_gerbv_installed() -> bool:
     try:
-        result = json.loads( stdout )
-    except json.JSONDecodeError:
-        logger.error( "Failed to parse gerber diff JSON output: %s", stdout[:500] )
+        stdout, stderr, exitcode = run_and_capture(["gerbv", "--version"])
+    except:
         return False
 
-    total_diff = result.get( 'total_diff_percent', 0.0 )
-    additions_pct = result.get( 'additions', {} ).get( 'percent', 0 )
-    removals_pct = result.get( 'removals', {} ).get( 'percent', 0 )
-
-    if total_diff <= max_diff_percent:
-        if total_diff > 0.0:
-            logger.info( "Gerber diff within tolerance: total=%.4f%% (max=%.4f%%)",
-                         total_diff, max_diff_percent )
-
-        return True
-
-    logger.error( "Gerber files differ: total=%.4f%% (max=%.4f%%), additions=%.4f%%, removals=%.4f%%",
-                  total_diff, max_diff_percent, additions_pct, removals_pct )
-
-    if diff_handler is not None:
-        diff_png = gerber_generated_path + ".DIFF.png"
-        run_and_capture( [kicad_cli(), "gerber", "diff",
-                          "--format", "png",
-                          "--no-align",
-                          "-o", diff_png,
-                          gerber_generated_path, gerber_source_path] )
-
-        if Path( diff_png ).exists():
-            diff_handler( diff_png )
-
-    return False
-
-
-def is_gerbview_available() -> bool:
-    """Check if the gerbview kiface is built and loadable by kicad-cli."""
-    try:
-        stdout, stderr, exitcode = run_and_capture([kicad_cli(), "gerber", "info", "--help"])
-    except Exception:
-        return False
-
-    return exitcode == 0
-
-
+    return exitcode == 0 and stdout is not None and stdout.startswith("gerbv version")

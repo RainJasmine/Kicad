@@ -166,12 +166,14 @@ NODE* NODE::Branch()
     child->m_root = isRoot() ? this : m_root;
     child->m_maxClearance = m_maxClearance;
 
-    // Immediate offspring of the root branch needs not copy anything. For the rest, clone
-    // the spatial index, joints, and overridden item maps.
+    // Immediate offspring of the root branch needs not copy anything. For the rest, deep-copy
+    // joints, overridden item maps and pointers to stored items.
     if( !isRoot() )
     {
-        delete child->m_index;
-        child->m_index = m_index->Clone().release();
+        JOINT_MAP::iterator j;
+
+        for( ITEM* item : *m_index )
+            child->m_index->Add( item );
 
         child->m_joints = m_joints;
         child->m_override = m_override;
@@ -1251,19 +1253,6 @@ int NODE::FindLinesBetweenJoints( const JOINT& aA, const JOINT& aB, std::vector<
     }
 
     return 0;
-}
-
-
-void NODE::BeginBulkAdd()
-{
-    m_index->SetDeferred( true );
-}
-
-
-void NODE::FinalizeBulkAdd()
-{
-    m_index->SetDeferred( false );
-    m_index->BuildSpatialIndex();
 }
 
 

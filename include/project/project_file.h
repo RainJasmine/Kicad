@@ -207,9 +207,6 @@ public:
     /// Drawing sheet file
     wxString m_BoardDrawingSheetFile;
 
-    /// Recent queries for Find by Properties dialog
-    std::vector<wxString> m_FindByPropertiesQueries;
-
     /// MRU path storage
     wxString m_PcbLastPath[LAST_PATH_SIZE];
 

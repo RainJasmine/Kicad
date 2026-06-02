@@ -897,9 +897,6 @@ public:
     virtual size_t GetPointCount() const override { return PointCount(); }
     virtual size_t GetSegmentCount() const override { return SegmentCount(); }
 
-    bool PointInside( const VECTOR2I& aPt, int aAccuracy = 0,
-                      bool aUseBBoxCache = false ) const override;
-
     void TransformToPolygon( SHAPE_POLY_SET& aBuffer, int aError,
                              ERROR_LOC aErrorLoc ) const override;
 

@@ -21,8 +21,6 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#include <memory>
-
 #include <pcb_edit_frame.h>
 #include <tool/tool_manager.h>
 #include <tools/pcb_actions.h>
@@ -150,13 +148,8 @@ void DRC_TOOL::RunTests( PROGRESS_REPORTER* aProgressReporter, bool aRefillZones
     NETLIST           netlist;
     bool              netlistFetched = false;
 
-    // Hold the disabler at function scope so it survives for the entire DRC run. A bare
-    // wxWindowDisabler on the following if-body would be a scopeless temporary destroyed at
-    // the end of the statement and disable nothing.
-    std::unique_ptr<wxWindowDisabler> disabler;
-
     if( m_drcDialog )
-        disabler = std::make_unique<wxWindowDisabler>( /* except: */ m_drcDialog );
+        wxWindowDisabler  disabler( /* disable everything except: */ m_drcDialog );
 
     m_drcRunning = true;
 

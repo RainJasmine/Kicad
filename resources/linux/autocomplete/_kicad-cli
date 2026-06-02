@@ -4,7 +4,6 @@ _kicad_cli_commands() {
     local -a commands
     commands=(
         'fp:Footprint and Footprint Libraries'
-        'gerber:Gerber and Excellon file operations'
         'jobset:Jobset'
         'pcb:PCB'
         'sch:Schematics'
@@ -29,9 +28,6 @@ _kicad_cli() {
             case $words[1] in
                 (fp)
                     _kicad_cli_fp
-                    ;;
-                (gerber)
-                    _kicad_cli_gerber
                     ;;
                 (jobset)
                     _kicad_cli_jobset
@@ -140,116 +136,6 @@ _kicad_cli_fp_upgrade() {
         '--force[Forces the footprint library to be resaved regardless of versioning]' \
         '(--help -h)'{--help,-h}'[Shows help message and exits]' \
         '(--output -o)'{--output,-o}'[Output directory \[nargs=0..1\] \[default: ""\]]' \
-        && return 0
-}
-
-_kicad_cli_gerber_commands() {
-    local -a commands
-    commands=(
-        'diff:Compare two Gerber or Excellon files and show differences'
-        'export:Export Gerber/Excellon to other formats'
-        'info:Display information about a Gerber or Excellon file'
-    )
-    _describe -t commands 'command' commands
-}
-_kicad_cli_gerber() {
-    local context state state_descr line
-    typeset -A opt_args
-
-    _arguments -C \
-        '(--help -h)'{--help,-h}'[Shows help message and exits]' \
-        '1: :_kicad_cli_gerber_commands' \
-        '*:: :->args' \
-        && return 0
-
-    case $state in
-        (args)
-            case $words[1] in
-                (diff)
-                    _kicad_cli_gerber_diff
-                    ;;
-                (export)
-                    _kicad_cli_gerber_export
-                    ;;
-                (info)
-                    _kicad_cli_gerber_info
-                    ;;
-            esac
-            ;;
-    esac
-}
-
-_kicad_cli_gerber_diff() {
-    local context state state_descr line
-    typeset -A opt_args
-
-    _arguments -C \
-        '--dpi[Resolution in DPI for PNG output (default: 300) \[nargs=0..1\] \[default: 300\]]' \
-        '--exit-code-only[Only set exit code (0=identical, 1=different), no output]' \
-        '--format[Output format: png, text, or json (default: png) \[nargs=0..1\] \[default: "png"\]]' \
-        '(--help -h)'{--help,-h}'[Shows help message and exits]' \
-        '--no-antialias[Disable anti-aliasing for PNG output]' \
-        '(--output -o)'{--output,-o}'[Output file \[nargs=0..1\] \[default: ""\]]' \
-        '--strict[Fail on any parse warnings or errors]' \
-        '--tolerance[Tolerance in nm for floating point comparisons (default: 0) \[nargs=0..1\] \[default: 0\]]' \
-        '--transparent[Use transparent background for PNG output]' \
-        && return 0
-}
-
-_kicad_cli_gerber_export_commands() {
-    local -a commands
-    commands=(
-        'png:Export a Gerber or Excellon file to PNG image'
-    )
-    _describe -t commands 'command' commands
-}
-_kicad_cli_gerber_export() {
-    local context state state_descr line
-    typeset -A opt_args
-
-    _arguments -C \
-        '(--help -h)'{--help,-h}'[Shows help message and exits]' \
-        '1: :_kicad_cli_gerber_export_commands' \
-        '*:: :->args' \
-        && return 0
-
-    case $state in
-        (args)
-            case $words[1] in
-                (png)
-                    _kicad_cli_gerber_export_png
-                    ;;
-            esac
-            ;;
-    esac
-}
-
-_kicad_cli_gerber_export_png() {
-    local context state state_descr line
-    typeset -A opt_args
-
-    _arguments -C \
-        '--dpi[Resolution in DPI (default: 300) \[nargs=0..1\] \[default: 300\]]' \
-        '--height[Output height in pixels (overrides DPI) \[nargs=0..1\] \[default: 0\]]' \
-        '(--help -h)'{--help,-h}'[Shows help message and exits]' \
-        '--no-antialias[Disable anti-aliasing]' \
-        '(--output -o)'{--output,-o}'[Output file \[nargs=0..1\] \[default: ""\]]' \
-        '--strict[Fail on any parse warnings or errors]' \
-        '--transparent[Use transparent background (default)]' \
-        '--width[Output width in pixels (overrides DPI) \[nargs=0..1\] \[default: 0\]]' \
-        && return 0
-}
-
-_kicad_cli_gerber_info() {
-    local context state state_descr line
-    typeset -A opt_args
-
-    _arguments -C \
-        '--area[Calculate and display copper area]' \
-        '--format[Output format, options: text, json \[nargs=0..1\] \[default: "text"\]]' \
-        '(--help -h)'{--help,-h}'[Shows help message and exits]' \
-        '--strict[Fail on any parse warnings or errors]' \
-        '--units[Output units, options: mm, inch, mils (default: mm) \[nargs=0..1\] \[default: "mm"\]]' \
         && return 0
 }
 
@@ -497,7 +383,6 @@ _kicad_cli_pcb_export_3dpdf() {
         '--no-board-body[Exclude board body]' \
         '--no-components[Exclude 3D models for components]' \
         '--no-dnp[Exclude 3D models for components with '\''Do not populate'\'' attribute]' \
-        '--no-extra-pad-thickness[Disable extra pad thickness (pads will have normal thickness)]' \
         '--no-unspecified[Exclude 3D models for components with '\''Unspecified'\'' footprint type]' \
         '(--output -o)'{--output,-o}'[Output file \[nargs=0..1\] \[default: ""\]]' \
         '--subst-models[Substitute STEP or IGS models with the same name in place of VRML models]' \
@@ -531,7 +416,6 @@ _kicad_cli_pcb_export_brep() {
         '--no-board-body[Exclude board body]' \
         '--no-components[Exclude 3D models for components]' \
         '--no-dnp[Exclude 3D models for components with '\''Do not populate'\'' attribute]' \
-        '--no-extra-pad-thickness[Disable extra pad thickness (pads will have normal thickness)]' \
         '--no-unspecified[Exclude 3D models for components with '\''Unspecified'\'' footprint type]' \
         '(--output -o)'{--output,-o}'[Output file \[nargs=0..1\] \[default: ""\]]' \
         '--subst-models[Substitute STEP or IGS models with the same name in place of VRML models]' \
@@ -553,13 +437,11 @@ _kicad_cli_pcb_export_drill() {
         '--excellon-zeros-format[Valid options are: decimal,suppressleading,suppresstrailing,keep. \[nargs=0..1\] \[default: "decimal"\]]' \
         '--format[Valid options excellon, gerber. \[nargs=0..1\] \[default: "excellon"\]]' \
         '--generate-map[Generate map / summary of drill hits]' \
-        '--generate-report[Generate report of drill hits]' \
         '--generate-tenting[Generate a file specifically for tenting]' \
         '--gerber-precision[Precision of Gerber coordinates (5 or 6) \[nargs=0..1\] \[default: 6\]]' \
         '(--help -h)'{--help,-h}'[Shows help message and exits]' \
         '--map-format[Valid options: pdf,gerberx2,ps,dxf,svg \[nargs=0..1\] \[default: "pdf"\]]' \
         '(--output -o)'{--output,-o}'[Output directory \[nargs=0..1\] \[default: ""\]]' \
-        '--report-path[Report output file path \[nargs=0..1\] \[default: ""\]]' \
         && return 0
 }
 
@@ -665,7 +547,6 @@ _kicad_cli_pcb_export_glb() {
         '--no-board-body[Exclude board body]' \
         '--no-components[Exclude 3D models for components]' \
         '--no-dnp[Exclude 3D models for components with '\''Do not populate'\'' attribute]' \
-        '--no-extra-pad-thickness[Disable extra pad thickness (pads will have normal thickness)]' \
         '--no-unspecified[Exclude 3D models for components with '\''Unspecified'\'' footprint type]' \
         '(--output -o)'{--output,-o}'[Output file \[nargs=0..1\] \[default: ""\]]' \
         '--subst-models[Substitute STEP or IGS models with the same name in place of VRML models]' \
@@ -788,7 +669,6 @@ _kicad_cli_pcb_export_ply() {
         '--no-board-body[Exclude board body]' \
         '--no-components[Exclude 3D models for components]' \
         '--no-dnp[Exclude 3D models for components with '\''Do not populate'\'' attribute]' \
-        '--no-extra-pad-thickness[Disable extra pad thickness (pads will have normal thickness)]' \
         '--no-unspecified[Exclude 3D models for components with '\''Unspecified'\'' footprint type]' \
         '(--output -o)'{--output,-o}'[Output file \[nargs=0..1\] \[default: ""\]]' \
         '--subst-models[Substitute STEP or IGS models with the same name in place of VRML models]' \
@@ -812,7 +692,6 @@ _kicad_cli_pcb_export_pos() {
         '--smd-only[Include only SMD footprints (ascii or csv only)]' \
         '--units[Output units; ascii or csv format only; valid options: in,mm \[nargs=0..1\] \[default: "in"\]]' \
         '--use-drill-file-origin[Use drill/place file origin (ascii or csv only)]' \
-        '--variant[Board variant for variant-aware filtering (DNP, BOM, position file exclusions) \[nargs=0..1\] \[default: ""\]]' \
         && return 0
 }
 
@@ -892,7 +771,6 @@ _kicad_cli_pcb_export_step() {
         '--no-board-body[Exclude board body]' \
         '--no-components[Exclude 3D models for components]' \
         '--no-dnp[Exclude 3D models for components with '\''Do not populate'\'' attribute]' \
-        '--no-extra-pad-thickness[Disable extra pad thickness (pads will have normal thickness)]' \
         '--no-optimize-step[Do not optimize STEP file (enables writing parametric curves)]' \
         '--no-unspecified[Exclude 3D models for components with '\''Unspecified'\'' footprint type]' \
         '(--output -o)'{--output,-o}'[Output file \[nargs=0..1\] \[default: ""\]]' \
@@ -927,7 +805,6 @@ _kicad_cli_pcb_export_stl() {
         '--no-board-body[Exclude board body]' \
         '--no-components[Exclude 3D models for components]' \
         '--no-dnp[Exclude 3D models for components with '\''Do not populate'\'' attribute]' \
-        '--no-extra-pad-thickness[Disable extra pad thickness (pads will have normal thickness)]' \
         '--no-unspecified[Exclude 3D models for components with '\''Unspecified'\'' footprint type]' \
         '(--output -o)'{--output,-o}'[Output file \[nargs=0..1\] \[default: ""\]]' \
         '--subst-models[Substitute STEP or IGS models with the same name in place of VRML models]' \
@@ -961,7 +838,6 @@ _kicad_cli_pcb_export_stpz() {
         '--no-board-body[Exclude board body]' \
         '--no-components[Exclude 3D models for components]' \
         '--no-dnp[Exclude 3D models for components with '\''Do not populate'\'' attribute]' \
-        '--no-extra-pad-thickness[Disable extra pad thickness (pads will have normal thickness)]' \
         '--no-optimize-step[Do not optimize STEP file (enables writing parametric curves)]' \
         '--no-unspecified[Exclude 3D models for components with '\''Unspecified'\'' footprint type]' \
         '(--output -o)'{--output,-o}'[Output file \[nargs=0..1\] \[default: ""\]]' \
@@ -1027,7 +903,6 @@ _kicad_cli_pcb_export_u3d() {
         '--no-board-body[Exclude board body]' \
         '--no-components[Exclude 3D models for components]' \
         '--no-dnp[Exclude 3D models for components with '\''Do not populate'\'' attribute]' \
-        '--no-extra-pad-thickness[Disable extra pad thickness (pads will have normal thickness)]' \
         '--no-unspecified[Exclude 3D models for components with '\''Unspecified'\'' footprint type]' \
         '(--output -o)'{--output,-o}'[Output file \[nargs=0..1\] \[default: ""\]]' \
         '--subst-models[Substitute STEP or IGS models with the same name in place of VRML models]' \
@@ -1079,7 +954,6 @@ _kicad_cli_pcb_export_xao() {
         '--no-board-body[Exclude board body]' \
         '--no-components[Exclude 3D models for components]' \
         '--no-dnp[Exclude 3D models for components with '\''Do not populate'\'' attribute]' \
-        '--no-extra-pad-thickness[Disable extra pad thickness (pads will have normal thickness)]' \
         '--no-unspecified[Exclude 3D models for components with '\''Unspecified'\'' footprint type]' \
         '(--output -o)'{--output,-o}'[Output file \[nargs=0..1\] \[default: ""\]]' \
         '--subst-models[Substitute STEP or IGS models with the same name in place of VRML models]' \
@@ -1259,7 +1133,6 @@ _kicad_cli_sch_export_bom() {
         '--sort-asc[Sort ascending (true) or descending (false). \[nargs=0..1\] \[default: true\]]' \
         '--sort-field[Field name to sort by. \[nargs=0..1\] \[default: "Reference"\]]' \
         '--string-delimiter[Character to surround fields with. \[nargs=0..1\] \[default: """\]]' \
-        '--variant[]' \
         && return 0
 }
 
@@ -1270,7 +1143,7 @@ _kicad_cli_sch_export_dxf() {
     _arguments -C \
         '(--black-and-white -b)'{--black-and-white,-b}'[Black and white only]' \
         '--default-font[Default font name \[nargs=0..1\] \[default: ""\]]' \
-        '(--define-var --variant -D)'{--define-var,--variant,-D}'[]' \
+        '(--define-var -D)'{--define-var,-D}'[]' \
         '--draw-hop-over[Draw hop over at wire crossings]' \
         '--drawing-sheet[Path to drawing sheet, this overrides any existing project defined sheet when used \[nargs=0..1\] \[default: ""\]]' \
         '(--exclude-drawing-sheet -e)'{--exclude-drawing-sheet,-e}'[No drawing sheet]' \
@@ -1288,7 +1161,7 @@ _kicad_cli_sch_export_hpgl() {
     _arguments -C \
         '(--black-and-white -b)'{--black-and-white,-b}'[Black and white only]' \
         '--default-font[Default font name \[nargs=0..1\] \[default: ""\]]' \
-        '(--define-var --variant -D)'{--define-var,--variant,-D}'[]' \
+        '(--define-var -D)'{--define-var,-D}'[]' \
         '--draw-hop-over[Draw hop over at wire crossings]' \
         '--drawing-sheet[Path to drawing sheet, this overrides any existing project defined sheet when used \[nargs=0..1\] \[default: ""\]]' \
         '(--exclude-drawing-sheet -e)'{--exclude-drawing-sheet,-e}'[No drawing sheet]' \
@@ -1309,7 +1182,6 @@ _kicad_cli_sch_export_netlist() {
         '--format[Netlist output format, valid options: kicadsexpr, kicadxml, cadstar, orcadpcb2, spice, spicemodel, pads, allegro \[nargs=0..1\] \[default: "kicadsexpr"\]]' \
         '(--help -h)'{--help,-h}'[Shows help message and exits]' \
         '(--output -o)'{--output,-o}'[Output file \[nargs=0..1\] \[default: ""\]]' \
-        '--variant[]' \
         && return 0
 }
 
@@ -1320,7 +1192,7 @@ _kicad_cli_sch_export_pdf() {
     _arguments -C \
         '(--black-and-white -b)'{--black-and-white,-b}'[Black and white only]' \
         '--default-font[Default font name \[nargs=0..1\] \[default: ""\]]' \
-        '(--define-var --variant -D)'{--define-var,--variant,-D}'[]' \
+        '(--define-var -D)'{--define-var,-D}'[]' \
         '--draw-hop-over[Draw hop over at wire crossings]' \
         '--drawing-sheet[Path to drawing sheet, this overrides any existing project defined sheet when used \[nargs=0..1\] \[default: ""\]]' \
         '(--exclude-drawing-sheet -e)'{--exclude-drawing-sheet,-e}'[No drawing sheet]' \
@@ -1342,7 +1214,7 @@ _kicad_cli_sch_export_ps() {
     _arguments -C \
         '(--black-and-white -b)'{--black-and-white,-b}'[Black and white only]' \
         '--default-font[Default font name \[nargs=0..1\] \[default: ""\]]' \
-        '(--define-var --variant -D)'{--define-var,--variant,-D}'[]' \
+        '(--define-var -D)'{--define-var,-D}'[]' \
         '--draw-hop-over[Draw hop over at wire crossings]' \
         '--drawing-sheet[Path to drawing sheet, this overrides any existing project defined sheet when used \[nargs=0..1\] \[default: ""\]]' \
         '(--exclude-drawing-sheet -e)'{--exclude-drawing-sheet,-e}'[No drawing sheet]' \
@@ -1371,7 +1243,7 @@ _kicad_cli_sch_export_svg() {
     _arguments -C \
         '(--black-and-white -b)'{--black-and-white,-b}'[Black and white only]' \
         '--default-font[Default font name \[nargs=0..1\] \[default: ""\]]' \
-        '(--define-var --variant -D)'{--define-var,--variant,-D}'[]' \
+        '(--define-var -D)'{--define-var,-D}'[]' \
         '--draw-hop-over[Draw hop over at wire crossings]' \
         '--drawing-sheet[Path to drawing sheet, this overrides any existing project defined sheet when used \[nargs=0..1\] \[default: ""\]]' \
         '(--exclude-drawing-sheet -e)'{--exclude-drawing-sheet,-e}'[No drawing sheet]' \

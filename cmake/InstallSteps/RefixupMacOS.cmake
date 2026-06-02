@@ -15,6 +15,8 @@ function( refix_kicad_bundle target )
 
     string( TIMESTAMP start_time )
 
+    cleanup_python( ${target} )
+
     file( GLOB_RECURSE items ${target}/*.dylib ${target}/*.so ${target}/*.kiface )
 
     foreach( item ${items} )
@@ -32,6 +34,20 @@ function( refix_kicad_bundle target )
             refix_prereqs( ${binary} )
         endforeach( )
     endforeach( )
+
+    file( GLOB pythonbinbinaries ${target}/Contents/Frameworks/Python.framework/Versions/3.*/bin/python3 )
+    foreach( pythonbinbinary ${pythonbinbinaries} )
+        message( "Refixing rpaths and prereqs for '${pythonbinbinary}'" )
+        refix_rpaths( ${pythonbinbinary} )
+        refix_prereqs( ${pythonbinbinary} )
+    endforeach()
+
+    file( GLOB pythonresbinaries ${target}/Contents/Frameworks/Python.framework/Versions/3.*/Resources/Python.app/Contents/MacOS/Python )
+    foreach( pythonresbinary ${pythonresbinaries} )
+        message( "Refixing rpaths and prereqs for '${pythonresbinary}'" )
+        refix_rpaths( ${pythonresbinary} )
+        refix_prereqs( ${pythonresbinary} )
+    endforeach()
 
     file( GLOB binaries ${target}/Contents/MacOS/* )
     foreach( binary ${binaries} )
@@ -51,6 +67,22 @@ function( refix_kicad_bundle target )
     string( TIMESTAMP end_time )
     # message( "Refixing start time: ${start_time}\nRefixing end time: ${end_time}" )
 endfunction( )
+
+function( cleanup_python bundle)
+    # Remove extra Python
+    file( REMOVE_RECURSE ${bundle}/Contents/MacOS/Python )
+    file( GLOB extra_pythons LIST_DIRECTORIES true ${bundle}/Contents/Applications/*/Contents/MacOS/Python )
+
+    if( NOT "${extra_pythons}" STREQUAL "" )
+        message( "Removing extra Pythons copied into Contents/MacOS: ${extra_pythons}" )
+        file( REMOVE_RECURSE ${extra_pythons} )
+    endif()
+
+    # Make sure Python's Current is a symlink to 3.x
+    file( REMOVE_RECURSE ${bundle}/Contents/Frameworks/Python.framework/Versions/Current )
+    file( GLOB python_version LIST_DIRECTORIES true  RELATIVE ${bundle}/Contents/Frameworks/Python.framework/Versions ${bundle}/Contents/Frameworks/Python.framework/Versions/3* )
+    execute_process( COMMAND ln -s ${python_version} ${bundle}/Contents/Frameworks/Python.framework/Versions/Current )
+endfunction()
 
 
 function( delete_all_rpaths BINARY_PATH )
@@ -102,7 +134,9 @@ function( refix_rpaths binary )
     set( desired_rpaths )
     file( RELATIVE_PATH relative_kicad_framework_path ${executable_path} ${target}/Contents/Frameworks )
     string( REGEX REPLACE "/+$" "" relative_kicad_framework_path "${relative_kicad_framework_path}" ) # remove trailing slash
-    list( APPEND desired_rpaths "@executable_path/${relative_kicad_framework_path}" )
+    file( RELATIVE_PATH relative_python_framework_path ${executable_path} ${target}/Contents/Frameworks/Python.framework )
+    string( REGEX REPLACE "/+$" "" relative_python_framework_path "${relative_python_framework_path}" ) # remove trailing slash
+    list( APPEND desired_rpaths "@executable_path/${relative_kicad_framework_path}" "@executable_path/${relative_python_framework_path}" )
 
     foreach( desired_rpath ${desired_rpaths} )
         execute_process(

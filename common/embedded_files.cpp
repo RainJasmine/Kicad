@@ -324,43 +324,25 @@ EMBEDDED_FILES::RETURN_CODE EMBEDDED_FILES::DecompressAndDecode( EMBEDDED_FILE& 
     }
 
     aFile.decompressedData.resize( decompressedSize );
+    std::string test_hash;
+    std::string new_hash;
 
     MMH3_HASH hash( EMBEDDED_FILES::Seed() );
     hash.add( aFile.decompressedData );
-    std::string new_hash = hash.digest().ToString();
+    new_hash = hash.digest().ToString();
 
     if( aFile.data_hash.length() == 64 )
-    {
-        // SHA-256 hash from older file formats
-        std::string sha_hash;
-        picosha2::hash256_hex_string( aFile.decompressedData, sha_hash );
+        picosha2::hash256_hex_string( aFile.decompressedData, test_hash );
+    else
+        test_hash = new_hash;
 
-        if( sha_hash != aFile.data_hash )
-        {
-            wxLogTrace( wxT( "KICAD_EMBED" ),
-                        wxT( "%s:%s:%d\n * Checksum error in embedded file '%s'" ),
-                        __FILE__, __FUNCTION__, __LINE__, aFile.name );
-            aFile.decompressedData.clear();
-            return RETURN_CODE::CHECKSUM_ERROR;
-        }
-    }
-    else if( new_hash != aFile.data_hash )
+    if( test_hash != aFile.data_hash )
     {
-        // Current MMH3 hash didn't match. Try the V1 hash algorithm for files
-        // saved before the tail-byte alignment fix.
-        MMH3_HASH v1hash( EMBEDDED_FILES::Seed() );
-        v1hash.addDataV1( reinterpret_cast<const uint8_t*>( aFile.decompressedData.data() ),
-                          aFile.decompressedData.size() );
-        std::string v1_hash = v1hash.digest().ToString();
-
-        if( v1_hash != aFile.data_hash )
-        {
-            wxLogTrace( wxT( "KICAD_EMBED" ),
-                        wxT( "%s:%s:%d\n * Checksum error in embedded file '%s'" ),
-                        __FILE__, __FUNCTION__, __LINE__, aFile.name );
-            aFile.decompressedData.clear();
-            return RETURN_CODE::CHECKSUM_ERROR;
-        }
+        wxLogTrace( wxT( "KICAD_EMBED" ),
+                    wxT( "%s:%s:%d\n * Checksum error in embedded file '%s'" ),
+                    __FILE__, __FUNCTION__, __LINE__, aFile.name );
+        aFile.decompressedData.clear();
+        return RETURN_CODE::CHECKSUM_ERROR;
     }
 
     aFile.data_hash = new_hash;
@@ -430,12 +412,11 @@ void EMBEDDED_FILES_PARSER::ParseEmbedded( EMBEDDED_FILES* aFiles )
         {
             if( !file->compressedEncodedData.empty() )
             {
-                if( EMBEDDED_FILES::DecompressAndDecode( *file )
-                        != EMBEDDED_FILES::RETURN_CODE::OK )
-                {
-                    THROW_PARSE_ERROR( "Checksum error in embedded file " + file->name,
-                                       CurSource(), CurLine(), CurLineNumber(), CurOffset() );
-                }
+                EMBEDDED_FILES::DecompressAndDecode( *file );
+
+                if( !file->Validate() )
+                    THROW_PARSE_ERROR( "Checksum error in embedded file " + file->name, CurSource(),
+                                        CurLine(), CurLineNumber(), CurOffset() );
             }
 
             aFiles->AddFile( file.release() );
@@ -549,12 +530,9 @@ void EMBEDDED_FILES_PARSER::ParseEmbedded( EMBEDDED_FILES* aFiles )
     {
         if( !file->compressedEncodedData.empty() )
         {
-            if( EMBEDDED_FILES::DecompressAndDecode( *file )
-                    != EMBEDDED_FILES::RETURN_CODE::OK )
-            {
-                THROW_PARSE_ERROR( "Checksum error in embedded file " + file->name,
-                                   CurSource(), CurLine(), CurLineNumber(), CurOffset() );
-            }
+            if( EMBEDDED_FILES::DecompressAndDecode( *file ) == EMBEDDED_FILES::RETURN_CODE::CHECKSUM_ERROR )
+                THROW_PARSE_ERROR( "Checksum error in embedded file " + file->name, CurSource(),
+                                    CurLine(), CurLineNumber(), CurOffset() );
         }
 
         aFiles->AddFile( file.release() );

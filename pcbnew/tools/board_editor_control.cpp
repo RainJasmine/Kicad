@@ -54,7 +54,6 @@
 #include <dialogs/dialog_assign_netclass.h>
 #include <dialog_plot.h>
 #include <dialogs/rule_editor_dialog_base.h>
-#include <dialogs/dialog_find_by_properties.h>
 #include <kiface_base.h>
 #include <kiway.h>
 #include <netlist_reader/pcb_netlist.h>
@@ -589,13 +588,6 @@ int BOARD_EDITOR_CONTROL::FindNext( const TOOL_EVENT& aEvent )
 }
 
 
-int BOARD_EDITOR_CONTROL::FindByProperties( const TOOL_EVENT& aEvent )
-{
-    m_frame->ShowFindByPropertiesDialog();
-    return 0;
-}
-
-
 int BOARD_EDITOR_CONTROL::BoardSetup( const TOOL_EVENT& aEvent )
 {
     getEditFrame<PCB_EDIT_FRAME>()->ShowBoardSetupDialog();
@@ -725,18 +717,9 @@ int BOARD_EDITOR_CONTROL::ExportNetlist( const TOOL_EVENT& aEvent )
         netlist.AddComponent( component );
     }
 
-    try
-    {
-        FILE_OUTPUTFORMATTER formatter( fn.GetFullPath() );
+    FILE_OUTPUTFORMATTER formatter( fn.GetFullPath() );
 
-        netlist.Format( "pcb_netlist", &formatter, 0, noh->GetNetlistOptions() );
-        formatter.Finish();
-    }
-    catch( const IO_ERROR& ioe )
-    {
-        DisplayErrorMessage( m_frame, wxString::Format( _( "Failed to export netlist to '%s': %s" ),
-                                                        fn.GetFullPath(), ioe.What() ) );
-    }
+    netlist.Format( "pcb_netlist", &formatter, 0, noh->GetNetlistOptions() );
 
     return 0;
 }
@@ -763,53 +746,95 @@ int BOARD_EDITOR_CONTROL::RepairBoard( const TOOL_EVENT& aEvent )
     wxString details;
     bool     quiet = aEvent.Parameter<bool>();
 
-    int duplicates = board()->RepairDuplicateItemUuids();
+    // Repair duplicate IDs and missing nets.
+    std::set<KIID> ids;
+    int            duplicates = 0;
+
+    auto processItem =
+            [&]( EDA_ITEM* aItem )
+            {
+                if( ids.count( aItem->m_Uuid ) )
+                {
+                    duplicates++;
+                    const_cast<KIID&>( aItem->m_Uuid ) = KIID();
+                }
+
+                ids.insert( aItem->m_Uuid );
+
+                BOARD_CONNECTED_ITEM* cItem = dynamic_cast<BOARD_CONNECTED_ITEM*>( aItem );
+
+                if( cItem && cItem->GetNetCode() )
+                {
+                    NETINFO_ITEM* netinfo = cItem->GetNet();
+
+                    if( netinfo && !board()->FindNet( netinfo->GetNetname() ) )
+                    {
+                        board()->Add( netinfo );
+
+                        details += wxString::Format( _( "Orphaned net %s re-parented.\n" ),
+                                                     netinfo->GetNetname() );
+                        errors++;
+                    }
+                }
+            };
+
+    // Footprint IDs are the most important, so give them the first crack at "claiming" a
+    // particular KIID.
+
+    for( FOOTPRINT* footprint : board()->Footprints() )
+        processItem( footprint );
+
+    // After that the principal use is for DRC marker pointers, which are most likely to pads
+    // or tracks.
+
+    for( FOOTPRINT* footprint : board()->Footprints() )
+    {
+        for( PAD* pad : footprint->Pads() )
+            processItem( pad );
+    }
+
+    for( PCB_TRACK* track : board()->Tracks() )
+        processItem( track );
+
+    // From here out I don't think order matters much.
+
+    for( FOOTPRINT* footprint : board()->Footprints() )
+    {
+        processItem( &footprint->Reference() );
+        processItem( &footprint->Value() );
+
+        for( BOARD_ITEM* item : footprint->GraphicalItems() )
+            processItem( item );
+
+        for( ZONE* zone : footprint->Zones() )
+            processItem( zone );
+
+        for( PCB_GROUP* group : footprint->Groups() )
+            processItem( group );
+    }
+
+    // Everything owned by the board not handled above
+    for( BOARD_ITEM* item : board()->GetItemSet() )
+    {
+        // Top-level footprints and tracks were handled above.
+        switch( item->Type() )
+        {
+        case PCB_FOOTPRINT_T:
+        case PCB_TRACE_T:
+        case PCB_ARC_T:
+        case PCB_VIA_T:
+            break;
+
+        default:
+            processItem( item );
+            break;
+        }
+    }
 
     if( duplicates )
     {
         errors += duplicates;
         details += wxString::Format( _( "%d duplicate IDs replaced.\n" ), duplicates );
-    }
-
-    for( FOOTPRINT* footprint : board()->Footprints() )
-    {
-        for( PAD* pad : footprint->Pads() )
-        {
-            BOARD_CONNECTED_ITEM* cItem = pad;
-
-            if( cItem->GetNetCode() )
-            {
-                NETINFO_ITEM* netinfo = cItem->GetNet();
-
-                if( netinfo && !board()->FindNet( netinfo->GetNetname() ) )
-                {
-                    board()->Add( netinfo );
-
-                    details += wxString::Format( _( "Orphaned net %s re-parented.\n" ),
-                                                 netinfo->GetNetname() );
-                    errors++;
-                }
-            }
-        }
-    }
-
-    for( PCB_TRACK* track : board()->Tracks() )
-    {
-        BOARD_CONNECTED_ITEM* cItem = track;
-
-        if( cItem->GetNetCode() )
-        {
-            NETINFO_ITEM* netinfo = cItem->GetNet();
-
-            if( netinfo && !board()->FindNet( netinfo->GetNetname() ) )
-            {
-                board()->Add( netinfo );
-
-                details += wxString::Format( _( "Orphaned net %s re-parented.\n" ),
-                                             netinfo->GetNetname() );
-                errors++;
-            }
-        }
     }
 
     /*******************************
@@ -1010,6 +1035,13 @@ int BOARD_EDITOR_CONTROL::ToggleLibraryTree( const TOOL_EVENT& aEvent )
 int BOARD_EDITOR_CONTROL::ToggleSearch( const TOOL_EVENT& aEvent )
 {
     getEditFrame<PCB_EDIT_FRAME>()->ToggleSearch();
+    return 0;
+}
+
+
+int BOARD_EDITOR_CONTROL::TogglePythonConsole( const TOOL_EVENT& aEvent )
+{
+    m_frame->ScriptingConsoleEnableDisable();
     return 0;
 }
 
@@ -2281,7 +2313,6 @@ void BOARD_EDITOR_CONTROL::setTransitions()
     Go( &BOARD_EDITOR_CONTROL::Find,                   ACTIONS::find.MakeEvent() );
     Go( &BOARD_EDITOR_CONTROL::FindNext,               ACTIONS::findNext.MakeEvent() );
     Go( &BOARD_EDITOR_CONTROL::FindNext,               ACTIONS::findPrevious.MakeEvent() );
-    Go( &BOARD_EDITOR_CONTROL::FindByProperties, PCB_ACTIONS::findByProperties.MakeEvent() );
 
     Go( &BOARD_EDITOR_CONTROL::OpenNonKicadBoard,      PCB_ACTIONS::openNonKicadBoard.MakeEvent() );
     Go( &BOARD_EDITOR_CONTROL::ExportFootprints,       PCB_ACTIONS::exportFootprints.MakeEvent() );
@@ -2355,6 +2386,7 @@ void BOARD_EDITOR_CONTROL::setTransitions()
     Go( &BOARD_EDITOR_CONTROL::ToggleNetInspector,     PCB_ACTIONS::showNetInspector.MakeEvent() );
     Go( &BOARD_EDITOR_CONTROL::ToggleLibraryTree,      PCB_ACTIONS::showDesignBlockPanel.MakeEvent() );
     Go( &BOARD_EDITOR_CONTROL::ToggleSearch,           PCB_ACTIONS::showSearch.MakeEvent() );
+    Go( &BOARD_EDITOR_CONTROL::TogglePythonConsole,    PCB_ACTIONS::showPythonConsole.MakeEvent() );
     Go( &BOARD_EDITOR_CONTROL::RepairBoard,            PCB_ACTIONS::repairBoard.MakeEvent() );
     // Line modes: explicit, next, and notification
     Go( &BOARD_EDITOR_CONTROL::ChangeLineMode,        PCB_ACTIONS::lineModeFree.MakeEvent() );

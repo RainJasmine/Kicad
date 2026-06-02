@@ -106,8 +106,6 @@
 #include <mail_type.h>
 #include <ki_exception.h>
 
-class KICAD_API_SERVER;
-
 
 #define KIFACE_VERSION      1
 #define KIFACE_GETTER       KIFACE_1
@@ -116,6 +114,7 @@ class KICAD_API_SERVER;
 // be mangled.
 #define KIFACE_INSTANCE_NAME_AND_VERSION   "KIFACE_1"
 
+#ifndef SWIG
 #if defined(__linux__) || defined(__FreeBSD__)
  #define LIB_ENV_VAR    wxT( "LD_LIBRARY_PATH" )
 #elif defined(__WXMAC__)
@@ -125,6 +124,7 @@ class KICAD_API_SERVER;
 #else
  #error Platform support missing
 #endif
+#endif  // SWIG
 
 class wxConfigBase;
 class wxWindow;
@@ -256,26 +256,6 @@ struct KIFACE
         return 0;
     }
 
-    virtual bool HandleApiOpenDocument( const wxString& aPath,
-                                        KICAD_API_SERVER* aServer,
-                                        wxString* aError )
-    {
-        if( aError )
-            *aError = wxS( "OpenDocument is not implemented for this face" );
-
-        return false;
-    }
-
-    virtual bool HandleApiCloseDocument( const wxString& aBoardFileName,
-                                         KICAD_API_SERVER* aServer,
-                                         wxString* aError )
-    {
-        if( aError )
-            *aError = wxS( "CloseDocument is not implemented for this face" );
-
-        return false;
-    }
-
     virtual void PreloadLibraries( KIWAY* aKiway ) {}
 
     virtual void CancelPreload( bool aBlock = true ) {}
@@ -326,6 +306,7 @@ public:
         FACE_PL_EDITOR,
         FACE_PCB_CALCULATOR,
         FACE_BMP2CMP,
+        FACE_PYTHON,
 
         KIWAY_FACE_COUNT
     };
@@ -478,14 +459,6 @@ public:
                      PROGRESS_REPORTER* aProgressReporter = nullptr );
     bool ProcessJobConfigDialog( KIWAY::FACE_T aFace, JOB* aJob, wxWindow* aWindow );
 
-    bool ProcessApiOpenDocument( KIWAY::FACE_T aFace, const wxString& aPath,
-                                 KICAD_API_SERVER* aServer,
-                                 wxString* aError = nullptr );
-
-    bool ProcessApiCloseDocument( KIWAY::FACE_T aFace, const wxString& aPath,
-                                  KICAD_API_SERVER* aServer,
-                                  wxString* aError = nullptr );
-
     /**
      * Gets the window pointer to the blocking dialog (to send it signals)
      * @return Pointer to blocking dialog window or null if none
@@ -535,7 +508,11 @@ private:
 };
 
 
+#ifndef SWIG
+// provided by single_top.cpp and kicad.cpp;
 extern KIWAY Kiway;
+// whereas python launchers: single_top.py and project manager instantiate as a python object
+#endif
 
 
 /**
@@ -553,6 +530,8 @@ extern KIWAY Kiway;
 typedef KIFACE* KIFACE_GETTER_FUNC( int* aKIFACEversion, int aKIWAYversion, PGM_BASE* aProgram );
 
 
+#ifndef SWIG
+
 /// No name mangling.  Each KIFACE (DSO/DLL) will implement this once.
 extern "C" {
 #if defined(BUILD_KIWAY_DLL)
@@ -561,5 +540,7 @@ extern "C" {
     KIFACE* KIFACE_GETTER(  int* aKIFACEversion, int aKIWAYversion, PGM_BASE* aProgram );
 #endif
 }
+
+#endif  // SWIG
 
 #endif  // KIWAY_H_

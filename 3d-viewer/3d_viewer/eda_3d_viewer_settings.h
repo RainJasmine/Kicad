@@ -155,7 +155,6 @@ public:
         bool differentiate_plated_copper;
         bool use_board_editor_copper_colors;    // OpenGL only
         bool preview_show_board_body;
-        bool show_missing_models; // Show placeholder for missing 3D models
 
         /**
          * return true if platted copper aeras and non platted copper areas must be drawn

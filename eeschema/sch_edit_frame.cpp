@@ -58,6 +58,7 @@
 #include <core/profile.h>
 #include <project/project_file.h>
 #include <project/net_settings.h>
+#include <python_scripting.h>
 #include <sch_edit_frame.h>
 #include <symbol_chooser_frame.h>
 #include <sch_painter.h>
@@ -597,10 +598,6 @@ SCH_EDIT_FRAME::~SCH_EDIT_FRAME()
 
     if( m_schematic )
         m_schematic->RemoveAllListeners();
-
-    // Canvas outlives m_schematic; detach tracker consumers before delete.
-    if( GetCanvas() && GetCanvas()->GetView() )
-        GetCanvas()->GetView()->DetachTextVarTracker();
 
     // Delete all items not in draw list before deleting schematic
     // to avoid dangling pointers stored in these items
@@ -1233,7 +1230,12 @@ void SCH_EDIT_FRAME::doCloseWindow()
 
         for( const SCH_SHEET_PATH& path : sheetlist )
         {
-            if( SCH_SCREEN* screen = path.LastScreen() )
+            SCH_SCREEN* screen = path.LastScreen();
+
+            // Only sweep autosaves for sheets actually dirtied in this session.
+            // A clean sheet's autosave, if any, is a previous-session leftover the
+            // user explicitly deferred in the recovery dialog.
+            if( screen && screen->IsContentModified() )
                 sheetSrcs.push_back( Prj().AbsolutePath( screen->GetFileName() ) );
         }
 
@@ -2453,17 +2455,7 @@ void SCH_EDIT_FRAME::onCloseErcDialog( wxCommandEvent& aEvent )
 DIALOG_SYMBOL_FIELDS_TABLE* SCH_EDIT_FRAME::GetSymbolFieldsTableDialog()
 {
     if( !m_symbolFieldsTableDialog )
-    {
-        auto* dlg = new DIALOG_SYMBOL_FIELDS_TABLE( this );
-
-        if( dlg->WasAborted() )
-        {
-            dlg->Destroy();
-            return nullptr;
-        }
-
-        m_symbolFieldsTableDialog = dlg;
-    }
+        m_symbolFieldsTableDialog = new DIALOG_SYMBOL_FIELDS_TABLE( this );
 
     return m_symbolFieldsTableDialog;
 }
@@ -3031,13 +3023,7 @@ void SCH_EDIT_FRAME::SetSchematic( SCHEMATIC* aSchematic )
     wxCHECK( aSchematic, /* void */ );
 
     if( m_schematic )
-    {
         m_schematic->SetProject( nullptr );
-
-        // Detach before the outgoing schematic (and its tracker) is freed.
-        if( GetCanvas() && GetCanvas()->GetView() )
-            GetCanvas()->GetView()->DetachTextVarTracker();
-    }
 
     aSchematic->SetProject( &Prj() );
     delete m_schematic;

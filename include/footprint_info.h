@@ -64,7 +64,7 @@ public:
 
     wxString GetName() const override { return m_fpname; }
 
-    int GetPinCount() override { return GetNumberedPadCount(); }
+    int GetPinCount() override { return GetUniquePadCount(); }
 
     LIB_ID GetLIB_ID() const override
     {
@@ -95,12 +95,6 @@ public:
     {
         ensure_loaded();
         return m_unique_pad_count;
-    }
-
-    unsigned GetNumberedPadCount()
-    {
-        ensure_loaded();
-        return m_numbered_pad_count;
     }
 
     int GetOrderNum()
@@ -143,7 +137,6 @@ protected:
     int             m_num;              ///< Order number in the display list.
     unsigned        m_pad_count;        ///< Number of pads
     unsigned        m_unique_pad_count; ///< Number of unique pads
-    unsigned        m_numbered_pad_count; ///< Number of unique electrical pads (numeric or BGA-style numbers)
     wxString        m_doc;              ///< Footprint description.
     wxString        m_keywords;         ///< Footprint keywords.
 

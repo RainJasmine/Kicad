@@ -81,9 +81,11 @@ if(KICAD_BUILD_FUZZ_TESTS)
             common
             qa_utils
             markdown_lib
+            scripting
             ${PCBNEW_IO_LIBRARIES}
             ${wxWidgets_LIBRARIES}
             ${GDI_PLUS_LIBRARIES}
+            ${PYTHON_LIBRARIES}
             Boost::headers
             ${PCBNEW_EXTRA_LIBS}    # -lrt must follow Boost
     )

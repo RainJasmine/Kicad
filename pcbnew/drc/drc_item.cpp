@@ -339,7 +339,6 @@ std::vector<std::reference_wrapper<RC_ITEM>> DRC_ITEM::allItemTypes( {
         DRC_ITEM::annularWidth,
         DRC_ITEM::drillTooSmall,
         DRC_ITEM::microviaDrillTooSmall,
-        DRC_ITEM::viaDiameter,
         DRC_ITEM::courtyardsOverlap,
         DRC_ITEM::missingCourtyard,
         DRC_ITEM::malformedCourtyard,
@@ -388,7 +387,6 @@ std::vector<std::reference_wrapper<RC_ITEM>> DRC_ITEM::allItemTypes( {
         DRC_ITEM::npthInsideCourtyard,
         DRC_ITEM::itemOnDisabledLayer,
         DRC_ITEM::unresolvedVariable,
-        DRC_ITEM::assertionFailure,
         DRC_ITEM::footprintTypeMismatch,
         DRC_ITEM::libFootprintIssues,
         DRC_ITEM::libFootprintMismatch,
@@ -474,8 +472,8 @@ std::shared_ptr<DRC_ITEM> DRC_ITEM::Create( int aErrorCode )
     case DRCE_MISSING_TUNING_PROFILE:   return std::make_shared<DRC_ITEM>( missingTuningProfile );
     case DRCE_TRACK_ON_POST_MACHINED_LAYER: return std::make_shared<DRC_ITEM>( trackOnPostMachinedLayer );
     case DRCE_TRACK_NOT_CENTERED_ON_VIA:    return std::make_shared<DRC_ITEM>( trackNotCenteredOnVia );
-
     default:
+        wxFAIL_MSG( wxT( "Unknown DRC error code" ) );
         return nullptr;
     }
 }

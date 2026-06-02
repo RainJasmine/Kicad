@@ -25,11 +25,8 @@
 #pragma once
 
 #include <memory>
-#include <optional>
-#include <vector>
 
 #include <board_stackup_manager/board_stackup.h>
-#include <eda_units.h>
 #include <lset.h>
 #include <settings/nested_settings.h>
 #include <widgets/ui_common.h>
@@ -256,12 +253,6 @@ public:
 
     virtual ~BOARD_DESIGN_SETTINGS();
 
-    struct VALIDATION_ERROR
-    {
-        wxString setting_name;
-        wxString error_message;
-    };
-
     bool operator==( const BOARD_DESIGN_SETTINGS& aOther ) const;
     bool operator!=( const BOARD_DESIGN_SETTINGS& aOther ) const
     {
@@ -288,14 +279,6 @@ public:
      * Return true if the DRC error code's severity is SEVERITY_IGNORE.
      */
     bool Ignore( int aDRCErrorCode );
-
-    /**
-     * Validate design settings values and return per-field errors.
-     *
-     * @return empty vector if valid, otherwise one or more validation errors.
-     */
-        std::vector<VALIDATION_ERROR> ValidateDesignRules(
-            std::optional<EDA_UNITS> aUnits = std::nullopt ) const;
 
     ZONE_SETTINGS& GetDefaultZoneSettings()
     {

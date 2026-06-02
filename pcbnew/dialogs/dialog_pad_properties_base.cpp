@@ -1109,7 +1109,7 @@ DIALOG_PAD_PROPERTIES_BASE::DIALOG_PAD_PROPERTIES_BASE( wxWindow* parent, wxWind
 	gbPostMachiningLeftCol->SetFlexibleDirection( wxBOTH );
 	gbPostMachiningLeftCol->SetNonFlexibleGrowMode( wxFLEX_GROWMODE_SPECIFIED );
 
-	m_topPostMachiningLabel = new wxStaticText( sbPostMachining->GetStaticBox(), wxID_ANY, _("Front:"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_topPostMachiningLabel = new wxStaticText( sbPostMachining->GetStaticBox(), wxID_ANY, _("Top:"), wxDefaultPosition, wxDefaultSize, 0 );
 	m_topPostMachiningLabel->Wrap( -1 );
 	gbPostMachiningLeftCol->Add( m_topPostMachiningLabel, wxGBPosition( 0, 0 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL, 5 );
 
@@ -1152,7 +1152,7 @@ DIALOG_PAD_PROPERTIES_BASE::DIALOG_PAD_PROPERTIES_BASE( wxWindow* parent, wxWind
 	gbPostMachiningRightCol->SetFlexibleDirection( wxBOTH );
 	gbPostMachiningRightCol->SetNonFlexibleGrowMode( wxFLEX_GROWMODE_SPECIFIED );
 
-	m_bottomPostMachiningLabel = new wxStaticText( sbPostMachining->GetStaticBox(), wxID_ANY, _("Back:"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_bottomPostMachiningLabel = new wxStaticText( sbPostMachining->GetStaticBox(), wxID_ANY, _("Bottom:"), wxDefaultPosition, wxDefaultSize, 0 );
 	m_bottomPostMachiningLabel->Wrap( -1 );
 	gbPostMachiningRightCol->Add( m_bottomPostMachiningLabel, wxGBPosition( 0, 0 ), wxGBSpan( 1, 1 ), wxALIGN_CENTER_VERTICAL, 5 );
 
@@ -1210,7 +1210,7 @@ DIALOG_PAD_PROPERTIES_BASE::DIALOG_PAD_PROPERTIES_BASE( wxWindow* parent, wxWind
 	gbBackdrillLeftCol->SetFlexibleDirection( wxBOTH );
 	gbBackdrillLeftCol->SetNonFlexibleGrowMode( wxFLEX_GROWMODE_SPECIFIED );
 
-	m_backDrillTopLayerLabel = new wxStaticText( sbBackdrill->GetStaticBox(), wxID_ANY, _("Front backdrill must-cut:"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_backDrillTopLayerLabel = new wxStaticText( sbBackdrill->GetStaticBox(), wxID_ANY, _("Top backdrill must-cut:"), wxDefaultPosition, wxDefaultSize, 0 );
 	m_backDrillTopLayerLabel->Wrap( -1 );
 	m_backDrillTopLayerLabel->SetToolTip( _("The backdrill must pass through this layer") );
 
@@ -1243,7 +1243,7 @@ DIALOG_PAD_PROPERTIES_BASE::DIALOG_PAD_PROPERTIES_BASE( wxWindow* parent, wxWind
 	gbBackdrillRightCol->SetFlexibleDirection( wxBOTH );
 	gbBackdrillRightCol->SetNonFlexibleGrowMode( wxFLEX_GROWMODE_SPECIFIED );
 
-	m_backDrillBottomLayerLabel = new wxStaticText( sbBackdrill->GetStaticBox(), wxID_ANY, _("Back backdrill must-cut:"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_backDrillBottomLayerLabel = new wxStaticText( sbBackdrill->GetStaticBox(), wxID_ANY, _("Bottom backdrill must-cut:"), wxDefaultPosition, wxDefaultSize, 0 );
 	m_backDrillBottomLayerLabel->Wrap( -1 );
 	m_backDrillBottomLayerLabel->SetToolTip( _("The backdrill must pass through this layer") );
 

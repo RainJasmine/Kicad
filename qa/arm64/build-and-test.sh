@@ -42,6 +42,8 @@ cmd_build() {
         cmake -G Ninja \
             -DCMAKE_BUILD_TYPE=QABUILD \
             -DKICAD_BUILD_QA_TESTS=ON \
+            -DKICAD_SCRIPTING=OFF \
+            -DKICAD_SCRIPTING_WXPYTHON=OFF \
             -DKICAD_BUILD_I18N=OFF \
             -DKICAD_UPDATE_CHECK=OFF \
             -DKICAD_USE_CMAKE_FINDPROTOBUF=ON \

@@ -134,7 +134,7 @@ void OUTLINE_GLYPH::Triangulate( std::function<void( const VECTOR2I& aPt1,
                                                      const VECTOR2I& aPt2,
                                                      const VECTOR2I& aPt3 )> aCallback ) const
 {
-    const_cast<OUTLINE_GLYPH*>( this )->CacheTriangulation();
+    const_cast<OUTLINE_GLYPH*>( this )->CacheTriangulation( false );
 
     for( unsigned int i = 0; i < TriangulatedPolyCount(); i++ )
     {
@@ -150,13 +150,15 @@ void OUTLINE_GLYPH::Triangulate( std::function<void( const VECTOR2I& aPt1,
 }
 
 
-void OUTLINE_GLYPH::CacheTriangulation( bool aSimplify, const TASK_SUBMITTER& aSubmitter )
+void OUTLINE_GLYPH::CacheTriangulation( bool aPartition, bool aSimplify )
 {
     // Only call CacheTriangulation if it has never been done before.  Otherwise we'll hash
     // the triangulation to see if it has been edited, and glyphs are invariant after creation.
+    //
+    // Also forces "partition" to false as we never want to partition a glyph.
 
     if( TriangulatedPolyCount() == 0 )
-        SHAPE_POLY_SET::CacheTriangulation( aSimplify );
+        SHAPE_POLY_SET::CacheTriangulation( false, aSimplify );
 }
 
 
@@ -175,5 +177,5 @@ OUTLINE_GLYPH::GetTriangulationData() const
 void OUTLINE_GLYPH::CacheTriangulation(
         std::vector<std::unique_ptr<SHAPE_POLY_SET::TRIANGULATED_POLYGON>>& aHintData )
 {
-    cacheTriangulation( false, &aHintData );
+    cacheTriangulation( false, false, &aHintData );
 }

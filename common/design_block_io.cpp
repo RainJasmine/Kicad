@@ -466,16 +466,12 @@ void DESIGN_BLOCK_IO::DesignBlockSave( const wxString&                    aLibra
 
     try
     {
-        std::string payload = dbMetadata.dump( 0 );
-        wxString    writeError;
-        success = KIPLATFORM::IO::AtomicWriteFile( dbMetadataFile, payload.data(), payload.size(),
-                                                   &writeError );
+        wxFFile mdFile( dbMetadataFile, wxT( "wb" ) );
 
-        if( !success )
-        {
-            wxLogError( _( "Cannot save design block metadata '%s': %s" ), dbMetadataFile,
-                        writeError );
-        }
+        if( mdFile.IsOpened() )
+            success = mdFile.Write( dbMetadata.dump( 0 ) );
+
+        // wxFFile dtor will close the file
     }
     catch( ... )
     {

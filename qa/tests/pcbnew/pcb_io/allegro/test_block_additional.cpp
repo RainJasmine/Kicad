@@ -76,6 +76,7 @@ struct hash<BLOCK_TEST_KEY>
 
 
 using BLOCK_TEST_FUNC = std::function<void( const BLOCK_BASE& )>;
+using DB_OBJ_TEST_FUNC = std::function<void( const DB_OBJ& )>;
 
 
 static void TestOlympus0x20( const BLOCK_BASE& aBlock )
@@ -271,6 +272,19 @@ static const std::unordered_map<BLOCK_TEST_KEY, BLOCK_TEST_FUNC> additionalBlock
     { { "parallella_v163",            0x0002cc08 }, TestParallellaV163_PS_28C128N },
     { { "parallella_v163",            0x0002e168 }, TestParallellaV163_PS_P65X1P7SLT },
 };
+
+
+static const std::unordered_map<BLOCK_TEST_KEY, DB_OBJ_TEST_FUNC> additionalDbObjTests{
+    { { "Olympus_15061-1b_v165",      0x0131553c }, []( const DB_OBJ& obj )
+        {
+            BOOST_REQUIRE( obj.GetType() == BRD_x20 );
+
+            const auto& blk = static_cast<const UNKNOWN_0x20&>( obj );
+            BOOST_TEST( blk.m_Next.m_TargetKey == 0x824DF8F0 );
+        }
+    },
+};
+
 // clang-format on
 
 
@@ -289,5 +303,24 @@ void KI_TEST::RunAdditionalBlockTest( const std::string& aBoardName, size_t aBlo
     else
     {
         BOOST_TEST_FAIL( "No additional test defined for this block" );
+    }
+}
+
+
+void KI_TEST::RunAdditionalObjectTest( const std::string& aBoardName, size_t aBlockOffset, const DB_OBJ& obj )
+{
+    const BLOCK_TEST_KEY key{ aBoardName, aBlockOffset };
+
+    auto it = additionalDbObjTests.find( key );
+    if( it != additionalDbObjTests.end() )
+    {
+        const auto& testFunc = it->second;
+        BOOST_REQUIRE( testFunc );
+
+        testFunc( obj );
+    }
+    else
+    {
+        BOOST_TEST_FAIL( "No additional test defined for this DB_OBJ" );
     }
 }

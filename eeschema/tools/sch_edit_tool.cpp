@@ -271,27 +271,6 @@ private:
 };
 
 
-class LOCK_CONTEXT_MENU : public CONDITIONAL_MENU
-{
-public:
-    LOCK_CONTEXT_MENU( TOOL_INTERACTIVE* aTool ) :
-        CONDITIONAL_MENU( aTool )
-    {
-        SetIcon( BITMAPS::locked );
-        SetTitle( _( "Locking" ) );
-
-        AddItem( SCH_ACTIONS::lock, SCH_CONDITIONS::HasUnlockedItems );
-        AddItem( SCH_ACTIONS::unlock, SCH_CONDITIONS::HasLockedItems );
-        AddItem( SCH_ACTIONS::toggleLock, SELECTION_CONDITIONS::ShowAlways );
-    }
-
-    ACTION_MENU* create() const override
-    {
-        return new LOCK_CONTEXT_MENU( this->m_tool );
-    }
-};
-
-
 SCH_EDIT_TOOL::SCH_EDIT_TOOL() :
         SCH_TOOL_BASE<SCH_EDIT_FRAME>( "eeschema.InteractiveEdit" )
 {
@@ -800,13 +779,6 @@ bool SCH_EDIT_TOOL::Init()
                 return menu;
             };
 
-    auto makeLockMenu = [&]( TOOL_INTERACTIVE* tool )
-    {
-        std::shared_ptr<LOCK_CONTEXT_MENU> menu = std::make_shared<LOCK_CONTEXT_MENU>( tool );
-        tool->GetToolMenu().RegisterSubMenu( menu );
-        return menu.get();
-    };
-
     const auto canCopyText = SCH_CONDITIONS::OnlyTypes( {
             SCH_TEXT_T,
             SCH_TEXTBOX_T,
@@ -896,7 +868,6 @@ bool SCH_EDIT_TOOL::Init()
     selToolMenu.AddMenu( makeConvertToMenu(),          toChangeCondition, 200 );
 
     selToolMenu.AddItem( SCH_ACTIONS::cleanupSheetPins, sheetHasUndefinedPins, 250 );
-    selToolMenu.AddMenu( makeLockMenu( m_selectionTool ), S_C::NotEmpty, 250 );
 
     selToolMenu.AddSeparator( 300 );
     selToolMenu.AddItem( ACTIONS::cut,                 S_C::IdleSelection, 300 );
@@ -970,8 +941,6 @@ int SCH_EDIT_TOOL::Rotate( const TOOL_EVENT& aEvent )
 {
     bool           clockwise = ( aEvent.Matches( SCH_ACTIONS::rotateCW.MakeEvent() ) );
     SCH_SELECTION& selection = m_selectionTool->RequestSelection( RotatableItems, true, false );
-
-    m_selectionTool->FilterSelectionForLockedItems();
 
     wxLogTrace( "KICAD_SCH_MOVE", "SCH_EDIT_TOOL::Rotate: start, clockwise=%d, selection size=%u", clockwise,
                 selection.GetSize() );
@@ -1303,8 +1272,6 @@ int SCH_EDIT_TOOL::Mirror( const TOOL_EVENT& aEvent )
 {
     SCH_SELECTION& selection = m_selectionTool->RequestSelection( RotatableItems, false, false );
 
-    m_selectionTool->FilterSelectionForLockedItems();
-
     if( selection.GetSize() == 0 )
         return 0;
 
@@ -1601,9 +1568,6 @@ static void swapFieldPositionsWithMatching( std::vector<SCH_FIELD>& aAFields, st
 int SCH_EDIT_TOOL::Swap( const TOOL_EVENT& aEvent )
 {
     SCH_SELECTION&         selection = m_selectionTool->RequestSelection( SwappableItems );
-
-    m_selectionTool->FilterSelectionForLockedItems();
-
     std::vector<EDA_ITEM*> sorted = selection.GetItemsSortedBySelectionOrder();
 
     if( selection.Size() < 2 )
@@ -2233,11 +2197,7 @@ int SCH_EDIT_TOOL::RepeatDrawItem( const TOOL_EVENT& aEvent )
 int SCH_EDIT_TOOL::DoDelete( const TOOL_EVENT& aEvent )
 {
     SCH_SCREEN*           screen = m_frame->GetScreen();
-
-    m_selectionTool->RequestSelection( SCH_COLLECTOR::DeletableItems );
-    m_selectionTool->FilterSelectionForLockedItems();
-
-    std::deque<EDA_ITEM*> items = m_selectionTool->GetSelection().GetItems();
+    std::deque<EDA_ITEM*> items = m_selectionTool->RequestSelection( SCH_COLLECTOR::DeletableItems ).GetItems();
     SCH_COMMIT            commit( m_toolMgr );
     std::vector<VECTOR2I> pts;
     bool                  updateHierarchy = false;
@@ -3696,78 +3656,6 @@ void SCH_EDIT_TOOL::FixERCError( const std::shared_ptr<RC_ITEM>& aERCItem )
 }
 
 
-int SCH_EDIT_TOOL::ToggleLock( const TOOL_EVENT& aEvent )
-{
-    return modifyLockSelected( TOGGLE );
-}
-
-
-int SCH_EDIT_TOOL::Lock( const TOOL_EVENT& aEvent )
-{
-    return modifyLockSelected( ON );
-}
-
-
-int SCH_EDIT_TOOL::Unlock( const TOOL_EVENT& aEvent )
-{
-    return modifyLockSelected( OFF );
-}
-
-
-int SCH_EDIT_TOOL::modifyLockSelected( MODIFY_MODE aMode )
-{
-    SCH_SELECTION& selection = m_selectionTool->RequestSelection();
-
-    if( selection.Empty() )
-        m_toolMgr->RunAction( ACTIONS::cursorClick );
-
-    if( selection.Empty() )
-        return 0;
-
-    if( aMode == TOGGLE )
-    {
-        aMode = ON;
-
-        for( EDA_ITEM* item : selection )
-        {
-            if( SCH_ITEM* schItem = dynamic_cast<SCH_ITEM*>( item ) )
-            {
-                if( schItem->IsLocked() )
-                {
-                    aMode = OFF;
-                    break;
-                }
-            }
-        }
-    }
-
-    wxString   commitMsg = ( aMode == ON ) ? _( "Lock" ) : _( "Unlock" );
-    SCH_COMMIT commit( m_toolMgr );
-
-    for( EDA_ITEM* item : selection )
-    {
-        if( SCH_ITEM* schItem = dynamic_cast<SCH_ITEM*>( item ) )
-        {
-            // Don't lock/unlock pins, fields, or sheet pins - they inherit from parent
-            if( schItem->Type() == SCH_PIN_T || schItem->Type() == SCH_FIELD_T
-                    || schItem->Type() == SCH_SHEET_PIN_T )
-                continue;
-
-            commit.Modify( schItem, m_frame->GetScreen() );
-            schItem->SetLocked( aMode == ON );
-        }
-    }
-
-    if( !commit.Empty() )
-    {
-        commit.Push( commitMsg );
-        m_toolMgr->PostEvent( EVENTS::SelectedEvent );
-    }
-
-    return 0;
-}
-
-
 void SCH_EDIT_TOOL::setTransitions()
 {
     // clang-format off
@@ -3814,10 +3702,6 @@ void SCH_EDIT_TOOL::setTransitions()
     Go( &SCH_EDIT_TOOL::SetAttribute,       SCH_ACTIONS::setExcludeFromBOM.MakeEvent() );
     Go( &SCH_EDIT_TOOL::SetAttribute,       SCH_ACTIONS::setExcludeFromBoard.MakeEvent() );
     Go( &SCH_EDIT_TOOL::SetAttribute,       SCH_ACTIONS::setExcludeFromSim.MakeEvent() );
-
-    Go( &SCH_EDIT_TOOL::ToggleLock,         SCH_ACTIONS::toggleLock.MakeEvent() );
-    Go( &SCH_EDIT_TOOL::Lock,               SCH_ACTIONS::lock.MakeEvent() );
-    Go( &SCH_EDIT_TOOL::Unlock,             SCH_ACTIONS::unlock.MakeEvent() );
 
     Go( &SCH_EDIT_TOOL::CleanupSheetPins,   SCH_ACTIONS::cleanupSheetPins.MakeEvent() );
     Go( &SCH_EDIT_TOOL::GlobalEdit,         SCH_ACTIONS::editTextAndGraphics.MakeEvent() );

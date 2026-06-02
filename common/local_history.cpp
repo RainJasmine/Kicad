@@ -36,7 +36,6 @@
 #include <confirm.h>
 #include <progress_reporter.h>
 
-#include <kiplatform/io.h>
 
 #include <git2.h>
 #include <wx/filename.h>
@@ -334,7 +333,7 @@ bool LOCAL_HISTORY::RunRegisteredSaversAndCommit( const wxString& aProjectPath, 
             [this, projectPath = aProjectPath, title = aTitle, tagFileType = aTagFileType,
              data = std::move( fileData )]() mutable -> bool
             {
-                bool result = commitInBackground( projectPath, title, data );
+                bool result = commitInBackground( projectPath, title, data, !tagFileType.IsEmpty() );
 
                 if( !tagFileType.IsEmpty() )
                     TagSave( projectPath, tagFileType );
@@ -427,16 +426,16 @@ bool LOCAL_HISTORY::RunRegisteredSaversAsAutosaveFiles( const wxString& aProject
             continue;
         }
 
-        wxString err;
+        wxFFile out( dst, wxS( "wb" ) );
 
-        if( KIPLATFORM::IO::AtomicWriteFile( dst, buf.data(), buf.size(), &err ) )
+        if( out.IsOpened() && ( buf.empty() || out.Write( buf.data(), buf.size() ) == buf.size() ) )
         {
             anyWritten = true;
             wxLogTrace( traceAutoSave, wxS("[autosave] wrote %zu bytes to '%s'"), buf.size(), dst );
         }
         else
         {
-            wxLogTrace( traceAutoSave, wxS("[autosave] write failed for '%s': %s"), dst, err );
+            wxLogTrace( traceAutoSave, wxS("[autosave] write failed for '%s'"), dst );
         }
     }
 
@@ -507,20 +506,36 @@ findAutosaveFilePairs( const wxString& aProjectPath )
 
 
 std::vector<std::pair<wxString, wxString>>
-LOCAL_HISTORY::FindStaleAutosaveFiles( const wxString& aProjectPath ) const
+LOCAL_HISTORY::FindStaleAutosaveFiles( const wxString& aProjectPath, const std::vector<wxString>& aExtensions ) const
 {
     std::vector<std::pair<wxString, wxString>> results;
 
+    if( aExtensions.empty() )
+        return results;
+
     for( auto& pair : findAutosaveFilePairs( aProjectPath ) )
     {
-        wxFileName autosaveFn( pair.first );
         wxFileName srcFn( pair.second );
+        bool       match = false;
+
+        for( const wxString& ext : aExtensions )
+        {
+            if( srcFn.GetExt().IsSameAs( ext, false ) )
+            {
+                match = true;
+                break;
+            }
+        }
+
+        if( !match )
+            continue;
+
         wxDateTime srcTime;
 
         if( srcFn.FileExists() )
             srcTime = srcFn.GetModificationTime();
 
-        wxDateTime autosaveTime = autosaveFn.GetModificationTime();
+        wxDateTime autosaveTime = wxFileName( pair.first ).GetModificationTime();
 
         if( !srcTime.IsValid() || autosaveTime.IsLaterThan( srcTime ) )
             results.emplace_back( std::move( pair ) );
@@ -582,7 +597,7 @@ void LOCAL_HISTORY::RemoveAutosaveFiles( const wxString& aProjectPath,
 
 
 bool LOCAL_HISTORY::commitInBackground( const wxString& aProjectPath, const wxString& aTitle,
-                                        const std::vector<HISTORY_FILE_DATA>& aFileData )
+                                        const std::vector<HISTORY_FILE_DATA>& aFileData, bool aIsManualSave )
 {
     wxLogTrace( traceAutoSave, wxS("[history] background: writing %zu entries for '%s'"),
                 aFileData.size(), aProjectPath );
@@ -739,7 +754,7 @@ bool LOCAL_HISTORY::commitInBackground( const wxString& aProjectPath, const wxSt
             }
         }
 
-        if( stagedMatchesDisk )
+        if( stagedMatchesDisk && !aIsManualSave )
         {
             wxLogTrace( traceAutoSave, wxS( "[history] background: first commit; staged matches disk -- skipping" ) );
             hasChanges = false;

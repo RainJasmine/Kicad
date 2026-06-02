@@ -44,7 +44,6 @@ public:
     int JobExportSvg( JOB* aJob );
     int JobExportDxf( JOB* aJob );
     int JobExportPdf( JOB* aJob );
-    int JobExportPng( JOB* aJob );
     int JobExportPs( JOB* aJob );
     int JobExportGerber( JOB* aJob );
     int JobExportGerbers( JOB* aJob );
@@ -60,12 +59,6 @@ public:
     int JobExportStats( JOB* aJob );
     int JobUpgrade( JOB* aJob );
     int JobImport( JOB* aJob );
-
-    /**
-     * Clear the cached CLI board so the next job reloads from the current project.
-     * Called when the API server switches documents.
-     */
-    void ClearCachedBoard();
 
 private:
     BOARD* getBoard( const wxString& aPath = wxEmptyString );

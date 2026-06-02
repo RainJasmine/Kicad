@@ -21,7 +21,6 @@
 #ifndef KICAD_API_SERVER_H
 #define KICAD_API_SERVER_H
 
-#include <atomic>
 #include <memory>
 #include <set>
 #include <string>
@@ -42,7 +41,7 @@ wxDECLARE_EVENT( API_REQUEST_EVENT, wxCommandEvent );
 class KICOMMON_API KICAD_API_SERVER : public wxEvtHandler
 {
 public:
-    KICAD_API_SERVER( bool aAutoStart = true );
+    KICAD_API_SERVER();
 
     ~KICAD_API_SERVER();
 
@@ -66,15 +65,7 @@ public:
 
     void DeregisterHandler( API_HANDLER* aHandler );
 
-    void SetReadyToReply( bool aReady = true )
-    {
-        m_readyToReply.store( aReady, std::memory_order_release );
-    }
-
-    void SetSocketPath( const wxString& aSocketPath )
-    {
-        m_socketPathOverride = aSocketPath;
-    }
+    void SetReadyToReply( bool aReady = true ) { m_readyToReply = aReady; }
 
     std::string SocketPath() const;
 
@@ -97,8 +88,6 @@ private:
      */
     void handleApiEvent( wxCommandEvent& aEvent );
 
-    void handleApiRequestString( std::string& aRequestString );
-
     void log( const std::string& aOutput );
 
     std::unique_ptr<KINNG_REQUEST_SERVER> m_server;
@@ -107,9 +96,7 @@ private:
 
     std::string m_token;
 
-    std::atomic<bool> m_readyToReply;
-
-    wxString m_socketPathOverride;
+    bool m_readyToReply;
 
     static wxString s_logFileName;
 

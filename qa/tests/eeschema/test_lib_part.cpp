@@ -732,20 +732,20 @@ BOOST_AUTO_TEST_CASE( SetUnitCountRejectsInvalidValues )
     LIB_SYMBOL baseline( wxS( "test_part" ) );
     checkMandatoryFields( baseline );
 
-    // When wxDEBUG_LEVEL > 0 the wxCHECK fires (caught by CHECK_WX_ASSERT) and the function
-    // does not modify the symbol. With wxDEBUG_LEVEL == 0 the wxCHECK is silent and the
-    // function returns early without modification. Cover both call paths so the test
-    // exercises the actual SetUnitCount entry on every build configuration.
+    // In debug builds the wxCHECK fires (caught by CHECK_WX_ASSERT) and the function does
+    // not modify the symbol. In release builds, the wxCHECK is silent and the function
+    // returns early without modification. Cover both call paths so the test exercises the
+    // actual SetUnitCount entry on every build configuration.
     LIB_SYMBOL zeroCount( wxS( "test_part" ) );
     CHECK_WX_ASSERT( zeroCount.SetUnitCount( 0, true ) );
-#if wxDEBUG_LEVEL == 0
+#ifndef __WXDEBUG__
     zeroCount.SetUnitCount( 0, true );
 #endif
     checkMandatoryFields( zeroCount );
 
     LIB_SYMBOL negativeCount( wxS( "test_part" ) );
     CHECK_WX_ASSERT( negativeCount.SetUnitCount( -1, true ) );
-#if wxDEBUG_LEVEL == 0
+#ifndef __WXDEBUG__
     negativeCount.SetUnitCount( -1, true );
 #endif
     checkMandatoryFields( negativeCount );

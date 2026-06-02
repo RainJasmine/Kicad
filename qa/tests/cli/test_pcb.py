@@ -94,74 +94,24 @@ def test_pcb_export_svg( kitest: KiTestFixture,
         # This test works only with Python >= 3.9 because it uses a pathlib function only existing
         # in 3.9 and newer. So skip it for previous versions
         if sys.hexversion >= 0x03090000 :
-            # Comparison DPI = 850 => 1px == 30um. I.e. allowable error of 90 um after eroding
-            assert utils.svgs_are_equivalent( str( generated_svg_path ), svg_source_path, 850,
+            # Comparison DPI = 1270 => 1px == 20um. I.e. allowable error of 60 um after eroding
+            assert utils.svgs_are_equivalent( str( generated_svg_path ), svg_source_path, 1270,
                                               diff_handler=kitest.add_attachment )
 
 
-@pytest.mark.parametrize("test_file,layers_to_test",
-                         [
-                            (
-                                "cli/artwork_generation_regressions/ZoneFill-4.0.7.kicad_pcb",
-                                ["F.Cu","B.Cu"]
-                            ),
-                            (   "cli/artwork_generation_regressions/ZoneFill-Legacy.brd",
-                                ["F.Cu","B.Cu"]
-                            )
-                         ])
-def test_pcb_export_png( kitest: KiTestFixture,
-                         test_file: str,
-                         layers_to_test: List[str] ):
-
-    input_file = kitest.get_data_file_path( test_file )
-
-    for layer_name in layers_to_test:
-        output_dir = kitest.get_output_path( "cli/export_png/{}/{}/".format(
-                input_file.stem, layer_name.replace( ".", "_" ) ) )
-
-        if output_dir.exists():
-            import shutil
-            shutil.rmtree( output_dir )
-
-        output_dir.mkdir( parents=True, exist_ok=True )
-
-        command = [utils.kicad_cli(), "pcb", "export", "png", "--dpi", "300",
-                   "--black-and-white", "--layers", layer_name,
-                   "-o", str(output_dir), str(input_file)]
-
-        stdout, stderr, exitcode = utils.run_and_capture( command )
-        # Don't assert stderr (legacy fills will have errors)
-        assert exitcode == 0
-        assert stdout is not None
-
-        png_files = list( output_dir.glob( "*.png" ) )
-        assert len( png_files ) == 1, \
-            "Expected 1 PNG file in output dir, found {}".format( len( png_files ) )
-
-        generated_png_path = png_files[0]
-        kitest.add_attachment( generated_png_path )
-
-        # Verify the filename contains the board stem
-        assert generated_png_path.stem.startswith( input_file.stem ), \
-            "Unexpected output filename: {}".format( generated_png_path.name )
-
-        assert not utils.image_is_blank( str( generated_png_path ) )
-
-        # FIXME: add golden/reference PNG comparison using utils.images_are_equal()
-        # for regression testing (see test_pcb_export_svg for the pattern)
-
-
-@pytest.mark.skipif(not utils.is_gerbview_available(), reason="Requires gerbview kiface (kicad-cli gerber)")
-@pytest.mark.parametrize("test_file,layers_to_test,max_diff_percent",
+@pytest.mark.skipif(not utils.is_gerbv_installed(), reason="Requires gerbv to be installed")
+@pytest.mark.parametrize("test_file,layers_to_test,originInches,windowsizeInches",
                          [
                             (
                                 "cli/artwork_generation_regressions/ZoneFill-4.0.7.kicad_pcb",
                                 ["F.Cu","B.Cu"],
-                                0.5
+                                ( 3.5, -4.6 ),
+                                ( 4.3, 2.2 )
                             ),
                             (   "cli/artwork_generation_regressions/ZoneFill-Legacy.brd",
                                 ["F.Cu","B.Cu"],
-                                0.5
+                                ( -0.6, -0.4 ),
+                                ( 1.7, 0.8 )
                             ),
                             (
                                 # Regression for https://gitlab.com/kicad/code/kicad/-/issues/24143:
@@ -172,13 +122,15 @@ def test_pcb_export_png( kitest: KiTestFixture,
                                 # unfractured outline.
                                 "cli/artwork_generation_regressions/Issue24143.kicad_pcb",
                                 ["F.Cu"],
-                                0.0
+                                ( 4.5, -3.1 ),
+                                ( 0.4, 0.4 )
                             )
                          ])
 def test_pcb_export_gerber( kitest: KiTestFixture,
                             test_file: str,
                             layers_to_test: List[str],
-                            max_diff_percent: float ):
+                            originInches :  Tuple[float, float],
+                            windowsizeInches :  Tuple[float, float] ):
 
     input_file = kitest.get_data_file_path( test_file )
 
@@ -211,9 +163,10 @@ def test_pcb_export_gerber( kitest: KiTestFixture,
         layer_name_fixed = "-" + layer_name.replace( ".", "_" )
         gbr_source_path += layer_name_fixed + ".gbr"
 
-        assert utils.gerbers_are_equivalent( str( generated_gerber_path ), gbr_source_path,
-                                             diff_handler=kitest.add_attachment,
-                                             max_diff_percent=max_diff_percent )
+        # Comparison DPI = 5080 => 1px == 5um. I.e. allowable error of 15 um after eroding
+        assert utils.gerbers_are_equivalent( str( generated_gerber_path ), gbr_source_path, 5080,
+                                             originInches, windowsizeInches,
+                                             diff_handler=kitest.add_attachment )
 
 
 @pytest.mark.parametrize("test_file,golden_name,output_dir,skip_line_count,cli_args",

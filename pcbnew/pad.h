@@ -1006,7 +1006,7 @@ public:
     wxString ShowPadShape( PCB_LAYER_ID aLayer ) const;
 
     /**
-     * An older version still used by place file writer
+     * An older version still used by place file writer and SWIG interface.
      */
     wxString ShowLegacyPadShape( PCB_LAYER_ID aLayer ) const;
 

@@ -263,17 +263,6 @@ public:
         return m_maxClearance;
     }
 
-    /**
-     * Defer spatial index insertion during bulk population. Call
-     * FinalizeBulkAdd() when done adding items to build the index.
-     */
-    void BeginBulkAdd();
-
-    /**
-     * Build the spatial index from all items added since BeginBulkAdd().
-     */
-    void FinalizeBulkAdd();
-
     ///< Set the worst-case clearance between any pair of items.
     void SetMaxClearance( int aClearance )
     {

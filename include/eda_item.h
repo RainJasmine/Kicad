@@ -28,7 +28,6 @@
 #define EDA_ITEM_H
 
 #include <deque>
-#include <set>
 
 #include <api/serializable.h>
 #include <core/typeinfo.h>

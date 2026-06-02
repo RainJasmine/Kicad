@@ -55,7 +55,7 @@ namespace SYM_CHOOSER_TIMING
             double total_ms = g_started ? ms( now - g_start_time ).count() : step_ms;
             m_last = now;
 
-            wxLogTrace( wxT("KI_TRACE_SYM_CHOOSER"), wxT("step=%s step_ms=%.3f total_ms=%.3f mode=%s%s%s\n"),
+            KI_TRACE( wxT("KI_TRACE_SYM_CHOOSER"), wxT("step=%s step_ms=%.3f total_ms=%.3f mode=%s%s%s\n"),
                       wxString::FromUTF8( aStep ).c_str(), step_ms, total_ms,
                       g_firstRun ? wxT("cold") : wxT("warm"),
                       aExtra.IsEmpty() ? wxT("") : wxT(" "),
@@ -68,7 +68,7 @@ namespace SYM_CHOOSER_TIMING
 
     inline void LogRaw( const char* aStep, double aStepMs, double aTotalMs, const wxString& aExtra = wxEmptyString )
     {
-        wxLogTrace( wxT("KI_TRACE_SYM_CHOOSER"), wxT("step=%s step_ms=%.3f total_ms=%.3f mode=%s%s%s\n"),
+        KI_TRACE( wxT("KI_TRACE_SYM_CHOOSER"), wxT("step=%s step_ms=%.3f total_ms=%.3f mode=%s%s%s\n"),
                   wxString::FromUTF8( aStep ).c_str(), aStepMs, aTotalMs,
                   g_firstRun ? wxT("cold") : wxT("warm"),
                   aExtra.IsEmpty() ? wxT("") : wxT(" "),

@@ -34,7 +34,7 @@
 #include <gestfich.h>
 #include <paths.h>
 #include <pgm_base.h>
-#include <api/python_manager.h>
+#include <python_manager.h>
 #include <reporter.h>
 #include <settings/settings_manager.h>
 #include <settings/common_settings.h>
@@ -172,8 +172,6 @@ public:
         return wxDIR_CONTINUE;
     }
 };
-
-
 void API_PLUGIN_MANAGER::ReloadPlugins( std::optional<wxString> aDirectoryToScan,
                                         std::shared_ptr<REPORTER> aReporter )
 {
@@ -226,55 +224,44 @@ void API_PLUGIN_MANAGER::ReloadPlugins( std::optional<wxString> aDirectoryToScan
                 }
             } );
 
-    if( aDirectoryToScan )
+    wxDir systemPluginsDir( PATHS::GetStockPluginsPath() );
+
+    if( systemPluginsDir.IsOpened() )
     {
-        wxDir customDir( *aDirectoryToScan );
-        wxLogTrace( traceApi, wxString::Format( "Manager: scanning custom path (%s) for plugins...",
-                                                customDir.GetName() ) );
-        customDir.Traverse( loader );
+        wxLogTrace( traceApi, wxString::Format( "Manager: scanning system path (%s) for plugins...",
+                                                systemPluginsDir.GetName() ) );
+        systemPluginsDir.Traverse( loader );
     }
+
+    wxString thirdPartyPath;
+    const ENV_VAR_MAP& env = Pgm().GetLocalEnvVariables();
+
+    if( std::optional<wxString> v = ENV_VAR::GetVersionedEnvVarValue( env, wxT( "3RD_PARTY" ) ) )
+        thirdPartyPath = *v;
     else
+        thirdPartyPath = PATHS::GetDefault3rdPartyPath();
+
+    wxDir thirdParty( thirdPartyPath );
+
+    if( thirdParty.IsOpened() )
     {
-        wxDir systemPluginsDir( PATHS::GetStockPluginsPath() );
+        wxLogTrace( traceApi, wxString::Format( "Manager: scanning PCM path (%s) for plugins...",
+                                                thirdParty.GetName() ) );
+        thirdParty.Traverse( loader );
+    }
 
-        if( systemPluginsDir.IsOpened() )
-        {
-            wxLogTrace( traceApi, wxString::Format( "Manager: scanning system path (%s) for plugins...",
-                                                    systemPluginsDir.GetName() ) );
-            systemPluginsDir.Traverse( loader );
-        }
+    wxDir userPluginsDir( PATHS::GetUserPluginsPath() );
 
-        wxString thirdPartyPath;
-        const ENV_VAR_MAP& env = Pgm().GetLocalEnvVariables();
-
-        if( std::optional<wxString> v = ENV_VAR::GetVersionedEnvVarValue( env, wxT( "3RD_PARTY" ) ) )
-            thirdPartyPath = *v;
-        else
-            thirdPartyPath = PATHS::GetDefault3rdPartyPath();
-
-        wxDir thirdParty( thirdPartyPath );
-
-        if( thirdParty.IsOpened() )
-        {
-            wxLogTrace( traceApi, wxString::Format( "Manager: scanning PCM path (%s) for plugins...",
-                                                    thirdParty.GetName() ) );
-            thirdParty.Traverse( loader );
-        }
-
-        wxDir userPluginsDir( PATHS::GetUserPluginsPath() );
-
-        if( userPluginsDir.IsOpened() )
-        {
-            wxLogTrace( traceApi, wxString::Format( "Manager: scanning user path (%s) for plugins...",
-                                                    userPluginsDir.GetName() ) );
-            userPluginsDir.Traverse( loader );
-        }
+    if( userPluginsDir.IsOpened() )
+    {
+        wxLogTrace( traceApi, wxString::Format( "Manager: scanning user path (%s) for plugins...",
+                                                userPluginsDir.GetName() ) );
+        userPluginsDir.Traverse( loader );
     }
 
     processPluginDependencies();
 
-    if( !Busy() )
-        m_reloadReporter.reset();
+    m_reloadReporter.reset();
 
     wxCommandEvent* evt = new wxCommandEvent( EDA_EVT_PLUGIN_AVAILABILITY_CHANGED, wxID_ANY );
     m_parent->QueueEvent( evt );
@@ -326,15 +313,10 @@ std::optional<const PLUGIN_ACTION*> API_PLUGIN_MANAGER::GetAction( const wxStrin
 }
 
 
-int API_PLUGIN_MANAGER::doInvokeAction( const wxString& aIdentifier, std::vector<wxString> aExtraArgs,
-                                        bool aSync, wxString* aStdout, wxString* aStderr,
-                                        std::shared_ptr<REPORTER> aReporter )
+void API_PLUGIN_MANAGER::InvokeAction( const wxString& aIdentifier, std::shared_ptr<REPORTER> aReporter )
 {
     if( !m_actionsCache.contains( aIdentifier ) )
-    {
-        reportPluginActionMessage( aReporter.get(), aIdentifier, _( "action is not registered" ) );
-        return -1;
-    }
+        return;
 
     const PLUGIN_ACTION* action = m_actionsCache.at( aIdentifier );
     const API_PLUGIN& plugin = action->plugin;
@@ -343,7 +325,7 @@ int API_PLUGIN_MANAGER::doInvokeAction( const wxString& aIdentifier, std::vector
     {
         wxLogTrace( traceApi, wxString::Format( "Manager: Plugin %s is not ready",
                                                 plugin.Identifier() ) );
-        return -1;
+        return;
     }
 
     wxFileName pluginFile( action->entrypoint );
@@ -367,7 +349,7 @@ int API_PLUGIN_MANAGER::doInvokeAction( const wxString& aIdentifier, std::vector
                                                     plugin.Identifier() ) );
             reportPluginActionMessage( aReporter.get(), action->name,
                                        _( "missing plugin environment" ) );
-            return -1;
+            return;
         }
 
         if( !pluginFile.IsFileReadable() )
@@ -377,7 +359,7 @@ int API_PLUGIN_MANAGER::doInvokeAction( const wxString& aIdentifier, std::vector
             reportPluginActionMessage( aReporter.get(), action->name,
                                        wxString::Format( _( "entrypoint '%s' could not be read" ),
                                                          pluginFile.GetFullPath() ) );
-            return -1;
+            return;
         }
 
         std::optional<wxString> pythonHome =
@@ -386,13 +368,8 @@ int API_PLUGIN_MANAGER::doInvokeAction( const wxString& aIdentifier, std::vector
         PYTHON_MANAGER manager( *py );
         wxExecuteEnv   env;
         wxGetEnvMap( &env.env );
-
-        if( Pgm().ApiServerOrNull() )
-        {
-            env.env[wxS( "KICAD_API_SOCKET" )] = Pgm().GetApiServer().SocketPath();
-            env.env[wxS( "KICAD_API_TOKEN" )] = Pgm().GetApiServer().Token();
-        }
-
+        env.env[wxS( "KICAD_API_SOCKET" )] = Pgm().GetApiServer().SocketPath();
+        env.env[wxS( "KICAD_API_TOKEN" )] = Pgm().GetApiServer().Token();
         env.cwd = pluginFile.GetPath();
 
 #ifdef _WIN32
@@ -412,23 +389,8 @@ int API_PLUGIN_MANAGER::doInvokeAction( const wxString& aIdentifier, std::vector
         if( pythonHome )
             env.env[wxS( "VIRTUAL_ENV" )] = *pythonHome;
 
-        std::vector<wxString> pyArgs( aExtraArgs );
-        pyArgs.insert( pyArgs.begin(), pluginFile.GetFullPath() );
-
-        if( aSync )
-        {
-            wxString stdOut;
-            wxString stdErr;
-            wxString* stdoutSink = aStdout ? aStdout : &stdOut;
-            wxString* stderrSink = aStderr ? aStderr : &stdErr;
-            int ret = manager.ExecuteSync( pyArgs, stdoutSink, stderrSink, &env );
-            reportPluginActionResult( aReporter.get(), action->name, ret, *stderrSink );
-            return ret;
-        }
-
-        [[maybe_unused]] long pid = manager.Execute( pyArgs,
-                [aReporter, action]( int aRetVal, const wxString& aOutput,
-                                         const wxString& aError )
+        [[maybe_unused]] long pid = manager.Execute( { pluginFile.GetFullPath() },
+                [aReporter, action]( int aRetVal, const wxString& aOutput, const wxString& aError )
                 {
                     wxLogTrace( traceApi,
                                 wxString::Format( "Manager: action exited with code %d", aRetVal ) );
@@ -442,9 +404,8 @@ int API_PLUGIN_MANAGER::doInvokeAction( const wxString& aIdentifier, std::vector
 
         if( !pid )
         {
-            reportPluginActionMessage( aReporter.get(), action->name,
-                                       _( "process could not be created" ) );
-            return -1;
+            reportPluginActionMessage( aReporter.get(), action->name, _( "process could not be created" ) );
+            return;
         }
 
 #ifdef __WXMAC__
@@ -486,83 +447,51 @@ int API_PLUGIN_MANAGER::doInvokeAction( const wxString& aIdentifier, std::vector
         {
             wxLogTrace( traceApi, wxString::Format( "Manager: Exec entrypoint %s is not executable",
                                                     pluginFile.GetFullPath() ) );
+
             reportPluginActionMessage( aReporter.get(), action->name,
                                        wxString::Format( _( "entrypoint '%s' is not executable" ),
                                                          pluginFile.GetFullPath() ) );
-            return -1;
+            return;
         }
+
+        args.emplace_back( pluginPath.wc_str() );
+
+        for( const wxString& arg : action->args )
+            args.emplace_back( arg.wc_str() );
+
+        args.emplace_back( nullptr );
 
         wxExecuteEnv env;
         wxGetEnvMap( &env.env );
-
-        if( Pgm().ApiServerOrNull() )
-        {
-            env.env[wxS( "KICAD_API_SOCKET" )] = Pgm().GetApiServer().SocketPath();
-            env.env[wxS( "KICAD_API_TOKEN" )] = Pgm().GetApiServer().Token();
-        }
-
+        env.env[wxS( "KICAD_API_SOCKET" )] = Pgm().GetApiServer().SocketPath();
+        env.env[wxS( "KICAD_API_TOKEN" )] = Pgm().GetApiServer().Token();
         env.cwd = pluginFile.GetPath();
 
-        long pidOrRetCode = 0;
+        ACTION_PROCESS* process = new ACTION_PROCESS(
+                [aReporter, action]( int aRetVal, const wxString& aOutput, const wxString& aError )
+                {
+                    wxLogTrace( traceApi,
+                                wxString::Format( "Manager: action exited with code %d", aRetVal ) );
 
-        if( aSync )
-        {
-            wxString cmd = pluginPath;
+                    if( !aError.IsEmpty() )
+                        wxLogTrace( traceApi, wxString::Format( "Manager: action stderr: %s", aError ) );
 
-            for( const wxString& arg : action->args )
-                cmd << " " << arg;
+                    reportPluginActionResult( aReporter.get(), action->name, aRetVal, aError );
+                } );
 
-            wxArrayString out, err;
+        process->Redirect();
+        args.emplace_back( pluginPath.wc_str() );
 
-            pidOrRetCode = wxExecute( cmd, out, err, wxEXEC_BLOCK, &env );
+        for( const wxString& arg : action->args )
+            args.emplace_back( arg.wc_str() );
 
-            if( aStdout )
-            {
-                for( const wxString& line : out )
-                    *aStdout << line << "\n";
-            }
+        args.emplace_back( nullptr );
 
-            wxString stdErr;
+        long pidOrRetCode = wxExecute( const_cast<wchar_t**>( args.data() ),
+                                       wxEXEC_ASYNC | wxEXEC_HIDE_CONSOLE, process, &env );
 
-            for( const wxString& line : err )
-                stdErr << line << "\n";
-
-            if( aStderr )
-                *aStderr = stdErr;
-
-            reportPluginActionResult( aReporter.get(), action->name, pidOrRetCode, stdErr );
-            return pidOrRetCode;
-        }
-        else
-        {
-            ACTION_PROCESS* process = new ACTION_PROCESS(
-                    [aReporter, action]( int aRetVal, const wxString& aOutput,
-                                             const wxString& aError )
-                    {
-                        wxLogTrace( traceApi,
-                                    wxString::Format( "Manager: action exited with code %d", aRetVal ) );
-
-                        if( !aError.IsEmpty() )
-                            wxLogTrace( traceApi,
-                                        wxString::Format( "Manager: action stderr: %s", aError ) );
-
-                        reportPluginActionResult( aReporter.get(), action->name, aRetVal, aError );
-                    } );
-
-            process->Redirect();
-            args.emplace_back( pluginPath.wc_str() );
-
-            for( const wxString& arg : action->args )
-                args.emplace_back( arg.wc_str() );
-
-            args.emplace_back( nullptr );
-
-            pidOrRetCode = wxExecute( const_cast<wchar_t**>( args.data() ),
-                                      wxEXEC_ASYNC | wxEXEC_HIDE_CONSOLE, process, &env );
-
-            if( !pidOrRetCode )
-                delete process;
-        }
+        if( !pidOrRetCode )
+            delete process;
 
         if( !pidOrRetCode )
         {
@@ -581,25 +510,8 @@ int API_PLUGIN_MANAGER::doInvokeAction( const wxString& aIdentifier, std::vector
     default:
         wxLogTrace( traceApi, wxString::Format( "Manager: unhandled runtime for action %s",
                                                 action->identifier ) );
+        return;
     }
-
-    return -1;
-}
-
-
-void API_PLUGIN_MANAGER::InvokeAction( const wxString& aIdentifier,
-                                       std::shared_ptr<REPORTER> aReporter )
-{
-    doInvokeAction( aIdentifier, {}, false, nullptr, nullptr, std::move( aReporter ) );
-}
-
-
-int API_PLUGIN_MANAGER::InvokeActionSync( const wxString& aIdentifier, std::vector<wxString> aExtraArgs,
-                                          wxString* aStdout, wxString* aStderr,
-                                          std::shared_ptr<REPORTER> aReporter )
-{
-    return doInvokeAction( aIdentifier, aExtraArgs, true, aStdout, aStderr,
-                           std::move( aReporter ) );
 }
 
 
@@ -930,13 +842,11 @@ void API_PLUGIN_MANAGER::processNextJob( wxCommandEvent& aEvent )
                         wxLogTrace( traceApi, wxString::Format( "Manager: marking %s as ready",
                                                                 job.identifier ) );
                         m_readyPlugins.insert( job.identifier );
-
+                        m_busyPlugins.erase( job.identifier );
                         wxCommandEvent* availabilityEvt =
                                 new wxCommandEvent( EDA_EVT_PLUGIN_AVAILABILITY_CHANGED, wxID_ANY );
                         wxTheApp->QueueEvent( availabilityEvt );
                     }
-
-                    m_busyPlugins.erase( job.identifier );
 
                     wxCommandEvent* evt = new wxCommandEvent( EDA_EVT_PLUGIN_MANAGER_JOB_FINISHED,
                                                               wxID_ANY );
@@ -951,15 +861,8 @@ void API_PLUGIN_MANAGER::processNextJob( wxCommandEvent& aEvent )
 
     m_jobs.pop_front();
 
-    if( !Busy() )
-        m_reloadReporter.reset();
+    m_reloadReporter.reset();
 
     wxLogTrace( traceApi, wxString::Format( "Manager: finished job; %zu left in queue",
                                             m_jobs.size() ) );
-}
-
-
-bool API_PLUGIN_MANAGER::Busy() const
-{
-    return !m_jobs.empty() || !m_busyPlugins.empty();
 }

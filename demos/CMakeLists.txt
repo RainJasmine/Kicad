@@ -9,6 +9,7 @@ install( DIRECTORY
     multichannel
     openair-max
     pic_programmer
+    python_scripts_examples
     royalblue54L_feather
     simulation
     "sonde xilinx"

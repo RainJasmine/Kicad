@@ -20,11 +20,13 @@ sudo apt-get update && sudo apt-get install -y \
   libglm-dev \
   libwxgtk3.2-dev \
   libwxgtk-webview3.2-dev \
+  python3-wxgtk4.0 \
   libbz2-dev \
   libssl-dev \
   libzstd-dev \
   zlib1g-dev \
   python3-dev \
+  swig \
   python3-pytest \
   python3-cairosvg \
   python3-numpy \

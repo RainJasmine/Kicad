@@ -245,11 +245,6 @@ void EDA_3D_VIEWER_FRAME::setupUIConditions()
             {
                 return m_boardAdapter.m_Cfg->m_Render.engine != RENDER_ENGINE::OPENGL;
             };
-    auto showMissingModels =
-            [this]( const SELECTION& aSel )
-            {
-                return m_boardAdapter.m_Cfg->m_Render.show_missing_models;
-            };
     auto showTH =
             [this]( const SELECTION& aSel )
             {
@@ -298,7 +293,6 @@ void EDA_3D_VIEWER_FRAME::setupUIConditions()
             };
 
     mgr->SetConditions( EDA_3D_ACTIONS::toggleRaytacing, ACTION_CONDITIONS().Check( raytracing ) );
-    mgr->SetConditions( EDA_3D_ACTIONS::toggleShowMissingModels, ACTION_CONDITIONS().Check( showMissingModels ) );
 
     mgr->SetConditions( EDA_3D_ACTIONS::showTHT, ACTION_CONDITIONS().Check( showTH ) );
     mgr->SetConditions( EDA_3D_ACTIONS::showSMD, ACTION_CONDITIONS().Check( showSMD ) );

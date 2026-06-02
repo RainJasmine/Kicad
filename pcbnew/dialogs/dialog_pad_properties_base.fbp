@@ -12129,7 +12129,7 @@
                                           <property name="gripper">0</property>
                                           <property name="hidden">0</property>
                                           <property name="id">wxID_ANY</property>
-                                          <property name="label">Front:</property>
+                                          <property name="label">Top:</property>
                                           <property name="markup">0</property>
                                           <property name="max_size"></property>
                                           <property name="maximize_button">0</property>
@@ -12686,7 +12686,7 @@
                                           <property name="gripper">0</property>
                                           <property name="hidden">0</property>
                                           <property name="id">wxID_ANY</property>
-                                          <property name="label">Back:</property>
+                                          <property name="label">Bottom:</property>
                                           <property name="markup">0</property>
                                           <property name="max_size"></property>
                                           <property name="maximize_button">0</property>
@@ -13324,7 +13324,7 @@
                                           <property name="gripper">0</property>
                                           <property name="hidden">0</property>
                                           <property name="id">wxID_ANY</property>
-                                          <property name="label">Front backdrill must-cut:</property>
+                                          <property name="label">Top backdrill must-cut:</property>
                                           <property name="markup">0</property>
                                           <property name="max_size"></property>
                                           <property name="maximize_button">0</property>
@@ -13683,7 +13683,7 @@
                                           <property name="gripper">0</property>
                                           <property name="hidden">0</property>
                                           <property name="id">wxID_ANY</property>
-                                          <property name="label">Back backdrill must-cut:</property>
+                                          <property name="label">Bottom backdrill must-cut:</property>
                                           <property name="markup">0</property>
                                           <property name="max_size"></property>
                                           <property name="maximize_button">0</property>

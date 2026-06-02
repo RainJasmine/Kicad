@@ -256,11 +256,6 @@ public:
     PCM_PACKAGE_STATE GetPackageState( const wxString& aRepositoryId, const wxString& aPackageId );
 
     /**
-     * @brief Returns true if the selected package version requires SWIG
-     */
-    static bool UsesSWIGRuntime( const PCM_PACKAGE& aPackage, const wxString& aVersion );
-
-    /**
      * @brief Returns pinned status of a package
      *
      * @param aPackageId package id

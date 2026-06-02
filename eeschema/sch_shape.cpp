@@ -32,8 +32,6 @@
 #include <gr_basic.h>
 #include <geometry/geometry_utils.h>
 #include <schematic.h>
-#include <api/api_utils.h>
-#include <api/schematic/schematic_types.pb.h>
 #include <sch_shape.h>
 #include <properties/property.h>
 #include <properties/property_mgr.h>
@@ -51,41 +49,6 @@ SCH_SHAPE::SCH_SHAPE( SHAPE_T aShape, SCH_LAYER_ID aLayer, int aLineWidth, FILL_
 EDA_ITEM* SCH_SHAPE::Clone() const
 {
     return new SCH_SHAPE( *this );
-}
-
-
-void SCH_SHAPE::Serialize( google::protobuf::Any& aContainer ) const
-{
-    using namespace kiapi::common;
-
-    kiapi::schematic::types::SchematicGraphicShape msg;
-    google::protobuf::Any any;
-
-    msg.mutable_id()->set_value( m_Uuid.AsStdString() );
-    msg.set_locked( IsLocked() ? types::LockedState::LS_LOCKED : types::LockedState::LS_UNLOCKED );
-
-    EDA_SHAPE::Serialize( any, schIUScale );
-    any.UnpackTo( msg.mutable_shape() );
-
-    aContainer.PackFrom( msg );
-}
-
-
-bool SCH_SHAPE::Deserialize( const google::protobuf::Any& aContainer )
-{
-    using namespace kiapi::common;
-
-    kiapi::schematic::types::SchematicGraphicShape msg;
-
-    if( !aContainer.UnpackTo( &msg ) )
-        return false;
-
-    const_cast<KIID&>( m_Uuid ) = KIID( msg.id().value() );
-    SetLocked( msg.locked() == types::LockedState::LS_LOCKED );
-
-    google::protobuf::Any any;
-    any.PackFrom( msg.shape() );
-    return EDA_SHAPE::Deserialize( any, schIUScale );
 }
 
 

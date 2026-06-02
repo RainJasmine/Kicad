@@ -104,5 +104,6 @@ target_link_libraries( drc_proto
     ${PCBNEW_IO_LIBRARIES}
     ${wxWidgets_LIBRARIES}
     ${GDI_PLUS_LIBRARIES}
+    ${PYTHON_LIBRARIES}
     ${PCBNEW_EXTRA_LIBS}    # -lrt must follow Boost
 )

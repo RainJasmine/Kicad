@@ -27,23 +27,21 @@
 #include <dialog_footprint_wizard_list_base.h>
 #include <footprint_wizard.h>
 
-class FOOTPRINT_WIZARD_FRAME;
-
-
 class DIALOG_FOOTPRINT_WIZARD_LIST: public DIALOG_FOOTPRINT_WIZARD_LIST_BASE
 {
 public:
-    DIALOG_FOOTPRINT_WIZARD_LIST( FOOTPRINT_WIZARD_FRAME* aParent );
+    DIALOG_FOOTPRINT_WIZARD_LIST( wxWindow * aParent );
     ~DIALOG_FOOTPRINT_WIZARD_LIST() = default;
 
-    const wxString& GetWizard();
-    FOOTPRINT_WIZARD_FRAME* ParentFrame();
+    FOOTPRINT_WIZARD* GetWizard();
 
 private:
     void initLists();
     void OnCellFpGeneratorClick( wxGridEvent& event ) override;
     void OnCellFpGeneratorDoubleClick( wxGridEvent& event ) override;
+    void onShowTrace( wxCommandEvent& event ) override;
+    void onUpdatePythonModulesClick( wxCommandEvent& event ) override;
 
 private:
-    wxString m_selectedWizard;    ///< The selected footprint wizard identifier
+    FOOTPRINT_WIZARD* m_footprintWizard;    ///< The selected python script wizard
 };

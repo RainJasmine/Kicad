@@ -1501,29 +1501,6 @@ int ERC_TESTER::TestSameLocalGlobalLabel()
                         map[text] = std::make_pair( label, sheet );
                     }
                 }
-                else if( item->Type() == SCH_PIN_T )
-                {
-                    SCH_PIN* pin = static_cast<SCH_PIN*>( item );
-
-                    if( !pin->IsPower() )
-                        continue;
-
-                    SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( pin->GetParentSymbol() );
-
-                    if( !symbol )
-                        continue;
-
-                    wxString text = ( pin->IsGlobalPower() && !symbol->IsGlobalPower() )
-                                            ? pin->GetShownName()
-                                            : symbol->GetValue( true, &sheet, false );
-
-                    auto& map = pin->IsGlobalPower() ? globalLabels : localLabels;
-
-                    if( !map.count( text ) )
-                    {
-                        map[text] = std::make_pair( pin, sheet );
-                    }
-                }
             }
         }
     }
@@ -1534,14 +1511,7 @@ int ERC_TESTER::TestSameLocalGlobalLabel()
         {
             if( globalText == localText )
             {
-                ERCE_T errorCode = ( globalItem.first->Type() == SCH_PIN_T && localItem.first->Type() == SCH_PIN_T )
-                                           ? ERCE_SAME_LOCAL_GLOBAL_POWER
-                                           : ERCE_SAME_LOCAL_GLOBAL_LABEL;
-
-                if( !m_settings.IsTestEnabled( errorCode ) )
-                    continue;
-
-                std::shared_ptr<ERC_ITEM> ercItem = ERC_ITEM::Create( errorCode );
+                std::shared_ptr<ERC_ITEM> ercItem = ERC_ITEM::Create( ERCE_SAME_LOCAL_GLOBAL_LABEL );
                 ercItem->SetItems( globalItem.first, localItem.first );
                 ercItem->SetSheetSpecificPath( globalItem.second );
                 ercItem->SetItemsSheetPaths( globalItem.second, localItem.second );
@@ -2166,8 +2136,7 @@ void ERC_TESTER::RunTests( DS_PROXY_VIEW_ITEM* aDrawingSheet, SCH_EDIT_FRAME* aE
         TestSimilarLabels();
     }
 
-    if( m_settings.IsTestEnabled( ERCE_SAME_LOCAL_GLOBAL_LABEL )
-        || m_settings.IsTestEnabled( ERCE_SAME_LOCAL_GLOBAL_POWER ) )
+    if( m_settings.IsTestEnabled( ERCE_SAME_LOCAL_GLOBAL_LABEL ) )
     {
         if( aProgressReporter )
             aProgressReporter->AdvancePhase( _( "Checking local and global labels..." ) );

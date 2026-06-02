@@ -415,61 +415,18 @@ bool PANEL_SETUP_TRACKS_AND_VIAS::Validate()
         }
     }
 
-    // Test diff pairs using backend validation.
-    BOARD_DESIGN_SETTINGS tempSettings( *m_BrdSettings );
-
-    tempSettings.m_DiffPairDimensionsList.clear();
-    tempSettings.m_DiffPairDimensionsList.emplace_back( 0, 0, 0 );
-
-    for( int row = 0; row < m_diffPairsGrid->GetNumberRows(); ++row )
+    // Test diff pairs
+    for( int row = 0; row < m_diffPairsGrid->GetNumberRows();  ++row )
     {
-        if( !m_diffPairsGrid->GetCellValue( row, DP_WIDTH_COL ).IsEmpty() )
+        wxString dpWidth = m_diffPairsGrid->GetCellValue( row, 0 );
+        wxString dpGap = m_diffPairsGrid->GetCellValue( row, 1 );
+
+        if( !dpWidth.IsEmpty() && dpGap.IsEmpty() )
         {
-            DIFF_PAIR_DIMENSION diffPair;
-
-            diffPair.m_Width = m_diffPairsGrid->GetUnitValue( row, DP_WIDTH_COL );
-
-            if( !m_diffPairsGrid->GetCellValue( row, DP_GAP_COL ).IsEmpty() )
-                diffPair.m_Gap = m_diffPairsGrid->GetUnitValue( row, DP_GAP_COL );
-
-            if( !m_diffPairsGrid->GetCellValue( row, DP_VIA_GAP_COL ).IsEmpty() )
-                diffPair.m_ViaGap = m_diffPairsGrid->GetUnitValue( row, DP_VIA_GAP_COL );
-
-            tempSettings.m_DiffPairDimensionsList.push_back( diffPair );
-        }
-    }
-
-    const wxString diffPairPrefix = wxS( "diff_pair_dimensions_list[" );
-
-    for( const BOARD_DESIGN_SETTINGS::VALIDATION_ERROR& error :
-         tempSettings.ValidateDesignRules( m_Frame->GetUserUnits() ) )
-    {
-        if( !error.setting_name.StartsWith( diffPairPrefix ) )
-            continue;
-
-        wxString remainder = error.setting_name.Mid( diffPairPrefix.length() );
-        long     listIndex = -1;
-
-        if( !remainder.BeforeFirst( ']' ).ToLong( &listIndex ) || listIndex <= 0 )
-        {
-            PAGED_DIALOG::GetDialog( this )->SetError( error.error_message, this, m_diffPairsGrid );
+            msg = _( "No differential pair gap defined." );
+            PAGED_DIALOG::GetDialog( this )->SetError( msg, this, m_diffPairsGrid, row, 1 );
             return false;
         }
-
-        int row = static_cast<int>( listIndex ) - 1;
-        int col = DP_GAP_COL;
-
-        if( error.setting_name.EndsWith( wxS( ".width" ) ) )
-            col = DP_WIDTH_COL;
-        else if( error.setting_name.EndsWith( wxS( ".via_gap" ) ) )
-            col = DP_VIA_GAP_COL;
-
-        if( row >= 0 && row < m_diffPairsGrid->GetNumberRows() )
-            PAGED_DIALOG::GetDialog( this )->SetError( error.error_message, this, m_diffPairsGrid, row, col );
-        else
-            PAGED_DIALOG::GetDialog( this )->SetError( error.error_message, this, m_diffPairsGrid );
-
-        return false;
     }
 
     return true;

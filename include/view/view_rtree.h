@@ -29,20 +29,16 @@
 
 #include <math/box2.h>
 
-#include <geometry/rtree/dynamic_rtree.h>
+#include <geometry/rtree.h>
 
 namespace KIGFX
 {
-
-class VIEW_ITEM;
+typedef RTree<VIEW_ITEM*, int, 2, double> VIEW_RTREE_BASE;
 
 /**
- * Implement a non-owning R-tree for fast spatial indexing of VIEW items.
- *
- * Uses DYNAMIC_RTREE with stored insertion bboxes, eliminating the O(N)
- * fallback removal that the old RTree required when bbox was unavailable.
+ * Implement an non-owning R-tree for fast spatial indexing of VIEW items.
  */
-class VIEW_RTREE
+class VIEW_RTREE : public VIEW_RTREE_BASE
 {
 public:
     /**
@@ -52,12 +48,12 @@ public:
      */
     void Insert( VIEW_ITEM* aItem, const BOX2I& bbox )
     {
-        const int mmin[2] = { std::min( bbox.GetX(), bbox.GetRight() ),
-                              std::min( bbox.GetY(), bbox.GetBottom() ) };
-        const int mmax[2] = { std::max( bbox.GetX(), bbox.GetRight() ),
-                              std::max( bbox.GetY(), bbox.GetBottom() ) };
+        const int       mmin[2] = { std::min( bbox.GetX(), bbox.GetRight() ),
+                                    std::min( bbox.GetY(), bbox.GetBottom() ) };
+        const int       mmax[2] = { std::max( bbox.GetX(), bbox.GetRight() ),
+                                    std::max( bbox.GetY(), bbox.GetBottom() ) };
 
-        m_tree.Insert( mmin, mmax, aItem );
+        VIEW_RTREE_BASE::Insert( mmin, mmax, aItem );
     }
 
     /**
@@ -67,21 +63,23 @@ public:
      */
     void Remove( VIEW_ITEM* aItem, const BOX2I* aBbox )
     {
+        // const BOX2I&    bbox    = aItem->ViewBBox();
+
         if( aBbox )
         {
             const int mmin[2] = { std::min( aBbox->GetX(), aBbox->GetRight() ),
                                   std::min( aBbox->GetY(), aBbox->GetBottom() ) };
             const int mmax[2] = { std::max( aBbox->GetX(), aBbox->GetRight() ),
                                   std::max( aBbox->GetY(), aBbox->GetBottom() ) };
-            m_tree.Remove( mmin, mmax, aItem );
+            VIEW_RTREE_BASE::Remove( mmin, mmax, aItem );
             return;
         }
 
-        // DYNAMIC_RTREE::Remove falls back to full-tree search when the provided
-        // bbox doesn't match, so passing INT_MIN/INT_MAX triggers that path.
-        const int mmin[2] = { INT_MIN, INT_MIN };
-        const int mmax[2] = { INT_MAX, INT_MAX };
-        m_tree.Remove( mmin, mmax, aItem );
+        // FIXME: use cached bbox or ptr_map to speed up pointer <-> node lookups.
+        const int       mmin[2] = { INT_MIN, INT_MIN };
+        const int       mmax[2] = { INT_MAX, INT_MAX };
+
+        VIEW_RTREE_BASE::Remove( mmin, mmax, aItem );
     }
 
     /**
@@ -91,10 +89,10 @@ public:
     template <class Visitor>
     void Query( const BOX2I& aBounds, Visitor& aVisitor ) const
     {
-        int mmin[2] = { std::min( aBounds.GetX(), aBounds.GetRight() ),
-                        std::min( aBounds.GetY(), aBounds.GetBottom() ) };
-        int mmax[2] = { std::max( aBounds.GetX(), aBounds.GetRight() ),
-                        std::max( aBounds.GetY(), aBounds.GetBottom() ) };
+        int   mmin[2] = { std::min( aBounds.GetX(), aBounds.GetRight() ),
+                          std::min( aBounds.GetY(), aBounds.GetBottom() ) };
+        int   mmax[2] = { std::max( aBounds.GetX(), aBounds.GetRight() ),
+                          std::max( aBounds.GetY(), aBounds.GetBottom() ) };
 
         // We frequently use the maximum bounding box to recache all items
         // or for any item that overflows the integer width limits of BBOX2I
@@ -109,48 +107,11 @@ public:
             mmax[0] = mmax[1] = INT_MAX;
         }
 
-        m_tree.Search( mmin, mmax, aVisitor );
+        VIEW_RTREE_BASE::Search( mmin, mmax, aVisitor );
     }
-
-    /**
-     * Remove all items from the tree.
-     */
-    void RemoveAll()
-    {
-        m_tree.RemoveAll();
-    }
-
-    /**
-     * Build the R-tree from a batch of items using packed bulk loading.
-     *
-     * Dramatically faster than individual Insert calls when rebuilding from scratch.
-     */
-    void BulkLoad( std::vector<std::pair<VIEW_ITEM*, BOX2I>>& aItems )
-    {
-        using BULK_ENTRY = KIRTREE::DYNAMIC_RTREE<VIEW_ITEM*, int, 2>::BULK_ENTRY;
-        std::vector<BULK_ENTRY> entries;
-        entries.reserve( aItems.size() );
-
-        for( const auto& [item, bbox] : aItems )
-        {
-            BULK_ENTRY e;
-            e.min[0] = std::min( bbox.GetX(), bbox.GetRight() );
-            e.min[1] = std::min( bbox.GetY(), bbox.GetBottom() );
-            e.max[0] = std::max( bbox.GetX(), bbox.GetRight() );
-            e.max[1] = std::max( bbox.GetY(), bbox.GetBottom() );
-            e.data = item;
-            entries.push_back( e );
-        }
-
-        m_tree.BulkLoad( entries );
-    }
-
-    bool IsEmpty() const { return m_tree.empty(); }
 
 private:
-    KIRTREE::DYNAMIC_RTREE<VIEW_ITEM*, int, 2> m_tree;
 };
-
 } // namespace KIGFX
 
 #endif

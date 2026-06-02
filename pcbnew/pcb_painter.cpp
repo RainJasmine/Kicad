@@ -328,18 +328,8 @@ COLOR4D PCB_RENDER_SETTINGS::GetColor( const BOARD_ITEM* aItem, int aLayer ) con
         return color;
 
     // Selection disambiguation
-    if( aItem->IsBrightened() || ( aItem->Type() == PCB_MARKER_T && aItem->IsSelected() ) )
-    {
-        if( aItem->Type() == PCB_MARKER_T )
-        {
-            auto itemLayerIter = m_layerColors.find( LAYER_DRC_HIGHLIGHTED );
-
-            if( itemLayerIter != m_layerColors.end() )
-                return itemLayerIter->second;
-        }
-
+    if( aItem->IsBrightened() )
         return color.Brightened( m_selectFactor ).WithAlpha( 0.8 );
-    }
 
     // Normal selection
     if( aItem->IsSelected() )
@@ -2287,7 +2277,7 @@ void PCB_PAINTER::draw( const PCB_SHAPE* aShape, int aLayer )
                         // primitives to draw the polygon solid shape on Opengl.  GLU tessellation
                         // is much slower, so currently we are using our tessellation.
                         if( m_gal->IsOpenGlEngine() && !shape.IsTriangulationUpToDate() )
-                            shape.CacheTriangulation( true );
+                            shape.CacheTriangulation( true, true );
 
                         m_gal->DrawPolygon( shape );
                     }
@@ -2814,7 +2804,7 @@ void PCB_PAINTER::draw( const FOOTPRINT* aFootprint, int aLayer )
 #endif
     }
 
-    if( aLayer == LAYER_CONFLICTS_SHADOW && aFootprint->IsConflicting() )
+    if( aLayer == LAYER_CONFLICTS_SHADOW )
     {
         const SHAPE_POLY_SET& frontpoly = aFootprint->GetCourtyard( F_CrtYd );
         const SHAPE_POLY_SET& backpoly = aFootprint->GetCourtyard( B_CrtYd );
@@ -2906,17 +2896,13 @@ void PCB_PAINTER::draw( const ZONE* aZone, int aLayer )
 {
     if( aLayer == LAYER_CONFLICTS_SHADOW )
     {
-        if( aZone->IsConflicting() && aZone->GetIsRuleArea() )
-        {
-            COLOR4D color = m_pcbSettings.GetColor( aZone, aLayer );
+        COLOR4D color = m_pcbSettings.GetColor( aZone, aLayer );
 
-            m_gal->SetIsFill( true );
-            m_gal->SetIsStroke( false );
-            m_gal->SetFillColor( color );
+        m_gal->SetIsFill( true );
+        m_gal->SetIsStroke( false );
+        m_gal->SetFillColor( color );
 
-            m_gal->DrawPolygon( aZone->Outline()->Outline( 0 ) );
-        }
-
+        m_gal->DrawPolygon( aZone->Outline()->Outline( 0 ) );
         return;
     }
 
@@ -3013,7 +2999,7 @@ void PCB_PAINTER::draw( const ZONE* aZone, int aLayer )
         // draw the polygon solid shape on Opengl.  GLU tessellation is much slower,
         // so currently we are using our tessellation.
         if( m_gal->IsOpenGlEngine() && !polySet->IsTriangulationUpToDate() )
-            polySet->CacheTriangulation( true );
+            polySet->CacheTriangulation( true, true );
 
         m_gal->DrawPolygon( *polySet, displayMode == ZONE_DISPLAY_MODE::SHOW_TRIANGULATION );
     }
@@ -3210,14 +3196,7 @@ void PCB_PAINTER::draw( const PCB_MARKER* aMarker, int aLayer )
     case LAYER_MARKER_SHADOWS:
     case LAYER_DRC_ERROR:
     case LAYER_DRC_WARNING:
-    case LAYER_DRC_EXCLUSION:
-    case LAYER_DRC_HIGHLIGHTED:
     {
-        // The active marker is redrawn on LAYER_DRC_HIGHLIGHTED so it lands on top of any
-        // neighbouring inactive markers
-        if( aLayer == LAYER_DRC_HIGHLIGHTED && !aMarker->IsBrightened() && !aMarker->IsSelected() )
-            return;
-
         bool isShadow = aLayer == LAYER_MARKER_SHADOWS;
 
         SHAPE_LINE_CHAIN polygon;
@@ -3244,7 +3223,7 @@ void PCB_PAINTER::draw( const PCB_MARKER* aMarker, int aLayer )
     }
 
     case LAYER_DRC_SHAPES:
-        if( !aMarker->IsBrightened() && !aMarker->IsSelected() )
+        if( !aMarker->IsBrightened() )
             return;
 
         for( const PCB_SHAPE& shape : aMarker->GetShapes() )
@@ -3253,7 +3232,7 @@ void PCB_PAINTER::draw( const PCB_MARKER* aMarker, int aLayer )
             {
                 m_gal->SetIsFill( false );
                 m_gal->SetIsStroke( true );
-                m_gal->SetStrokeColor( color );
+                m_gal->SetStrokeColor( WHITE );
                 m_gal->SetLineWidth( KiROUND( aMarker->MarkerScale() / 2.0 ) );
 
                 if( shape.GetShape() == SHAPE_T::SEGMENT )

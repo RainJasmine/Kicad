@@ -29,6 +29,9 @@
 #include <pcbnew_id.h>
 #include <wildcards_and_files_ext.h>
 #include <dialogs/dialog_footprint_wizard_list.h>
+#include <base_units.h>
+#include <widgets/wx_grid.h>
+#include <wx/listbox.h>
 #include <wx/msgdlg.h>
 #include <tool/tool_manager.h>
 #include "footprint_wizard_frame.h"
@@ -42,8 +45,10 @@ void FOOTPRINT_WIZARD_FRAME::DisplayWizardInfos()
     msg = _( "Footprint Wizard" );
     msg << wxT( " [" );
 
-    wxString wizardName = m_currentWizard ? m_currentWizard->Info().meta.name : _( "no wizard selected" );
-    msg << wizardName;
+    if( !m_wizardName.IsEmpty() )
+        msg << m_wizardName;
+    else
+        msg += _( "no wizard selected" );
 
     msg << wxT( "]" );
 
@@ -64,18 +69,15 @@ void FOOTPRINT_WIZARD_FRAME::RegenerateFootprint()
     GetBoard()->DeleteAllFootprints();
 
     // Creates the footprint
-    tl::expected<FOOTPRINT*, wxString> result = Manager()->Generate( footprintWizard );
+    wxString   msg;
+    FOOTPRINT* footprint = footprintWizard->GetFootprint( &msg );
+    DisplayBuildMessage( msg );
 
-    if( result )
+    if( footprint )
     {
-        m_buildMessageBox->SetValue( footprintWizard->Info().meta.description );
         //  Add the object to board
-        GetBoard()->Add( *result, ADD_MODE::APPEND );
-        ( *result )->SetPosition( VECTOR2I( 0, 0 ) );
-    }
-    else
-    {
-        m_buildMessageBox->SetValue( result.error() );
+        GetBoard()->Add( footprint, ADD_MODE::APPEND );
+        footprint->SetPosition( VECTOR2I( 0, 0 ) );
     }
 
     updateView();
@@ -83,17 +85,43 @@ void FOOTPRINT_WIZARD_FRAME::RegenerateFootprint()
 }
 
 
+void FOOTPRINT_WIZARD_FRAME::DisplayBuildMessage( wxString& aMessage )
+{
+    m_buildMessageBox->SetValue( aMessage );
+}
+
+
 FOOTPRINT_WIZARD* FOOTPRINT_WIZARD_FRAME::GetMyWizard()
 {
-    return m_currentWizard;
+    if( m_wizardName.Length() == 0 )
+        return nullptr;
+
+    FOOTPRINT_WIZARD* footprintWizard = FOOTPRINT_WIZARD_LIST::GetWizard( m_wizardName );
+
+    if( !footprintWizard )
+    {
+        wxMessageBox( _( "Couldn't reload footprint wizard" ) );
+        return nullptr;
+    }
+
+    return footprintWizard;
 }
 
 
 FOOTPRINT* FOOTPRINT_WIZARD_FRAME::GetBuiltFootprint()
 {
-    // TODO(JE) should this be cached?
-    tl::expected<FOOTPRINT*, wxString> result = Manager()->Generate( m_currentWizard );
-    return result.value_or( nullptr );
+    FOOTPRINT_WIZARD* footprintWizard = FOOTPRINT_WIZARD_LIST::GetWizard( m_wizardName );
+
+    if( footprintWizard && m_modal_ret_val )
+    {
+        wxString   msg;
+        FOOTPRINT* footprint = footprintWizard->GetFootprint( &msg );
+        DisplayBuildMessage( msg );
+
+        return footprint;
+    }
+
+    return nullptr;
 }
 
 
@@ -104,18 +132,25 @@ void FOOTPRINT_WIZARD_FRAME::SelectFootprintWizard()
     if( wizardSelector.ShowModal() != wxID_OK )
         return;
 
-    m_currentWizard = nullptr;
-    wxString wizardIdentifier = wizardSelector.GetWizard();
+    FOOTPRINT_WIZARD* footprintWizard = wizardSelector.GetWizard();
 
-    if( !wizardIdentifier.IsEmpty() )
+    if( footprintWizard )
     {
-        if( std::optional<FOOTPRINT_WIZARD*> wizard = Manager()->GetWizard( wizardIdentifier ) )
-            m_currentWizard = *wizard;
+        m_wizardName = footprintWizard->GetName();
+        m_wizardDescription = footprintWizard->GetDescription();
+
+        footprintWizard->ResetParameters();
+    }
+    else
+    {
+        m_wizardName.Empty();
+        m_wizardDescription.Empty();
     }
 
     RegenerateFootprint();
     Zoom_Automatique( false );
     DisplayWizardInfos();
+    ReCreatePageList();
     ReCreateParameterList();
 }
 
@@ -142,15 +177,91 @@ void FOOTPRINT_WIZARD_FRAME::DefaultParameters()
 }
 
 
-void FOOTPRINT_WIZARD_FRAME::RebuildWizardParameters()
+void FOOTPRINT_WIZARD_FRAME::SelectWizardPreviousPage()
 {
-    ReCreateParameterList();
+    int page = m_pageList->GetSelection() - 1;
+
+    if( page < 0 )
+        page = 0;
+
+    m_pageList->SetSelection( page, true );
+
+    wxCommandEvent event;
+    ClickOnPageList( event );
+}
+
+void FOOTPRINT_WIZARD_FRAME::SelectWizardNextPage()
+{
+    int page = m_pageList->GetSelection() + 1;
+
+    if( (int)m_pageList->GetCount() <= page )
+        page = m_pageList->GetCount() - 1;
+
+    m_pageList->SetSelection( page, true );
+
+    wxCommandEvent event;
+    ClickOnPageList( event );
 }
 
 
-void FOOTPRINT_WIZARD_FRAME::OnWizardParametersChanged()
+// This is a flag to avoid reentering of ParametersUpdated
+// that can happen in some cases
+static bool lock_update_prms = false;
+
+
+void FOOTPRINT_WIZARD_FRAME::ParametersUpdated( wxGridEvent& event )
 {
-    RegenerateFootprint();
-    DisplayWizardInfos();
+    FOOTPRINT_WIZARD* footprintWizard = GetMyWizard();
+
+    if( !footprintWizard )
+        return;
+
+    if( m_parameterGridPage < 0 )
+        return;
+
+    if( lock_update_prms )
+        return;
+
+    wxArrayString   prmValues = footprintWizard->GetParameterValues( m_parameterGridPage );
+    bool            has_changed = false;
+    int             count = m_parameterGrid->GetNumberRows();
+
+    for( int prm_id = 0; prm_id < count; ++prm_id )
+    {
+        wxString value = m_parameterGrid->GetCellValue( prm_id, WIZ_COL_VALUE );
+
+        if( prmValues[prm_id] != value )
+        {
+            has_changed = true;
+            prmValues[prm_id] = value;
+        }
+    }
+
+    if( has_changed )
+    {
+         wxString res = footprintWizard->SetParameterValues( m_parameterGridPage, prmValues );
+
+        if( !res.IsEmpty() )
+            wxMessageBox( res );
+
+        RegenerateFootprint();
+        DisplayWizardInfos();
+
+        // The python script can have modified some other parameters.
+        // So rebuild the current parameter list with new values, just in case.
+        //
+        // On wxWidgets 3.0.5, ReCreateParameterList() generates a EVT_GRID_CMD_CELL_CHANGED
+        // that call ParametersUpdated() and creating an infinite loop
+        // Note also it happens **only for languages using a comma** instead of a point
+        // for floating point separator
+        // It does not happen on wxWidgets 3.1.4
+        //
+        // So lock the next call.
+        lock_update_prms = true;
+        ReCreateParameterList();
+    }
+
+    // unlock ParametersUpdated() now the update is finished
+    lock_update_prms = false;
 }
 

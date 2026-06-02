@@ -69,17 +69,9 @@ private:
     VECTOR2I scaleSize( const VECTOR2I& aSize ) const;
     int scale( int aVal ) const;
 
-    /**
-     * Get a block by its key, and check that it is of the expected type.
-      *
-      * @tparam T must be a BLOCK_DATA struct with a BLOCK_TYPE_CODE member
-     */
-    template <ALLEGRO_BLOCK_DATA T>
-    const T* expectBlockByKey( uint32_t aKey ) const
+    template <typename T>
+    const T* expectBlockByKey( uint32_t aKey, uint8_t aType ) const
     {
-        // The type code trait
-        constexpr uint8_t kType = T::BLOCK_TYPE_CODE;
-
         if( aKey == 0 )
             return nullptr;
 
@@ -87,13 +79,13 @@ private:
 
         if( !block )
         {
-            reportMissingBlock( aKey, kType );
+            reportMissingBlock( aKey, aType );
             return nullptr;
         }
 
-        if( block->GetBlockType() != kType )
+        if( block->GetBlockType() != aType )
         {
-            reportUnexpectedBlockType( block->GetBlockType(), kType, aKey, block->GetOffset() );
+            reportUnexpectedBlockType( block->GetBlockType(), aType, aKey, block->GetOffset() );
             return nullptr;
         }
 

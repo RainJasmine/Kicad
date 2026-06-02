@@ -150,6 +150,7 @@ public:
     int NextLineMode( const TOOL_EVENT& aEvent );
     int OnAngleSnapModeChanged( const TOOL_EVENT& aEvent );
     int ToggleAnnotateAuto( const TOOL_EVENT& aEvent );
+    int TogglePythonConsole( const TOOL_EVENT& aEvent );
 
     int GridFeedback( const TOOL_EVENT& aEvent );
 

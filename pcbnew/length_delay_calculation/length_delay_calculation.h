@@ -33,7 +33,6 @@
 #include <unordered_set>
 
 class BOARD;
-class PCB_VIA;
 
 /**
 * Holds length measurement result details and statistics
@@ -71,9 +70,9 @@ struct LENGTH_DELAY_STATS
  */
 struct PATH_OPTIMISATIONS
 {
-    /// Optimise vias for electrical length calculations, including effective
-    /// via span and trace clipping inside via pads
-    bool OptimiseVias = false;
+    /// Optimise via layers for height calculations, ensuring only the distance
+    /// between routed segments is considered
+    bool OptimiseViaLayers = false;
 
     /// Merges all contiguous (end-to-end, same layer) tracks
     bool MergeTracks = false;
@@ -191,13 +190,6 @@ public:
     /// Optimises the given trace / line to minimise the electrical path length within the given pad
     static void OptimiseTraceInPad( SHAPE_LINE_CHAIN& aLine, const PAD* aPad, PCB_LAYER_ID aPcbLayer );
 
-    /// Returns true if the given point falls inside VIA pad shape on the given layer
-    static bool IsPointInsideViaPad( const PCB_VIA* aVia, const VECTOR2I& aPoint, PCB_LAYER_ID aLayer );
-
-    /// Clips trace portions inside a VIA pad and replaces them with a straight-line segment
-    /// from the VIA edge intersection to the VIA centre, analogous to OptimiseTraceInPad.
-    static void OptimiseTraceInVia( SHAPE_LINE_CHAIN& aLine, const PCB_VIA* aVia, PCB_LAYER_ID aLayer );
-
     /// Return a LENGTH_CALCULATION_ITEM constructed from the given BOARD_CONNECTED_ITEM
     LENGTH_DELAY_CALCULATION_ITEM GetLengthCalculationItem( const BOARD_CONNECTED_ITEM* aBoardItem ) const;
 
@@ -240,18 +232,15 @@ protected:
     /// Clips the given line to the minimal direct electrical length within the pad
     static void clipLineToPad( SHAPE_LINE_CHAIN& aLine, const PAD* aPad, PCB_LAYER_ID aLayer, bool aForward = true );
 
-    /// Clips the given line to the minimal direct electrical length within the via
-    static void clipLineToVia( SHAPE_LINE_CHAIN& aLine, const PCB_VIA* aVia, PCB_LAYER_ID aLayer, bool aForward );
-
     /**
      * Optimises the via layers. Ensures that vias that are routed through only on one layer do not count towards total
      * length calculations.
      */
-    void optimiseVias(
-            const std::vector<LENGTH_DELAY_CALCULATION_ITEM*>&                            aVias,
-            std::vector<LENGTH_DELAY_CALCULATION_ITEM*>&                                  aLines,
-            std::map<VECTOR2I, std::unordered_set<LENGTH_DELAY_CALCULATION_ITEM*>>&       aLinesPositionMap,
-            const std::map<VECTOR2I, std::unordered_set<LENGTH_DELAY_CALCULATION_ITEM*>>& aPadsPositionMap ) const;
+    static void
+    optimiseViaLayers( const std::vector<LENGTH_DELAY_CALCULATION_ITEM*>&                            aVias,
+                       std::vector<LENGTH_DELAY_CALCULATION_ITEM*>&                                  aLines,
+                       std::map<VECTOR2I, std::unordered_set<LENGTH_DELAY_CALCULATION_ITEM*>>&       aLinesPositionMap,
+                       const std::map<VECTOR2I, std::unordered_set<LENGTH_DELAY_CALCULATION_ITEM*>>& aPadsPositionMap );
 
     /**
      * Merges any lines (traces) that are contiguous, on one layer, and with no junctions

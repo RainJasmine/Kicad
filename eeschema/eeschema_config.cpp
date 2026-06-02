@@ -34,8 +34,6 @@
 #include <settings/color_settings.h>
 #include <sch_painter.h>
 #include <schematic.h>
-#include <schematic_text_var_adapter.h>
-#include <text_var_dependency.h>
 #include <widgets/hierarchy_pane.h>
 #include <widgets/sch_design_block_pane.h>
 #include <widgets/sch_search_pane.h>
@@ -137,12 +135,6 @@ void SCH_EDIT_FRAME::ShowSchematicSetupDialog( const wxString& aInitialPage )
 
         Prj().IncrementTextVarsTicker();
         Prj().IncrementNetclassesTicker();
-
-        // CROSS_REF keys deliberately excluded — those are driven by per-item
-        // SCH_COMMIT changes.
-        if( SCHEMATIC_TEXT_VAR_ADAPTER* adapter = Schematic().GetTextVarAdapter() )
-            adapter->Tracker().InvalidateProjectScoped();
-
         Pgm().GetSettingsManager().SaveProject();
 
         GetRenderSettings()->SetDefaultPenWidth( Schematic().Settings().m_DefaultLineWidth );
@@ -205,17 +197,7 @@ void SCH_EDIT_FRAME::saveProjectSettings()
         if( success && layoutfn.IsOk() && !layoutfn.FileExists() && layoutfn.HasName() )
         {
             if( layoutfn.DirExists() && layoutfn.IsDirWritable() )
-            {
-                try
-                {
-                    DS_DATA_MODEL::GetTheInstance().Save( layoutfn.GetFullPath() );
-                }
-                catch( const IO_ERROR& ioe )
-                {
-                    wxLogError( _( "Failed to save drawing sheet '%s': %s" ),
-                                layoutfn.GetFullPath(), ioe.What() );
-                }
-            }
+                DS_DATA_MODEL::GetTheInstance().Save( layoutfn.GetFullPath() );
         }
     }
 

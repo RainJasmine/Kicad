@@ -114,6 +114,7 @@ void PNS_LOG_PLAYER::ReplayLog( PNS_LOG_FILE* aLog, int aStartEventIndex, int aF
         auto  items = aLog->ItemsById( evt );
         PNS::ITEM_SET ritems;
 
+        printf("items: %zu\n", items.size() );
         ITEM* ritem = nullptr;
 
         if( items.size() && items[0] )
@@ -325,6 +326,8 @@ void PNS_LOG_PLAYER::ReplayLog( PNS_LOG_FILE* aLog, int aStartEventIndex, int aF
 bool PNS_LOG_PLAYER::CompareResults( PNS_LOG_FILE* aLog )
 {
     auto cstate = GetRouterUpdatedItems();
+
+    printf("Comparing %zu added/%zu removed items\n", cstate.m_addedItems.size(), cstate.m_removedIds.size() );
     return cstate.Compare( aLog->GetExpectedResult() );
 }
 

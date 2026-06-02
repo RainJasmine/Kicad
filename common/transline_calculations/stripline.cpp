@@ -31,17 +31,6 @@ using TCP = TRANSLINE_PARAMETERS;
 
 void STRIPLINE::Analyse()
 {
-    UpdateDielectricModel();
-
-    const double f = GetParameter( TCP::FREQUENCY );
-    const double rawEpsR = GetParameter( TCP::EPSILONR );
-    const double rawTanD = GetParameter( TCP::TAND );
-
-    // Overlay dispersed values so helpers reading EPSILONR / TAND via GetParameter
-    // pick them up.  Raw inputs are restored before return.
-    SetParameter( TCP::EPSILONR, GetDispersedEpsilonR( f ) );
-    SetParameter( TCP::TAND, GetDispersedTanDelta( f ) );
-
     SetParameter( TCP::SKIN_DEPTH, SkinDepth() );
     SetParameter( TCP::EPSILON_EFF, GetParameter( TCP::EPSILONR ) ); // no dispersion
 
@@ -60,9 +49,6 @@ void STRIPLINE::Analyse()
                                       * GetParameter( TCP::FREQUENCY ) / TC::C0 ); // in radians
 
     unit_prop_delay = UnitPropagationDelay( GetParameter( TCP::EPSILON_EFF ) );
-
-    SetParameter( TCP::EPSILONR, rawEpsR );
-    SetParameter( TCP::TAND, rawTanD );
 }
 
 

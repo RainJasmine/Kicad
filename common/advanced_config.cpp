@@ -98,7 +98,6 @@ static const wxChar Skip3DModelFileCache[] = wxT( "Skip3DModelFileCache" );
 static const wxChar Skip3DModelMemoryCache[] = wxT( "Skip3DModelMemoryCache" );
 static const wxChar HideVersionFromTitle[] = wxT( "HideVersionFromTitle" );
 static const wxChar TraceMasks[] = wxT( "TraceMasks" );
-static const wxChar RouterTestCaseDirectory[] = wxT( "RouterTestCaseDirectory" );
 static const wxChar ShowEventCounters[] = wxT( "ShowEventCounters" );
 static const wxChar AllowManualCanvasScale[] = wxT( "AllowManualCanvasScale" );
 static const wxChar UpdateUIEventInterval[] = wxT( "UpdateUIEventInterval" );
@@ -686,13 +685,9 @@ void ADVANCED_CFG::loadSettings( wxConfigBase& aCfg )
                                                           m_PcbImportMinObjectSizeNm, 100,
                                                           1000000 ) );
 
-    m_entries.push_back( std::make_unique<PARAM_CFG_WXSTRING>( true, AC_KEYS::RouterTestCaseDirectory, &m_RouterTestCaseDirectory, wxS( "" ) ) );
-
-    
     // Special case for trace mask setting...we just grab them and set them immediately
     // Because we even use wxLogTrace inside of advanced config
     m_entries.push_back( std::make_unique<PARAM_CFG_WXSTRING>( true, AC_KEYS::TraceMasks, &m_traceMasks, wxS( "" ) ) );
-
 
     // Load the config from file
     wxConfigLoadSetups( &aCfg, m_entries );

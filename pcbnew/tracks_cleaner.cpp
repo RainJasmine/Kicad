@@ -390,8 +390,6 @@ void TRACKS_CLEANER::cleanup( bool aDeleteDuplicateVias, bool aDeleteNullSegment
         rtree.Insert( track, track->GetLayer() );
     }
 
-    rtree.Build();
-
     std::set<BOARD_ITEM*> toRemove;
 
     for( PCB_TRACK* track : m_brd->Tracks() )
@@ -592,28 +590,22 @@ void TRACKS_CLEANER::cleanup( bool aDeleteDuplicateVias, bool aDeleteNullSegment
         auto merge_returns = tp.submit_blocks( 0, m_brd->Tracks().size(), track_loop );
         bool retval = false;
 
-        // Drain every worker before mutating any track flags.  mergeCollinearSegments writes
-        // IS_DELETED on aSeg2, and worker threads still in track_loop read the same flags via
-        // HasFlag and via the PCB_TRACK copy constructor in testMergeCollinearSegments.
-        std::vector<std::pair<PCB_TRACK*, PCB_TRACK*>> mergePairs;
-
-        for( auto& ret : merge_returns )
+        for( size_t ii = 0; ii < merge_returns.size(); ++ii )
         {
+            std::future<std::vector<std::pair<PCB_TRACK*, PCB_TRACK*>>>& ret = merge_returns[ii];
+
             if( ret.valid() )
             {
-                std::vector<std::pair<PCB_TRACK*, PCB_TRACK*>> pairs = ret.get();
-                mergePairs.insert( mergePairs.end(), pairs.begin(), pairs.end() );
+                for( auto& [seg1, seg2] : ret.get() )
+                {
+                    retval = true;
+
+                    if( seg1->HasFlag( IS_DELETED ) || seg2->HasFlag( IS_DELETED ) )
+                        continue;
+
+                    mergeCollinearSegments( seg1, seg2 );
+                }
             }
-        }
-
-        for( auto& [seg1, seg2] : mergePairs )
-        {
-            retval = true;
-
-            if( seg1->HasFlag( IS_DELETED ) || seg2->HasFlag( IS_DELETED ) )
-                continue;
-
-            mergeCollinearSegments( seg1, seg2 );
         }
 
         return retval;

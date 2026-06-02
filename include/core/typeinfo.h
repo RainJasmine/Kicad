@@ -27,6 +27,7 @@
 #define __KICAD_TYPEINFO_H
 
 
+#ifndef SWIG
 #include <type_traits>
 
 /**
@@ -66,6 +67,8 @@ Casted dyn_cast( From aObject )
 }
 
 class EDA_ITEM;
+
+#endif  // SWIG
 
 
 /**

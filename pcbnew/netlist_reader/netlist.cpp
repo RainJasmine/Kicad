@@ -284,7 +284,7 @@ void PCB_EDIT_FRAME::LoadFootprints( NETLIST& aNetlist, REPORTER& aReporter )
                 continue;            // Footprint does not exist in any library.
 
             footprint = new FOOTPRINT( *footprint );
-            footprint->ResetUuidDirect();
+            const_cast<KIID&>( footprint->m_Uuid ) = KIID();
         }
 
         if( footprint )

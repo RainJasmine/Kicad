@@ -797,11 +797,9 @@ void OPENGL_GAL::EndDrawing()
 
     cntTotal.Stop();
 
-#ifdef KICAD_GAL_PROFILE
-    wxLogTrace( traceGalProfile, "Timing: %s %s %s %s %s %s", cntTotal.to_string(),
+    KI_TRACE( traceGalProfile, "Timing: %s %s %s %s %s %s\n", cntTotal.to_string(),
               cntEndCached.to_string(), cntEndNoncached.to_string(), cntEndOverlay.to_string(),
               cntComposite.to_string(), cntSwap.to_string() );
-#endif
 }
 
 
@@ -811,12 +809,7 @@ void OPENGL_GAL::LockContext( int aClientCookie )
     m_isContextLocked = true;
     m_lockClientCookie = aClientCookie;
 
-    GL_CONTEXT_MANAGER* mgr = Pgm().GetGLContextManager();
-
-    if( !mgr )
-        return;
-
-    mgr->LockCtx( m_glPrivContext, this );
+    Pgm().GetGLContextManager()->LockCtx( m_glPrivContext, this );
 }
 
 
@@ -831,12 +824,7 @@ void OPENGL_GAL::UnlockContext( int aClientCookie )
 
     m_isContextLocked = false;
 
-    GL_CONTEXT_MANAGER* mgr = Pgm().GetGLContextManager();
-
-    if( !mgr )
-        return;
-
-    mgr->UnlockCtx( m_glPrivContext );
+    Pgm().GetGLContextManager()->UnlockCtx( m_glPrivContext );
 }
 
 

@@ -150,6 +150,16 @@ SELECTION_CONDITION EDITOR_CONDITIONS::BoundingBoxes()
 }
 
 
+SELECTION_CONDITION EDITOR_CONDITIONS::ScriptingConsoleVisible()
+{
+    EDA_DRAW_FRAME* drwFrame = dynamic_cast<EDA_DRAW_FRAME*>( m_frame );
+
+    wxASSERT( drwFrame );
+
+    return std::bind( &EDITOR_CONDITIONS::consoleVisibleFunc, _1, drwFrame );
+}
+
+
 bool EDITOR_CONDITIONS::contentModifiedFunc( const SELECTION& aSelection, EDA_BASE_FRAME* aFrame )
 {
     return aFrame->IsContentModified();
@@ -216,4 +226,10 @@ bool EDITOR_CONDITIONS::cursorFunc( const SELECTION& aSelection, EDA_DRAW_FRAME*
 bool EDITOR_CONDITIONS::bboxesFunc( const SELECTION& aSelection, EDA_DRAW_FRAME* aFrame )
 {
     return aFrame->GetCanvas()->GetView()->GetPainter()->GetSettings()->GetDrawBoundingBoxes();
+}
+
+
+bool EDITOR_CONDITIONS::consoleVisibleFunc( const SELECTION& aSelection, EDA_DRAW_FRAME* aFrame )
+{
+    return aFrame->IsScriptingConsoleVisible();
 }

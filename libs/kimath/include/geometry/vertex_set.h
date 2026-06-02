@@ -149,7 +149,7 @@ class VERTEX
      */
     void zSort()
     {
-        std::vector<VERTEX*> queue;
+        std::deque<VERTEX*> queue;
 
         queue.push_back( this );
 

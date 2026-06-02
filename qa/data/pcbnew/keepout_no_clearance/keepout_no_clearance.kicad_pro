@@ -471,11 +471,14 @@
     }
   },
   "libraries": {
-    "pinned_footprint_libs": [],
+    "pinned_footprint_libs": [
+      "pklib",
+      "ABC_ABC_ABC_LIB"
+    ],
     "pinned_symbol_libs": []
   },
   "meta": {
-    "filename": "keepout_no_clearance.kicad_pro",
+    "filename": "KeepoutZoneTest.kicad_pro",
     "version": 3
   },
   "net_settings": {
@@ -633,8 +636,8 @@
     "subpart_id_separator": 0,
     "top_level_sheets": [
       {
-        "filename": "keepout_no_clearance.kicad_sch",
-        "name": "keepout_no_clearance",
+        "filename": "KeepoutZoneTest.kicad_sch",
+        "name": "KeepoutZoneTest",
         "uuid": "00000000-0000-0000-0000-000000000000"
       }
     ],

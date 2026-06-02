@@ -27,8 +27,6 @@
 
 #include "sch_pin.h"
 
-#include <api/api_enums.h>
-#include <api/api_utils.h>
 #include <base_units.h>
 #include <pgm_base.h>
 #include <pin_layout_cache.h>
@@ -43,7 +41,6 @@
 #include <string_utils.h>
 #include <properties/property.h>
 #include <properties/property_mgr.h>
-#include <api/schematic/schematic_types.pb.h>
 
 wxString FormatStackedPinForDisplay( const wxString& aPinNumber, int aPinLength, int aTextSize, KIFONT::FONT* aFont,
                                      const KIFONT::METRICS& aFontMetrics )
@@ -251,85 +248,6 @@ SCH_PIN& SCH_PIN::operator=( const SCH_PIN& aPin )
     m_layoutCache.reset();
 
     return *this;
-}
-
-
-void SCH_PIN::Serialize( google::protobuf::Any& aContainer ) const
-{
-    using namespace kiapi::common;
-    using namespace kiapi::schematic::types;
-    SchematicPin pin;
-
-    pin.mutable_id()->set_value( m_Uuid.AsStdString() );
-    pin.set_name( GetBaseName().ToUTF8() );
-    pin.set_number( GetNumber().ToUTF8() );
-
-    PackVector2( *pin.mutable_position(), GetPosition(), schIUScale );
-    PackDistance( *pin.mutable_length(), GetLength(), schIUScale );
-    pin.set_orientation( ToProtoEnum<PIN_ORIENTATION, SchematicPinOrientation>( GetOrientation() ) );
-
-    pin.set_electrical_type( ToProtoEnum<ELECTRICAL_PINTYPE, types::ElectricalPinType>( GetType() ) );
-    pin.set_shape( ToProtoEnum<GRAPHIC_PINSHAPE, SchematicPinShape>( GetShape() ) );
-    pin.set_visible( IsVisible() );
-
-    PackDistance( *pin.mutable_name_text_size(), GetNameTextSize(), schIUScale );
-    PackDistance( *pin.mutable_number_text_size(), GetNumberTextSize(), schIUScale );
-
-    for( const ALT& alt : GetAlternates() | std::views::values )
-    {
-        SchematicPinAlternate* altProto = pin.add_alternates();
-        altProto->set_name( alt.m_Name.ToUTF8() );
-        altProto->set_shape( ToProtoEnum<GRAPHIC_PINSHAPE, SchematicPinShape>( alt.m_Shape ) );
-        altProto->set_electrical_type( ToProtoEnum<ELECTRICAL_PINTYPE, types::ElectricalPinType>( alt.m_Type ) );
-    }
-
-    if( !m_alt.IsEmpty() && m_alt != GetBaseName() )
-        pin.set_active_alternate( m_alt.ToUTF8() );
-
-    aContainer.PackFrom( pin );
-}
-
-
-bool SCH_PIN::Deserialize( const google::protobuf::Any& aContainer )
-{
-    using namespace kiapi::common;
-    using namespace kiapi::schematic::types;
-
-    SchematicPin pin;
-
-    if( !aContainer.UnpackTo( &pin ) )
-        return false;
-
-    const_cast<KIID&>( m_Uuid ) = KIID( pin.id().value() );
-    m_name = wxString::FromUTF8( pin.name() );
-    m_number = wxString::FromUTF8( pin.number() );
-
-    SetPosition( UnpackVector2( pin.position(), schIUScale ) );
-    SetLength( UnpackDistance( pin.length(), schIUScale ) );
-    SetOrientation( FromProtoEnum<PIN_ORIENTATION>( pin.orientation() ) );
-
-    m_type = FromProtoEnum<ELECTRICAL_PINTYPE>( pin.electrical_type() );
-    m_shape = FromProtoEnum<GRAPHIC_PINSHAPE>( pin.shape() );
-    SetVisible( pin.visible() );
-
-    m_nameTextSize = UnpackDistance( pin.name_text_size(), schIUScale );
-    m_numTextSize = UnpackDistance( pin.number_text_size(), schIUScale );
-
-    std::map<wxString, ALT>& alts = GetAlternates();
-
-    for( const SchematicPinAlternate& altProto : pin.alternates() )
-    {
-        ALT alt;
-        alt.m_Name = wxString::FromUTF8( altProto.name() );
-        alt.m_Shape = FromProtoEnum<GRAPHIC_PINSHAPE>( altProto.shape() );
-        alt.m_Type = FromProtoEnum<ELECTRICAL_PINTYPE>( altProto.electrical_type() );
-        alts.emplace( alt.m_Name, alt );
-    }
-
-    if( m_layoutCache )
-        m_layoutCache->MarkDirty( PIN_LAYOUT_CACHE::DIRTY_FLAGS::ALL );
-
-    return true;
 }
 
 
@@ -1717,18 +1635,6 @@ bool SCH_PIN::ConnectionPropagatesTo( const EDA_ITEM* aItem ) const
 }
 
 
-bool SCH_PIN::IsLocked() const
-{
-    if( const SYMBOL* parentSymbol = GetParentSymbol() )
-    {
-        if( parentSymbol->IsLocked() )
-            return true;
-    }
-
-    return SCH_ITEM::IsLocked();
-}
-
-
 BITMAPS SCH_PIN::GetMenuImage() const
 {
     if( m_libPin )
@@ -2068,9 +1974,6 @@ static struct SCH_PIN_DESC
         REGISTER_TYPE( SCH_PIN );
         propMgr.AddTypeCast( new TYPE_CAST<SCH_PIN, SCH_ITEM> );
         propMgr.InheritsAfter( TYPE_HASH( SCH_PIN ), TYPE_HASH( SCH_ITEM ) );
-
-        // Lock state is inherited from parent symbol (no independent locking of child items)
-        propMgr.Mask( TYPE_HASH( SCH_PIN ), TYPE_HASH( SCH_ITEM ), _HKI( "Locked" ) );
 
         propMgr.AddProperty( new PROPERTY<SCH_PIN, wxString>( _HKI( "Pin Name" ),
                     &SCH_PIN::SetName, &SCH_PIN::GetName ) )

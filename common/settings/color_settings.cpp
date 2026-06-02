@@ -30,7 +30,7 @@
 
 
 ///! Update the schema version whenever a migration is required
-const int colorsSchemaVersion = 6;
+const int colorsSchemaVersion = 5;
 const wxString COLOR_SETTINGS::COLOR_BUILTIN_DEFAULT = "_builtin_default";
 const wxString COLOR_SETTINGS::COLOR_BUILTIN_CLASSIC = "_builtin_classic";
 
@@ -130,7 +130,6 @@ COLOR_SETTINGS::COLOR_SETTINGS( const wxString& aFilename, bool aAbsolutePath ) 
     CLR( "board.drc_error",                LAYER_DRC_ERROR          );
     CLR( "board.drc_warning",              LAYER_DRC_WARNING        );
     CLR( "board.drc_exclusion",            LAYER_DRC_EXCLUSION      );
-    CLR( "board.drc_highlighted",          LAYER_DRC_HIGHLIGHTED    );
     CLR( "board.grid",                     LAYER_GRID               );
     CLR( "board.grid_axes",                LAYER_GRID_AXES          );
     CLR( "board.pad_plated_hole",          LAYER_PAD_PLATEDHOLES    );
@@ -311,13 +310,6 @@ COLOR_SETTINGS::COLOR_SETTINGS( const wxString& aFilename, bool aAbsolutePath ) 
 
     // this bump shouldn't have happened; add a no-op migration to avoid future issues
     registerMigration( 4, 5, []() { return true; } );
-
-    registerMigration( 5, 6,
-            [&]()
-            {
-                Set( "board.drc_highlighted", COLOR4D( PUREMAGENTA ) );
-                return true;
-            } );
 }
 
 

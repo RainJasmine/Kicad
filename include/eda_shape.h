@@ -38,7 +38,6 @@ class LINE_READER;
 class EDA_DRAW_FRAME;
 class FOOTPRINT;
 class MSG_PANEL_ITEM;
-struct EDA_IU_SCALE;
 
 using KIGFX::COLOR4D;
 
@@ -114,9 +113,6 @@ public:
 
     void Serialize( google::protobuf::Any &aContainer ) const override;
     bool Deserialize( const google::protobuf::Any &aContainer ) override;
-
-    void Serialize( google::protobuf::Any &aContainer, const EDA_IU_SCALE& aScale ) const;
-    bool Deserialize( const google::protobuf::Any& aContainer, const EDA_IU_SCALE& aScale );
 
     wxString ShowShape() const;
 
@@ -544,7 +540,9 @@ protected:
                                                 //   number box, thermal spoke template, etc.)
 };
 
+#ifndef SWIG
 DECLARE_ENUM_TO_WXANY( SHAPE_T );
 DECLARE_ENUM_TO_WXANY( LINE_STYLE );
 DECLARE_ENUM_TO_WXANY( UI_FILL_MODE );
+#endif
 

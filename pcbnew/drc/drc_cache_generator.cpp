@@ -148,14 +148,6 @@ bool DRC_CACHE_GENERATOR::Run()
         }
     }
 
-    for( ZONE* zone : m_board->m_DRCCopperZones )
-    {
-        LSET zoneCopperLayers = zone->GetLayerSet() & boardCopperLayers;
-
-        for( PCB_LAYER_ID layer : zoneCopperLayers )
-            m_board->m_DRCCopperZonesByLayer[layer].push_back( zone );
-    }
-
     size_t              count = 0;
     std::atomic<size_t> done( 1 );
 
@@ -217,7 +209,6 @@ bool DRC_CACHE_GENERATOR::Run()
                     m_board->m_CopperItemRTreeCache = std::make_shared<DRC_RTREE>();
 
                 forEachGeometryItem( itemTypes, boardCopperLayers, addToCopperTree );
-                m_board->m_CopperItemRTreeCache->Build();
             } );
 
     std::future_status status = retn.wait_for( std::chrono::milliseconds( 250 ) );
@@ -263,8 +254,6 @@ bool DRC_CACHE_GENERATOR::Run()
                                if( IsCopperLayer( layer ) )
                                    rtree->Insert( aZone, layer );
                            } );
-
-                   rtree->Build();
 
                    {
                        std::unique_lock<std::shared_mutex> writeLock( m_board->m_CachesMutex );

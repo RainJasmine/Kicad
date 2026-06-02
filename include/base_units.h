@@ -26,8 +26,6 @@
 #ifndef _BASE_UNITS_H_
 #define _BASE_UNITS_H_
 
-#include <cstdint>
-
 /*  Note about internal units and max size for boards and items
 
     The largest distance that we (and Kicad) can support is INT_MAX, since it represents
@@ -108,17 +106,6 @@ struct EDA_IU_SCALE
 
         return static_cast<int>( mils < 0 ? mils - 0.5 : mils + 0.5 );
     }
-
-    constexpr inline int64_t IUToNm( int iu ) const
-    {
-        return static_cast<int64_t>( iu ) * static_cast<int64_t>( 1000000.0 / IU_PER_MM );
-    }
-
-    constexpr inline int NmToIU( int64_t nm ) const
-    {
-        double iu = static_cast<double>( nm ) * IU_PER_MM / 1000000.0;
-        return static_cast<int>( iu < 0 ? iu - 0.5 : iu + 0.5 );
-    }
 };
 
 constexpr EDA_IU_SCALE gerbIUScale = EDA_IU_SCALE( GERB_IU_PER_MM );
@@ -131,6 +118,7 @@ constexpr EDA_IU_SCALE unityScale = EDA_IU_SCALE( 1 );
 constexpr double ARC_LOW_DEF_MM = 0.02;
 constexpr double ARC_HIGH_DEF_MM = 0.005;
 
+#ifndef SWIG
 // The max error is the distance between the middle of a segment, and the circle
 // for circle/arc to segment approximation.
 // Warning: too small values can create very long calculation time in zone filling
@@ -139,5 +127,6 @@ constexpr double ARC_HIGH_DEF_MM = 0.005;
 // Allowed error to approximate an arg by segments, in Pcbnew IU
 constexpr int ARC_LOW_DEF = pcbIUScale.mmToIU( ARC_LOW_DEF_MM );
 constexpr int ARC_HIGH_DEF = pcbIUScale.mmToIU( ARC_HIGH_DEF_MM );
+#endif
 
 #endif   // _BASE_UNITS_H_

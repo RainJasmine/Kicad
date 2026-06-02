@@ -32,6 +32,7 @@
 #include <reporter.h>
 #include <board.h>
 #include <board_design_settings.h>
+#include <plotcontroller.h>
 #include <pcb_plot_params.h>
 #include <wx/ffile.h>
 #include <dialog_plot.h>
@@ -373,4 +374,152 @@ void AddGerberX2Attribute( PLOTTER* aPlotter, const BOARD* aBoard, int aLayer,
 
     if( !text.IsEmpty() )
         aPlotter->AddLineToHeader( makeStringCompatX1( text, aUseX1CompatibilityMode ) );
+}
+
+
+void BuildPlotFileName( wxFileName* aFilename, const wxString& aOutputDir,
+                        const wxString& aSuffix, const wxString& aExtension )
+{
+    // Kept as compat, incase python junk used it
+    PCB_PLOTTER::BuildPlotFileName( aFilename, aOutputDir, aSuffix, aExtension );
+}
+
+
+PLOT_CONTROLLER::PLOT_CONTROLLER( BOARD* aBoard )
+{
+    m_plotter = nullptr;
+    m_board = aBoard;
+    m_plotLayer = UNDEFINED_LAYER;
+}
+
+
+PLOT_CONTROLLER::~PLOT_CONTROLLER()
+{
+    ClosePlot();
+}
+
+
+/*
+ * IMPORTANT: the locale during plots *MUST* be kept as C/POSIX using a LOCALE_IO object on the
+ * stack. This even when opening/closing the plotfile, as some drivers do I/O even then.
+ */
+void PLOT_CONTROLLER::ClosePlot()
+{
+    if( m_plotter )
+    {
+        m_plotter->EndPlot();
+
+        delete m_plotter->RenderSettings();
+        delete m_plotter;
+
+        m_plotter = nullptr;
+    }
+}
+
+
+bool PLOT_CONTROLLER::OpenPlotfile( const wxString& aSuffix, PLOT_FORMAT aFormat,
+                                    const wxString& aSheetName, const wxString& aSheetPath )
+{
+    // Save the current format: sadly some plot routines depends on this but the main reason
+    // is that the StartPlot method uses it to dispatch the plotter creation
+    GetPlotOptions().SetFormat( aFormat );
+
+    // Ensure that the previous plot is closed
+    ClosePlot();
+
+    // Now compute the full filename for the output and start the plot (after ensuring the
+    // output directory is OK).
+
+    std::function<bool( wxString* )> textResolver =
+            [&]( wxString* token ) -> bool
+            {
+                // Handles m_board->GetTitleBlock() *and* m_board->GetProject()
+                return m_board->ResolveTextVar( token, 0 );
+            };
+
+    wxString outputDirName = GetPlotOptions().GetOutputDirectory();
+    outputDirName = ExpandTextVars( outputDirName, &textResolver );
+    outputDirName = ExpandEnvVarSubstitutions( outputDirName, m_board->GetProject() );
+
+    wxFileName   outputDir = wxFileName::DirName( outputDirName );
+    wxString     boardFilename = m_board->GetFileName();
+    PCB_LAYER_ID layer = ToLAYER_ID( GetLayer() );
+    wxString     layerName = m_board->GetLayerName( layer );
+
+    if( EnsureFileDirectoryExists( &outputDir, boardFilename ) )
+    {
+        // outputDir contains now the full path of plot files
+        m_plotFile = boardFilename;
+        m_plotFile.SetPath( outputDir.GetPath() );
+        wxString fileExt = GetDefaultPlotExtension( aFormat );
+
+        // Gerber format *can* use layer-specific file extensions (this is no longer best
+        // practice as the official file ext is now .gbr).
+        if( GetPlotOptions().GetFormat() == PLOT_FORMAT::GERBER
+                && GetPlotOptions().GetUseGerberProtelExtensions() )
+        {
+            fileExt = GetGerberProtelExtension( GetLayer() );
+        }
+
+        // Build plot filenames from the board name and layer names:
+        BuildPlotFileName( &m_plotFile, outputDir.GetPath(), aSuffix, fileExt );
+
+        m_plotter = StartPlotBoard( m_board, &GetPlotOptions(), layer, layerName,
+                                    m_plotFile.GetFullPath(), aSheetName, aSheetPath );
+    }
+
+    return ( m_plotter != nullptr );
+}
+
+
+bool PLOT_CONTROLLER::PlotLayer()
+{
+    // No plot open, nothing to do...
+    if( !m_plotter )
+        return false;
+
+    // Fully delegated to the parent
+    // Note : PlotOneBoardLayer() do not plot drill marks
+    if( GetPlotOptions().GetDrillMarksType() == DRILL_MARKS::NO_DRILL_SHAPE )
+        PlotOneBoardLayer( m_board, m_plotter, ToLAYER_ID( GetLayer() ), GetPlotOptions(), true );
+    else
+    {
+        LSEQ layerSequence( { ToLAYER_ID( GetLayer() ) } );
+        PlotBoardLayers( m_board, m_plotter, layerSequence, GetPlotOptions() );
+    }
+
+    PlotInteractiveLayer( m_board, m_plotter, GetPlotOptions() );
+
+    return true;
+}
+
+
+bool PLOT_CONTROLLER::PlotLayers( const LSEQ& aLayerSequence )
+{
+    // No plot open, nothing to do...
+    if( !m_plotter )
+        return false;
+
+    // Fully delegated to the parent
+    PlotBoardLayers( m_board, m_plotter, aLayerSequence, GetPlotOptions() );
+    PlotInteractiveLayer( m_board, m_plotter, GetPlotOptions() );
+    return true;
+}
+
+
+void PLOT_CONTROLLER::SetColorMode( bool aColorMode )
+{
+    if( !m_plotter )
+        return;
+
+    m_plotter->SetColorMode( aColorMode );
+}
+
+
+bool PLOT_CONTROLLER::GetColorMode()
+{
+    if( !m_plotter )
+        return false;
+
+    return m_plotter->GetColorMode();
 }

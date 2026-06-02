@@ -23,11 +23,8 @@
 #include <wx/wxcrt.h>
 #include <wx/filename.h>
 
-#include <cstdio>
-#include <io.h>
 #include <stdexcept>
 #include <string>
-#include <vector>
 #include <windows.h>
 #include <shlwapi.h>
 #include <winternl.h>
@@ -114,28 +111,47 @@ FILE* KIPLATFORM::IO::SeqFOpen( const wxString& aPath, const wxString& aMode )
 
 bool KIPLATFORM::IO::DuplicatePermissions( const wxString &aSrc, const wxString &aDest )
 {
-    // Only copy the DACL. Copying OWNER/GROUP would require SE_RESTORE_NAME when the
-    // target is owned by a different principal (common for files under ProgramData or
-    // on network shares), turning ACL preservation into a hard failure. The temp file
-    // is created by the current user, so leaving owner as the current user is correct.
-    const SECURITY_INFORMATION secInfo = DACL_SECURITY_INFORMATION;
-
-    // Size-probe call: required buffer size is returned via dwSize. By API contract this
-    // call fails with ERROR_INSUFFICIENT_BUFFER; the previous implementation wrapped it
-    // in an if() and therefore never executed the body, silently returning false on every
-    // save and surfacing as "Cannot copy permissions" once atomic save made the failure
-    // fatal.
+    bool retval = false;
     DWORD dwSize = 0;
-    GetFileSecurityW( aSrc.wc_str(), secInfo, nullptr, 0, &dwSize );
 
-    if( dwSize == 0 || GetLastError() != ERROR_INSUFFICIENT_BUFFER )
-        return false;
+    // Retrieve the security descriptor from the source file
+    if( GetFileSecurity( aSrc.wc_str(),
+            OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+            NULL, 0, &dwSize ) )
+    {
+        #ifdef __MINGW32__
+        // pSD is used as PSECURITY_DESCRIPTOR, aka void* pointer
+        // it create an annoying warning on gcc with "delete[] pSD;" :
+        // "warning: deleting 'PSECURITY_DESCRIPTOR' {aka 'void*'} is undefined"
+        // so use a BYTE* pointer (do not cast it to a void pointer)
+        BYTE* pSD = new BYTE[dwSize];
+        #else
+        PSECURITY_DESCRIPTOR pSD = static_cast<PSECURITY_DESCRIPTOR>( new BYTE[dwSize] );
+        #endif
 
-    std::vector<BYTE> sdBuffer( dwSize );
-    PSECURITY_DESCRIPTOR pSD = static_cast<PSECURITY_DESCRIPTOR>( sdBuffer.data() );
+        if( !pSD )
+            return false;
 
-    return GetFileSecurityW( aSrc.wc_str(), secInfo, pSD, dwSize, &dwSize )
-           && SetFileSecurityW( aDest.wc_str(), secInfo, pSD );
+        if( !GetFileSecurity( aSrc.wc_str(),
+                OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION
+                        | DACL_SECURITY_INFORMATION, pSD, dwSize, &dwSize ) )
+        {
+            delete[] pSD;
+            return false;
+        }
+
+        // Assign the retrieved security descriptor to the destination file
+        if( !SetFileSecurity( aDest.wc_str(),
+                OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION
+                        | DACL_SECURITY_INFORMATION, pSD ) )
+        {
+            retval = false;
+        }
+
+        delete[] pSD;
+    }
+
+    return retval;
 }
 
 bool KIPLATFORM::IO::MakeWriteable( const wxString& aFilePath )
@@ -158,121 +174,6 @@ bool KIPLATFORM::IO::MakeWriteable( const wxString& aFilePath )
 
     return true;
 }
-
-KIPLATFORM::IO::TARGET_ATTRS KIPLATFORM::IO::CaptureTargetAttributes( const wxString& aPath )
-{
-    TARGET_ATTRS snapshot;
-    DWORD        attrs = GetFileAttributesW( aPath.wc_str() );
-
-    if( attrs == INVALID_FILE_ATTRIBUTES )
-        return snapshot;
-
-    // Only preserve bits that SetFileSecurity (used by DuplicatePermissions) does not
-    // carry across a rename. Other attributes on the new file come from the temp's
-    // default creation attrs and should not be overwritten here.
-    snapshot.value    = static_cast<std::uint32_t>( attrs )
-                        & ( FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_HIDDEN );
-    snapshot.captured = true;
-    return snapshot;
-}
-
-
-bool KIPLATFORM::IO::ApplyTargetAttributes( const wxString& aPath, const TARGET_ATTRS& aAttrs )
-{
-    if( !aAttrs.captured )
-        return true;
-
-    DWORD current = GetFileAttributesW( aPath.wc_str() );
-
-    if( current == INVALID_FILE_ATTRIBUTES )
-        return false;
-
-    DWORD merged = current | static_cast<DWORD>( aAttrs.value );
-
-    if( merged == current )
-        return true;
-
-    return SetFileAttributesW( aPath.wc_str(), merged ) != 0;
-}
-
-
-FILE* KIPLATFORM::IO::OpenUniqueSiblingTempFile( const wxString& aTargetPath,
-                                                 const wxString& aMode, wxString* aTempPathOut,
-                                                 wxString* aError )
-{
-    // Exclusive-create closes the TOCTOU window: if another process pre-created a file
-    // at the candidate path, CreateFileW with CREATE_NEW fails and we retry.
-    for( unsigned attempt = 0; attempt < 32; ++attempt )
-    {
-        wxString candidate = MakeSiblingTempPath( aTargetPath );
-        HANDLE h = CreateFileW( candidate.wc_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
-                                FILE_ATTRIBUTE_NORMAL, nullptr );
-
-        if( h != INVALID_HANDLE_VALUE )
-        {
-            int fd = _open_osfhandle( reinterpret_cast<intptr_t>( h ), _O_WRONLY | _O_BINARY );
-
-            if( fd < 0 )
-            {
-                CloseHandle( h );
-                DeleteFileW( candidate.wc_str() );
-
-                if( aError )
-                {
-                    *aError = wxString::Format( wxT( "_open_osfhandle failed for '%s'" ),
-                                                candidate );
-                }
-
-                return nullptr;
-            }
-
-            FILE* fp = _wfdopen( fd, aMode.wc_str() );
-
-            if( !fp )
-            {
-                _close( fd ); // also closes the HANDLE
-                DeleteFileW( candidate.wc_str() );
-
-                if( aError )
-                    *aError = wxString::Format( wxT( "_wfdopen failed for '%s'" ), candidate );
-
-                return nullptr;
-            }
-
-            if( aTempPathOut )
-                *aTempPathOut = candidate;
-
-            return fp;
-        }
-
-        DWORD err = GetLastError();
-
-        if( err != ERROR_FILE_EXISTS && err != ERROR_ALREADY_EXISTS )
-        {
-            if( aError )
-                *aError = wxString::Format( wxT( "CreateFile failed for '%s' (Win32 %lu)" ),
-                                            candidate, err );
-
-            return nullptr;
-        }
-    }
-
-    if( aError )
-        *aError = wxT( "Exhausted temp-file retry budget" );
-
-    return nullptr;
-}
-
-
-wxString KIPLATFORM::IO::ResolveSymlinkTarget( const wxString& aPath )
-{
-    // Windows reparse points are semantically richer than POSIX symlinks (junctions,
-    // mount points, symlinks). The pre-atomic save code used wxFopen which opened
-    // through symlinks; MoveFileExW with MOVEFILE_REPLACE_EXISTING also follows
-    // reparse points for the target, so no pre-resolution is needed here.
-    return aPath;
-}
-
 
 bool KIPLATFORM::IO::IsFileHidden( const wxString& aFileName )
 {
@@ -419,94 +320,6 @@ long long KIPLATFORM::IO::TimestampDir( const wxString& aDirPath, const wxString
     CloseHandle( hDir );
 
     return timestamp;
-}
-
-
-bool KIPLATFORM::IO::FlushToDisk( FILE* aFp )
-{
-    if( !aFp )
-        return false;
-
-    if( std::fflush( aFp ) != 0 )
-        return false;
-
-    int fd = _fileno( aFp );
-
-    if( fd < 0 )
-        return false;
-
-    HANDLE h = reinterpret_cast<HANDLE>( _get_osfhandle( fd ) );
-
-    if( h == INVALID_HANDLE_VALUE )
-        return false;
-
-    return FlushFileBuffers( h ) != 0;
-}
-
-
-bool KIPLATFORM::IO::FlushDirectory( const wxString& aDirPath )
-{
-    // NTFS metadata journaling commits rename operations durably on its own, so there is
-    // no equivalent of POSIX dir-fsync. Report success unconditionally.
-    (void) aDirPath;
-    return true;
-}
-
-
-bool KIPLATFORM::IO::AtomicRename( const wxString& aSrc, const wxString& aDst, wxString* aError )
-{
-    // Try MoveFileEx first. MOVEFILE_WRITE_THROUGH ensures the rename is committed before
-    // return, so a power loss after success does not lose the replacement. MOVEFILE_REPLACE_EXISTING
-    // allows overwriting the destination (the caller has already verified this is the intent).
-    // A brief retry loop absorbs transient antivirus / indexer / cloud-sync locks that would
-    // otherwise surface as ERROR_SHARING_VIOLATION or ERROR_ACCESS_DENIED.
-    DWORD lastError = 0;
-
-    for( int attempt = 0; attempt < 10; ++attempt )
-    {
-        if( MoveFileExW( aSrc.wc_str(), aDst.wc_str(),
-                         MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH ) )
-            return true;
-
-        lastError = GetLastError();
-
-        if( lastError != ERROR_SHARING_VIOLATION && lastError != ERROR_ACCESS_DENIED
-            && lastError != ERROR_LOCK_VIOLATION )
-            break;
-
-        Sleep( 50 );
-    }
-
-    // Fall back to ReplaceFileW, which handles some share-mode cases MoveFileEx cannot
-    // (for instance when the destination is open for reading with FILE_SHARE_DELETE).
-    if( ReplaceFileW( aDst.wc_str(), aSrc.wc_str(), nullptr, REPLACEFILE_WRITE_THROUGH, nullptr,
-                      nullptr ) )
-        return true;
-
-    DWORD fallbackError = GetLastError();
-
-    if( aError )
-    {
-        wchar_t* msg = nullptr;
-        FormatMessageW( FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM
-                            | FORMAT_MESSAGE_IGNORE_INSERTS,
-                        nullptr, fallbackError ? fallbackError : lastError,
-                        MAKELANGID( LANG_NEUTRAL, SUBLANG_DEFAULT ), reinterpret_cast<LPWSTR>( &msg ),
-                        0, nullptr );
-
-        if( msg )
-        {
-            *aError = wxString( msg );
-            LocalFree( msg );
-        }
-        else
-        {
-            *aError = wxString::Format( wxT( "Win32 error %lu" ), fallbackError ? fallbackError
-                                                                                : lastError );
-        }
-    }
-
-    return false;
 }
 
 

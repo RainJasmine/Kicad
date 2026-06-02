@@ -27,10 +27,7 @@
 
 #include <board.h>
 #include <board_design_settings.h>
-#include <footprint.h>
 #include <geometry/geometry_utils.h>
-#include <geometry/shape_circle.h>
-#include <geometry/circle.h>
 #include <pad.h>
 #include <pcb_track.h>
 
@@ -163,8 +160,8 @@ LENGTH_DELAY_STATS LENGTH_DELAY_CALCULATION::CalculateLengthDetails( std::vector
         wxLogTrace( wxT( "PNS_TUNE" ), wxT( "" ) );
         wxLogTrace( wxT( "PNS_TUNE" ), wxT( "========== CalculateLengthDetails START ==========" ) );
         wxLogTrace( wxT( "PNS_TUNE" ), wxT( "CalculateLengthDetails: input has %zu items" ), aItems.size() );
-        wxLogTrace( wxT( "PNS_TUNE" ), wxT( "CalculateLengthDetails: optimisations - OptimiseVias=%d, MergeTracks=%d, OptimiseTracesInPads=%d, InferViaInPad=%d" ),
-                    aOptimisations.OptimiseVias, aOptimisations.MergeTracks,
+        wxLogTrace( wxT( "PNS_TUNE" ), wxT( "CalculateLengthDetails: optimisations - OptimiseViaLayers=%d, MergeTracks=%d, OptimiseTracesInPads=%d, InferViaInPad=%d" ),
+                    aOptimisations.OptimiseViaLayers, aOptimisations.MergeTracks,
                     aOptimisations.OptimiseTracesInPads, aOptimisations.InferViaInPad );
 
         // Count initial items by type
@@ -186,7 +183,7 @@ LENGTH_DELAY_STATS LENGTH_DELAY_CALCULATION::CalculateLengthDetails( std::vector
     }
 
     // If this set of items has not been optimised, optimise for shortest electrical path
-    if( aOptimisations.OptimiseVias || aOptimisations.MergeTracks || aOptimisations.MergeTracks )
+    if( aOptimisations.OptimiseViaLayers || aOptimisations.MergeTracks || aOptimisations.MergeTracks )
     {
         if( doTrace )
             wxLogTrace( wxT( "PNS_TUNE" ), wxT( "CalculateLengthDetails: performing optimisations..." ) );
@@ -220,12 +217,12 @@ LENGTH_DELAY_STATS LENGTH_DELAY_CALCULATION::CalculateLengthDetails( std::vector
             }
         }
 
-        if( aOptimisations.OptimiseVias )
+        if( aOptimisations.OptimiseViaLayers )
         {
             if( doTrace )
                 wxLogTrace( wxT( "PNS_TUNE" ), wxT( "CalculateLengthDetails: optimising via layers (%zu vias)" ), vias.size() );
 
-            optimiseVias( vias, lines, linesPositionMap, padsPositionMap );
+            optimiseViaLayers( vias, lines, linesPositionMap, padsPositionMap );
         }
 
         if( aOptimisations.MergeTracks )
@@ -234,25 +231,6 @@ LENGTH_DELAY_STATS LENGTH_DELAY_CALCULATION::CalculateLengthDetails( std::vector
                 wxLogTrace( wxT( "PNS_TUNE" ), wxT( "CalculateLengthDetails: merging tracks (%zu lines)" ), lines.size() );
 
             mergeLines( lines, linesPositionMap );
-        }
-
-        // Clip traces inside VIA pads after merging
-        if( aOptimisations.OptimiseVias )
-        {
-            for( LENGTH_DELAY_CALCULATION_ITEM* via : vias )
-            {
-                const PCB_VIA* pcbVia = via->GetVia();
-
-                for( LENGTH_DELAY_CALCULATION_ITEM* lineItem : lines )
-                {
-                    if( lineItem->GetMergeStatus() != LENGTH_DELAY_CALCULATION_ITEM::MERGE_STATUS::MERGED_IN_USE )
-                    {
-                        continue;
-                    }
-
-                    OptimiseTraceInVia( lineItem->GetLine(), pcbVia, lineItem->GetStartLayer() );
-                }
-            }
         }
 
         if( aOptimisations.OptimiseTracesInPads )
@@ -607,103 +585,83 @@ void LENGTH_DELAY_CALCULATION::optimiseTracesInPads( const std::vector<LENGTH_DE
 }
 
 
-void LENGTH_DELAY_CALCULATION::optimiseVias(
+void LENGTH_DELAY_CALCULATION::optimiseViaLayers(
         const std::vector<LENGTH_DELAY_CALCULATION_ITEM*>& aVias, std::vector<LENGTH_DELAY_CALCULATION_ITEM*>& aLines,
         std::map<VECTOR2I, std::unordered_set<LENGTH_DELAY_CALCULATION_ITEM*>>&       aLinesPositionMap,
-        const std::map<VECTOR2I, std::unordered_set<LENGTH_DELAY_CALCULATION_ITEM*>>& aPadsPositionMap ) const
+        const std::map<VECTOR2I, std::unordered_set<LENGTH_DELAY_CALCULATION_ITEM*>>& aPadsPositionMap )
 {
     for( LENGTH_DELAY_CALCULATION_ITEM* via : aVias )
     {
-        const PCB_VIA* pcbVia = via->GetVia();
+        auto lineItr = aLinesPositionMap.find( via->GetVia()->GetPosition() );
 
-        std::unordered_set<LENGTH_DELAY_CALCULATION_ITEM*> connectedLines;
+        if( lineItr == aLinesPositionMap.end() )
+            continue;
 
-        const VECTOR2I viaPos = pcbVia->GetPosition();
+        std::unordered_set<LENGTH_DELAY_CALCULATION_ITEM*>& connectedLines = lineItr->second;
 
-        auto exactMatch = aLinesPositionMap.find( viaPos );
+        if( connectedLines.empty() )
+        {
+            // No connected lines - this via is floating. Set both layers to the same
+            via->SetLayers( via->GetVia()->GetLayer(), via->GetVia()->GetLayer() );
+        }
+        else if( connectedLines.size() == 1 )
+        {
+            // This is either a via stub, or a via-in-pad
+            bool               isViaInPad = false;
+            const PCB_LAYER_ID lineLayer = ( *connectedLines.begin() )->GetStartLayer();
 
-        if( exactMatch != aLinesPositionMap.end() )
-            connectedLines.insert( exactMatch->second.begin(), exactMatch->second.end() );
+            auto padItr = aPadsPositionMap.find( via->GetVia()->GetPosition() );
 
-        int maxRadius = 0;
+            if( padItr != aPadsPositionMap.end() )
+            {
+                // This could be a via-in-pad - check for overlapping pads which are not on the line layer
+                const std::unordered_set<LENGTH_DELAY_CALCULATION_ITEM*>& pads = padItr->second;
 
-        pcbVia->Padstack().ForEachUniqueLayer(
-                [&]( PCB_LAYER_ID layer )
+                if( pads.size() == 1 )
                 {
-                    maxRadius = std::max( maxRadius, pcbVia->GetWidth( layer ) / 2 );
-                } );
+                    const LENGTH_DELAY_CALCULATION_ITEM* padItem = *pads.begin();
 
-        const int64_t maxRadiusSq = static_cast<int64_t>( maxRadius ) * maxRadius;
-
-        for( const auto& [pos, lineSet] : aLinesPositionMap )
-        {
-            if( pos == viaPos )
-                continue;
-
-            if( ( pos - viaPos ).SquaredEuclideanNorm() > maxRadiusSq )
-                continue;
-
-            for( LENGTH_DELAY_CALCULATION_ITEM* lineItem : lineSet )
-            {
-                PCB_LAYER_ID           layer = lineItem->GetStartLayer();
-                std::shared_ptr<SHAPE> shape = pcbVia->GetEffectiveShape( layer, FLASHING::ALWAYS_FLASHED );
-
-                if( shape && shape->Collide( pos, 0 ) )
-                    connectedLines.insert( lineItem );
-            }
-        }
-
-        const PAD* coincidentPad = nullptr;
-
-        for( PAD* pad : m_board->GetConnectivity()->GetConnectedPads( pcbVia ) )
-        {
-            coincidentPad = pad;
-            break;
-        }
-
-        LSET spanLayers;
-
-        for( const LENGTH_DELAY_CALCULATION_ITEM* lineItem : connectedLines )
-            spanLayers.set( lineItem->GetStartLayer() );
-
-        if( coincidentPad )
-        {
-            PCB_LAYER_ID padSideLayer;
-
-            if( coincidentPad->GetAttribute() == PAD_ATTRIB::SMD || coincidentPad->GetAttribute() == PAD_ATTRIB::CONN )
-            {
-                padSideLayer = *coincidentPad->Padstack().LayerSet().CuStack().begin();
-            }
-            else
-            {
-                padSideLayer = coincidentPad->GetParentFootprint()->GetLayer();
+                    if( !padItem->GetPad()->Padstack().LayerSet().Contains( lineLayer ) )
+                    {
+                        // This is probably a via-in-pad
+                        isViaInPad = true;
+                        via->SetLayers( lineLayer, padItem->GetStartLayer() );
+                    }
+                }
             }
 
-            spanLayers.set( padSideLayer );
-        }
-
-        wxLogTrace( wxT( "PNS_TUNE" ),
-                    wxT( "optimiseVias: via@(%d,%d) connectedLines=%zu coincidentPad=%d "
-                         "spanLayerCount=%d" ),
-                    viaPos.x, viaPos.y, connectedLines.size(), coincidentPad ? 1 : 0,
-                    static_cast<int>( spanLayers.count() ) );
-
-        const LSEQ cuStack = spanLayers.CuStack();
-
-        if( cuStack.empty() )
-        {
-            // Nothing connects to this via
-            via->SetLayers( pcbVia->GetLayer(), pcbVia->GetLayer() );
-        }
-        else if( cuStack.size() == 1 )
-        {
-            // Stub via
-            via->SetLayers( cuStack.front(), cuStack.front() );
+            if( !isViaInPad )
+            {
+                // This is a via stub - make its electrical length 0
+                via->SetLayers( lineLayer, lineLayer );
+            }
         }
         else
         {
-            // Signal transitions layers
-            via->SetLayers( cuStack.front(), cuStack.back() );
+            // This via has more than one track ending at it. Calculate the connected layer span (which may be shorter
+            // than the overall via span)
+            LSET layers;
+
+            for( const LENGTH_DELAY_CALCULATION_ITEM* lineItem : connectedLines )
+                layers.set( lineItem->GetStartLayer() );
+
+            LSEQ cuStack = layers.CuStack();
+
+            PCB_LAYER_ID firstLayer = UNDEFINED_LAYER;
+            PCB_LAYER_ID lastLayer = UNDEFINED_LAYER;
+
+            for( PCB_LAYER_ID layer : cuStack )
+            {
+                if( firstLayer == UNDEFINED_LAYER )
+                    firstLayer = layer;
+                else
+                    lastLayer = layer;
+            }
+
+            if( lastLayer == UNDEFINED_LAYER )
+                via->SetLayers( firstLayer, firstLayer );
+            else
+                via->SetLayers( firstLayer, lastLayer );
         }
     }
 }
@@ -725,115 +683,6 @@ void LENGTH_DELAY_CALCULATION::OptimiseTraceInPad( SHAPE_LINE_CHAIN& aLine, cons
         clipLineToPad( aLine, aPad, aPcbLayer, true );
     else if( shape->Contains( aLine.CLastPoint() ) )
         clipLineToPad( aLine, aPad, aPcbLayer, false );
-}
-
-
-void LENGTH_DELAY_CALCULATION::clipLineToVia( SHAPE_LINE_CHAIN& aLine, const PCB_VIA* aVia, PCB_LAYER_ID aLayer,
-                                              bool aForward )
-{
-    wxASSERT( aLine.PointCount() >= 2 );
-
-    const int start = aForward ? 0 : aLine.PointCount() - 1;
-    const int delta = aForward ? 1 : -1;
-
-    std::shared_ptr<SHAPE> viaShape = aVia->GetEffectiveShape( aLayer, FLASHING::ALWAYS_FLASHED );
-
-    if( !viaShape )
-        return;
-
-    const SHAPE_CIRCLE* viaCircle = dynamic_cast<const SHAPE_CIRCLE*>( viaShape.get() );
-
-    if( !viaCircle )
-        return;
-
-    // Find the first point OUTSIDE the via pad
-    int      firstOutside = -1;
-    VECTOR2I intersectionPt;
-    bool     hasIntersection = false;
-
-    for( int vertex = start + delta; aForward ? vertex < aLine.PointCount() : vertex >= 0; vertex += delta )
-    {
-        if( !viaShape->Collide( aLine.GetPoint( vertex ), 0 ) )
-        {
-            firstOutside = vertex;
-            int prevVertex = vertex - delta;
-
-            SEG seg( aLine.GetPoint( vertex ), aLine.GetPoint( prevVertex ) );
-
-            CIRCLE circle( viaCircle->GetCenter(), viaCircle->GetRadius() );
-
-            std::vector<VECTOR2I> pts = circle.Intersect( seg );
-
-            if( !pts.empty() )
-            {
-                // Pick the intersection closest to the outside vertex
-                VECTOR2I outside = aLine.GetPoint( vertex );
-                intersectionPt = pts[0];
-
-                for( size_t i = 1; i < pts.size(); i++ )
-                {
-                    if( ( pts[i] - outside ).SquaredEuclideanNorm()
-                        < ( intersectionPt - outside ).SquaredEuclideanNorm() )
-                    {
-                        intersectionPt = pts[i];
-                    }
-                }
-
-                hasIntersection = true;
-            }
-
-            break;
-        }
-    }
-
-    if( firstOutside < 0 )
-        return;
-
-    SHAPE_LINE_CHAIN newChain;
-
-    if( aForward )
-    {
-        // viaCenter -> intersection -> [firstOutside to end]
-        newChain.Append( aVia->GetPosition() );
-
-        if( hasIntersection )
-            newChain.Append( intersectionPt );
-
-        newChain.Append( aLine.Slice( firstOutside, -1 ) );
-    }
-    else
-    {
-        // [0 to firstOutside] -> intersection -> viaCenter
-        newChain.Append( aLine.Slice( 0, firstOutside ) );
-
-        if( hasIntersection )
-            newChain.Append( intersectionPt );
-
-        newChain.Append( aVia->GetPosition() );
-    }
-
-    aLine = newChain;
-}
-
-
-void LENGTH_DELAY_CALCULATION::OptimiseTraceInVia( SHAPE_LINE_CHAIN& aLine, const PCB_VIA* aVia, PCB_LAYER_ID aLayer )
-{
-    std::shared_ptr<SHAPE> viaShape = aVia->GetEffectiveShape( aLayer, FLASHING::ALWAYS_FLASHED );
-
-    if( !viaShape )
-        return;
-
-    if( viaShape->Collide( aLine.CPoint( 0 ), 0 ) )
-        clipLineToVia( aLine, aVia, aLayer, true );
-    else if( viaShape->Collide( aLine.CLastPoint(), 0 ) )
-        clipLineToVia( aLine, aVia, aLayer, false );
-}
-
-
-bool LENGTH_DELAY_CALCULATION::IsPointInsideViaPad( const PCB_VIA* aVia, const VECTOR2I& aPoint, PCB_LAYER_ID aLayer )
-{
-    std::shared_ptr<SHAPE> shape = aVia->GetEffectiveShape( aLayer, FLASHING::ALWAYS_FLASHED );
-    return shape && shape->Collide( aPoint, 0 );
 }
 
 

@@ -106,16 +106,8 @@ public:
 
     CONSOLE_LOG(){};
 
-    const wxString& GetLogContents() const 
-    {
-        return m_logContents;
-    }
-
     void PrintProgress( const wxString& aMessage )
     {
-        if ( m_silenceConsoleOutput )
-            return;
-
         if( m_lastLineIsProgressBar )
             eraseLastLine();
 
@@ -131,28 +123,18 @@ public:
         if( m_lastLineIsProgressBar )
             eraseLastLine();
 
-        if( !m_silenceConsoleOutput )
-        {
         printf( "%s", (const char*) aMessage.c_str() );
         fflush( stdout );
-        }
 
-        m_logContents.append( aMessage );
         m_lastLineIsProgressBar = false;
     }
 
 
     void SetColor( COLOR color )
     {
-        if ( m_silenceConsoleOutput )
-            return;
-
-        std::map<COLOR, wxString> colorMap =
-        {
-            { RED, "\033[0;31m" },
+        std::map<COLOR, wxString> colorMap = { { RED, "\033[0;31m" },
                                                { GREEN, "\033[0;32m" },
-            { DEFAULT, "\033[0;37m" }
-        };
+                                               { DEFAULT, "\033[0;37m" } };
 
         printf( "%s", (const char*) colorMap[color].c_str() );
         fflush( stdout );
@@ -162,17 +144,12 @@ public:
 private:
     void eraseLastLine()
     {
-        if ( m_silenceConsoleOutput )
-            return;
-
         printf( "\r\033[K" );
         fflush( stdout );
     }
 
-    bool m_silenceConsoleOutput = true;
     bool       m_lastLineIsProgressBar = false;
     std::mutex m_lock;
-    wxString m_logContents;
 };
 
 

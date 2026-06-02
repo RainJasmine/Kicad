@@ -13,6 +13,7 @@
       "packages": [
         "python3",
         "opencascade",
+        "wxpython-33",
         "wxwidgets-33",
         "ngspice"
       ]

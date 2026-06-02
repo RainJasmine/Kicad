@@ -75,6 +75,9 @@
 #include <pcb_draw_panel_gal.h>
 #include <drawing_sheet/ds_proxy_view_item.h>
 
+#include "../scripting/python_scripting.h"
+
+
 /* Data to build the layer pair indicator button */
 static wxBitmapBundle LayerPairBitmap;
 
@@ -247,6 +250,8 @@ std::optional<TOOLBAR_CONFIGURATION> PCB_EDIT_TOOLBAR_SETTINGS::DefaultToolbarCo
 
                       menu->Add( PCB_ACTIONS::zoneFillAll );
                       menu->Add( PCB_ACTIONS::zoneUnfillAll );
+                      menu->AppendSeparator();
+                      menu->Add( PCB_ACTIONS::zonesManager );
 
                       return menu;
                   } )
@@ -453,6 +458,9 @@ void PCB_EDIT_FRAME::configureToolbars()
     auto pluginControlFactory =
             [this]( ACTION_TOOLBAR* aToolbar )
             {
+                // Add scripting console and API plugins
+                bool scriptingAvailable = SCRIPTING::IsWxAvailable();
+
 #ifdef KICAD_IPC_API
                 bool haveApiPlugins = Pgm().GetCommonSettings()->m_Api.enable_server
                                         && !Pgm().GetPluginManager().GetActionsForScope( PluginActionScope() ).empty();
@@ -460,10 +468,18 @@ void PCB_EDIT_FRAME::configureToolbars()
                 bool haveApiPlugins = false;
 #endif
 
-                if( haveApiPlugins )
+                if( scriptingAvailable || haveApiPlugins )
                 {
                     aToolbar->AddScaledSeparator( aToolbar->GetParent() );
-                    AddApiPluginTools( aToolbar );
+
+                    if( scriptingAvailable )
+                    {
+                        aToolbar->Add( PCB_ACTIONS::showPythonConsole );
+                        addActionPluginTools( aToolbar );
+                    }
+
+                    if( haveApiPlugins )
+                        AddApiPluginTools( aToolbar );
                 }
             };
 

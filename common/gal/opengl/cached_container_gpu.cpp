@@ -67,9 +67,7 @@ CACHED_CONTAINER_GPU::CACHED_CONTAINER_GPU( unsigned int aSize ) :
         m_useCopyBuffer = false;
     }
 
-#ifdef KICAD_GAL_PROFILE
-    wxLogTrace( traceGalProfile, "VBO initial size: %u", m_currentSize );
-#endif
+    KI_TRACE( traceGalProfile, "VBO initial size: %d\n", m_currentSize );
 
     glGenBuffers( 1, &m_glBufferHandle );
     glBindBuffer( GL_ARRAY_BUFFER, m_glBufferHandle );
@@ -242,7 +240,7 @@ bool CACHED_CONTAINER_GPU::defragmentResize( unsigned int aNewSize )
     m_freeSpace += ( aNewSize - m_currentSize );
     m_currentSize = aNewSize;
 
-    wxLogTrace( traceGalProfile, "VBO size %d used %d", m_currentSize, AllItemsSize() );
+    KI_TRACE( traceGalProfile, "VBO size %d used %d\n", m_currentSize, AllItemsSize() );
 
     // Now there is only one big chunk of free memory
     m_freeChunks.clear();
@@ -328,7 +326,7 @@ bool CACHED_CONTAINER_GPU::defragmentResizeMemcpy( unsigned int aNewSize )
     m_freeSpace += ( aNewSize - m_currentSize );
     m_currentSize = aNewSize;
 
-    wxLogTrace( traceGalProfile, "VBO size %d used: %d", m_currentSize, AllItemsSize() );
+    KI_TRACE( traceGalProfile, "VBO size %d used: %d \n", m_currentSize, AllItemsSize() );
 
     // Now there is only one big chunk of free memory
     m_freeChunks.clear();

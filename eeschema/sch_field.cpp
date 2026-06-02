@@ -42,8 +42,6 @@
 #include "sim/sim_lib_mgr.h"
 #include <properties/property.h>
 #include <properties/property_mgr.h>
-#include <google/protobuf/any.pb.h>
-#include <api/schematic/schematic_types.pb.h>
 
 static const std::vector<KICAD_T> labelTypes = { SCH_LABEL_LOCATE_ANY_T };
 
@@ -120,41 +118,6 @@ SCH_FIELD::SCH_FIELD( const SCH_FIELD& aField ) :
     m_lastResolvedColor = aField.m_lastResolvedColor;
 
     m_renderCache.reset();
-}
-
-
-void SCH_FIELD::Serialize( google::protobuf::Any& aContainer ) const
-{
-    kiapi::schematic::types::SchematicField field;
-
-    field.set_name( GetName( false ).ToUTF8() );
-    field.set_visible( IsVisible() );
-    field.set_show_name( IsNameShown() );
-    field.set_allow_auto_place( CanAutoplace() );
-
-    google::protobuf::Any any;
-    EDA_TEXT::Serialize( any, schIUScale );
-    any.UnpackTo( field.mutable_text() );
-
-    aContainer.PackFrom( field );
-}
-
-
-bool SCH_FIELD::Deserialize( const google::protobuf::Any& aContainer )
-{
-    kiapi::schematic::types::SchematicField field;
-
-    if( !aContainer.UnpackTo( &field ) )
-        return false;
-
-    SetName( wxString::FromUTF8( field.name() ) );
-    SetVisible( field.visible() );
-    SetNameShown( field.show_name() );
-    SetCanAutoplace( field.allow_auto_place() );
-
-    google::protobuf::Any any;
-    any.PackFrom( field.text() );
-    return EDA_TEXT::Deserialize( any, schIUScale );
 }
 
 
@@ -769,24 +732,6 @@ bool SCH_FIELD::IsReplaceable() const
         return false;
 
     return true;
-}
-
-
-bool SCH_FIELD::IsLocked() const
-{
-    if( const SYMBOL* parentSymbol = GetParentSymbol() )
-    {
-        if( parentSymbol->IsLocked() )
-            return true;
-    }
-
-    if( const SCH_SHEET* parentSheet = dynamic_cast<const SCH_SHEET*>( m_parent ) )
-    {
-        if( parentSheet->IsLocked() )
-            return true;
-    }
-
-    return SCH_ITEM::IsLocked();
 }
 
 
@@ -1469,17 +1414,11 @@ bool SCH_FIELD::operator==( const SCH_ITEM& aOther ) const
 
 bool SCH_FIELD::operator==( const SCH_FIELD& aOther ) const
 {
-    // Identical fields owned by different items are not equal.
-    if( m_parent || aOther.m_parent )
+    // Identical fields of different symbols are not equal.
+    if( !GetParentSymbol() || !aOther.GetParentSymbol()
+        || GetParentSymbol()->m_Uuid != aOther.GetParentSymbol()->m_Uuid )
     {
-        if( !m_parent || !aOther.m_parent )
-            return false;
-
-        if( m_parent->Type() != aOther.m_parent->Type() )
-            return false;
-
-        if( m_parent->m_Uuid != aOther.m_parent->m_Uuid )
-            return false;
+        return false;
     }
 
     if( IsMandatory() != aOther.IsMandatory() )
@@ -1716,9 +1655,6 @@ static struct SCH_FIELD_DESC
         propMgr.AddTypeCast( new TYPE_CAST<SCH_FIELD, EDA_TEXT> );
         propMgr.InheritsAfter( TYPE_HASH( SCH_FIELD ), TYPE_HASH( SCH_ITEM ) );
         propMgr.InheritsAfter( TYPE_HASH( SCH_FIELD ), TYPE_HASH( EDA_TEXT ) );
-
-        // Lock state is inherited from parent symbol (no independent locking of child items)
-        propMgr.Mask( TYPE_HASH( SCH_FIELD ), TYPE_HASH( SCH_ITEM ), _HKI( "Locked" ) );
 
         const wxString textProps = _HKI( "Text Properties" );
 

@@ -76,19 +76,8 @@ NETLIST_EXPORTER_SPICE::NETLIST_EXPORTER_SPICE( SCHEMATIC* aSchematic ) :
 bool NETLIST_EXPORTER_SPICE::WriteNetlist( const wxString& aOutFileName, unsigned aNetlistOptions,
                                            REPORTER& aReporter )
 {
-    try
-    {
-        FILE_OUTPUTFORMATTER formatter( aOutFileName, wxT( "wt" ), '\'' );
-        bool result = DoWriteNetlist( wxEmptyString, aNetlistOptions, formatter, aReporter );
-        formatter.Finish();
-
-        return result;
-    }
-    catch( const IO_ERROR& ioe )
-    {
-        aReporter.Report( ioe.What(), RPT_SEVERITY_ERROR );
-        return false;
-    }
+    FILE_OUTPUTFORMATTER formatter( aOutFileName, wxT( "wt" ), '\'' );
+    return DoWriteNetlist( wxEmptyString, aNetlistOptions, formatter, aReporter );
 }
 
 
@@ -273,6 +262,16 @@ void NETLIST_EXPORTER_SPICE::ConvertToSpiceMarkup( wxString* aNetName )
     aNetName->Replace( '>', '_' );
     aNetName->Replace( '~', '_' );
     aNetName->Replace( ' ', '_' );
+
+    // Make sure that SPICE zero should be zero anywhere, independent if it is local or not.
+    // Therefore any signal ending with '/0' is rewritten as '0' to be recognized by SPICE.
+    if( aNetName->EndsWith( wxS( "/0" ) ) && !aNetName->EndsWith( wxS( "//0" ) ) )
+        aNetName->assign( wxS( "0" ) );
+
+    // Make sure that local ground signals with leading slash ('/gnd') are rewritten as gloabal gnd to be recognized
+    // by SPICE as zero.
+    if( aNetName->IsSameAs( wxS( "/gnd" ), false /* caseSensitive=false */ ) )
+        aNetName->assign( aNetName->Mid( 1 ) );
 
     // A net name on the root sheet with a label '/foo' is going to get titled "//foo".  This
     // will trip up ngspice as "//" opens a line comment.

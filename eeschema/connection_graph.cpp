@@ -129,98 +129,6 @@ void CONNECTION_SUBGRAPH::ExchangeItem( SCH_ITEM* aOldItem, SCH_ITEM* aNewItem )
 }
 
 
-/**
- * Unified driver ranking used by CONNECTION_SUBGRAPH::ResolveDrivers (within a single
- * subgraph) and by buildConnectionGraph's global-label transitive-closure pre-pass
- * (across subgraphs). Returns -1 if aA wins, +1 if aB wins, 0 if the two are tied.
- *
- * Rules are applied in priority order and each rule short-circuits if it distinguishes
- * the candidates.
- *   1. Higher CONNECTION_SUBGRAPH driver priority wins. ResolveDrivers pre-filters
- *      candidates to a single priority, so this rule is a no-op there; the pre-pass
- *      relies on it to break ties across subgraphs with different primary-driver
- *      priorities.
- *   2. For two bus connections, the superset wins. Without this, a wider bus can be
- *      silently canonicalized to a narrower one and lose members.
- *   3. For two pins, a pin on a global power symbol beats a local power pin beats a
- *      regular pin.
- *   4. For two sheet pins, an OUTPUT shape beats an INPUT shape.
- *   5. Names containing "-Pad" are treated as low quality and demoted.
- *   6. Alphabetical fallback for deterministic ordering.
- */
-static int compareDrivers( SCH_ITEM* aA, SCH_CONNECTION* aAConn, const wxString& aAName,
-                           SCH_ITEM* aB, SCH_CONNECTION* aBConn, const wxString& aBName )
-{
-    CONNECTION_SUBGRAPH::PRIORITY pa = CONNECTION_SUBGRAPH::GetDriverPriority( aA );
-    CONNECTION_SUBGRAPH::PRIORITY pb = CONNECTION_SUBGRAPH::GetDriverPriority( aB );
-
-    if( pa != pb )
-        return pa > pb ? -1 : 1;
-
-    if( aAConn->IsBus() && aBConn->IsBus() )
-    {
-        bool a_in_b = aAConn->IsSubsetOf( aBConn );
-        bool b_in_a = aBConn->IsSubsetOf( aAConn );
-
-        if( b_in_a && !a_in_b )
-            return -1;
-
-        if( a_in_b && !b_in_a )
-            return 1;
-    }
-
-    if( aA->Type() == SCH_PIN_T && aB->Type() == SCH_PIN_T )
-    {
-        SCH_PIN* pinA = static_cast<SCH_PIN*>( aA );
-        SCH_PIN* pinB = static_cast<SCH_PIN*>( aB );
-
-        SYMBOL* parentA = pinA->GetLibPin() ? pinA->GetLibPin()->GetParentSymbol() : nullptr;
-        SYMBOL* parentB = pinB->GetLibPin() ? pinB->GetLibPin()->GetParentSymbol() : nullptr;
-
-        bool aGlobal = parentA && parentA->IsGlobalPower();
-        bool bGlobal = parentB && parentB->IsGlobalPower();
-
-        if( aGlobal != bGlobal )
-            return aGlobal ? -1 : 1;
-
-        bool aLocal = parentA && parentA->IsLocalPower();
-        bool bLocal = parentB && parentB->IsLocalPower();
-
-        if( aLocal != bLocal )
-            return aLocal ? -1 : 1;
-    }
-
-    if( aA->Type() == SCH_SHEET_PIN_T && aB->Type() == SCH_SHEET_PIN_T )
-    {
-        SCH_SHEET_PIN* sheetPinA = static_cast<SCH_SHEET_PIN*>( aA );
-        SCH_SHEET_PIN* sheetPinB = static_cast<SCH_SHEET_PIN*>( aB );
-
-        if( sheetPinA->GetShape() != sheetPinB->GetShape() )
-        {
-            if( sheetPinA->GetShape() == LABEL_FLAG_SHAPE::L_OUTPUT )
-                return -1;
-
-            if( sheetPinB->GetShape() == LABEL_FLAG_SHAPE::L_OUTPUT )
-                return 1;
-        }
-    }
-
-    bool aLowQuality = aAName.Contains( wxS( "-Pad" ) );
-    bool bLowQuality = aBName.Contains( wxS( "-Pad" ) );
-
-    if( aLowQuality != bLowQuality )
-        return aLowQuality ? 1 : -1;
-
-    if( aAName < aBName )
-        return -1;
-
-    if( aBName < aAName )
-        return 1;
-
-    return 0;
-}
-
-
 bool CONNECTION_SUBGRAPH::ResolveDrivers( bool aCheckMultipleDrivers )
 {
     std::lock_guard lock( m_driver_mutex );
@@ -276,12 +184,75 @@ bool CONNECTION_SUBGRAPH::ResolveDrivers( bool aCheckMultipleDrivers )
 
     if( !candidates.empty() )
     {
-        // Delegate to the shared compareDrivers helper so this site and the global-label
-        // transitive-closure pre-pass in buildConnectionGraph agree on every tie-break.
+        // Candidates are ranked using the following rules (in order):
+        // 1. Prefer bus supersets over subsets to keep the widest connection.
+        // 2. Prefer pins on power symbols (global first, then local) over regular pins.
+        // 3. Prefer output sheet pins over input sheet pins.
+        // 4. Prefer names that do not look auto-generated (avoid "-Pad" suffixes).
+        // 5. Fall back to alphabetical comparison for deterministic ordering.
         auto candidate_cmp = [&]( SCH_ITEM* a, SCH_ITEM* b )
         {
-            return compareDrivers( a, a->Connection( &m_sheet ), GetNameForDriver( a ),
-                                   b, b->Connection( &m_sheet ), GetNameForDriver( b ) ) < 0;
+            SCH_CONNECTION* ac = a->Connection( &m_sheet );
+            SCH_CONNECTION* bc = b->Connection( &m_sheet );
+
+            if( ac->IsBus() && bc->IsBus() )
+            {
+                if( bc->IsSubsetOf( ac ) && !ac->IsSubsetOf( bc ) )
+                {
+                    return true;
+                }
+
+                if( !bc->IsSubsetOf( ac ) && ac->IsSubsetOf( bc ) )
+                {
+                    return false;
+                }
+            }
+
+            if( a->Type() == SCH_PIN_T && b->Type() == SCH_PIN_T )
+            {
+                SCH_PIN* pa = static_cast<SCH_PIN*>( a );
+                SCH_PIN* pb = static_cast<SCH_PIN*>( b );
+
+                SYMBOL* aParent = pa->GetLibPin() ? pa->GetLibPin()->GetParentSymbol() : nullptr;
+                SYMBOL* bParent = pb->GetLibPin() ? pb->GetLibPin()->GetParentSymbol() : nullptr;
+
+                bool aGlobal = aParent && aParent->IsGlobalPower();
+                bool bGlobal = bParent && bParent->IsGlobalPower();
+
+                if( aGlobal != bGlobal )
+                    return aGlobal;
+
+                bool aLocal = aParent && aParent->IsLocalPower();
+                bool bLocal = bParent && bParent->IsLocalPower();
+
+                if( aLocal != bLocal )
+                    return aLocal;
+            }
+
+            if( a->Type() == SCH_SHEET_PIN_T && b->Type() == SCH_SHEET_PIN_T )
+            {
+                SCH_SHEET_PIN* sa = static_cast<SCH_SHEET_PIN*>( a );
+                SCH_SHEET_PIN* sb = static_cast<SCH_SHEET_PIN*>( b );
+
+                if( sa->GetShape() != sb->GetShape() )
+                {
+                    if( sa->GetShape() == LABEL_FLAG_SHAPE::L_OUTPUT )
+                        return true;
+                    if( sb->GetShape() == LABEL_FLAG_SHAPE::L_OUTPUT )
+                        return false;
+                }
+            }
+
+            const wxString& a_name = GetNameForDriver( a );
+            const wxString& b_name = GetNameForDriver( b );
+
+            bool a_lowQualityName = a_name.Contains( "-Pad" );
+            bool b_lowQualityName = b_name.Contains( "-Pad" );
+
+            if( a_lowQualityName != b_lowQualityName )
+                return !a_lowQualityName;
+
+            return a_name < b_name;
         };
 
         std::sort( candidates.begin(), candidates.end(), candidate_cmp );
@@ -2397,17 +2368,22 @@ void CONNECTION_GRAPH::buildConnectionGraph( std::function<void( SCH_ITEM* )>* a
                     }
                 };
 
-        // Pick the subgraph whose primary driver the file-local compareDrivers helper
-        // would rank first. Using the same helper as CONNECTION_SUBGRAPH::ResolveDrivers
-        // guarantees both sites agree on every tie-break rule (priority, bus width,
-        // pin power parent, sheet-pin shape, -Pad demotion, alphabetical).
+        // Pick the subgraph whose primary driver CONNECTION_SUBGRAPH::ResolveDrivers
+        // would have preferred as the representative for the equivalence class.
+        // Higher driver priority wins; ties broken by alphabetically lower current
+        // primary name (matching ResolveDrivers' candidate_cmp tie-break).
         auto prefer_as_representative =
                 [&]( CONNECTION_SUBGRAPH* aA, CONNECTION_SUBGRAPH* aB ) -> bool
                 {
-                    return compareDrivers( aA->m_driver, aA->m_driver_connection,
-                                           aA->m_driver_connection->Name(),
-                                           aB->m_driver, aB->m_driver_connection,
-                                           aB->m_driver_connection->Name() ) < 0;
+                    CONNECTION_SUBGRAPH::PRIORITY pa =
+                            CONNECTION_SUBGRAPH::GetDriverPriority( aA->m_driver );
+                    CONNECTION_SUBGRAPH::PRIORITY pb =
+                            CONNECTION_SUBGRAPH::GetDriverPriority( aB->m_driver );
+
+                    if( pa != pb )
+                        return pa > pb;
+
+                    return aA->m_driver_connection->Name() < aB->m_driver_connection->Name();
                 };
 
         auto union_sgs =
@@ -2623,11 +2599,8 @@ void CONNECTION_GRAPH::buildConnectionGraph( std::function<void( SCH_ITEM* )>* a
         }
     }
 
-    // Phase 1: write each subgraph's items' connections.  Items can be referenced from
-    // other subgraphs (via labels), so phase 2 below has to wait for every phase 1 task
-    // to complete before reading anything through label->Connection().
-    auto propagateConnectionsTask =
-            [&]( CONNECTION_SUBGRAPH* subgraph )
+    auto updateItemConnectionsTask =
+            [&]( CONNECTION_SUBGRAPH* subgraph ) -> size_t
             {
                 // Make sure weakly-driven single-pin nets get the unconnected_ prefix
                 if( !subgraph->m_strong_driver
@@ -2642,53 +2615,54 @@ void CONNECTION_GRAPH::buildConnectionGraph( std::function<void( SCH_ITEM* )>* a
 
                 subgraph->m_dirty = false;
                 subgraph->UpdateItemConnections();
+
+                // No other processing to do on buses
+                if( subgraph->m_driver_connection->IsBus() )
+                    return 0;
+
+                // As a visual aid, we can check sheet pins that are driven by themselves to see
+                // if they should be promoted to buses
+                if( subgraph->m_driver && subgraph->m_driver->Type() == SCH_SHEET_PIN_T )
+                {
+                    SCH_SHEET_PIN* pin = static_cast<SCH_SHEET_PIN*>( subgraph->m_driver );
+
+                    if( SCH_SHEET* sheet = pin->GetParent() )
+                    {
+                        wxString    pinText = pin->GetShownText( false );
+                        SCH_SCREEN* screen  = sheet->GetScreen();
+
+                        for( SCH_ITEM* item : screen->Items().OfType( SCH_HIER_LABEL_T ) )
+                        {
+                            SCH_HIERLABEL* label = static_cast<SCH_HIERLABEL*>( item );
+
+                            if( label->GetShownText( &subgraph->m_sheet, false ) == pinText )
+                            {
+                                SCH_SHEET_PATH path = subgraph->m_sheet;
+                                path.push_back( sheet );
+
+                                SCH_CONNECTION* parent_conn = label->Connection( &path );
+
+                                if( parent_conn && parent_conn->IsBus() )
+                                    subgraph->m_driver_connection->SetType( CONNECTION_TYPE::BUS );
+
+                                break;
+                            }
+                        }
+
+                        if( subgraph->m_driver_connection->IsBus() )
+                            return 0;
+                    }
+                }
+
+                return 1;
             };
 
-    auto results1 = tp.submit_loop( 0, m_driver_subgraphs.size(),
+    auto results2 = tp.submit_loop( 0, m_driver_subgraphs.size(),
                             [&]( const int ii )
                             {
-                                propagateConnectionsTask( m_driver_subgraphs[ii] );
+                                updateItemConnectionsTask( m_driver_subgraphs[ii] );
                             } );
-    results1.wait();
-
-    // Phase 2: promote sheet-pin subgraphs to buses based on the matching child-sheet
-    // hier label.  This reads other subgraphs' connections via label->Connection() and
-    // also writes subgraph->m_driver_connection->SetType, so it has to be serial.
-    for( CONNECTION_SUBGRAPH* subgraph : m_driver_subgraphs )
-    {
-        if( subgraph->m_driver_connection->IsBus() )
-            continue;
-
-        if( !subgraph->m_driver || subgraph->m_driver->Type() != SCH_SHEET_PIN_T )
-            continue;
-
-        SCH_SHEET_PIN* pin = static_cast<SCH_SHEET_PIN*>( subgraph->m_driver );
-        SCH_SHEET*     sheet = pin->GetParent();
-
-        if( !sheet )
-            continue;
-
-        wxString    pinText = pin->GetShownText( false );
-        SCH_SCREEN* screen  = sheet->GetScreen();
-
-        for( SCH_ITEM* item : screen->Items().OfType( SCH_HIER_LABEL_T ) )
-        {
-            SCH_HIERLABEL* label = static_cast<SCH_HIERLABEL*>( item );
-
-            if( label->GetShownText( &subgraph->m_sheet, false ) == pinText )
-            {
-                SCH_SHEET_PATH path = subgraph->m_sheet;
-                path.push_back( sheet );
-
-                SCH_CONNECTION* parent_conn = label->Connection( &path );
-
-                if( parent_conn && parent_conn->IsBus() )
-                    subgraph->m_driver_connection->SetType( CONNECTION_TYPE::BUS );
-
-                break;
-            }
-        }
-    }
+    results2.wait();
 
     m_net_code_to_subgraphs_map.clear();
     m_net_name_to_subgraphs_map.clear();

@@ -221,10 +221,6 @@ PANEL_PREVIEW_3D_MODEL::PANEL_PREVIEW_3D_MODEL( wxWindow* aParent, PCB_BASE_FRAM
 
     loadSettings();
 
-    // Don't show placeholder models in the footprint properties 3D preview
-    if( m_boardAdapter.m_Cfg )
-        m_boardAdapter.m_Cfg->m_Render.show_missing_models = false;
-
     // Create the manager
     m_toolManager = new TOOL_MANAGER;
     m_toolManager->SetEnvironment( m_dummyBoard, nullptr, nullptr, nullptr, this );
@@ -382,63 +378,9 @@ void PANEL_PREVIEW_3D_MODEL::SetSelectedModel( int idx )
 }
 
 
-void PANEL_PREVIEW_3D_MODEL::SetExtrusionTransformMode( EXTRUDED_3D_BODY* aBody )
-{
-    m_extrudedBody = aBody;
-
-    if( aBody )
-    {
-        xscale->ChangeValue( formatScaleValue( aBody->m_scale.x ) );
-        yscale->ChangeValue( formatScaleValue( aBody->m_scale.y ) );
-        zscale->ChangeValue( formatScaleValue( aBody->m_scale.z ) );
-
-        xrot->ChangeValue( formatRotationValue( -aBody->m_rotation.x ) );
-        yrot->ChangeValue( formatRotationValue( -aBody->m_rotation.y ) );
-        zrot->ChangeValue( formatRotationValue( -aBody->m_rotation.z ) );
-
-        xoff->ChangeValue( formatOffsetValue( aBody->m_offset.x ) );
-        yoff->ChangeValue( formatOffsetValue( aBody->m_offset.y ) );
-        zoff->ChangeValue( formatOffsetValue( aBody->m_offset.z ) );
-
-        m_opacity->SetValue( 100 );
-        m_opacity->Enable( false );
-    }
-    else
-    {
-        m_opacity->Enable( true );
-    }
-}
-
-
 void PANEL_PREVIEW_3D_MODEL::updateOrientation( wxCommandEvent &event )
 {
-    if( m_extrudedBody )
-    {
-        m_extrudedBody->m_scale.x = EDA_UNIT_UTILS::UI::DoubleValueFromString( unityScale, EDA_UNITS::UNSCALED,
-                                                                               evaluateTextCtrl( xscale->GetValue() ) );
-        m_extrudedBody->m_scale.y = EDA_UNIT_UTILS::UI::DoubleValueFromString( unityScale, EDA_UNITS::UNSCALED,
-                                                                               evaluateTextCtrl( yscale->GetValue() ) );
-        m_extrudedBody->m_scale.z = EDA_UNIT_UTILS::UI::DoubleValueFromString( unityScale, EDA_UNITS::UNSCALED,
-                                                                               evaluateTextCtrl( zscale->GetValue() ) );
-
-        m_extrudedBody->m_rotation.x = -rotationFromString( evaluateTextCtrl( xrot->GetValue() ) );
-        m_extrudedBody->m_rotation.y = -rotationFromString( evaluateTextCtrl( yrot->GetValue() ) );
-        m_extrudedBody->m_rotation.z = -rotationFromString( evaluateTextCtrl( zrot->GetValue() ) );
-
-        m_extrudedBody->m_offset.x = EDA_UNIT_UTILS::UI::DoubleValueFromString( pcbIUScale, m_userUnits,
-                                                                                evaluateTextCtrl( xoff->GetValue() ) )
-                                     / pcbIUScale.IU_PER_MM;
-        m_extrudedBody->m_offset.y = EDA_UNIT_UTILS::UI::DoubleValueFromString( pcbIUScale, m_userUnits,
-                                                                                evaluateTextCtrl( yoff->GetValue() ) )
-                                     / pcbIUScale.IU_PER_MM;
-        m_extrudedBody->m_offset.z = EDA_UNIT_UTILS::UI::DoubleValueFromString( pcbIUScale, m_userUnits,
-                                                                                evaluateTextCtrl( zoff->GetValue() ) )
-                                     / pcbIUScale.IU_PER_MM;
-
-        UpdateDummyFootprint( true );
-        onModify();
-    }
-    else if( m_parentModelList && m_selected >= 0 && m_selected < (int) m_parentModelList->size() )
+    if( m_parentModelList && m_selected >= 0 && m_selected < (int) m_parentModelList->size() )
     {
         // Write settings back to the parent
         FP_3DMODEL* modelInfo = &m_parentModelList->at( (unsigned) m_selected );
@@ -740,9 +682,6 @@ void PANEL_PREVIEW_3D_MODEL::UpdateDummyFootprint( bool aReloadRequired )
     }
 
     syncLocalEmbeddedFiles();
-
-    if( m_extrudedBody && !m_dummyFootprint->HasExtrudedBody() )
-        m_extrudedBody = nullptr;
 
     if( aReloadRequired )
         m_previewPane->ReloadRequest();

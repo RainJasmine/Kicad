@@ -61,6 +61,7 @@
 #include <pgm_base.h>
 #include <design_block_library_adapter.h>
 #include <policy_keys.h>
+#include <python_scripting.h>
 #include <settings/common_settings.h>
 #include <settings/settings_manager.h>
 #include <string_utils.h>
@@ -74,7 +75,7 @@
 #ifdef KICAD_IPC_API
 #include <api/api_plugin_manager.h>
 #include <api/api_server.h>
-#include <api/python_manager.h>
+#include <python_manager.h>
 #endif
 
 #ifdef _MSC_VER
@@ -324,7 +325,7 @@ void PGM_BASE::HideSplash()
 }
 
 
-bool PGM_BASE::InitPgm( bool aHeadless, bool aIsUnitTest )
+bool PGM_BASE::InitPgm( bool aHeadless, bool aSkipPyInit, bool aIsUnitTest )
 {
 #if defined( __WXMAC__ )
     // Set the application locale to the system default
@@ -474,6 +475,11 @@ bool PGM_BASE::InitPgm( bool aHeadless, bool aIsUnitTest )
 
     GetNotificationsManager().Load();
 
+    // Create the python scripting stuff
+    // Skip it for applications that do not use it
+    if( !aSkipPyInit )
+        m_python_scripting = std::make_unique<SCRIPTING>();
+
     // TODO(JE): Remove this if apps are refactored to not assume Prj() always works
     // Need to create a project early for now (it can have an empty path for the moment)
     GetSettingsManager().LoadProject( "" );
@@ -533,7 +539,7 @@ void PGM_BASE::SaveCommonSettings()
 {
     // GetCommonSettings() is not initialized until fairly late in the
     // process startup: InitPgm(), so test before using:
-    if( GetCommonSettings() && IsGUI() )
+    if( GetCommonSettings() )
         GetCommonSettings()->m_System.working_dir = wxGetCwd();
 }
 

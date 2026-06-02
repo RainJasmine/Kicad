@@ -23,9 +23,7 @@ set( KIAPI_PROTO_SRCS
 
     common/types/base_types.proto
     common/types/enums.proto
-    common/types/jobs.proto
     common/types/project_settings.proto
-    common/types/wizards.proto
 
     common/commands/base_commands.proto
     common/commands/editor_commands.proto
@@ -33,12 +31,10 @@ set( KIAPI_PROTO_SRCS
 
     board/board.proto
     board/board_commands.proto
-    board/board_jobs.proto
     board/board_types.proto
 
     schematic/schematic_types.proto
     schematic/schematic_commands.proto
-    schematic/schematic_jobs.proto
     )
 
 # Generated C++ code must be in the build dir; it is dependent on the version of protoc installed
@@ -76,9 +72,9 @@ target_compile_definitions( kiapi INTERFACE KIAPI_IMPORTEXPORT=APIIMPORT )
 
 # https://groups.google.com/g/protobuf/c/PDR1bqRazts
 if(MSVC)
-    target_compile_options( kiapi PUBLIC /FI${CMAKE_CURRENT_SOURCE_DIR}/../include/import_export.h )
+    target_compile_options( kiapi PRIVATE /FI${CMAKE_CURRENT_SOURCE_DIR}/../include/import_export.h )
 else()
-    target_compile_options( kiapi PUBLIC -include ${CMAKE_CURRENT_SOURCE_DIR}/../include/import_export.h )
+    add_definitions( -include ${CMAKE_CURRENT_SOURCE_DIR}/../include/import_export.h )
 endif()
 
 if( APPLE )

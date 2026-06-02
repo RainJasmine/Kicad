@@ -23,9 +23,6 @@
 
 #include "panel_package.h"
 
-#include <bitmaps/bitmap_types.h>
-#include <bitmaps/bitmaps_list.h>
-
 PANEL_PACKAGE::PANEL_PACKAGE( wxWindow* parent, const ActionCallback& aCallback,
                               const PinCallback& aPinCallback, const PACKAGE_VIEW_DATA& aData ) :
         PANEL_PACKAGE_BASE( parent ),
@@ -85,11 +82,6 @@ PANEL_PACKAGE::PANEL_PACKAGE( wxWindow* parent, const ActionCallback& aCallback,
                      m_pinVersionMenuItem->GetId() );
 
     m_actionMenuItem = splitMenu->Append( wxID_ANY, _( "Uninstall" ) );
-
-    m_warningIcon->SetBitmap( KiBitmapBundle( BITMAPS::small_warning ) );
-    m_warningIcon->SetToolTip( _( "Warning: This plugin only supports the legacy Python API "
-                                  "and will not run in this KiCad version." ) );
-    m_warningIcon->Show( m_data.swig_warning );
 
     SetState( m_data.state, m_data.pinned );
 }

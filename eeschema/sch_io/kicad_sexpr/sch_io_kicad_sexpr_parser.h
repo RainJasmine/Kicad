@@ -132,7 +132,6 @@ private:
         KIID              uuid;
         LIB_ID            libId;
         std::vector<KIID> memberUuids;
-        bool              locked = false;
     };
 
     void checkpoint();

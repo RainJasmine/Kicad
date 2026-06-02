@@ -77,6 +77,7 @@ target_link_libraries( qa_pcbnew_utils PUBLIC
 #     unit_test_utils
 #     ${PCBNEW_IO_LIBRARIES}
 #     ${wxWidgets_LIBRARIES}
+#     ${PYTHON_LIBRARIES}
 #     ${PCBNEW_EXTRA_LIBS}    # -lrt must follow Boost
 #)
 

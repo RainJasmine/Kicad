@@ -262,8 +262,6 @@ public:
                                 // False (default): all pads are treated as locked for the purposes of
                                 // movement and any attempt to move them will move the footprint instead.
 
-    bool      m_ImportKeepKiCadLayerNames;
-
     std::unique_ptr<PNS::ROUTING_SETTINGS> m_PnsSettings;
 
     int       m_FootprintViewerLibListWidth;
@@ -271,5 +269,7 @@ public:
 
     wxString  m_LastFootprintLibDir;
     wxString  m_LastFootprint3dDir;
+
+    ACTION_PLUGIN_SETTINGS_LIST m_VisibleActionPlugins;
 };
 

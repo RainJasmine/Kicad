@@ -46,13 +46,11 @@ void FOOTPRINT_INFO_IMPL::load()
         {
             m_pad_count = 0;
             m_unique_pad_count = 0;
-            m_numbered_pad_count = 0;
         }
         else
         {
             m_pad_count = footprint->GetPadCount( DO_NOT_INCLUDE_NPTH );
             m_unique_pad_count = footprint->GetUniquePadCount( DO_NOT_INCLUDE_NPTH );
-            m_numbered_pad_count = footprint->GetNumberedPadCount();
             m_keywords = footprint->GetKeywords();
             m_doc = footprint->GetLibDescription();
         }
@@ -65,7 +63,6 @@ void FOOTPRINT_INFO_IMPL::load()
 
         m_pad_count = 0;
         m_unique_pad_count = 0;
-        m_numbered_pad_count = 0;
     }
 
     m_loaded = true;

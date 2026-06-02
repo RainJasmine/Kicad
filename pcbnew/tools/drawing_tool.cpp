@@ -4330,7 +4330,7 @@ int DRAWING_TOOL::DrawVia( const TOOL_EVENT& aEvent )
                 track->SetEnd( viaPos );
 
                 PCB_TRACK* newTrack = dynamic_cast<PCB_TRACK*>( track->Clone() );
-                newTrack->ResetUuidDirect();
+                const_cast<KIID&>( newTrack->m_Uuid ) = KIID();
 
                 newTrack->SetStart( viaPos );
                 newTrack->SetEnd( trackEnd );

@@ -34,6 +34,7 @@
 #include "tools/align_distribute_tool.h"
 #include "tools/pcb_point_editor.h"
 #include "tools/pcb_selection_tool.h"
+#include <python/scripting/pcb_scripting_tool.h>
 #include <bitmaps.h>
 #include <board.h>
 #include <project/net_settings.h>
@@ -1238,6 +1239,7 @@ void FOOTPRINT_EDIT_FRAME::setupTools()
     m_toolManager->RegisterTool( new PCB_VIEWER_TOOLS );
     m_toolManager->RegisterTool( new PCB_GROUP_TOOL );
     m_toolManager->RegisterTool( new CONVERT_TOOL );
+    m_toolManager->RegisterTool( new SCRIPTING_TOOL );
     m_toolManager->RegisterTool( new PROPERTIES_TOOL );
     m_toolManager->RegisterTool( new EMBED_TOOL );
 

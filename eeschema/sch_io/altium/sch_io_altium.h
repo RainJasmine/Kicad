@@ -149,6 +149,7 @@ private:
     SCH_SHEET* getCurrentSheet();
 
     bool ShouldPutItemOnSheet( int aOwnerindex );
+    bool IsComponentPartVisible( const ASCH_OWNER_INTERFACE& aElem ) const;
     const ASCH_STORAGE_FILE* GetFileFromStorage( const wxString& aFilename ) const;
     void CreateAliases();
     void AddTextBox( const ASCH_TEXT_FRAME* aElem );

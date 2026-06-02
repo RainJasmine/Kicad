@@ -178,7 +178,13 @@ bool PGM_KICAD::OnPgmInit()
     }
 #endif
 
-    if( !InitPgm( false ) )
+    bool skipPythonInit = false;
+
+    if( appType == FRAME_BM2CMP || appType == FRAME_PL_EDITOR || appType == FRAME_GERBER
+        || appType == FRAME_CALC )
+        skipPythonInit = true;
+
+    if( !InitPgm( false, skipPythonInit ) )
         return false;
 
 
@@ -525,18 +531,12 @@ struct APP_KICAD : public wxApp
 
     int OnExit() override
     {
-        // Drain wxPendingDelete (frames deferred via Destroy()) before tearing down
-        // PGM_BASE singletons. On macOS the dock-quit path leaves frames in this
-        // queue at OnExit() time, and their canvas destructors call into
-        // Pgm().GetGLContextManager(). Running OnPgmExit() first would null that
-        // pointer out from under them. See https://gitlab.com/kicad/code/kicad/-/issues/23373
-        int ret = wxApp::OnExit();
+        program.OnPgmExit();
 
-        // Avoid wxLog crashing when used in destructors invoked from OnPgmExit().
+        // Avoid wxLog crashing when used in destructors.
         wxLog::EnableLogging( false );
 
-        program.OnPgmExit();
-        return ret;
+        return wxApp::OnExit();
     }
 
 

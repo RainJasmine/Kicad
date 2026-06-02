@@ -195,12 +195,14 @@ static BLOCK_TEST_INFO createBlockTestEntry( const std::string&                 
     const std::string blockDataUri = std::string( "file://" ) + boardDir + blockDataLoc.ToStdString();
 
     const bool extraBlockTest = blockTestJson.value( "extraBlockTest", false );
+    const bool extraDbObjTest = blockTestJson.value( "extraDbObjTest", false );
 
     return BLOCK_TEST_INFO{
             blockType,
             blockOffset,
             skipBlock,
             extraBlockTest,
+            extraDbObjTest,
             blockDataUri,
     };
 }
@@ -308,6 +310,19 @@ public:
             if( blockTest.m_ExtraBlockTest )
             {
                 KI_TEST::RunAdditionalBlockTest( aBrdName, blockTest.m_BlockOffset, *block );
+            }
+
+            // Now try to convert the block into a DB_OBJ
+            ALLEGRO::BRD_DB                  brd;
+            ALLEGRO::BRD_DB::OBJ_FACTORY     objFactory( brd );
+            // Not all blocks convert to DB_OBJ yet, but at least it mustn't crash.
+            // Eventually, this should always succeed.
+            std::unique_ptr<ALLEGRO::DB_OBJ> dbObj = objFactory.CreateObject( *block );
+
+            if( blockTest.m_ExtraDbObjTest )
+            {
+                BOOST_REQUIRE( dbObj != nullptr );
+                KI_TEST::RunAdditionalObjectTest( aBrdName, blockTest.m_BlockOffset, *dbObj );
             }
         }
     }

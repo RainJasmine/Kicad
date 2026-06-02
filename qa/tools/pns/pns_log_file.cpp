@@ -25,13 +25,7 @@
 // WARNING - this Tom's crappy PNS hack tool code. Please don't complain about its quality
 // (unless you want to improve it).
 
-#include <wx/filename.h>
-#include <wx/ffile.h>
-#include <wx/stdstream.h>
-#include <wx/wfstream.h>
-
 #include "pns_log_file.h"
-#include "pns_arc.h"
 
 #include <router/pns_segment.h>
 
@@ -50,6 +44,8 @@ std::vector<BOARD_CONNECTED_ITEM*> PNS_LOG_FILE::ItemsById( const PNS::LOGGER::E
     std::vector<BOARD_CONNECTED_ITEM*> parents;
 
     parents.resize( evt.uuids.size() );
+
+    printf("u %zu p %zu\n", evt.uuids.size(), parents.size() );
 
     for( BOARD_CONNECTED_ITEM* item : m_board->AllConnectedItems() )
     {
@@ -91,40 +87,7 @@ PNS_LOG_FILE::PNS_LOG_FILE() :
 }
 
 
-std::shared_ptr<SHAPE> PNS_LOG_FILE::parseShape( const nlohmann::json& aJSON )
-{
-    const wxString type = static_cast<wxString>( aJSON.at( "type" ).get<wxString>() );
-
-    if( type == wxT("segment") )
-    {
-        std::shared_ptr<SHAPE_SEGMENT> sh( new SHAPE_SEGMENT );
-        sh->SetSeg( SEG( aJSON.at( "start" ).get<VECTOR2I>(), aJSON.at( "end" ).get<VECTOR2I>() ) );
-        sh->SetWidth( aJSON.at( "width" ).get<int>() );
-        return sh;
-    }
-    else if( type == wxT("circle") )
-    {
-        std::shared_ptr<SHAPE_CIRCLE> sh( new SHAPE_CIRCLE );
-        sh->SetCenter( aJSON.at( "center" ).get<VECTOR2I>() );
-        sh->SetRadius( aJSON.at( "radius" ).get<int>() );
-        return sh;
-    }
-    else if( type == wxT("arc") )
-    {
-        VECTOR2I start = aJSON.at( "start" ).get<VECTOR2I>();
-        VECTOR2I mid = aJSON.at( "mid" ).get<VECTOR2I>();
-        VECTOR2I end = aJSON.at( "end" ).get<VECTOR2I>();
-        int width = aJSON.at( "width" ).get<int>();
-
-        std::shared_ptr<SHAPE_ARC> sh( new SHAPE_ARC( start, mid, end, width ) );
-        return sh;
-    }
-
-    return nullptr;
-}
-
-
-std::shared_ptr<SHAPE> PNS_LOG_FILE::parseLegacyShape( SHAPE_TYPE expectedType, wxStringTokenizer& aTokens )
+std::shared_ptr<SHAPE> PNS_LOG_FILE::parseShape( SHAPE_TYPE expectedType, wxStringTokenizer& aTokens )
 {
     SHAPE_TYPE type = static_cast<SHAPE_TYPE> ( wxAtoi( aTokens.GetNextToken() ) );
 
@@ -156,7 +119,7 @@ std::shared_ptr<SHAPE> PNS_LOG_FILE::parseLegacyShape( SHAPE_TYPE expectedType, 
     return nullptr;
 }
 
-bool PNS_LOG_FILE::parseLegacyCommonPnsProps( PNS::ITEM* aItem, const wxString& cmd,
+bool PNS_LOG_FILE::parseCommonPnsProps( PNS::ITEM* aItem, const wxString& cmd,
                                         wxStringTokenizer& aTokens )
 {
     if( cmd == wxS( "net" ) )
@@ -174,17 +137,7 @@ bool PNS_LOG_FILE::parseLegacyCommonPnsProps( PNS::ITEM* aItem, const wxString& 
     return false;
 }
 
-
-bool PNS_LOG_FILE::parseCommonPnsProps( const nlohmann::json& aJSON, PNS::ITEM* aItem )
-{
-    aItem->SetNet( m_board->FindNet( aJSON.at( "net" ).get<wxString>() ) );
-    aItem->SetLayers(
-            PNS_LAYER_RANGE( aJSON.at( "layers" ).at( 0 ).get<int>(), aJSON.at( "layers" ).at( 1 ).get<int>() ) );
-
-    return true;
-}
-
-std::unique_ptr<PNS::SEGMENT> PNS_LOG_FILE::parseLegacyPnsSegmentFromString( wxStringTokenizer& aTokens )
+std::unique_ptr<PNS::SEGMENT> PNS_LOG_FILE::parsePnsSegmentFromString( wxStringTokenizer& aTokens )
 {
     std::unique_ptr<PNS::SEGMENT> seg( new PNS::SEGMENT() );
 
@@ -192,11 +145,11 @@ std::unique_ptr<PNS::SEGMENT> PNS_LOG_FILE::parseLegacyPnsSegmentFromString( wxS
     {
         wxString cmd = aTokens.GetNextToken();
 
-        if( !parseLegacyCommonPnsProps( seg.get(), cmd, aTokens ) )
+        if( !parseCommonPnsProps( seg.get(), cmd, aTokens ) )
         {
             if( cmd == wxS( "shape" ) )
             {
-                std::shared_ptr<SHAPE> sh = parseLegacyShape( SH_SEGMENT, aTokens );
+                std::shared_ptr<SHAPE> sh = parseShape( SH_SEGMENT, aTokens );
 
                 if( !sh )
                     return nullptr;
@@ -210,7 +163,7 @@ std::unique_ptr<PNS::SEGMENT> PNS_LOG_FILE::parseLegacyPnsSegmentFromString( wxS
     return seg;
 }
 
-std::unique_ptr<PNS::VIA> PNS_LOG_FILE::parseLegacyPnsViaFromString( wxStringTokenizer& aTokens )
+std::unique_ptr<PNS::VIA> PNS_LOG_FILE::parsePnsViaFromString( wxStringTokenizer& aTokens )
 {
     std::unique_ptr<PNS::VIA> via( new PNS::VIA() );
 
@@ -218,11 +171,11 @@ std::unique_ptr<PNS::VIA> PNS_LOG_FILE::parseLegacyPnsViaFromString( wxStringTok
     {
         wxString cmd = aTokens.GetNextToken();
 
-        if( !parseLegacyCommonPnsProps( via.get(), cmd, aTokens ) )
+        if( !parseCommonPnsProps( via.get(), cmd, aTokens ) )
         {
             if( cmd == wxS( "shape" ) )
             {
-                std::shared_ptr<SHAPE> sh = parseLegacyShape( SH_CIRCLE, aTokens );
+                std::shared_ptr<SHAPE> sh = parseShape( SH_CIRCLE, aTokens );
 
                 if( !sh )
                     return nullptr;
@@ -242,62 +195,15 @@ std::unique_ptr<PNS::VIA> PNS_LOG_FILE::parseLegacyPnsViaFromString( wxStringTok
     return via;
 }
 
-std::unique_ptr<PNS::ITEM> PNS_LOG_FILE::parseItem( const nlohmann::json& aJSON )
-{
-    wxString kind = aJSON.at("kind").get<wxString>();
 
-    if( kind == wxT("segment") )
-    {
-        auto parsedShape = parseShape( aJSON.at("shape") );
-
-        if( !parsedShape )
-            return nullptr;
-
-        auto shape = static_cast<const SHAPE_SEGMENT*>( parsedShape.get() );
-        std::unique_ptr<PNS::SEGMENT> seg( new PNS::SEGMENT( *shape, nullptr ) );
-        parseCommonPnsProps( aJSON, seg.get() );
-        return std::move( seg );
-    }
-    else if ( kind == wxT( "arc" ) )
-    {
-        auto parsedShape = parseShape( aJSON.at("shape") );
-
-        if( !parsedShape )
-            return nullptr;
-
-        auto shape = static_cast<const SHAPE_ARC*>( parsedShape.get() );
-        std::unique_ptr<PNS::ARC> arc( new PNS::ARC( *shape, nullptr ) );
-        parseCommonPnsProps( aJSON, arc.get() );
-        return std::move( arc );
-    }
-    else if ( kind == wxT( "via" ) )
-    {
-        auto parsedShape = parseShape( aJSON.at("shape") );
-
-        if( !parsedShape )
-            return nullptr;
-
-        auto shape = static_cast<const SHAPE_CIRCLE*>( parsedShape.get() );
-        std::unique_ptr<PNS::VIA> via( new PNS::VIA() );
-        parseCommonPnsProps( aJSON, via.get() );
-        via->SetPos( shape->Centre() );
-        via->SetDiameter( via->Layers().Start(), shape->GetRadius() * 2 );
-        via->SetDrill( aJSON.at("drill").get<int>() );
-        return std::move(via);
-    }
-
-    return nullptr;
-}
-
-
-std::unique_ptr<PNS::ITEM> PNS_LOG_FILE::parseLegacyItemFromString( wxStringTokenizer& aTokens )
+std::unique_ptr<PNS::ITEM> PNS_LOG_FILE::parseItemFromString( wxStringTokenizer& aTokens )
 {
     wxString type = aTokens.GetNextToken();
 
     if( type == wxS( "segment" ) )
-        return parseLegacyPnsSegmentFromString( aTokens );
+        return parsePnsSegmentFromString( aTokens );
     else if( type == wxS( "via" ) )
-        return parseLegacyPnsViaFromString( aTokens );
+        return parsePnsViaFromString( aTokens );
 
     return nullptr;
 }
@@ -411,49 +317,25 @@ bool PNS_LOG_FILE::COMMIT_STATE::Compare( const PNS_LOG_FILE::COMMIT_STATE& aOth
 
 bool PNS_LOG_FILE::SaveLog( const wxFileName& logFileName, REPORTER* aRpt )
 {
-    PNS::LOGGER::LOG_DATA logData;
-
-    logData.m_AddedItems = m_commitState.m_addedItems;
-    logData.m_RemovedItems = m_commitState.m_removedIds;
-    logData.m_Heads = m_commitState.m_heads;
-    logData.m_BoardHash = m_boardHash;
-    logData.m_TestCaseType = m_testCaseType;
-    logData.m_Events = m_events;
-    logData.m_Mode = m_mode;
-    
-    wxString logString = PNS::LOGGER::FormatLogFileAsJSON( logData );
-
-    wxFFileOutputStream fp( logFileName.GetFullPath(), wxT( "wt" ) );
-
-    if( !fp.IsOk() )
-    {
-        if( aRpt )
-        {
-            aRpt->Report( wxString::Format( wxT("Failed to write log file: %s"), logFileName.GetFullPath() ), RPT_SEVERITY_ERROR );
-        }
-        return false;
-    }
-
-    wxScopedCharBuffer utf8 = logString.ToUTF8();
-    fp.Write( utf8.data(), utf8.length() );
-    fp.Close();
+    FILE*    log_f = wxFopen( logFileName.GetFullPath(), "wb" );
+    wxString logString = PNS::LOGGER::FormatLogFileAsString( m_mode, m_commitState.m_addedItems,
+                                                             m_commitState.m_removedIds,
+                                                             m_commitState.m_heads,
+                                                             m_events );
+    fprintf( log_f, "%s\n", logString.c_str().AsChar() );
+    fclose( log_f );
 
     return true;
 }
 
 
-bool PNS_LOG_FILE::Load( const wxFileName& logFileName, REPORTER* aRpt, const wxString boardFileName )
+bool PNS_LOG_FILE::Load( const wxFileName& logFileName, REPORTER* aRpt )
 {
     wxFileName fname_log( logFileName );
     fname_log.SetExt( wxT( "log" ) );
 
     wxFileName fname_dump( logFileName );
     fname_dump.SetExt( wxT( "dump" ) );
-
-    if( !boardFileName.IsEmpty() )
-    {
-        fname_dump = boardFileName;
-    }
 
     wxFileName fname_project( logFileName );
     fname_project.SetExt( wxT( "kicad_pro" ) );
@@ -514,151 +396,46 @@ bool PNS_LOG_FILE::Load( const wxFileName& logFileName, REPORTER* aRpt, const wx
         return false;
     }
 
+    FILE* f = fopen( fname_log.GetFullPath().c_str(), "rb" );
 
-    ok = loadJsonLog( logFileName.GetFullPath(), aRpt, false );
-    if( !ok && logFileName.FileExists() )
-    {
-        aRpt->Report("Falling back to legacy log format...\n", RPT_SEVERITY_WARNING);
-        ok = loadLegacyLog( logFileName.GetFullPath(), aRpt );
-    }
-
-    return ok;
-}
-
-
-bool PNS_LOG_FILE::loadJsonLog( const wxString& aFilename, REPORTER* aRpt, bool aHashOnly )
-{
-    wxFFileInputStream fp( aFilename, wxT( "rt" ) );
-    wxStdInputStream   fstream( fp );
-
-
-    if ( aRpt )
-    {
-        aRpt->Report( wxString::Format( "Loading log from: %s", aFilename ) );
-    }
-
-    if( !fp.IsOk() )
-    {
-        if( aRpt )
-            aRpt->Report( wxT("Failed to load."), RPT_SEVERITY_ERROR );
-
-        return false;
-    }
-
-    try
-    {
-        nlohmann::json logJson = nlohmann::json::parse( fstream, nullptr,
-                                                        /* allow_exceptions = */ true,
-                                                        /* ignore_comments  = */ true );
-
-        if( logJson.contains("board_hash") )
-        {
-            m_boardHash = logJson.at("board_hash").get<wxString>();
-        }
-
-        if( logJson.contains("test_case_type") )
-        {
-            m_testCaseType = static_cast<PNS::LOGGER::TEST_CASE_TYPE>( logJson.at("test_case_type").get<int>() );
-        }
-
-        if ( aHashOnly )
-            return true;
-
-        m_mode = static_cast<PNS::ROUTER_MODE>( logJson.at( "mode" ).get<int>() );
-
-        for( const nlohmann::json& event : logJson.at( "events" ) )
-        {
-            m_events.push_back( std::move( PNS::LOGGER::ParseEventFromJSON( event ) ) );
-        }
-
-        for( const nlohmann::json& addedItem : logJson.at( "addedItems" ) )
-        {
-            m_parsed_items.push_back( std::move( parseItem( addedItem ) ) );
-            m_commitState.m_addedItems.push_back( m_parsed_items.back().get() );
-        }
-
-        for( const nlohmann::json& addedItem : logJson.at( "removedItems" ) )
-        {
-            m_commitState.m_removedIds.insert( addedItem.get<KIID>() );
-        }
-
-        if( aRpt )
-        {
-            aRpt->Report( wxString::Format( "JSON log load: %lu events, %lu added, %lu removed\n", m_events.size(),
-                                            m_commitState.m_addedItems.size(), m_commitState.m_removedIds.size() ),
-                          RPT_SEVERITY_INFO );
-        }
-            
-
-    }
-    catch( const std::exception& exc )
-    {
-        if( aRpt )
-        {
-            aRpt->Report( wxString::Format( "JSON log parse failure: %s\n", exc.what() ), RPT_SEVERITY_ERROR );
-        }
-        return false;
-    }
-
-    return true;
-}
-
-
-bool PNS_LOG_FILE::loadLegacyLog( const wxString& aFilename, REPORTER* aRpt )
-{
-    FILE* f = fopen( aFilename.c_str(), "rb" );
-
-    aRpt->Report( wxString::Format( "Loading log from '%s'", aFilename ) );
+    aRpt->Report( wxString::Format( "Loading log from '%s'", fname_log.GetFullPath() ) );
 
     if( !f )
     {
-        aRpt->Report( wxT( "Failed to load log file." ), RPT_SEVERITY_ERROR );
+        aRpt->Report( wxT( "Failed to load log" ), RPT_SEVERITY_ERROR );
         return false;
     }
 
-    try
+    while( !feof( f ) )
     {
-        while( !feof( f ) )
+        wxString line = readLine( f );
+        wxStringTokenizer tokens( line );
+
+        if( !tokens.CountTokens() )
+            continue;
+
+        wxString cmd = tokens.GetNextToken();
+
+        if( cmd == wxT( "mode" ) )
         {
-            wxString          line = readLine( f );
-            wxStringTokenizer tokens( line );
-
-            if( !tokens.CountTokens() )
-                continue;
-
-            wxString cmd = tokens.GetNextToken();
-
-            if( cmd == wxT( "mode" ) )
-            {
-                m_mode = static_cast<PNS::ROUTER_MODE>( wxAtoi( tokens.GetNextToken() ) );
-            }
-            else if( cmd == wxT( "event" ) )
-            {
-                m_events.push_back( std::move( PNS::LOGGER::ParseEvent( line ) ) );
-            }
-            else if( cmd == wxT( "added" ) )
-            {
-                m_parsed_items.push_back( std::move( parseLegacyItemFromString( tokens ) ) );
-                m_commitState.m_addedItems.push_back( m_parsed_items.back().get() );
-            }
-            else if( cmd == wxT( "removed" ) )
-            {
-                m_commitState.m_removedIds.insert( KIID( tokens.GetNextToken() ) );
-            }
+            m_mode = static_cast<PNS::ROUTER_MODE>( wxAtoi( tokens.GetNextToken() ) );
         }
-    }
-    catch( ... )
-    {
-        return false;
+        else if( cmd == wxT( "event" ) )
+        {
+            m_events.push_back( std::move( PNS::LOGGER::ParseEvent( line ) ) );
+        }
+        else if ( cmd == wxT( "added" ) )
+        {
+            m_parsed_items.push_back( std::move( parseItemFromString( tokens ) ) );
+            m_commitState.m_addedItems.push_back( m_parsed_items.back().get() );
+        }
+        else if ( cmd == wxT( "removed" ) )
+        {
+            m_commitState.m_removedIds.insert( KIID( tokens.GetNextToken() ) );
+        }
     }
 
     fclose( f );
+
     return true;
 }
-
-const std::optional<wxString> PNS_LOG_FILE::GetLogBoardHash( const wxString& logFileName )
-{
-    loadJsonLog( logFileName, nullptr, true );
-    return m_boardHash;
-}
-

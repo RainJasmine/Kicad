@@ -147,8 +147,6 @@ bool DRC_TEST_PROVIDER_HOLE_TO_HOLE::Run()
                 return true;
             } );
 
-    m_holeTree.Build();
-
     std::unordered_map<PTR_PTR_CACHE_KEY, int> checkedPairs;
 
     for( PCB_TRACK* track : m_board->Tracks() )

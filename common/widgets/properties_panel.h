@@ -117,14 +117,4 @@ protected:
     float m_splitter_key_proportion;
 };
 
-class SUPPRESS_GRID_CHANGED_EVENTS
-{
-public:
-    SUPPRESS_GRID_CHANGED_EVENTS( PROPERTIES_PANEL* aPanel );
-    ~SUPPRESS_GRID_CHANGED_EVENTS();
-
-private:
-    PROPERTIES_PANEL* m_panel;
-};
-
 #endif /* PROPERTIES_PANEL_H */

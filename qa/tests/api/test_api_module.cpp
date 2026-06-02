@@ -45,7 +45,7 @@ bool init_unit_test()
     {
         wxSetAssertHandler( &KI_TEST::wxAssertThrower );
 
-        Pgm().InitPgm( true, true );
+        Pgm().InitPgm( true, true, true );
         Pgm().GetSettingsManager().LoadProject( "" );
     }
 

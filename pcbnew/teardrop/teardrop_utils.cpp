@@ -111,8 +111,6 @@ void TEARDROP_MANAGER::BuildTrackCaches()
             m_trackLookupList.AddTrack( track, track->GetLayer(), track->GetNetCode() );
         }
     }
-
-    m_tracksRTree.Build();
 }
 
 

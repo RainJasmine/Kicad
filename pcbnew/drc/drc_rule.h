@@ -42,12 +42,6 @@ class PCBEXPR_UCODE;
 class DRC_CONSTRAINT;
 class DRC_RULE_CONDITION;
 
-namespace kiapi::board
-{
-    class CustomRule;
-    class CustomRuleConstraint;
-}
-
 
 enum DRC_CONSTRAINT_T
 {
@@ -137,9 +131,6 @@ public:
 
     void AddConstraint( DRC_CONSTRAINT& aConstraint );
     std::optional<DRC_CONSTRAINT> FindConstraint( DRC_CONSTRAINT_T aType );
-
-    static wxString FormatRuleFromProto( const kiapi::board::CustomRule& aRule,
-                                                  wxString* aErrorText = nullptr );
 
     bool IsImplicit() const { return m_implicitSource != DRC_IMPLICIT_SOURCE::NONE; }
 
@@ -233,8 +224,6 @@ public:
     }
 
     void SetOptionsFromOther( const DRC_CONSTRAINT& aOther ) { m_options = aOther.m_options; }
-
-    void ToProto( kiapi::board::CustomRuleConstraint& aProto ) const;
 
 public:
     DRC_CONSTRAINT_T    m_Type;

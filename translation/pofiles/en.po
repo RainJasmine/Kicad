@@ -207,12 +207,6 @@ msgstr "Use raytracing"
 msgid "Render current view using Raytracing"
 msgstr "Render current view using Raytracing"
 
-msgid "Show parts without 3D model"
-msgstr "Show parts without 3D model"
-
-msgid "Display a placeholder for footprints with missing 3D models"
-msgstr "Display a placeholder for footprints with missing 3D models"
-
 msgid "Copy 3D image to clipboard"
 msgstr "Copy 3D image to clipboard"
 
@@ -1227,9 +1221,6 @@ msgstr "Plugin '%s': %s"
 msgid "exited with code %d"
 msgstr "exited with code %d"
 
-msgid "action is not registered"
-msgstr "action is not registered"
-
 msgid "missing plugin environment"
 msgstr "missing plugin environment"
 
@@ -1257,9 +1248,6 @@ msgstr "could not create plugin environment: %s"
 
 msgid "requirements.txt could not be read"
 msgstr "requirements.txt could not be read"
-
-msgid "Process could not be created"
-msgstr "Process could not be created"
 
 msgid "Background Jobs"
 msgstr "Background Jobs"
@@ -1419,10 +1407,6 @@ msgstr "Schematic file '%s' could not be saved as design block at '%s'."
 #, c-format
 msgid "Board file '%s' could not be saved as design block at '%s'."
 msgstr "Board file '%s' could not be saved as design block at '%s'."
-
-#, c-format
-msgid "Cannot save design block metadata '%s': %s"
-msgstr "Cannot save design block metadata '%s': %s"
 
 #, c-format
 msgid "Design block metadata file '%s' could not be saved."
@@ -3389,8 +3373,8 @@ msgstr "Clearance was too large.  It has been clipped to %s."
 msgid "Minimum copper clearance"
 msgstr "Minimum copper clearance"
 
-msgid "Optimum track width"
-msgstr "Optimum track width"
+msgid "Minimum track width"
+msgstr "Minimum track width"
 
 msgid "Via pad diameter"
 msgstr "Via pad diameter"
@@ -4638,9 +4622,8 @@ msgstr "Failed to create author signature: %s"
 msgid "Failed to create commit: %s"
 msgstr "Failed to create commit: %s"
 
-#, c-format
-msgid "Could not lookup remote '%s'"
-msgstr "Could not lookup remote '%s'"
+msgid "Could not lookup remote"
+msgstr "Could not lookup remote"
 
 #, c-format
 msgid "Could not connect to remote: %s"
@@ -4682,6 +4665,10 @@ msgstr "Failed to switch to branch '%s': %s"
 #, c-format
 msgid "Failed to update HEAD reference for branch '%s': %s"
 msgstr "Failed to update HEAD reference for branch '%s': %s"
+
+#, c-format
+msgid "Could not lookup remote '%s'"
+msgstr "Could not lookup remote '%s'"
 
 #, c-format
 msgid "Could not connect to remote '%s': %s"
@@ -5102,15 +5089,6 @@ msgstr "Export PDF Job Settings"
 msgid "PCB: Export PDF"
 msgstr "PCB: Export PDF"
 
-msgid "Export PNG"
-msgstr "Export PNG"
-
-msgid "Export PNG Job Settings"
-msgstr "Export PNG Job Settings"
-
-msgid "PCB: Export PNG"
-msgstr "PCB: Export PNG"
-
 msgid "Export position data"
 msgstr "Export position data"
 
@@ -5181,38 +5159,8 @@ msgstr "Schematic: Export DXF"
 msgid "Schematic: Export PDF"
 msgstr "Schematic: Export PDF"
 
-msgid "Schematic: Export PNG"
-msgstr "Schematic: Export PNG"
-
 msgid "Schematic PythonBOM export"
 msgstr "Schematic PythonBOM export"
-
-msgid "Gerber Diff"
-msgstr "Gerber Diff"
-
-msgid "Gerber Diff Job Settings"
-msgstr "Gerber Diff Job Settings"
-
-msgid "Gerber: Diff"
-msgstr "Gerber: Diff"
-
-msgid "Gerber Export PNG"
-msgstr "Gerber Export PNG"
-
-msgid "Gerber Export PNG Job Settings"
-msgstr "Gerber Export PNG Job Settings"
-
-msgid "Gerber: Export PNG"
-msgstr "Gerber: Export PNG"
-
-msgid "Gerber Info"
-msgstr "Gerber Info"
-
-msgid "Gerber Info Job Settings"
-msgstr "Gerber Info Job Settings"
-
-msgid "Gerber: Info"
-msgstr "Gerber: Info"
 
 msgid "Perform DRC"
 msgstr "Perform DRC"
@@ -5505,9 +5453,6 @@ msgstr "DRC exclusions"
 
 msgid "DRC marker shadows"
 msgstr "DRC marker shadows"
-
-msgid "DRC highlighted"
-msgstr "DRC highlighted"
 
 msgid "Grid axes"
 msgstr "Grid axes"
@@ -6074,6 +6019,15 @@ msgstr "Unable to parse OAuth metadata: %s"
 msgid "OAuth metadata must include authorization_endpoint and token_endpoint."
 msgstr "OAuth metadata must include authorization_endpoint and token_endpoint."
 
+msgid "authorization_endpoint"
+msgstr "authorization_endpoint"
+
+msgid "token_endpoint"
+msgstr "token_endpoint"
+
+msgid "revocation_endpoint"
+msgstr "revocation_endpoint"
+
 #, c-format
 msgid "Remote provider manifest schema '%s' is not readable."
 msgstr "Remote provider manifest schema '%s' is not readable."
@@ -6081,6 +6035,9 @@ msgstr "Remote provider manifest schema '%s' is not readable."
 #, c-format
 msgid "Remote provider manifest failed schema validation: %s"
 msgstr "Remote provider manifest failed schema validation: %s"
+
+msgid "assets[].download_url"
+msgstr "assets[].download_url"
 
 #, c-format
 msgid "Unable to parse remote provider manifest: %s"
@@ -6111,20 +6068,6 @@ msgstr "Maximum line length exceeded"
 
 msgid "Line length exceeded"
 msgstr "Line length exceeded"
-
-#, c-format
-msgid "Cannot flush '%s' to disk: %s"
-msgstr "Cannot flush '%s' to disk: %s"
-
-#, c-format
-msgid ""
-"Failed to commit save of '%s': %s. The file on disk has not been modified."
-msgstr ""
-"Failed to commit save of '%s': %s. The file on disk has not been modified."
-
-#, c-format
-msgid "Write failed to '%s': %s"
-msgstr "Write failed to '%s': %s"
 
 msgid "Default Editing"
 msgstr "Default Editing"
@@ -7977,14 +7920,11 @@ msgstr "Annotated %s as %s."
 msgid "Annotation complete."
 msgstr "Annotation complete."
 
+msgid "Added items via API"
+msgstr "Added items via API"
+
 msgid "Created items via API"
 msgstr "Created items via API"
-
-msgid "Modified items via API"
-msgstr "Modified items via API"
-
-msgid "Deleted items via API"
-msgstr "Deleted items via API"
 
 #, c-format
 msgid ""
@@ -9969,9 +9909,6 @@ msgstr "SVG"
 msgid "DXF"
 msgstr "DXF"
 
-msgid "PNG"
-msgstr "PNG"
-
 msgid "Page size:"
 msgstr "Page size:"
 
@@ -10036,15 +9973,6 @@ msgstr "DXF Options"
 
 msgid "Export units:"
 msgstr "Export units:"
-
-msgid "PNG Options"
-msgstr "PNG Options"
-
-msgid "DPI:"
-msgstr "DPI:"
-
-msgid "Anti-alias"
-msgstr "Anti-alias"
 
 msgid "Other Options"
 msgstr "Other Options"
@@ -10221,52 +10149,6 @@ msgstr "Never Show Again"
 
 msgid "Project Rescue Helper"
 msgstr "Project Rescue Helper"
-
-#, c-format
-msgid ""
-"%zu symbols have user fields whose names differ only in case. Choose how to "
-"resolve each before opening the table."
-msgstr ""
-"%zu symbols have user fields whose names differ only in case. Choose how to "
-"resolve each before opening the table."
-
-msgid "Apply and Continue"
-msgstr "Apply and Continue"
-
-msgid "(empty)"
-msgstr "(empty)"
-
-#, c-format
-msgid "Keep '%s'"
-msgstr "Keep '%s'"
-
-msgid "Join values"
-msgstr "Join values"
-
-msgid "Resolve duplicate field names"
-msgstr "Resolve duplicate field names"
-
-msgid ""
-"Some symbols have user fields whose names differ only in case. Choose how to "
-"resolve each before opening the table."
-msgstr ""
-"Some symbols have user fields whose names differ only in case. Choose how to "
-"resolve each before opening the table."
-
-msgid "Apply same choice to all conflicts of the same field name"
-msgstr "Apply same choice to all conflicts of the same field name"
-
-msgid "Join separator:"
-msgstr "Join separator:"
-
-msgid "; "
-msgstr "; "
-
-msgid "String inserted between values when the \"Join\" action is selected."
-msgstr "String inserted between values when the \"Join\" action is selected."
-
-msgid "Resolve Field Name Conflicts"
-msgstr "Resolve Field Name Conflicts"
 
 msgid "&Search for:"
 msgstr "&Search for:"
@@ -12205,10 +12087,6 @@ msgid ""
 msgstr ""
 "Cannot copy file '%s' as it will be overwritten by the new root sheet file."
 
-#, c-format
-msgid "Failed to save drawing sheet '%s': %s"
-msgstr "Failed to save drawing sheet '%s': %s"
-
 msgid "Plotting to HPGL is no longer supported as of KiCad 10.0."
 msgstr "Plotting to HPGL is no longer supported as of KiCad 10.0."
 
@@ -12569,9 +12447,6 @@ msgstr "Global label only appears once in the schematic"
 
 msgid "Local and global labels have same name"
 msgstr "Local and global labels have same name"
-
-msgid "Local and global power symbols have same name"
-msgstr "Local and global power symbols have same name"
 
 msgid "Different footprint assigned in another unit of the symbol"
 msgstr "Different footprint assigned in another unit of the symbol"
@@ -17895,8 +17770,8 @@ msgstr "Save to Linked Design Block"
 msgid "Save selected group to linked design block"
 msgstr "Save selected group to linked design block"
 
-msgid "Place/Remove No Connect Flags"
-msgstr "Place/Remove No Connect Flags"
+msgid "Place No Connect Flags"
+msgstr "Place No Connect Flags"
 
 msgid "Place Junctions"
 msgstr "Place Junctions"
@@ -18041,24 +17916,6 @@ msgstr "Swap Unit Labels"
 
 msgid "Swap labels between selected units"
 msgstr "Swap labels between selected units"
-
-msgid "Toggle Lock"
-msgstr "Toggle Lock"
-
-msgid "Lock or unlock selected items"
-msgstr "Lock or unlock selected items"
-
-msgid "Lock"
-msgstr "Lock"
-
-msgid "Prevent items from being moved and/or resized on the canvas"
-msgstr "Prevent items from being moved and/or resized on the canvas"
-
-msgid "Unlock"
-msgstr "Unlock"
-
-msgid "Allow items to be moved and/or resized on the canvas"
-msgstr "Allow items to be moved and/or resized on the canvas"
 
 msgid "Edit Reference Designator..."
 msgstr "Edit Reference Designator..."
@@ -18783,9 +18640,6 @@ msgstr "Add Junction"
 msgid "Add Wire to Bus Entry"
 msgstr "Add Wire to Bus Entry"
 
-msgid "Remove No Connect Flag"
-msgstr "Remove No Connect Flag"
-
 msgid "Junction location contains no joinable wires and/or pins."
 msgstr "Junction location contains no joinable wires and/or pins."
 
@@ -18868,9 +18722,6 @@ msgstr "Pin Function"
 
 msgid "Pin Helpers"
 msgstr "Pin Helpers"
-
-msgid "Locking"
-msgstr "Locking"
 
 msgid "Transform Selection"
 msgstr "Transform Selection"
@@ -20519,20 +20370,6 @@ msgstr ""
 msgid "Shows help message and exits"
 msgstr "Shows help message and exits"
 
-msgid "Run the KiCad IPC API server in headless mode"
-msgstr "Run the KiCad IPC API server in headless mode"
-
-msgid ""
-"Optional path to a .kicad_pro, .kicad_pcb, or .kicad_sch file to pre-load"
-msgstr ""
-"Optional path to a .kicad_pro, .kicad_pcb, or .kicad_sch file to pre-load"
-
-msgid "Override API socket path"
-msgstr "Override API socket path"
-
-msgid "Failed to start API server\n"
-msgstr "Failed to start API server\n"
-
 msgid "Footprint and Footprint Libraries"
 msgstr "Footprint and Footprint Libraries"
 
@@ -20556,112 +20393,6 @@ msgstr "Upgrades the footprint library to the current kicad version format"
 
 msgid "Forces the footprint library to be resaved regardless of versioning"
 msgstr "Forces the footprint library to be resaved regardless of versioning"
-
-msgid ""
-"View and compare existing Gerber/Excellon files. To export Gerbers from a "
-"PCB, use 'pcb export gerbers'"
-msgstr ""
-"View and compare existing Gerber/Excellon files. To export Gerbers from a "
-"PCB, use 'pcb export gerbers'"
-
-msgid "Convert Gerber/Excellon to other formats"
-msgstr "Convert Gerber/Excellon to other formats"
-
-msgid "Convert a Gerber or Excellon file to PNG image"
-msgstr "Convert a Gerber or Excellon file to PNG image"
-
-msgid "Resolution in DPI (default: 300)"
-msgstr "Resolution in DPI (default: 300)"
-
-msgid "Output width in pixels (overrides DPI)"
-msgstr "Output width in pixels (overrides DPI)"
-
-msgid "Output height in pixels (overrides DPI)"
-msgstr "Output height in pixels (overrides DPI)"
-
-msgid "Use transparent background (default)"
-msgstr "Use transparent background (default)"
-
-msgid "Fail on any parse warnings or errors"
-msgstr "Fail on any parse warnings or errors"
-
-msgid "Units for viewport parameters, options: mm, inch, mils (default: mm)"
-msgstr "Units for viewport parameters, options: mm, inch, mils (default: mm)"
-
-msgid "Viewport origin X"
-msgstr "Viewport origin X"
-
-msgid "Viewport origin Y"
-msgstr "Viewport origin Y"
-
-msgid "Viewport width (enables viewport mode)"
-msgstr "Viewport width (enables viewport mode)"
-
-msgid "Viewport height (enables viewport mode)"
-msgstr "Viewport height (enables viewport mode)"
-
-msgid "Foreground color as hex (e.g., '#FFFFFF')"
-msgstr "Foreground color as hex (e.g., '#FFFFFF')"
-
-msgid "Background color as hex (e.g., '#000000')"
-msgstr "Background color as hex (e.g., '#000000')"
-
-#, c-format
-msgid "Invalid units: %s\n"
-msgstr "Invalid units: %s\n"
-
-msgid ""
-"Error: both --window-width and --window-height must be specified together\n"
-msgstr ""
-"Error: both --window-width and --window-height must be specified together\n"
-
-msgid "Compare two Gerber or Excellon files and show differences"
-msgstr "Compare two Gerber or Excellon files and show differences"
-
-msgid "Reference file (first Gerber/Excellon file)"
-msgstr "Reference file (first Gerber/Excellon file)"
-
-msgid "Comparison file (second Gerber/Excellon file)"
-msgstr "Comparison file (second Gerber/Excellon file)"
-
-msgid "Output format: png, text, or json (default: png)"
-msgstr "Output format: png, text, or json (default: png)"
-
-msgid "Resolution in DPI for PNG output (default: 300)"
-msgstr "Resolution in DPI for PNG output (default: 300)"
-
-msgid "Disable anti-aliasing for PNG output"
-msgstr "Disable anti-aliasing for PNG output"
-
-msgid "Use transparent background for PNG output"
-msgstr "Use transparent background for PNG output"
-
-msgid "Only set exit code (0=identical, 1=different), no output"
-msgstr "Only set exit code (0=identical, 1=different), no output"
-
-msgid "Tolerance in nm for floating point comparisons (default: 0)"
-msgstr "Tolerance in nm for floating point comparisons (default: 0)"
-
-msgid ""
-"Skip bounding-box origin alignment; catches absolute-placement regressions"
-msgstr ""
-"Skip bounding-box origin alignment; catches absolute-placement regressions"
-
-#, c-format
-msgid "Invalid output format: %s\n"
-msgstr "Invalid output format: %s\n"
-
-msgid "Display information about a Gerber or Excellon file"
-msgstr "Display information about a Gerber or Excellon file"
-
-msgid "Output format, options: text, json"
-msgstr "Output format, options: text, json"
-
-msgid "Output units, options: mm, inch, mils (default: mm)"
-msgstr "Output units, options: mm, inch, mils (default: mm)"
-
-msgid "Calculate and display copper area"
-msgstr "Calculate and display copper area"
 
 msgid "Jobset"
 msgstr "Jobset"
@@ -21054,20 +20785,6 @@ msgstr "Plot the layers to a single PDF file with multiple pages"
 msgid "Cannot use more than one mode flag\n"
 msgstr "Cannot use more than one mode flag\n"
 
-msgid "Generate PNG outputs of a given layer list"
-msgstr "Generate PNG outputs of a given layer list"
-
-msgid "Color theme to use (will default to PCB editor settings)"
-msgstr "Color theme to use (will default to PCB editor settings)"
-
-#, c-format
-msgid "Resolution in dots per inch (default %d)"
-msgstr "Resolution in dots per inch (default %d)"
-
-#, c-format
-msgid "DPI must be between %d and %d\n"
-msgstr "DPI must be between %d and %d\n"
-
 msgid "Generate Position File"
 msgstr "Generate Position File"
 
@@ -21151,6 +20868,9 @@ msgstr "Subtract holes from copper areas"
 
 msgid "Generate SVG outputs of a given layer list"
 msgstr "Generate SVG outputs of a given layer list"
+
+msgid "Color theme to use (will default to PCB editor settings)"
+msgstr "Color theme to use (will default to PCB editor settings)"
 
 msgid ""
 "Set page sizing mode (0 = page with frame and title block, 1 = current page "
@@ -22213,13 +21933,6 @@ msgid ""
 msgstr ""
 "Pinned packages don't affect available update notification and will not be "
 "updated with 'Update All' button."
-
-msgid ""
-"Warning: This plugin only supports the legacy Python API and will not run in "
-"this KiCad version."
-msgstr ""
-"Warning: This plugin only supports the legacy Python API and will not run in "
-"this KiCad version."
 
 msgid "Install Pending"
 msgstr "Install Pending"
@@ -24319,44 +24032,6 @@ msgstr "W"
 msgid "Internal Layer Tracks"
 msgstr "Internal Layer Tracks"
 
-msgid ""
-"'Constant': εr and tan δ applied at all frequencies.\n"
-"'Djordjevic-Sarkar': causal wideband Debye anchored at the spec frequency."
-msgstr ""
-"'Constant': εr and tan δ applied at all frequencies.\n"
-"'Djordjevic-Sarkar': causal wideband Debye anchored at the spec frequency."
-
-msgid ""
-"Enable solder resist / LPI overlay correction.  Affects εeff, Z0, and "
-"dielectric loss for microstrip, coupled microstrip, CPW, and CBCPW."
-msgstr ""
-"Enable solder resist / LPI overlay correction.  Affects εeff, Z0, and "
-"dielectric loss for microstrip, coupled microstrip, CPW, and CBCPW."
-
-msgid ""
-"Cured mask thickness.  Typical LPI is 15-30 um; set to 0 or uncheck to "
-"disable."
-msgstr ""
-"Cured mask thickness.  Typical LPI is 15-30 um; set to 0 or uncheck to "
-"disable."
-
-msgid ""
-"Mask relative permittivity.  Default 3.5 for standard green LPI.  Range "
-"3.3-3.8 for typical resins."
-msgstr ""
-"Mask relative permittivity.  Default 3.5 for standard green LPI.  Range "
-"3.3-3.8 for typical resins."
-
-msgid "Mask loss tangent.  Default 0.025 for LPI."
-msgstr "Mask loss tangent.  Default 0.025 for LPI."
-
-msgid ""
-"Enable when the mask fills the CPW slots (standard LPI process).\n"
-"Disable for selective mask that covers only the traces."
-msgstr ""
-"Enable when the mask fills the CPW slots (standard LPI process).\n"
-"Disable for selective mask that covers only the traces."
-
 msgid "Microstrip Line"
 msgstr "Microstrip Line"
 
@@ -24389,33 +24064,6 @@ msgstr "Transmission Line Type"
 
 msgid "Substrate Parameters"
 msgstr "Substrate Parameters"
-
-msgid "Dielectric model:"
-msgstr "Dielectric model:"
-
-msgid "Constant (εr, tan δ)"
-msgstr "Constant (εr, tan δ)"
-
-msgid "Djordjevic-Sarkar causal"
-msgstr "Djordjevic-Sarkar causal"
-
-msgid "Soldermask present"
-msgstr "Soldermask present"
-
-msgid "Mask fills gaps"
-msgstr "Mask fills gaps"
-
-msgid "Mask thickness:"
-msgstr "Mask thickness:"
-
-msgid "µm"
-msgstr "µm"
-
-msgid "Mask εr:"
-msgstr "Mask εr:"
-
-msgid "Mask tan δ:"
-msgstr "Mask tan δ:"
 
 msgid "Er:"
 msgstr "Er:"
@@ -24452,9 +24100,6 @@ msgstr "Component Parameters"
 
 msgid "Frequency:"
 msgstr "Frequency:"
-
-msgid "Spec frequency:"
-msgstr "Spec frequency:"
 
 msgid "Physical Parameters"
 msgstr "Physical Parameters"
@@ -24909,13 +24554,6 @@ msgstr "Dielectric Loss Factor"
 msgid "Specific Resistance"
 msgstr "Specific Resistance"
 
-msgid ""
-"Height from substrate top to grounded cover. Leave at the large default "
-"value for no cover."
-msgstr ""
-"Height from substrate top to grounded cover. Leave at the large default "
-"value for no cover."
-
 msgid "Substrate relative permittivity (dielectric constant)"
 msgstr "Substrate relative permittivity (dielectric constant)"
 
@@ -24950,6 +24588,9 @@ msgstr "Skin depth:"
 
 msgid "Height of substrate"
 msgstr "Height of substrate"
+
+msgid "Height of box top"
+msgstr "Height of box top"
 
 msgid "Strip thickness"
 msgstr "Strip thickness"
@@ -25064,15 +24705,6 @@ msgstr "Zodd"
 msgid "Odd mode impedance (lines driven by opposite (differential) voltages)"
 msgstr "Odd mode impedance (lines driven by opposite (differential) voltages)"
 
-msgid "Common-mode Impedance (Zcomm):"
-msgstr "Common-mode Impedance (Zcomm):"
-
-msgid "Coupling coefficient (kc):"
-msgstr "Coupling coefficient (kc):"
-
-msgid "Distance from track to closest ground plane (default: centered)"
-msgstr "Distance from track to closest ground plane (default: centered)"
-
 msgid "Distance between strip and top metal"
 msgstr "Distance between strip and top metal"
 
@@ -25135,6 +24767,12 @@ msgstr "km/h"
 
 msgid "mi/h"
 msgstr "mi/h"
+
+msgid "Modified items via API"
+msgstr "Modified items via API"
+
+msgid "Deleted items via API"
+msgstr "Deleted items via API"
 
 msgid "Autoplacing components..."
 msgstr "Autoplacing components…"
@@ -25201,23 +24839,6 @@ msgstr "Allow Teardrops To Span Two Tracks"
 msgid "Max Width Ratio"
 msgstr "Max Width Ratio"
 
-#, c-format
-msgid "Value must be between %s and %s."
-msgstr "Value must be between %s and %s."
-
-#, c-format
-msgid "Value must be between %.3f and %.3f."
-msgstr "Value must be between %.3f and %.3f."
-
-msgid "Value must be between 0 and 99."
-msgstr "Value must be between 0 and 99."
-
-msgid "Value must be greater than or equal to 0."
-msgstr "Value must be greater than or equal to 0."
-
-msgid "No differential pair gap defined."
-msgstr "No differential pair gap defined."
-
 msgid "all copper layers"
 msgstr "all copper layers"
 
@@ -25226,14 +24847,6 @@ msgstr "and others"
 
 msgid "no layers"
 msgstr "no layers"
-
-#, c-format
-msgid "Cannot save board '%s': %s"
-msgstr "Cannot save board '%s': %s"
-
-#, c-format
-msgid "Unexpected error saving board '%s': %s"
-msgstr "Unexpected error saving board '%s': %s"
 
 #, c-format
 msgid "Dielectric %d"
@@ -26863,10 +26476,6 @@ msgstr "Dimension Properties"
 msgid "Run DRC"
 msgstr "Run DRC"
 
-#, c-format
-msgid "Elapsed: %s"
-msgstr "Elapsed: %s"
-
 msgid "Report All Errors for Each Track"
 msgstr "Report All Errors for Each Track"
 
@@ -26882,27 +26491,8 @@ msgstr "DRC incomplete: could not compile custom design rules."
 msgid "Show design rules."
 msgstr "Show design rules."
 
-msgid "Elapsed: 0 s"
-msgstr "Elapsed: 0 s"
-
-#, c-format
-msgid "%1$d min %2$d s"
-msgstr "%1$d min %2$d s"
-
-#, c-format
-msgid "%.2f s"
-msgstr "%.2f s"
-
 msgid "-------- DRC canceled by user.<br><br>"
 msgstr "-------- DRC canceled by user.<br><br>"
-
-#, c-format
-msgid "Canceled after %s"
-msgstr "Canceled after %s"
-
-#, c-format
-msgid "Completed in %s"
-msgstr "Completed in %s"
 
 #, c-format
 msgid "Remove all exclusions for violations of rule '%s'"
@@ -27056,8 +26646,8 @@ msgstr "Update/reset text layers and visibilities"
 msgid "Update/reset text sizes and styles"
 msgstr "Update/reset text sizes and styles"
 
-msgid "Update/reset text position and rotation"
-msgstr "Update/reset text position and rotation"
+msgid "Update/reset text positions"
+msgstr "Update/reset text positions"
 
 msgid "Update/reset text content"
 msgstr "Update/reset text content"
@@ -27070,16 +26660,6 @@ msgstr "Update/reset clearance overrides"
 
 msgid "Update/reset 3D models"
 msgstr "Update/reset 3D models"
-
-msgid "Match pad positions"
-msgstr "Match pad positions"
-
-msgid ""
-"Attempt to match pad positions even if the footprint origin or rotation has "
-"changed."
-msgstr ""
-"Attempt to match pad positions even if the footprint origin or rotation has "
-"changed."
 
 msgid "Update Footprints from Library"
 msgstr "Update Footprints from Library"
@@ -27662,73 +27242,6 @@ msgstr "Search &other text items"
 msgid "Restart Search"
 msgstr "Restart Search"
 
-msgid "Find by Properties"
-msgstr "Find by Properties"
-
-msgid "Property"
-msgstr "Property"
-
-msgid "Match"
-msgstr "Match"
-
-msgid "No items selected"
-msgstr "No items selected"
-
-msgid "Ignored"
-msgstr "Ignored"
-
-msgid "Matching"
-msgstr "Matching"
-
-msgid "Different"
-msgstr "Different"
-
-#, c-format
-msgid "%zu items matched"
-msgstr "%zu items matched"
-
-msgid "B. expressions are not supported."
-msgstr "B. expressions are not supported."
-
-msgid "Expression Error"
-msgstr "Expression Error"
-
-msgid "Syntax error in expression"
-msgstr "Syntax error in expression"
-
-msgid "Expression is empty"
-msgstr "Expression is empty"
-
-msgid "Syntax OK"
-msgstr "Syntax OK"
-
-msgid "Syntax error: "
-msgstr "Syntax error: "
-
-msgid "From Selection"
-msgstr "From Selection"
-
-msgid "Expression"
-msgstr "Expression"
-
-msgid "Check Syntax"
-msgstr "Check Syntax"
-
-msgid "Create from Selection Tab"
-msgstr "Create from Selection Tab"
-
-msgid "Query"
-msgstr "Query"
-
-msgid "Deselect non-matching items"
-msgstr "Deselect non-matching items"
-
-msgid "Zoom to fit selected items"
-msgstr "Zoom to fit selected items"
-
-msgid "Select Matching"
-msgstr "Select Matching"
-
 msgid "Footprint: "
 msgstr "Footprint: "
 
@@ -28083,8 +27596,26 @@ msgstr ""
 msgid "Explicit jumper pad groups:"
 msgstr "Explicit jumper pad groups:"
 
-msgid "Footprint Wizards"
-msgstr "Footprint Wizards"
+msgid "All footprint generator scripts were loaded"
+msgstr "All footprint generator scripts were loaded"
+
+msgid "Available Footprint Generators"
+msgstr "Available Footprint Generators"
+
+msgid "Search paths:"
+msgstr "Search paths:"
+
+msgid "Not loadable python scripts:"
+msgstr "Not loadable python scripts:"
+
+msgid "Show Trace"
+msgstr "Show Trace"
+
+msgid "Update Python Modules"
+msgstr "Update Python Modules"
+
+msgid "Footprint Generators"
+msgstr "Footprint Generators"
 
 msgid "Traceback of Python Script Errors"
 msgstr "Traceback of Python Script Errors"
@@ -28771,16 +28302,6 @@ msgstr "Auto-Match Layers"
 
 msgid "Automatically match any unmatched layers to their KiCad equivalent."
 msgstr "Automatically match any unmatched layers to their KiCad equivalent."
-
-msgid "Keep KiCad layer names"
-msgstr "Keep KiCad layer names"
-
-msgid ""
-"If checked, layers will keep their standard KiCad names instead of being "
-"renamed to the imported layer names."
-msgstr ""
-"If checked, layers will keep their standard KiCad names instead of being "
-"renamed to the imported layer names."
 
 msgid "Edit Mapping of Imported Layers"
 msgstr "Edit Mapping of Imported Layers"
@@ -29485,17 +29006,11 @@ msgstr ""
 msgid "Hole Post Machining"
 msgstr "Hole Post Machining"
 
-msgid "Front:"
-msgstr "Front:"
-
 msgid "Countersink"
 msgstr "Countersink"
 
 msgid "Counterbore"
 msgstr "Counterbore"
-
-msgid "Back:"
-msgstr "Back:"
 
 msgid "Backdrill"
 msgstr "Backdrill"
@@ -29503,8 +29018,8 @@ msgstr "Backdrill"
 msgid "Top & bottom"
 msgstr "Top & bottom"
 
-msgid "Front backdrill must-cut:"
-msgstr "Front backdrill must-cut:"
+msgid "Top backdrill must-cut:"
+msgstr "Top backdrill must-cut:"
 
 msgid "The backdrill must pass through this layer"
 msgstr "The backdrill must pass through this layer"
@@ -29512,8 +29027,8 @@ msgstr "The backdrill must pass through this layer"
 msgid "Top backdrill size:"
 msgstr "Top backdrill size:"
 
-msgid "Back backdrill must-cut:"
-msgstr "Back backdrill must-cut:"
+msgid "Bottom backdrill must-cut:"
+msgstr "Bottom backdrill must-cut:"
 
 msgid "Bottom backdrill size:"
 msgstr "Bottom backdrill size:"
@@ -30162,27 +29677,6 @@ msgstr "Side lights elevation:"
 msgid "Render PCB Job Options"
 msgstr "Render PCB Job Options"
 
-msgid "Test cases directory:"
-msgstr "Test cases directory:"
-
-msgid "Test case name:"
-msgstr "Test case name:"
-
-msgid "Testcase (strict geometry)"
-msgstr "Testcase (strict geometry)"
-
-msgid "Testcase (connectivity only)"
-msgstr "Testcase (connectivity only)"
-
-msgid "Testcase (expected fail)"
-msgstr "Testcase (expected fail)"
-
-msgid "Known bug"
-msgstr "Known bug"
-
-msgid "Save Router Testcase"
-msgstr "Save Router Testcase"
-
 msgid "Keepouts"
 msgstr "Keepouts"
 
@@ -30468,12 +29962,6 @@ msgstr "Backdrill:"
 
 msgid "Both"
 msgstr "Both"
-
-msgid "Front backdrill size:"
-msgstr "Front backdrill size:"
-
-msgid "Back backdrill size:"
-msgstr "Back backdrill size:"
 
 msgid "Hole Post-machining"
 msgstr "Hole Post-machining"
@@ -30914,27 +30402,6 @@ msgstr "Select Library Table"
 msgid "Error adding 3D model"
 msgstr "Error adding 3D model"
 
-msgid "Courtyard layer"
-msgstr "Courtyard layer"
-
-msgid "Fabrication layer"
-msgstr "Fabrication layer"
-
-msgid "Silkscreen layer"
-msgstr "Silkscreen layer"
-
-msgid "Pin bounding box"
-msgstr "Pin bounding box"
-
-msgid "Component height must be greater than zero."
-msgstr "Component height must be greater than zero."
-
-msgid "Extruded 3D Body"
-msgstr "Extruded 3D Body"
-
-msgid "Standoff height must be less than the overall height."
-msgstr "Standoff height must be less than the overall height."
-
 msgid "No filename entered"
 msgstr "No filename entered"
 
@@ -30944,59 +30411,8 @@ msgstr "Illegal filename"
 msgid "Unable to open file"
 msgstr "Unable to open file"
 
-msgid "Export Extruded Body"
-msgstr "Export Extruded Body"
-
-msgid "No extrusion outline could be generated for this footprint."
-msgstr "No extrusion outline could be generated for this footprint."
-
-msgid "Export Extruded 3D Body"
-msgstr "Export Extruded 3D Body"
-
-msgid "GLB files"
-msgstr "GLB files"
-
-msgid "BREP files"
-msgstr "BREP files"
-
-msgid "Failed to create extruded body geometry."
-msgstr "Failed to create extruded body geometry."
-
-msgid "Failed to write file."
-msgstr "Failed to write file."
-
 msgid "3D Model(s)"
 msgstr "3D Model(s)"
-
-msgid "Enable extruded 3D model for this footprint"
-msgstr "Enable extruded 3D model for this footprint"
-
-msgid "Show extruded 3D model"
-msgstr "Show extruded 3D model"
-
-msgid "Overall height:"
-msgstr "Overall height:"
-
-msgid "Standoff height:"
-msgstr "Standoff height:"
-
-msgid "Extrusion source:"
-msgstr "Extrusion source:"
-
-msgid "Material:"
-msgstr "Material:"
-
-msgid "Plastic"
-msgstr "Plastic"
-
-msgid "Matte"
-msgstr "Matte"
-
-msgid "Metal"
-msgstr "Metal"
-
-msgid "Export generated 3D model"
-msgstr "Export generated 3D model"
 
 #, c-format
 msgid "Layer name %s already in use."
@@ -31619,10 +31035,6 @@ msgstr "Rule '%s' references undefined layer(s): %s."
 
 msgid "Design rules cannot be added without a project"
 msgstr "Design rules cannot be added without a project"
-
-#, c-format
-msgid "Cannot save design rules to '%s': %s"
-msgstr "Cannot save design rules to '%s': %s"
 
 msgid "DRC Rules"
 msgstr "DRC Rules"
@@ -33081,6 +32493,9 @@ msgstr "Tracks which are similar in size do not need teardrops."
 
 msgid "Default Properties for New Graphics and Text"
 msgstr "Default Properties for New Graphics and Text"
+
+msgid "No differential pair gap defined."
+msgstr "No differential pair gap defined."
 
 msgid "Hole"
 msgstr "Hole"
@@ -34744,6 +34159,9 @@ msgstr "Remove this condition"
 msgid "Rule text cannot be empty"
 msgstr "Rule text cannot be empty"
 
+msgid "Check Syntax"
+msgstr "Check Syntax"
+
 msgid "No rule text to check."
 msgstr "No rule text to check."
 
@@ -34756,6 +34174,9 @@ msgstr "ERROR at line %d, column %d: %s"
 
 msgid "Syntax check passed with warnings:\n"
 msgstr "Syntax check passed with warnings:\n"
+
+msgid "Syntax OK"
+msgstr "Syntax OK"
 
 msgid "Within diff pairs"
 msgstr "Within diff pairs"
@@ -34976,22 +34397,6 @@ msgid ""
 "OpenCASCADE error: %s\n"
 msgstr ""
 "Could not add 3D model for %s.\n"
-"OpenCASCADE error: %s\n"
-
-#, c-format
-msgid ""
-"Could not add extruded body for %s.\n"
-"OpenCASCADE error: %s\n"
-msgstr ""
-"Could not add extruded body for %s.\n"
-"OpenCASCADE error: %s\n"
-
-#, c-format
-msgid ""
-"Could not add extruded pins for %s.\n"
-"OpenCASCADE error: %s\n"
-msgstr ""
-"Could not add extruded pins for %s.\n"
 "OpenCASCADE error: %s\n"
 
 msgid "Could not create PCB solid model.\n"
@@ -35652,35 +35057,18 @@ msgstr ""
 "Search terms are separated by spaces.  All search terms must match.\n"
 "A term which is a number will also match against the pad count."
 
-msgid "Unexpected error with footprint wizard"
-msgstr "Unexpected error with footprint wizard"
-
-#, c-format
-msgid "Could not launch footprint wizard '%s'"
-msgstr "Could not launch footprint wizard '%s'"
-
-msgid "Unexpected response from footprint wizard"
-msgstr "Unexpected response from footprint wizard"
-
-#, c-format
-msgid "Footprint wizard error: %s"
-msgstr "Footprint wizard error: %s"
-
-msgid "The KiCad API is disabled"
-msgstr "The KiCad API is disabled"
-
-msgid "3D Model"
-msgstr "3D Model"
-
 msgid "Footprint Wizard"
 msgstr "Footprint Wizard"
+
+#, c-format
+msgid "ModView: 3D Viewer [%s]"
+msgstr "ModView: 3D Viewer [%s]"
 
 msgid "no wizard selected"
 msgstr "no wizard selected"
 
-#, c-format
-msgid "3D Viewer [%s]"
-msgstr "3D Viewer [%s]"
+msgid "Couldn't reload footprint wizard"
+msgstr "Couldn't reload footprint wizard"
 
 msgid "Documentation"
 msgstr "Documentation"
@@ -38504,65 +37892,6 @@ msgid ""
 msgstr ""
 "Enter the python module which implements the PCB_IO::Footprint*() functions."
 
-#, c-format
-msgid "Failed to parse Sprint Layout file '%s'"
-msgstr "Failed to parse Sprint Layout file '%s'"
-
-#, c-format
-msgid "Failed to create board from Sprint Layout file '%s'"
-msgstr "Failed to create board from Sprint Layout file '%s'"
-
-msgid "Sprint Layout board file"
-msgstr "Sprint Layout board file"
-
-msgid "Sprint Layout macro file"
-msgstr "Sprint Layout macro file"
-
-msgid "Sprint Layout macro library"
-msgstr "Sprint Layout macro library"
-
-msgid "Unexpected end of Sprint Layout file"
-msgstr "Unexpected end of Sprint Layout file"
-
-msgid "Invalid string length in Sprint Layout file"
-msgstr "Invalid string length in Sprint Layout file"
-
-msgid "Unexpected seek in Sprint Layout file"
-msgstr "Unexpected seek in Sprint Layout file"
-
-msgid "Invalid board count in Sprint Layout file"
-msgstr "Invalid board count in Sprint Layout file"
-
-msgid "Too many objects in Sprint Layout board"
-msgstr "Too many objects in Sprint Layout board"
-
-#, c-format
-msgid "File '%s' is too small to be a Sprint Layout file"
-msgstr "File '%s' is too small to be a Sprint Layout file"
-
-#, c-format
-msgid "Failed to read file '%s'"
-msgstr "Failed to read file '%s'"
-
-msgid "Invalid Sprint Layout file header"
-msgstr "Invalid Sprint Layout file header"
-
-msgid "Too many objects in Sprint Layout file"
-msgstr "Too many objects in Sprint Layout file"
-
-msgid "Too many groups in Sprint Layout object"
-msgstr "Too many groups in Sprint Layout object"
-
-msgid "Too many points in Sprint Layout object"
-msgstr "Too many points in Sprint Layout object"
-
-#, c-format
-msgid "Unknown object type %d in Sprint Layout file"
-msgstr "Unknown object type %d in Sprint Layout file"
-
-msgid "Too many text children in Sprint Layout object"
-msgstr "Too many text children in Sprint Layout object"
-
 msgid "(not activated)"
 msgstr "(not activated)"
 
@@ -39637,6 +38966,56 @@ msgstr "Multiple Layers"
 msgid "HPGL plotting is no longer supported as of KiCad 10.0"
 msgstr "HPGL plotting is no longer supported as of KiCad 10.0"
 
+#, c-format
+msgid ""
+"Failed first phase initializing Python module '%s', through Python C API."
+msgstr ""
+"Failed first phase initializing Python module '%s', through Python C API."
+
+msgid "Scripting init"
+msgstr "Scripting init"
+
+#, c-format
+msgid ""
+"Failed second phase initializing Python module '%s', through Python C API."
+msgstr ""
+"Failed second phase initializing Python module '%s', through Python C API."
+
+#, c-format
+msgid "Unable to open plugin directory '%s'."
+msgstr "Unable to open plugin directory '%s'."
+
+msgid "Plugin Directory"
+msgstr "Plugin Directory"
+
+#, c-format
+msgid "The plugin directory '%s' does not exist.  Create it?"
+msgstr "The plugin directory '%s' does not exist.  Create it?"
+
+#, c-format
+msgid "Unable to create plugin directory '%s'."
+msgstr "Unable to create plugin directory '%s'."
+
+msgid "Exception on python action plugin code"
+msgstr "Exception on python action plugin code"
+
+#, c-format
+msgid "Method '%s' not found, or not callable"
+msgstr "Method '%s' not found, or not callable"
+
+msgid "Unknown Method"
+msgstr "Unknown Method"
+
+msgid "Apply Action Script"
+msgstr "Apply Action Script"
+
+msgid "Exception on python footprint wizard code"
+msgstr "Exception on python footprint wizard code"
+
+#, c-format
+msgid "Error loading drawing sheet '%s': %s"
+msgstr "Error loading drawing sheet '%s': %s"
+
 msgid ""
 "Unable to find complementary differential pair nets. Make sure the names of "
 "the nets belonging to a differential pair end with either N/P or +/-."
@@ -39897,10 +39276,6 @@ msgstr "Interactive Router"
 msgid "Track Corner Mode"
 msgstr "Track Corner Mode"
 
-#, c-format
-msgid "Test case in directory %s already exists. Overwrite?"
-msgstr "Test case in directory %s already exists. Overwrite?"
-
 msgid "Save router log"
 msgstr "Save router log"
 
@@ -40096,6 +39471,9 @@ msgstr "Align/Distribute"
 msgid "Zone Priority"
 msgstr "Zone Priority"
 
+msgid "Locking"
+msgstr "Locking"
+
 msgid "Specctra Session File"
 msgstr "Specctra Session File"
 
@@ -40109,16 +39487,12 @@ msgid "KiCad board netlist files"
 msgstr "KiCad board netlist files"
 
 #, c-format
-msgid "Failed to export netlist to '%s': %s"
-msgstr "Failed to export netlist to '%s': %s"
+msgid "Orphaned net %s re-parented.\n"
+msgstr "Orphaned net %s re-parented.\n"
 
 #, c-format
 msgid "%d duplicate IDs replaced.\n"
 msgstr "%d duplicate IDs replaced.\n"
-
-#, c-format
-msgid "Orphaned net %s re-parented.\n"
-msgstr "Orphaned net %s re-parented.\n"
 
 #, c-format
 msgid "%d potential problems repaired."
@@ -40157,6 +39531,12 @@ msgstr "Increase Via Size"
 
 msgid "Place Footprint"
 msgstr "Place Footprint"
+
+msgid "Lock"
+msgstr "Lock"
+
+msgid "Unlock"
+msgstr "Unlock"
 
 msgid "Zones have insufficient overlap for merging."
 msgstr "Zones have insufficient overlap for merging."
@@ -40619,9 +39999,6 @@ msgstr "Edit Field Properties..."
 msgid "Edit Text Properties..."
 msgstr "Edit Text Properties..."
 
-msgid "Mirror / Rotate"
-msgstr "Mirror / Rotate"
-
 msgid "Shape Modification"
 msgstr "Shape Modification"
 
@@ -40817,9 +40194,6 @@ msgstr "Update %s"
 
 msgid "Regenerate Selected"
 msgstr "Regenerate Selected"
-
-msgid "Zone Manager"
-msgstr "Zone Manager"
 
 msgid "Unable to fillet the selected lines."
 msgstr "Unable to fillet the selected lines."
@@ -41201,12 +40575,6 @@ msgstr "Set design block layout to current selection"
 
 msgid "Open in Footprint Editor"
 msgstr "Open in Footprint Editor"
-
-msgid "Find by Properties..."
-msgstr "Find by Properties..."
-
-msgid "Find board items matching property criteria or expressions"
-msgstr "Find board items matching property criteria or expressions"
 
 msgid ""
 "Selects a footprint by reference designator and places it under the cursor "
@@ -41778,8 +41146,20 @@ msgstr "Place origin point for drill files and component placement files"
 msgid "Reset Drill Origin"
 msgstr "Reset Drill Origin"
 
+msgid "Toggle Lock"
+msgstr "Toggle Lock"
+
+msgid "Lock or unlock selected items"
+msgstr "Lock or unlock selected items"
+
 msgid "Line Modes"
 msgstr "Line Modes"
+
+msgid "Prevent items from being moved and/or resized on the canvas"
+msgstr "Prevent items from being moved and/or resized on the canvas"
+
+msgid "Allow items to be moved and/or resized on the canvas"
+msgstr "Allow items to be moved and/or resized on the canvas"
 
 msgid "Toggle Last Net Highlight"
 msgstr "Toggle Last Net Highlight"
@@ -41822,6 +41202,12 @@ msgstr "Local Ratsnest"
 
 msgid "Toggle ratsnest display of selected item(s)"
 msgstr "Toggle ratsnest display of selected item(s)"
+
+msgid "Scripting Console"
+msgstr "Scripting Console"
+
+msgid "Show the Python scripting console"
+msgstr "Show the Python scripting console"
 
 msgid "Show/hide the net inspector"
 msgstr "Show/hide the net inspector"
@@ -42449,6 +41835,18 @@ msgstr "Reset wizard parameters"
 
 msgid "Reset wizard parameters to default"
 msgstr "Reset wizard parameters to default"
+
+msgid "Select previous wizard page"
+msgstr "Select previous wizard page"
+
+msgid "Select previous parameters page"
+msgstr "Select previous parameters page"
+
+msgid "Select next wizard page"
+msgstr "Select next wizard page"
+
+msgid "Select next parameters page"
+msgstr "Select next parameters page"
 
 msgid "Export footprint to editor"
 msgstr "Export footprint to editor"
@@ -43655,6 +43053,9 @@ msgid ""
 msgstr ""
 "Update filled areas shown in dialog, according to the new current settings"
 
+msgid "Zone Manager"
+msgstr "Zone Manager"
+
 msgid "inherited"
 msgstr "inherited"
 
@@ -43782,36 +43183,335 @@ msgstr "KiCad Schematic Symbol"
 msgid "KiCad Drawing Sheet"
 msgstr "KiCad Drawing Sheet"
 
-#~ msgid "Place No Connect Flags"
-#~ msgstr "Place No Connect Flags"
-
-#~ msgid ""
-#~ "View and compare existing Gerber/Excellon files. To export Gerbers from a "
-#~ "PCB, use 'pcb export gerber'"
-#~ msgstr ""
-#~ "View and compare existing Gerber/Excellon files. To export Gerbers from a "
-#~ "PCB, use 'pcb export gerber'"
+msgid "Process could not be created"
+msgstr "Process could not be created"
 
 #, c-format
+msgid "Could not create user scripting path %s."
+msgstr "Could not create user scripting path %s."
+
 #~ msgid ""
-#~ "Current file appears to be generated in Sprint Layout %d. Only version 3 "
-#~ "to 6 files are supported. "
+#~ "### More Examples\n"
+#~ "\n"
+#~ "    (rule \"copper keepout\"\n"
+#~ "       (constraint disallow track via zone)\n"
+#~ "       (condition \"A.intersectsArea('zone3')\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    (rule \"BGA neckdown\"\n"
+#~ "       (constraint track_width (min 0.2mm) (opt 0.25mm))\n"
+#~ "       (constraint clearance (min 0.05mm) (opt 0.08mm))\n"
+#~ "       (condition \"A.intersectsCourtyard('U3')\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    # prevent silk over tented vias\n"
+#~ "    (rule silk_over_via\n"
+#~ "       (constraint silk_clearance (min 0.2mm))\n"
+#~ "       (condition \"A.Type == '*Text' && B.Type == 'Via'\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    (rule \"Distance between Vias of Different Nets\"\n"
+#~ "        (constraint hole_to_hole (min 0.254mm))\n"
+#~ "        (condition \"A.Type == 'Via' && B.Type == 'Via' && A.Net != B."
+#~ "Net\"))\n"
+#~ "\n"
+#~ "    (rule \"Clearance between Pads of Different Nets\"\n"
+#~ "        (constraint clearance (min 3.0mm))\n"
+#~ "        (condition \"A.Type == 'Pad' && B.Type == 'Pad' && A.Net != B."
+#~ "Net\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    (rule \"Via Hole to Track Clearance\"\n"
+#~ "        (constraint hole_clearance (min 0.254mm))\n"
+#~ "        (condition \"A.Type == 'Via' && B.Type == 'Track'\"))\n"
+#~ "\n"
+#~ "    (rule \"Pad to Track Clearance\"\n"
+#~ "        (constraint clearance (min 0.2mm))\n"
+#~ "        (condition \"A.Type == 'Pad' && B.Type == 'Track'\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    (rule \"clearance-to-1mm-cutout\"\n"
+#~ "        (constraint edge_clearance (min 0.8mm))\n"
+#~ "        (condition \"A.Layer == 'Edge.Cuts' && A.Line_Width == 1.0mm\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    (rule \"Max Drill Hole Size Mechanical\"\n"
+#~ "        (constraint hole_size (max 6.3mm))\n"
+#~ "        (condition \"A.Pad_Type == 'NPTH, mechanical'\"))\n"
+#~ "\n"
+#~ "    (rule \"Max Drill Hole Size PTH\"\n"
+#~ "        (constraint hole_size (max 6.35mm))\n"
+#~ "        (condition \"A.Pad_Type == 'Through-hole'\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    # Specify an optimal gap for a particular diff-pair\n"
+#~ "    (rule \"dp clock gap\"\n"
+#~ "        (constraint diff_pair_gap (opt \"0.8mm\"))\n"
+#~ "        (condition \"A.inDiffPair('/CLK')\"))\n"
+#~ "\n"
+#~ "    # Specify a larger clearance around any diff-pair\n"
+#~ "    (rule \"dp clearance\"\n"
+#~ "        (constraint clearance (min \"1.5mm\"))\n"
+#~ "        (condition \"A.inDiffPair('*') && !AB.isCoupledDiffPair()\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    # Don't use thermal reliefs on heatsink pads\n"
+#~ "    (rule heat_sink_pad\n"
+#~ "        (constraint zone_connection solid)\n"
+#~ "        (condition \"A.Fabrication_Property == 'Heatsink pad'\"))\n"
+#~ "\n"
+#~ "    # Require all four thermal relief spokes to connect to parent zone\n"
+#~ "    (rule fully_spoked_pads\n"
+#~ "        (constraint min_resolved_spokes 4))\n"
+#~ "\n"
+#~ "    # Set thermal relief gap & spoke width for all zones\n"
+#~ "    (rule defined_relief\n"
+#~ "        (constraint thermal_relief_gap (min 10mil))\n"
+#~ "        (constraint thermal_spoke_width (min 12mil)))\n"
+#~ "\n"
+#~ "    # Override thermal relief gap & spoke width for GND and PWR zones\n"
+#~ "    (rule defined_relief_pwr\n"
+#~ "        (constraint thermal_relief_gap (min 10mil))\n"
+#~ "        (constraint thermal_spoke_width (min 12mil))\n"
+#~ "        (condition \"A.Name == 'zone_GND' || A.Name == 'zone_PWR'\"))\n"
+#~ "\n"
+#~ "    # Prevent copper fills under the courtyards of capacitors\n"
+#~ "    (rule no_copper_under_caps\n"
+#~ "        (constraint physical_clearance (min 0mm))\n"
+#~ "        (condition \"A.Type == 'Zone' && B.Reference == 'C*'\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    # Prevent solder wicking from SMD pads\n"
+#~ "    (rule holes_in_pads\n"
+#~ "        (constraint physical_hole_clearance (min 0.2mm))\n"
+#~ "        (condition \"B.Pad_Type == 'SMD'\"))\n"
+#~ "\n"
+#~ "    # Disallow solder mask margin overrides\n"
+#~ "    (rule \"disallow solder mask margin overrides\"\n"
+#~ "        (constraint assertion \"A.Soldermask_Margin_Override == null\")\n"
+#~ "        (condition \"A.Type == 'Pad'\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    # Enforce a mechanical clearance between components and board edge\n"
+#~ "    (rule front_mechanical_board_edge_clearance\n"
+#~ "        (layer \"F.Courtyard\")\n"
+#~ "        (constraint physical_clearance (min 3mm))\n"
+#~ "        (condition \"B.Layer == 'Edge.Cuts'\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    # Allow silk intersection with board edge for connectors\n"
+#~ "    (rule silk_board_edge_clearance\n"
+#~ "        (constraint silk_clearance)\n"
+#~ "        (severity ignore)\n"
+#~ "        (condition \"A.memberOfFootprint('J*') && B.Layer=='Edge."
+#~ "Cuts'\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    # Check current-carrying capacity\n"
+#~ "    (rule high-current\n"
+#~ "        (constraint track_width (min 1.0mm))\n"
+#~ "        (constraint connection_width (min 0.8mm))\n"
+#~ "        (condition \"A.hasNetclass('Power')\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    # Separate drill bit and milling cutter size constraints\n"
+#~ "    (rule \"Plated through-hole size\"\n"
+#~ "        (constraint hole_size (min 0.2mm) (max 6.35mm))\n"
+#~ "        (condition \"A.isPlated() && A.Hole_Size_X == A.Hole_Size_Y\"))\n"
+#~ "    (rule \"Plated slot size\"\n"
+#~ "        (constraint hole_size (min 0.5mm))\n"
+#~ "        (condition \"A.isPlated() && A.Hole_Size_X != A.Hole_Size_Y\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    # Allow blind to micro-via hole-to-hole violations when it is known "
+#~ "that\n"
+#~ "    # the fab will mechanically drill blind via holes -before- laser "
+#~ "drilling \n"
+#~ "    # micro-vias.\n"
+#~ "    (rule hole_to_hole_uvia_exclusion\n"
+#~ "        (condition \"A.Via_Type == 'Blind' && B.Via_Type == 'Micro'\")\n"
+#~ "        (constraint hole_to_hole)\n"
+#~ "        (severity ignore))\n"
+#~ "\n"
+#~ "\n"
+#~ "    # No solder mask expansion for vias.\n"
+#~ "    (rule \"no mask expansion on vias\"\n"
+#~ "        (constraint solder_mask_expansion (opt 0mm))\n"
+#~ "        (condition \"A.type == via\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    # Remove solder paste from DNP footprints.\n"
+#~ "    (rule remove_solder_paste_from_DNP\n"
+#~ "        (constraint solder_paste_abs_margin (opt -50mm))\n"
+#~ "        (condition \"A.Do_not_Populate\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    # Allow solder mask bridging under guard ring mask apertures\n"
+#~ "    (rule guard_ring_bridging\n"
+#~ "        (constraint bridged_mask)\n"
+#~ "        (condition \"A.intersectsArea('guard_ring')\")\n"
+#~ "        (severity ignore))\n"
 #~ msgstr ""
-#~ "Current file appears to be generated in Sprint Layout %d. Only version 3 "
-#~ "to 6 files are supported. "
-
-#~ msgid "Coordinate value out of range in Sprint Layout file"
-#~ msgstr "Coordinate value out of range in Sprint Layout file"
-
-#~ msgid "Minimum track width"
-#~ msgstr "Minimum track width"
-
-#~ msgid "Could not lookup remote"
-#~ msgstr "Could not lookup remote"
-
-#, c-format
-#~ msgid "Failed to commit save of '%s': %s"
-#~ msgstr "Failed to commit save of '%s': %s"
+#~ "### More Examples\n"
+#~ "\n"
+#~ "    (rule \"copper keepout\"\n"
+#~ "       (constraint disallow track via zone)\n"
+#~ "       (condition \"A.intersectsArea('zone3')\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    (rule \"BGA neckdown\"\n"
+#~ "       (constraint track_width (min 0.2mm) (opt 0.25mm))\n"
+#~ "       (constraint clearance (min 0.05mm) (opt 0.08mm))\n"
+#~ "       (condition \"A.intersectsCourtyard('U3')\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    # prevent silk over tented vias\n"
+#~ "    (rule silk_over_via\n"
+#~ "       (constraint silk_clearance (min 0.2mm))\n"
+#~ "       (condition \"A.Type == '*Text' && B.Type == 'Via'\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    (rule \"Distance between Vias of Different Nets\"\n"
+#~ "        (constraint hole_to_hole (min 0.254mm))\n"
+#~ "        (condition \"A.Type == 'Via' && B.Type == 'Via' && A.Net != B."
+#~ "Net\"))\n"
+#~ "\n"
+#~ "    (rule \"Clearance between Pads of Different Nets\"\n"
+#~ "        (constraint clearance (min 3.0mm))\n"
+#~ "        (condition \"A.Type == 'Pad' && B.Type == 'Pad' && A.Net != B."
+#~ "Net\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    (rule \"Via Hole to Track Clearance\"\n"
+#~ "        (constraint hole_clearance (min 0.254mm))\n"
+#~ "        (condition \"A.Type == 'Via' && B.Type == 'Track'\"))\n"
+#~ "\n"
+#~ "    (rule \"Pad to Track Clearance\"\n"
+#~ "        (constraint clearance (min 0.2mm))\n"
+#~ "        (condition \"A.Type == 'Pad' && B.Type == 'Track'\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    (rule \"clearance-to-1mm-cutout\"\n"
+#~ "        (constraint edge_clearance (min 0.8mm))\n"
+#~ "        (condition \"A.Layer == 'Edge.Cuts' && A.Line_Width == 1.0mm\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    (rule \"Max Drill Hole Size Mechanical\"\n"
+#~ "        (constraint hole_size (max 6.3mm))\n"
+#~ "        (condition \"A.Pad_Type == 'NPTH, mechanical'\"))\n"
+#~ "\n"
+#~ "    (rule \"Max Drill Hole Size PTH\"\n"
+#~ "        (constraint hole_size (max 6.35mm))\n"
+#~ "        (condition \"A.Pad_Type == 'Through-hole'\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    # Specify an optimal gap for a particular diff-pair\n"
+#~ "    (rule \"dp clock gap\"\n"
+#~ "        (constraint diff_pair_gap (opt \"0.8mm\"))\n"
+#~ "        (condition \"A.inDiffPair('/CLK')\"))\n"
+#~ "\n"
+#~ "    # Specify a larger clearance around any diff-pair\n"
+#~ "    (rule \"dp clearance\"\n"
+#~ "        (constraint clearance (min \"1.5mm\"))\n"
+#~ "        (condition \"A.inDiffPair('*') && !AB.isCoupledDiffPair()\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    # Don't use thermal reliefs on heatsink pads\n"
+#~ "    (rule heat_sink_pad\n"
+#~ "        (constraint zone_connection solid)\n"
+#~ "        (condition \"A.Fabrication_Property == 'Heatsink pad'\"))\n"
+#~ "\n"
+#~ "    # Require all four thermal relief spokes to connect to parent zone\n"
+#~ "    (rule fully_spoked_pads\n"
+#~ "        (constraint min_resolved_spokes 4))\n"
+#~ "\n"
+#~ "    # Set thermal relief gap & spoke width for all zones\n"
+#~ "    (rule defined_relief\n"
+#~ "        (constraint thermal_relief_gap (min 10mil))\n"
+#~ "        (constraint thermal_spoke_width (min 12mil)))\n"
+#~ "\n"
+#~ "    # Override thermal relief gap & spoke width for GND and PWR zones\n"
+#~ "    (rule defined_relief_pwr\n"
+#~ "        (constraint thermal_relief_gap (min 10mil))\n"
+#~ "        (constraint thermal_spoke_width (min 12mil))\n"
+#~ "        (condition \"A.Name == 'zone_GND' || A.Name == 'zone_PWR'\"))\n"
+#~ "\n"
+#~ "    # Prevent copper fills under the courtyards of capacitors\n"
+#~ "    (rule no_copper_under_caps\n"
+#~ "        (constraint physical_clearance (min 0mm))\n"
+#~ "        (condition \"A.Type == 'Zone' && B.Reference == 'C*'\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    # Prevent solder wicking from SMD pads\n"
+#~ "    (rule holes_in_pads\n"
+#~ "        (constraint physical_hole_clearance (min 0.2mm))\n"
+#~ "        (condition \"B.Pad_Type == 'SMD'\"))\n"
+#~ "\n"
+#~ "    # Disallow solder mask margin overrides\n"
+#~ "    (rule \"disallow solder mask margin overrides\"\n"
+#~ "        (constraint assertion \"A.Soldermask_Margin_Override == null\")\n"
+#~ "        (condition \"A.Type == 'Pad'\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    # Enforce a mechanical clearance between components and board edge\n"
+#~ "    (rule front_mechanical_board_edge_clearance\n"
+#~ "        (layer \"F.Courtyard\")\n"
+#~ "        (constraint physical_clearance (min 3mm))\n"
+#~ "        (condition \"B.Layer == 'Edge.Cuts'\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    # Allow silk intersection with board edge for connectors\n"
+#~ "    (rule silk_board_edge_clearance\n"
+#~ "        (constraint silk_clearance)\n"
+#~ "        (severity ignore)\n"
+#~ "        (condition \"A.memberOfFootprint('J*') && B.Layer=='Edge."
+#~ "Cuts'\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    # Check current-carrying capacity\n"
+#~ "    (rule high-current\n"
+#~ "        (constraint track_width (min 1.0mm))\n"
+#~ "        (constraint connection_width (min 0.8mm))\n"
+#~ "        (condition \"A.hasNetclass('Power')\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    # Separate drill bit and milling cutter size constraints\n"
+#~ "    (rule \"Plated through-hole size\"\n"
+#~ "        (constraint hole_size (min 0.2mm) (max 6.35mm))\n"
+#~ "        (condition \"A.isPlated() && A.Hole_Size_X == A.Hole_Size_Y\"))\n"
+#~ "    (rule \"Plated slot size\"\n"
+#~ "        (constraint hole_size (min 0.5mm))\n"
+#~ "        (condition \"A.isPlated() && A.Hole_Size_X != A.Hole_Size_Y\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    # Allow blind to micro-via hole-to-hole violations when it is known "
+#~ "that\n"
+#~ "    # the fab will mechanically drill blind via holes -before- laser "
+#~ "drilling \n"
+#~ "    # micro-vias.\n"
+#~ "    (rule hole_to_hole_uvia_exclusion\n"
+#~ "        (condition \"A.Via_Type == 'Blind' && B.Via_Type == 'Micro'\")\n"
+#~ "        (constraint hole_to_hole)\n"
+#~ "        (severity ignore))\n"
+#~ "\n"
+#~ "\n"
+#~ "    # No solder mask expansion for vias.\n"
+#~ "    (rule \"no mask expansion on vias\"\n"
+#~ "        (constraint solder_mask_expansion (opt 0mm))\n"
+#~ "        (condition \"A.type == via\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    # Remove solder paste from DNP footprints.\n"
+#~ "    (rule remove_solder_paste_from_DNP\n"
+#~ "        (constraint solder_paste_abs_margin (opt -50mm))\n"
+#~ "        (condition \"A.Do_not_Populate\"))\n"
+#~ "\n"
+#~ "\n"
+#~ "    # Allow solder mask bridging under guard ring mask apertures\n"
+#~ "    (rule guard_ring_bridging\n"
+#~ "        (constraint bridged_mask)\n"
+#~ "        (condition \"A.intersectsArea('guard_ring')\")\n"
+#~ "        (severity ignore))\n"
 
 #~ msgid ""
 #~ "### Constraints\n"
@@ -44683,20 +44383,8 @@ msgstr "KiCad Drawing Sheet"
 #~ msgid "Could not clone repository '%s'"
 #~ msgstr "Could not clone repository '%s'"
 
-#~ msgid "Added items via API"
-#~ msgstr "Added items via API"
-
 #~ msgid "Waiting for Git operations to finish..."
 #~ msgstr "Waiting for Git operations to finish..."
-
-#~ msgid "Height of box top"
-#~ msgstr "Height of box top"
-
-#~ msgid "Top backdrill must-cut:"
-#~ msgstr "Top backdrill must-cut:"
-
-#~ msgid "Bottom backdrill must-cut:"
-#~ msgstr "Bottom backdrill must-cut:"
 
 #~ msgid "Chamfer:"
 #~ msgstr "Chamfer:"
@@ -44745,30 +44433,6 @@ msgstr "KiCad Drawing Sheet"
 #~ "generate separate files for each variant.\n"
 #~ "When no --variant argument is provided the default variant is output."
 
-#~ msgid "Update/reset text positions"
-#~ msgstr "Update/reset text positions"
-
-#~ msgid "All footprint generator scripts were loaded"
-#~ msgstr "All footprint generator scripts were loaded"
-
-#~ msgid "Available Footprint Generators"
-#~ msgstr "Available Footprint Generators"
-
-#~ msgid "Search paths:"
-#~ msgstr "Search paths:"
-
-#~ msgid "Not loadable python scripts:"
-#~ msgstr "Not loadable python scripts:"
-
-#~ msgid "Show Trace"
-#~ msgstr "Show Trace"
-
-#~ msgid "Update Python Modules"
-#~ msgstr "Update Python Modules"
-
-#~ msgid "Footprint Generators"
-#~ msgstr "Footprint Generators"
-
 #~ msgid ""
 #~ "### Constraints\n"
 #~ "\n"
@@ -45211,85 +44875,6 @@ msgstr "KiCad Drawing Sheet"
 #~ "|\n"
 #~ "\n"
 #~ "\n"
-
-#, c-format
-#~ msgid "ModView: 3D Viewer [%s]"
-#~ msgstr "ModView: 3D Viewer [%s]"
-
-#~ msgid "Couldn't reload footprint wizard"
-#~ msgstr "Couldn't reload footprint wizard"
-
-#, c-format
-#~ msgid ""
-#~ "Failed first phase initializing Python module '%s', through Python C API."
-#~ msgstr ""
-#~ "Failed first phase initializing Python module '%s', through Python C API."
-
-#~ msgid "Scripting init"
-#~ msgstr "Scripting init"
-
-#, c-format
-#~ msgid ""
-#~ "Failed second phase initializing Python module '%s', through Python C API."
-#~ msgstr ""
-#~ "Failed second phase initializing Python module '%s', through Python C API."
-
-#, c-format
-#~ msgid "Unable to open plugin directory '%s'."
-#~ msgstr "Unable to open plugin directory '%s'."
-
-#~ msgid "Plugin Directory"
-#~ msgstr "Plugin Directory"
-
-#, c-format
-#~ msgid "The plugin directory '%s' does not exist.  Create it?"
-#~ msgstr "The plugin directory '%s' does not exist.  Create it?"
-
-#, c-format
-#~ msgid "Unable to create plugin directory '%s'."
-#~ msgstr "Unable to create plugin directory '%s'."
-
-#~ msgid "Exception on python action plugin code"
-#~ msgstr "Exception on python action plugin code"
-
-#, c-format
-#~ msgid "Method '%s' not found, or not callable"
-#~ msgstr "Method '%s' not found, or not callable"
-
-#~ msgid "Unknown Method"
-#~ msgstr "Unknown Method"
-
-#~ msgid "Apply Action Script"
-#~ msgstr "Apply Action Script"
-
-#~ msgid "Exception on python footprint wizard code"
-#~ msgstr "Exception on python footprint wizard code"
-
-#, c-format
-#~ msgid "Error loading drawing sheet '%s': %s"
-#~ msgstr "Error loading drawing sheet '%s': %s"
-
-#~ msgid "Scripting Console"
-#~ msgstr "Scripting Console"
-
-#~ msgid "Show the Python scripting console"
-#~ msgstr "Show the Python scripting console"
-
-#~ msgid "Select previous wizard page"
-#~ msgstr "Select previous wizard page"
-
-#~ msgid "Select previous parameters page"
-#~ msgstr "Select previous parameters page"
-
-#~ msgid "Select next wizard page"
-#~ msgstr "Select next wizard page"
-
-#~ msgid "Select next parameters page"
-#~ msgstr "Select next parameters page"
-
-#, c-format
-#~ msgid "Could not create user scripting path %s."
-#~ msgstr "Could not create user scripting path %s."
 
 #~ msgid "Select snapshot"
 #~ msgstr "Select snapshot"
@@ -45305,18 +44890,6 @@ msgstr "KiCad Drawing Sheet"
 
 #~ msgid "auth.metadata_url"
 #~ msgstr "auth.metadata_url"
-
-#~ msgid "authorization_endpoint"
-#~ msgstr "authorization_endpoint"
-
-#~ msgid "token_endpoint"
-#~ msgstr "token_endpoint"
-
-#~ msgid "revocation_endpoint"
-#~ msgstr "revocation_endpoint"
-
-#~ msgid "assets[].download_url"
-#~ msgstr "assets[].download_url"
 
 #~ msgid "EDA"
 #~ msgstr "EDA"
@@ -55706,6 +55279,9 @@ msgstr "KiCad Drawing Sheet"
 
 #~ msgid "JPEG"
 #~ msgstr "JPEG"
+
+#~ msgid "PNG"
+#~ msgstr "PNG"
 
 #~ msgid "Quality"
 #~ msgstr "Quality"

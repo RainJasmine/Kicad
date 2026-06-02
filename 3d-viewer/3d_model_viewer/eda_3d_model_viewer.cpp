@@ -114,9 +114,8 @@ EDA_3D_MODEL_VIEWER::~EDA_3D_MODEL_VIEWER()
 {
     wxLogTrace( m_logTrace, wxT( "EDA_3D_MODEL_VIEWER::~EDA_3D_MODEL_VIEWER" ) );
     GL_CONTEXT_MANAGER* gl_mgr = Pgm().GetGLContextManager();
-    wxASSERT( gl_mgr );
 
-    if( m_glRC && gl_mgr )
+    if( m_glRC )
     {
         gl_mgr->LockCtx( m_glRC, this );
 
@@ -261,13 +260,8 @@ void EDA_3D_MODEL_VIEWER::OnPaint( wxPaintEvent& event )
     // "Makes the OpenGL state that is represented by the OpenGL rendering
     //  context context current, i.e. it will be used by all subsequent OpenGL calls.
     //  This function may only be called when the window is shown on screen"
-    GL_CONTEXT_MANAGER* gl_mgr = Pgm().GetGLContextManager();
-
-    if( !gl_mgr )
-        return;
-
     if( m_glRC == nullptr )
-        m_glRC = gl_mgr->CreateCtx( this );
+        m_glRC = Pgm().GetGLContextManager()->CreateCtx( this );
 
     // CreateCtx could and does fail per sentry crash events, lets be graceful
     if( m_glRC == nullptr )
@@ -276,7 +270,7 @@ void EDA_3D_MODEL_VIEWER::OnPaint( wxPaintEvent& event )
         return;
     }
 
-    gl_mgr->LockCtx( m_glRC, this );
+    Pgm().GetGLContextManager()->LockCtx( m_glRC, this );
 
     // Set the OpenGL viewport according to the client size of this canvas.
     // This is done here rather than in a wxSizeEvent handler because our
@@ -394,7 +388,7 @@ void EDA_3D_MODEL_VIEWER::OnPaint( wxPaintEvent& event )
     //  commands is displayed on the window."
     SwapBuffers();
 
-    gl_mgr->UnlockCtx( m_glRC );
+    Pgm().GetGLContextManager()->UnlockCtx( m_glRC );
 }
 
 

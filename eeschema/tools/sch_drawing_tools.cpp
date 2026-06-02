@@ -1660,19 +1660,7 @@ int SCH_DRAWING_TOOLS::SingleClickPlace( const TOOL_EVENT& aEvent )
         else if( evt->IsClick( BUT_LEFT ) || evt->IsDblClick( BUT_LEFT )
                 || evt->IsAction( &ACTIONS::cursorClick ) || evt->IsAction( &ACTIONS::cursorDblClick ) )
         {
-            if( SCH_ITEM* existingItem = screen->GetItem( cursorPos, 0, type ) )
-            {
-                // No connects can be "toggled"/removed by clicking on them again
-                // It helps with not having to fight pin selection ambiguity
-                if( type == SCH_NO_CONNECT_T )
-                {
-                    SCH_COMMIT commit( m_toolMgr );
-                    commit.Removed( existingItem, screen );
-                    m_frame->RemoveFromScreen( existingItem, screen );
-                    commit.Push( _( "Remove No Connect Flag" ) );
-                }
-            }
-            else
+            if( !screen->GetItem( cursorPos, 0, type ) )
             {
                 if( type == SCH_JUNCTION_T )
                 {
@@ -3437,7 +3425,27 @@ int SCH_DRAWING_TOOLS::DrawSheet( const TOOL_EVENT& aEvent )
             SCH_SHEET_LIST hierarchy = m_frame->Schematic().Hierarchy();
             SCH_SHEET_PATH instance = m_frame->GetCurrentSheet();
             instance.push_back( sheet );
-            wxString pageNumber = hierarchy.GetNextPageNumber();
+            wxString pageNumber;
+
+            // Find the next available page number by checking all existing page numbers
+            std::set<int> usedPageNumbers;
+
+            for( const SCH_SHEET_PATH& path : hierarchy )
+            {
+                wxString existingPageNum = path.GetPageNumber();
+                long pageNum = 0;
+
+                if( existingPageNum.ToLong( &pageNum ) && pageNum > 0 )
+                    usedPageNumbers.insert( static_cast<int>( pageNum ) );
+            }
+
+            // Find the first available number starting from 1
+            int nextAvailable = 1;
+
+            while( usedPageNumbers.count( nextAvailable ) > 0 )
+                nextAvailable++;
+
+            pageNumber.Printf( wxT( "%d" ), nextAvailable );
             instance.SetPageNumber( pageNumber );
 
             m_view->ClearPreview();

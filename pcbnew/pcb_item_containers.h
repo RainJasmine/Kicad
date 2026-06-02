@@ -24,6 +24,8 @@
 #ifndef PCB_ITEM_CONTAINERS_H_
 #define PCB_ITEM_CONTAINERS_H_
 
+#include <macros_swig.h>
+
 // Board-level items
 class FOOTPRINT;
 class PCB_TRACK;
@@ -33,26 +35,28 @@ class PCB_POINT;
 class PCB_MARKER;
 class ZONE;
 
-typedef std::vector<PCB_MARKER*> MARKERS;
-typedef std::vector<ZONE*> ZONES;
-typedef std::deque<PCB_TRACK*> TRACKS;
-typedef std::deque<FOOTPRINT*> FOOTPRINTS;
-typedef std::deque<PCB_GROUP*> GROUPS;
-typedef std::deque<PCB_GENERATOR*> GENERATORS;
-typedef std::deque<PCB_POINT*> PCB_POINTS;
+DECL_VEC_FOR_SWIG( MARKERS, PCB_MARKER* )
+DECL_VEC_FOR_SWIG( ZONES, ZONE* )
+DECL_DEQ_FOR_SWIG( TRACKS, PCB_TRACK* )
+DECL_DEQ_FOR_SWIG( FOOTPRINTS, FOOTPRINT* )
+// Dequeue rather than Vector just so we can use moveUnflaggedItems in pcbnew_control.cpp
+DECL_DEQ_FOR_SWIG( GROUPS, PCB_GROUP* )
+DECL_DEQ_FOR_SWIG( GENERATORS, PCB_GENERATOR* )
+DECL_DEQ_FOR_SWIG( PCB_POINTS, PCB_POINT* )
 
 
 // Shared with board and footprint
 class BOARD_ITEM;
 
-typedef std::deque<BOARD_ITEM*> DRAWINGS;
+DECL_DEQ_FOR_SWIG( DRAWINGS, BOARD_ITEM* )
+
 
 // Footprint-level items
 class PAD;
 class PCB_FIELD;
 
-typedef std::deque<PAD*> PADS;
-typedef std::deque<PCB_FIELD*> PCB_FIELDS;
-//typedef std::vector<PCB_FIELD*> PCB_FIELD_VEC;
+DECL_DEQ_FOR_SWIG( PADS, PAD* )
+DECL_DEQ_FOR_SWIG( PCB_FIELDS, PCB_FIELD* )
+DECL_VEC_FOR_SWIG( PCB_FIELD_VEC, PCB_FIELD* )
 
 #endif // PCB_ITEM_CONTAINERS_H_

@@ -30,17 +30,14 @@
 #include "shapes3D/cylinder_3d.h"
 #include "shapes3D/frustum_3d.h"
 #include "shapes3D/triangle_3d.h"
-#include "shapes3D/dummy_block_3d.h"
 #include "shapes2D/layer_item_2d.h"
 #include "shapes2D/ring_2d.h"
 #include "shapes2D/polygon_2d.h"
-#include "shapes2D/triangle_2d.h"
 #include "shapes2D/filled_circle_2d.h"
 #include "shapes2D/round_segment_2d.h"
 #include "accelerators/bvh_pbrt.h"
 #include "3d_fastmath.h"
 #include "3d_math.h"
-#include "../3d_placeholder_utils.h"
 
 #include <board.h>
 #include <footprint.h>
@@ -427,7 +424,6 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
 
     m_objectContainer.Clear();
     m_containerWithObjectsToDelete.Clear();
-    m_extrusionMaterials.clear();
 
     setupMaterials();
 
@@ -1915,261 +1911,6 @@ void RENDER_3D_RAYTRACE_BASE::addPadsAndVias()
 }
 
 
-void RENDER_3D_RAYTRACE_BASE::addPlaceholderToRaytracer( CONTAINER_3D& aDstContainer, const FOOTPRINT* aFootprint,
-                                                         const glm::mat4& aFpMatrix, bool aHasExtrudedBody )
-{
-    if( aHasExtrudedBody )
-        return;
-
-    BOX2I localBox = CalcPlaceholderLocalBox( aFootprint );
-
-    float bboxW = std::abs( localBox.GetWidth() ) / pcbIUScale.IU_PER_MM * 0.9f;
-    float bboxH = std::abs( localBox.GetHeight() ) / pcbIUScale.IU_PER_MM * 0.9f;
-    float scaleZ = std::min( bboxW, bboxH ) * 0.5f;
-
-    VECTOR2I localCenter = localBox.GetCenter();
-    float    offsetX = localCenter.x / pcbIUScale.IU_PER_MM;
-    float    offsetY = -localCenter.y / pcbIUScale.IU_PER_MM;
-
-    if( aFootprint->IsFlipped() )
-        offsetY = -offsetY;
-
-    SFVEC3F boxMin( offsetX - bboxW * 0.5f, offsetY - bboxH * 0.5f, 0.0f );
-    SFVEC3F boxMax( offsetX + bboxW * 0.5f, offsetY + bboxH * 0.5f, scaleZ );
-
-    BBOX_3D worldBBox;
-    worldBBox.Reset();
-
-    for( int i = 0; i < 8; ++i )
-    {
-        SFVEC3F corner( ( i & 1 ) ? boxMax.x : boxMin.x, ( i & 2 ) ? boxMax.y : boxMin.y,
-                        ( i & 4 ) ? boxMax.z : boxMin.z );
-
-        glm::vec4 transformed = aFpMatrix * glm::vec4( corner, 1.0f );
-        worldBBox.Union( SFVEC3F( transformed ) );
-    }
-
-    DUMMY_BLOCK* placeholder = new DUMMY_BLOCK( worldBBox );
-    placeholder->SetBoardItem( const_cast<FOOTPRINT*>( aFootprint ) );
-    placeholder->SetMaterial( &m_materials.m_EpoxyBoard );
-    placeholder->SetColor( SFVEC3F( 1.0f, 0.5f, 0.0f ) );
-
-    aDstContainer.Add( placeholder );
-}
-
-
-static size_t addOutlineToRaytracerObjects( CONTAINER_2D& aObjContainer, const SHAPE_POLY_SET& aOutline, float aBiuTo3d,
-                                            const BOARD_ITEM& aBoardItem )
-{
-    size_t added = 0;
-
-    for( int oi = 0; oi < aOutline.OutlineCount(); oi++ )
-    {
-        const SHAPE_LINE_CHAIN& chain = aOutline.COutline( oi );
-
-        if( chain.PointCount() < 3 )
-            continue;
-
-        // Convert points to 3D-scaled coordinates
-        SEGMENTS_WIDTH_NORMALS segNormals;
-        SFVEC2F                prevPt;
-
-        for( int i = 0; i < chain.PointCount(); i++ )
-        {
-            const VECTOR2I& a = chain.CPoint( i );
-            SFVEC2F         pt( (float) a.x * aBiuTo3d, (float) ( -a.y ) * aBiuTo3d );
-
-            if( ( i == 0 ) || ( fabs( prevPt.x - pt.x ) > FLT_EPSILON ) || ( fabs( prevPt.y - pt.y ) > FLT_EPSILON ) )
-            {
-                prevPt = pt;
-
-                SEGMENT_WITH_NORMALS sn;
-                sn.m_Start = pt;
-                segNormals.push_back( sn );
-            }
-        }
-
-        // Build side-wall
-        if( segNormals.size() >= 3 )
-        {
-            std::vector<SFVEC2F> tmpNormals( segNormals.size() );
-            unsigned int         j = segNormals.size() - 1;
-
-            for( unsigned int i = 0; i < segNormals.size(); j = i++ )
-            {
-                SFVEC2F slope = segNormals[j].m_Start - segNormals[i].m_Start;
-                segNormals[i].m_Precalc_slope = slope;
-                tmpNormals[i] = glm::normalize( SFVEC2F( slope.y, -slope.x ) );
-            }
-
-            j = segNormals.size() - 1;
-
-            for( unsigned int i = 0; i < segNormals.size(); j = i++ )
-            {
-                const SFVEC2F& nBefore = tmpNormals[j];
-                const SFVEC2F& nCur = tmpNormals[i];
-                const SFVEC2F& nAfter = tmpNormals[( i + 1 ) % segNormals.size()];
-
-                float dotBefore = glm::dot( nBefore, nCur );
-                float dotAfter = glm::dot( nAfter, nCur );
-
-                segNormals[i].m_Normals.m_Start =
-                        ( dotBefore < 0.7f ) ? nCur : glm::normalize( nBefore * dotBefore + nCur );
-                segNormals[i].m_Normals.m_End = ( dotAfter < 0.7f ) ? nCur : glm::normalize( nAfter * dotAfter + nCur );
-            }
-
-            SEGMENTS capSegments( segNormals.size() );
-
-            for( unsigned int i = 0; i < segNormals.size(); i++ )
-                capSegments[i].m_Start = segNormals[i].m_Start;
-
-            j = capSegments.size() - 1;
-
-            for( unsigned int i = 0; i < capSegments.size(); j = i++ )
-            {
-                capSegments[i].m_inv_JY_minus_IY = 1.0f / ( capSegments[j].m_Start.y - capSegments[i].m_Start.y );
-                capSegments[i].m_JX_minus_IX = capSegments[j].m_Start.x - capSegments[i].m_Start.x;
-            }
-
-            OUTERS_AND_HOLES outersAndHoles;
-            outersAndHoles.m_Outers.push_back( capSegments );
-
-            aObjContainer.Add( new POLYGON_2D( segNormals, outersAndHoles, aBoardItem ) );
-            added++;
-        }
-    }
-
-    // top/bottom caps
-    size_t prevSize = aObjContainer.GetList().size();
-    ConvertPolygonToTriangles( aOutline, aObjContainer, aBiuTo3d, aBoardItem );
-    added += aObjContainer.GetList().size() - prevSize;
-
-    return added;
-}
-
-
-bool RENDER_3D_RAYTRACE_BASE::addExtrudedBodyToRaytracer( CONTAINER_3D& aDstContainer, const FOOTPRINT* aFootprint )
-{
-    SHAPE_POLY_SET outline;
-
-    if( !GetExtrusionOutline( aFootprint, outline ) )
-        return false;
-
-    if( outline.OutlineCount() == 0 )
-        return false;
-
-    outline.Simplify();
-
-    const EXTRUDED_3D_BODY* body = aFootprint->GetExtrudedBody();
-    const float             biuTo3d = m_boardAdapter.BiuTo3dUnits();
-
-    VECTOR2I fpPos = aFootprint->GetPosition();
-    ApplyExtrusionTransform( outline, body, fpPos );
-
-    bool  isBack = aFootprint->IsFlipped();
-    float boardSurfaceZ = m_boardAdapter.GetFootprintZPos( isBack );
-    float standoff3d = body->m_standoff * biuTo3d;
-    float bodyThickness = ( body->m_height - body->m_standoff ) * biuTo3d * body->m_scale.z;
-    float zOffset3d = pcbIUScale.mmToIU( body->m_offset.z ) * biuTo3d;
-
-    float zBot, zTop;
-
-    if( !isBack )
-    {
-        zBot = boardSurfaceZ + standoff3d + zOffset3d;
-        zTop = zBot + bodyThickness;
-    }
-    else
-    {
-        zTop = boardSurfaceZ - standoff3d - zOffset3d;
-        zBot = zTop - bodyThickness;
-    }
-
-    KIGFX::COLOR4D c = body->m_color;
-
-    if( c == KIGFX::COLOR4D::UNSPECIFIED )
-        c = EXTRUDED_3D_BODY::GetDefaultColor( body->m_material );
-
-    SFVEC3F objColor = ConvertSRGBToLinear( SFVEC3F( c.r, c.g, c.b ) );
-
-    // Build body 2D objects (side walls + caps)
-    outline.Fracture();
-
-    const LIST_OBJECT2D& objList = m_containerWithObjectsToDelete.GetList();
-    size_t               prevCount = objList.size();
-
-    addOutlineToRaytracerObjects( m_containerWithObjectsToDelete, outline, biuTo3d, *aFootprint );
-
-    EXTRUSION_MATERIAL_PROPS props = GetMaterialProps( body->m_material, objColor );
-
-    m_extrusionMaterials.push_back( std::make_unique<BLINN_PHONG_MATERIAL>(
-            props.m_Ambient, SFVEC3F( 0.0f ), props.m_Specular, props.m_Shininess, 0.0f, 0.0f ) );
-
-    const MATERIAL* bodyMaterial = m_extrusionMaterials.back().get();
-
-    auto it = objList.begin();
-    std::advance( it, prevCount );
-
-    for( ; it != objList.end(); ++it )
-    {
-        LAYER_ITEM* layerItem = new LAYER_ITEM( *it, zBot, zTop );
-        layerItem->SetBoardItem( const_cast<FOOTPRINT*>( aFootprint ) );
-        layerItem->SetMaterial( bodyMaterial );
-        layerItem->SetColor( objColor );
-        aDstContainer.Add( layerItem );
-    }
-
-    // Create metallic pin extrusions for THT pads (from opposite board side to standoff height)
-    if( standoff3d > 0.0f )
-    {
-        SHAPE_POLY_SET pinPoly;
-
-        if( GetExtrusionPinOutline( aFootprint, pinPoly ) )
-        {
-            ApplyExtrusionTransform( pinPoly, body, fpPos );
-
-            float oppositeSurfaceZ = m_boardAdapter.GetFootprintZPos( !isBack );
-            float protrusion = 1.0f * pcbIUScale.IU_PER_MM * biuTo3d;
-            float pinZBot, pinZTop;
-
-            if( !isBack )
-            {
-                pinZBot = oppositeSurfaceZ - protrusion;
-                pinZTop = boardSurfaceZ + standoff3d;
-            }
-            else
-            {
-                pinZTop = oppositeSurfaceZ + protrusion;
-                pinZBot = boardSurfaceZ - standoff3d;
-            }
-
-            SFVEC3F metalColor = ConvertSRGBToLinear( SFVEC3F( 0.75f, 0.75f, 0.75f ) );
-
-            pinPoly.Fracture();
-
-            size_t prevPinCount = objList.size();
-
-            addOutlineToRaytracerObjects( m_containerWithObjectsToDelete, pinPoly, biuTo3d, *aFootprint );
-
-            // Wrap pin objects with material and Z extents
-            auto pinIt = objList.begin();
-            std::advance( pinIt, prevPinCount );
-
-            for( ; pinIt != objList.end(); ++pinIt )
-            {
-                LAYER_ITEM* layerItem = new LAYER_ITEM( *pinIt, pinZBot, pinZTop );
-                layerItem->SetBoardItem( const_cast<FOOTPRINT*>( aFootprint ) );
-                layerItem->SetMaterial( &m_materials.m_Copper );
-                layerItem->SetColor( metalColor );
-                aDstContainer.Add( layerItem );
-            }
-        }
-    }
-
-    return true;
-}
-
-
 void RENDER_3D_RAYTRACE_BASE::load3DModels( CONTAINER_3D& aDstContainer,
                                             bool aSkipMaterialInformation )
 {
@@ -2187,16 +1928,8 @@ void RENDER_3D_RAYTRACE_BASE::load3DModels( CONTAINER_3D& aDstContainer,
     // Go for all footprints
     for( FOOTPRINT* fp : m_boardAdapter.GetBoard()->Footprints() )
     {
-        bool hasModels = !fp->Models().empty();
-        bool showMissing = m_boardAdapter.m_Cfg->m_Render.show_missing_models;
-
-        // Placeholder is suppressed when an extrusion was built.
-        bool hasExtrudedBody = false;
-
-        if( fp->HasExtrudedBody() && fp->GetExtrudedBody()->m_show && m_boardAdapter.IsFootprintShown( fp ) )
-            hasExtrudedBody = addExtrudedBodyToRaytracer( aDstContainer, fp );
-
-        if( ( hasModels || showMissing ) && m_boardAdapter.IsFootprintShown( fp ) )
+        if( !fp->Models().empty()
+          && m_boardAdapter.IsFootprintShown( fp ) )
         {
             double zpos = m_boardAdapter.GetFootprintZPos( fp->IsFlipped() );
 
@@ -2293,16 +2026,6 @@ void RENDER_3D_RAYTRACE_BASE::load3DModels( CONTAINER_3D& aDstContainer,
                     addModels( aDstContainer, modelPtr, modelMatrix, (float) model.m_Opacity,
                                aSkipMaterialInformation, fp );
                 }
-                else if( showMissing )
-                {
-                    addPlaceholderToRaytracer( aDstContainer, fp, fpMatrix, hasExtrudedBody );
-                }
-            }
-
-            // Footprint with no models assigned at all
-            if( !hasModels && showMissing )
-            {
-                addPlaceholderToRaytracer( aDstContainer, fp, fpMatrix, hasExtrudedBody );
             }
         }
     }

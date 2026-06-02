@@ -124,7 +124,7 @@ bool PCB_TEXTBOX::Deserialize( const google::protobuf::Any& aContainer )
     if( !aContainer.UnpackTo( &boardText ) )
         return false;
 
-    SetUuidDirect( KIID( boardText.id().value() ) );
+    const_cast<KIID&>( m_Uuid ) = KIID( boardText.id().value() );
     SetLayer( FromProtoEnum<PCB_LAYER_ID, types::BoardLayer>( boardText.layer() ) );
     SetLocked( boardText.locked() == kiapi::common::types::LockedState::LS_LOCKED );
 
@@ -412,7 +412,7 @@ double PCB_TEXTBOX::ViewGetLOD( int aLayer, const KIGFX::VIEW* aView ) const
     if( aLayer == LAYER_LOCKED_ITEM_SHADOW )
     {
         // Hide shadow if the main layer is not shown
-        if( !aView->IsLayerVisibleCached( m_layer ) )
+        if( !aView->IsLayerVisible( m_layer ) )
             return LOD_HIDE;
 
         // Hide shadow on dimmed tracks

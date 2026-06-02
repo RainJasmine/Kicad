@@ -80,7 +80,7 @@ bool PCB_GROUP::Deserialize( const google::protobuf::Any &aContainer )
     if( !aContainer.UnpackTo( &group ) )
         return false;
 
-    SetUuidDirect( KIID( group.id().value() ) );
+    const_cast<KIID&>( m_Uuid ) = KIID( group.id().value() );
     SetName( wxString( group.name().c_str(), wxConvUTF8 ) );
 
     BOARD* board = GetBoard();
@@ -358,7 +358,7 @@ std::vector<int> PCB_GROUP::ViewGetLayers() const
 
 double PCB_GROUP::ViewGetLOD( int aLayer, const KIGFX::VIEW* aView ) const
 {
-    if( aView->IsLayerVisibleCached( LAYER_ANCHOR ) )
+    if( aView->IsLayerVisible( LAYER_ANCHOR ) )
         return LOD_SHOW;
 
     return LOD_HIDE;

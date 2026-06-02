@@ -216,7 +216,6 @@ private:
     static ERC_ITEM isolatedPinLabel;
     static ERC_ITEM singleGlobalLabel;
     static ERC_ITEM sameLocalGlobalLabel;
-    static ERC_ITEM sameLocalGlobalPower;
     static ERC_ITEM similarLabels;
     static ERC_ITEM similarPower;
     static ERC_ITEM similarLabelAndPower;

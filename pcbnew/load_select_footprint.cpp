@@ -114,7 +114,7 @@ bool FOOTPRINT_EDIT_FRAME::LoadFootprintFromBoard( FOOTPRINT* aFootprint )
             {
                 KIID newId;
                 m_boardFootprintUuids[ newId ] = aItem->m_Uuid;
-                aItem->SetUuid( newId );
+                const_cast<KIID&>( aItem->m_Uuid ) = newId;
             };
 
     newFootprint = (FOOTPRINT*) aFootprint->Clone();    // Keep existing uuids
@@ -443,4 +443,5 @@ void PCB_BASE_FRAME::PlaceFootprint( FOOTPRINT* aFootprint, bool aRecreateRatsne
 
     SetMsgPanel( aFootprint );
 }
+
 

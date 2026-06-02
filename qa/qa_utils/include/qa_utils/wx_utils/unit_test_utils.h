@@ -331,12 +331,10 @@ struct NAMED_CASE
 /**
  * A test macro to check a wxASSERT is thrown.
  *
- * wxCHECK/wxASSERT only fire when wxDEBUG_LEVEL > 0, so the macro must key off
- * that rather than KiCad's own DEBUG define. QABUILD defines neither DEBUG nor
- * NDEBUG but is still built against a wxWidgets with assertions enabled, so the
- * previous #ifdef DEBUG gate silently skipped checks in that configuration.
+ * This only happens in DEBUG builds, so prevent test failures in Release builds
+ * by using this macro.
  */
-#if wxDEBUG_LEVEL > 0
+#ifdef DEBUG
 #define CHECK_WX_ASSERT( STATEMENT ) BOOST_CHECK_THROW( STATEMENT, KI_TEST::WX_ASSERT_ERROR );
 #else
 #define CHECK_WX_ASSERT( STATEMENT )

@@ -44,7 +44,7 @@ int fuzz_init( int* argc, char*** argv )
 
     wxSetAssertHandler( &KI_TEST::wxAssertThrower );
 
-    Pgm().InitPgm( true, true );
+    Pgm().InitPgm( true, true, true );
 
     Pgm().GetSettingsManager().RegisterSettings( new PCBNEW_SETTINGS, false );
 

@@ -74,7 +74,6 @@ set(3D-VIEWER_SRCS
     ${DIR_RAY_3D}/round_segment_3d.cpp
     ${DIR_RAY_3D}/triangle_3d.cpp
     3d_rendering/buffers_debug.cpp
-    3d_rendering/3d_placeholder_utils.cpp
     3d_rendering/render_3d_base.cpp
     3d_rendering/color_rgba.cpp
     3d_rendering/image.cpp

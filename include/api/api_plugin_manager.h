@@ -59,22 +59,6 @@ public:
     void InvokeAction( const wxString& aIdentifier,
                        std::shared_ptr<REPORTER> aReporter = nullptr );
 
-    /**
-     * Invokes an action synchronously, capturing its output.  Mainly used for things like
-     * wizards that have actions that return quickly and pass data to KiCad via stdout.
-     * @param aIdentifier is the plugin action to invoke
-     * @param aExtraArgs are extra arguments to pass to the action beyond the ones specified in the
-     *                   plugin configuration file
-     * @param aStdout is a pointer to a string to fill with the stdout output of the action
-     * @param aStderr is a pointer to a string to fill with the stderr output of the action
-     * @return the exit code from the action process
-     */
-    int InvokeActionSync( const wxString& aIdentifier, std::vector<wxString> aExtraArgs,
-                          wxString* aStdout = nullptr, wxString* aStderr = nullptr,
-                          std::shared_ptr<REPORTER> aReporter = nullptr );
-
-    bool Busy() const;
-
     std::optional<const PLUGIN_ACTION*> GetAction( const wxString& aIdentifier );
 
     std::vector<const PLUGIN_ACTION*> GetActionsForScope( PLUGIN_ACTION_SCOPE aScope );
@@ -89,11 +73,6 @@ private:
     void processPluginDependencies();
 
     void processNextJob( wxCommandEvent& aEvent );
-
-    int doInvokeAction( const wxString& aIdentifier, std::vector<wxString> aExtraArgs,
-                        bool aSync = false, wxString* aStdout = nullptr,
-                        wxString* aStderr = nullptr,
-                        std::shared_ptr<REPORTER> aReporter = nullptr );
 
     wxEvtHandler* m_parent;
 

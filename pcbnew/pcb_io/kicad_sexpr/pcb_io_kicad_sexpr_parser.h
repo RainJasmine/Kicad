@@ -360,7 +360,7 @@ private:
      */
     void parseRenderCache( EDA_TEXT* text );
 
-    FP_3DMODEL* parse3DModel( bool aFileNameAlreadyParsed = false );
+    FP_3DMODEL* parse3DModel();
 
     /**
      * Parse the current token as an ASCII numeric string with possible leading

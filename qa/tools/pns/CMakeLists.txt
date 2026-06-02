@@ -119,6 +119,7 @@ target_link_libraries( pns_debug_tool
     ${PCBNEW_IO_LIBRARIES}
     ${wxWidgets_LIBRARIES}
     ${GDI_PLUS_LIBRARIES}
+    ${PYTHON_LIBRARIES}
     Boost::headers
     ${PCBNEW_EXTRA_LIBS}    # -lrt must follow Boost
 )
@@ -143,6 +144,7 @@ target_link_libraries( qa_pns_regressions
     ${PCBNEW_IO_LIBRARIES}
     ${wxWidgets_LIBRARIES}
     ${GDI_PLUS_LIBRARIES}
+    ${PYTHON_LIBRARIES}
     Boost::headers
     ${PCBNEW_EXTRA_LIBS}    # -lrt must follow Boost
 )

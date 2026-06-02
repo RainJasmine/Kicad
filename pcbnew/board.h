@@ -377,6 +377,13 @@ public:
 
     const PCB_POINTS& Points() const { return m_points; }
 
+    // SWIG requires non-const accessors for some reason to make the custom iterators in board.i
+    // work.  It would be good to remove this if we can figure out how to fix that.
+#ifdef SWIG
+    DRAWINGS& Drawings() { return m_drawings; }
+    TRACKS& Tracks() { return m_tracks; }
+#endif
+
     const BOARD_ITEM_SET GetItemSet();
 
     /**
@@ -541,20 +548,6 @@ public:
      *         Type() == NOT_USED or null, depending on \a aAllowNullptrReturn.
      */
     BOARD_ITEM* ResolveItem( const KIID& aID, bool aAllowNullptrReturn = false ) const;
-
-    /**
-     * Rebind the UUID of an attached item and keep the item-by-id cache coherent.
-     */
-    void RebindItemUuid( BOARD_ITEM* aItem, const KIID& aNewId );
-
-    /**
-     * Rebind duplicate attached-item UUIDs so each live board item has a unique ID.
-     *
-     * Traversal order is stable and earlier items keep their existing UUIDs.
-     *
-     * @return number of duplicate IDs repaired.
-     */
-    int RepairDuplicateItemUuids();
 
     void FillItemMap( std::map<KIID, EDA_ITEM*>& aMap );
 
@@ -1011,6 +1004,7 @@ public:
         m_NetInfo.RemoveUnusedNets( aCommit );
     }
 
+#ifndef SWIG
     /**
      * @return iterator to the first element of the NETINFO_ITEMs list.
      */
@@ -1026,6 +1020,7 @@ public:
     {
         return m_NetInfo.end();
     }
+#endif
 
     /**
      * @return the number of nets (NETINFO_ITEM).
@@ -1430,27 +1425,19 @@ public:
         return m_itemByIdCache;
     }
 
-    bool IsItemIndexedById( const BOARD_ITEM* aItem ) const
-    {
-        return m_cachedIdByItem.contains( aItem );
-    }
-
-    /**
-     * Return a cached item for @a aId if the entry is still self-consistent.
-     *
-     * UUIDs can still be rewritten in-place in some attached-item paths.  When that happens, the
-     * cache may temporarily contain a stale alias from the old UUID to the live item.  Drop those
-     * aliases on read so lookups never return an item whose current UUID no longer matches the key.
-     */
-    BOARD_ITEM* GetCachedItemById( const KIID& aId ) const;
-
     /**
      * Add an item to the item-by-id cache.
      *
      * This is called by FOOTPRINT::Add() when items are added to footprints that are already
      * on the board, to keep the cache in sync.
      */
-    void CacheItemById( BOARD_ITEM* aItem ) const;
+    void CacheItemById( BOARD_ITEM* aItem )
+    {
+        if( IsFootprintHolder() )
+            return;
+
+        m_itemByIdCache.insert( { aItem->m_Uuid, aItem } );
+    }
 
     /**
      * Remove an item from the item-by-id cache.
@@ -1458,71 +1445,10 @@ public:
      * This is called by FOOTPRINT::Remove() when items are removed from footprints that are
      * already on the board, to keep the cache in sync.
      */
-    void UncacheItemById( const KIID& aId ) const;
-
-    void CacheItemSubtreeById( BOARD_ITEM* aItem )
+    void UncacheItemById( const KIID& aId )
     {
-        wxCHECK( aItem, /* void */ );
-
-        CacheItemById( aItem );
-
-        aItem->RunOnChildren(
-                [this]( BOARD_ITEM* aChild )
-                {
-                    CacheItemSubtreeById( aChild );
-                },
-                RECURSE_MODE::NO_RECURSE );
+        m_itemByIdCache.erase( aId );
     }
-
-    void CacheChildrenById( const BOARD_ITEM* aParent )
-    {
-        wxCHECK( aParent, /* void */ );
-
-        aParent->RunOnChildren(
-                [this]( BOARD_ITEM* aChild )
-                {
-                    CacheItemSubtreeById( aChild );
-                },
-                RECURSE_MODE::NO_RECURSE );
-    }
-
-    void UncacheItemSubtreeById( const BOARD_ITEM* aItem )
-    {
-        wxCHECK( aItem, /* void */ );
-
-        // Pointer-keyed eviction: never remove an entry that belongs to a
-        // different live item with the same UUID (e.g. a temporary copy).
-        UncacheItemByPtr( aItem );
-
-        aItem->RunOnChildren(
-                [this]( BOARD_ITEM* aChild )
-                {
-                    UncacheItemSubtreeById( aChild );
-                },
-                RECURSE_MODE::NO_RECURSE );
-    }
-
-    void UncacheChildrenById( const BOARD_ITEM* aParent )
-    {
-        wxCHECK( aParent, /* void */ );
-
-        aParent->RunOnChildren(
-                [this]( BOARD_ITEM* aChild )
-                {
-                    UncacheItemSubtreeById( aChild );
-                },
-                RECURSE_MODE::NO_RECURSE );
-    }
-
-    /**
-     * Remove every cache entry that still points to @a aItem.
-     *
-     * Safe to call from ~BOARD_ITEM and UUID-rebind paths: avoids evicting live items that
-     * share the same UUID while still purging stale aliases after in-place UUID changes.
-     */
-    void UncacheItemByPtr( const BOARD_ITEM* aItem );
-
-    BOARD_ITEM* CacheAndReturnItemById( const KIID& aId, BOARD_ITEM* aItem ) const;
 
     // --------- Item order comparators ---------
 
@@ -1561,10 +1487,9 @@ public:
     mutable std::unordered_map<const ZONE*, SHAPE_POLY_SET> m_DeflatedZoneOutlineCache;
 
     // ------------ DRC caches -------------
-    std::vector<ZONE*>                       m_DRCZones;
-    std::vector<ZONE*>                       m_DRCCopperZones;
-    std::map<PCB_LAYER_ID, std::vector<ZONE*>> m_DRCCopperZonesByLayer;
-    int                                      m_DRCMaxClearance;
+    std::vector<ZONE*>    m_DRCZones;
+    std::vector<ZONE*>    m_DRCCopperZones;
+    int                   m_DRCMaxClearance;
     int                   m_DRCMaxPhysicalClearance;
     ZONE*                 m_SolderMaskBridges;  // A container to build bridges on solder mask layers
     std::map<ZONE*, std::map<PCB_LAYER_ID, ISOLATED_ISLANDS>> m_ZoneIsolatedIslandsMap;
@@ -1611,9 +1536,7 @@ private:
 
     // Cache for fast access to items in the containers above by KIID, including children.
     // Mutable because it's a performance cache that can be populated during const lookups.
-    // NOT protected by m_CachesMutex. Only safe for single-threaded access (UI, serialization).
-    mutable std::unordered_map<KIID, BOARD_ITEM*>        m_itemByIdCache;
-    mutable std::unordered_map<const BOARD_ITEM*, KIID>  m_cachedIdByItem;
+    mutable std::unordered_map<KIID, BOARD_ITEM*> m_itemByIdCache;
 
     std::map<int, LAYER> m_layers;                  // layer data
 
@@ -1667,14 +1590,6 @@ private:
 
     std::unique_ptr<COMPONENT_CLASS_MANAGER>  m_componentClassManager;
     std::unique_ptr<LENGTH_DELAY_CALCULATION> m_lengthDelayCalc;
-
-    // Reactive text-variable dependency adapter. Installed as a listener
-    // during BOARD construction; destructor order ensures it outlives no
-    // listener calls.
-    std::unique_ptr<class BOARD_TEXT_VAR_ADAPTER> m_textVarAdapter;
-
-public:
-    BOARD_TEXT_VAR_ADAPTER* GetTextVarAdapter() const { return m_textVarAdapter.get(); }
 };
 
 

@@ -23,7 +23,6 @@
  */
 #include <wx/intl.h>
 #include <wx/arrstr.h>
-#include <wx/log.h>
 
 #include <kiface_base.h>
 #include <bitmaps.h>
@@ -90,11 +89,6 @@ TRANSLINE_IDENT::TRANSLINE_IDENT( enum TRANSLINE_TYPE_ID aType )
     m_TLine = nullptr;                      // The TRANSLINE itself
     m_HasPrmSelection = false;              // true if selection of parameters must be enabled in dialog menu
 
-    // Same H_t tooltip text is used for the microstrip and coupled-microstrip blocks below.
-    const wxString coverHeightToolTip =
-            _( "Height from substrate top to grounded cover. Leave at the large default value "
-               "for no cover." );
-
     // Add common prms:
     // Default values are for FR4
     AddPrm( new TRANSLINE_PRM( PRM_TYPE_SUBS, EPSILONR_PRM,
@@ -134,7 +128,7 @@ TRANSLINE_IDENT::TRANSLINE_IDENT( enum TRANSLINE_TYPE_ID aType )
         AddPrm( new TRANSLINE_PRM( PRM_TYPE_SUBS, H_PRM,
                                    "H", "H", _( "Height of substrate" ), 0.2, true ) );
         AddPrm( new TRANSLINE_PRM( PRM_TYPE_SUBS, H_T_PRM,
-                                   "H_t", "H(top)", coverHeightToolTip, 1e20, true ) );
+                                   "H_t", "H(top)", _( "Height of box top" ), 1e20, true ) );
         AddPrm( new TRANSLINE_PRM( PRM_TYPE_SUBS, T_PRM,
                                    "T", "T",
                                    _( "Strip thickness" ), 0.035, true ) );
@@ -164,7 +158,7 @@ TRANSLINE_IDENT::TRANSLINE_IDENT( enum TRANSLINE_TYPE_ID aType )
         break;
 
     case CPW_TYPE:          // coplanar waveguide
-        m_TLine           = new COPLANAR_UI();
+        m_TLine           = new COPLANAR();
         m_BitmapName      = BITMAPS::cpw;
         m_HasPrmSelection = true;
 
@@ -199,7 +193,7 @@ TRANSLINE_IDENT::TRANSLINE_IDENT( enum TRANSLINE_TYPE_ID aType )
         break;
 
     case GROUNDED_CPW_TYPE:      // grounded coplanar waveguide
-        m_TLine           = new GROUNDEDCOPLANAR_UI();
+        m_TLine           = new GROUNDEDCOPLANAR();
         m_BitmapName      = BITMAPS::cpw_back;
         m_HasPrmSelection = true;
 
@@ -235,7 +229,7 @@ TRANSLINE_IDENT::TRANSLINE_IDENT( enum TRANSLINE_TYPE_ID aType )
 
 
     case RECTWAVEGUIDE_TYPE:      // rectangular waveguide
-        m_TLine           = new RECTWAVEGUIDE_UI();
+        m_TLine           = new RECTWAVEGUIDE();
         m_BitmapName      = BITMAPS::rectwaveguide;
         m_HasPrmSelection = true;
 
@@ -271,7 +265,7 @@ TRANSLINE_IDENT::TRANSLINE_IDENT( enum TRANSLINE_TYPE_ID aType )
         break;
 
     case COAX_TYPE:      // coaxial cable
-        m_TLine           = new COAX_UI();
+        m_TLine           = new COAX();
         m_BitmapName      = BITMAPS::coax;
         m_HasPrmSelection = true;
 
@@ -326,7 +320,7 @@ TRANSLINE_IDENT::TRANSLINE_IDENT( enum TRANSLINE_TYPE_ID aType )
         AddPrm( new TRANSLINE_PRM( PRM_TYPE_SUBS, H_PRM,
                                    "H", "H", _( "Height of substrate" ), 0.2, true ) );
         AddPrm( new TRANSLINE_PRM( PRM_TYPE_SUBS, H_T_PRM,
-                                   "H_t", "H_t", coverHeightToolTip, 1e20, true ) );
+                                   "H_t", "H_t", _( "Height of box top" ), 1e20, true ) );
         AddPrm( new TRANSLINE_PRM( PRM_TYPE_SUBS, T_PRM,
                                    "T", "T", _( "Strip thickness" ), 0.035, true ) );
         AddPrm( new TRANSLINE_PRM( PRM_TYPE_SUBS, ROUGH_PRM,
@@ -365,16 +359,8 @@ TRANSLINE_IDENT::TRANSLINE_IDENT( enum TRANSLINE_TYPE_ID aType )
         m_Messages.Add( _( "Unit propagation delay (odd):" ) );
         m_Messages.Add( _( "Skin depth:" ) );
         m_Messages.Add( _( "Differential Impedance (Zd):" ) );
-        m_Messages.Add( _( "Common-mode Impedance (Zcomm):" ) );
-        m_Messages.Add( _( "Coupling coefficient (kc):" ) );
 
         AddPrm( new TRANSLINE_PRM( PRM_TYPE_SUBS, H_PRM, "H", "H", _( "Height of substrate" ), 0.2, true ) );
-        // Zero default keeps the math layer on the centred fast path so existing designs that
-        // never touched 'a' remain bit-identical to the pre-offset behaviour.
-        AddPrm( new TRANSLINE_PRM( PRM_TYPE_SUBS, STRIPLINE_A_PRM, "a", "a",
-                                   _( "Distance from track to closest ground plane "
-                                      "(default: centered)" ),
-                                   0.0, true ) );
         AddPrm( new TRANSLINE_PRM( PRM_TYPE_SUBS, T_PRM, "T", "T", _( "Strip thickness" ), 0.035, true ) );
         AddPrm( new TRANSLINE_PRM( PRM_TYPE_SUBS, MURC_PRM, "mu rel C",
                                    wxString::Format( wxT( "μ(%s)" ), _( "conductor" ) ),
@@ -432,7 +418,7 @@ TRANSLINE_IDENT::TRANSLINE_IDENT( enum TRANSLINE_TYPE_ID aType )
         break;
 
     case TWISTEDPAIR_TYPE:      // twisted pair
-        m_TLine           = new TWISTEDPAIR_UI();
+        m_TLine           = new TWISTEDPAIR();
         m_BitmapName      = BITMAPS::twistedpair;
         m_HasPrmSelection = true;
 
@@ -490,45 +476,6 @@ void TRANSLINE_IDENT::ReadConfig()
 {
     auto cfg = static_cast<PCB_CALCULATOR_SETTINGS*>( Kiface().KifaceSettings() );
     std::string name( m_TLine->m_Name );
-
-    // Recover C_STRIPLINE data that legacy builds wrote under the colliding "Coupled_MicroStrip"
-    // key. Distinguish by the c_microstrip-exclusive parameters H_t and Rough; if absent, the
-    // payload is stripline and belongs to the new key.
-    // TODO remove after KiCad 10.1 (two stable releases)
-    if( name == "Coupled_Stripline" && !cfg->m_TransLine.param_values.count( name ) )
-    {
-        const std::string legacyKey = "Coupled_MicroStrip";
-        auto              legacyValuesIt = cfg->m_TransLine.param_values.find( legacyKey );
-        auto              legacyUnitsIt  = cfg->m_TransLine.param_units.find( legacyKey );
-
-        // Require both maps to have the legacy entry so values and units stay paired; the
-        // downstream lookup asserts that param_units is populated whenever param_values is.
-        if( legacyValuesIt != cfg->m_TransLine.param_values.end()
-            && legacyUnitsIt != cfg->m_TransLine.param_units.end() )
-        {
-            const auto& legacyValues = legacyValuesIt->second;
-            const bool looksLikeCMicrostrip = legacyValues.count( "H_t" ) || legacyValues.count( "Rough" );
-
-            if( !looksLikeCMicrostrip )
-            {
-                cfg->m_TransLine.param_values[name] = legacyValues;
-                cfg->m_TransLine.param_units[name]  = legacyUnitsIt->second;
-
-                // Empty the legacy entry in place so the coupled-microstrip tab falls back to
-                // defaults instead of loading stripline data under its normal key. The outer
-                // map entries must remain because PARAM_MAP holds a raw pointer to the inner
-                // map captured at settings-ctor time; erasing would dangle those pointers.
-                legacyValuesIt->second.clear();
-                legacyUnitsIt->second.clear();
-            }
-            else
-            {
-                wxLogTrace( wxT( "KICAD_TRANSLINE" ),
-                            wxT( "Legacy Coupled_MicroStrip settings look like coupled-microstrip "
-                                 "data; Coupled_Stripline will fall back to defaults." ) );
-            }
-        }
-    }
 
     if( cfg->m_TransLine.param_values.count( name ) )
     {

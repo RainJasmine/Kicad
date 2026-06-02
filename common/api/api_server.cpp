@@ -50,14 +50,11 @@ wxString KICAD_API_SERVER::s_logFileName = "api.log";
 wxDEFINE_EVENT( API_REQUEST_EVENT, wxCommandEvent );
 
 
-KICAD_API_SERVER::KICAD_API_SERVER( bool aAutoStart ) :
+KICAD_API_SERVER::KICAD_API_SERVER() :
         wxEvtHandler(),
         m_token( KIID().AsStdString() ),
         m_readyToReply( false )
 {
-    if( !aAutoStart )
-        return;
-
     if( !Pgm().GetCommonSettings()->m_Api.enable_server )
     {
         wxLogTrace( traceApi, "Server: disabled by user preferences." );
@@ -80,24 +77,13 @@ void KICAD_API_SERVER::Start()
         return;
 
     wxFileName socket;
-
-    if( m_socketPathOverride.IsEmpty() )
-    {
 #ifdef __WXMAC__
-        socket.AssignDir( wxS( "/tmp" ) );
+    socket.AssignDir( wxS( "/tmp" ) );
 #else
-        socket.AssignDir( wxStandardPaths::Get().GetTempDir() );
+    socket.AssignDir( wxStandardPaths::Get().GetTempDir() );
 #endif
-        socket.AppendDir( wxS( "kicad" ) );
-        socket.SetFullName( wxS( "api.sock" ) );
-    }
-    else
-    {
-        socket.Assign( m_socketPathOverride );
-
-        if( !socket.IsAbsolute() )
-            socket.MakeAbsolute();
-    }
+    socket.AppendDir( wxS( "kicad" ) );
+    socket.SetFullName( wxS( "api.sock" ) );
 
     if( !PATHS::EnsurePathExists( socket.GetPath() ) )
     {
@@ -142,13 +128,6 @@ void KICAD_API_SERVER::Start()
             fmt::format( "ipc://{}", socket.GetFullPath().ToStdString() ) );
     m_server->SetCallback( [&]( std::string* aRequest ) { onApiRequest( aRequest ); } );
 
-    if( !m_server->Start() )
-    {
-        wxLogTrace( traceApi, "Server: failed to start KINNG listener thread" );
-        m_server.reset( nullptr );
-        return;
-    }
-
     m_logFilePath.AssignDir( PATHS::GetLogsPath() );
     m_logFilePath.SetName( s_logFileName );
 
@@ -159,6 +138,7 @@ void KICAD_API_SERVER::Start()
     }
 
     wxLogTrace( traceApi, wxString::Format( "Server: listening at %s", SocketPath() ) );
+
     Bind( API_REQUEST_EVENT, &KICAD_API_SERVER::handleApiEvent, this );
 }
 
@@ -203,7 +183,7 @@ std::string KICAD_API_SERVER::SocketPath() const
 
 void KICAD_API_SERVER::onApiRequest( std::string* aRequest )
 {
-    if( !m_readyToReply.load( std::memory_order_acquire ) )
+    if( !m_readyToReply )
     {
         ApiResponse notHandled;
         notHandled.mutable_status()->set_status( ApiStatusCode::AS_NOT_READY );
@@ -226,15 +206,9 @@ void KICAD_API_SERVER::onApiRequest( std::string* aRequest )
 void KICAD_API_SERVER::handleApiEvent( wxCommandEvent& aEvent )
 {
     std::string& requestString = *static_cast<std::string*>( aEvent.GetClientData() );
-    handleApiRequestString( requestString );
-}
-
-
-void KICAD_API_SERVER::handleApiRequestString( std::string& aRequestString )
-{
     ApiRequest request;
 
-    if( !request.ParseFromString( aRequestString ) )
+    if( !request.ParseFromString( requestString ) )
     {
         ApiResponse error;
         error.mutable_header()->set_kicad_token( m_token );
@@ -244,8 +218,6 @@ void KICAD_API_SERVER::handleApiRequestString( std::string& aRequestString )
 
         if( ADVANCED_CFG::GetCfg().m_EnableAPILogging )
             log( "Response (ERROR): " + error.Utf8DebugString() );
-
-        return;
     }
 
     if( ADVANCED_CFG::GetCfg().m_EnableAPILogging )

@@ -57,9 +57,6 @@ public:
 
     SCH_FIELD( const SCH_FIELD& aText );
 
-    void Serialize( google::protobuf::Any& aContainer ) const override;
-    bool Deserialize( const google::protobuf::Any& aContainer ) override;
-
     ~SCH_FIELD() override
     { }
 
@@ -268,8 +265,6 @@ public:
     BITMAPS GetMenuImage() const override;
 
     bool IsReplaceable() const override;
-
-    bool IsLocked() const override;
 
     VECTOR2I GetLibPosition() const { return EDA_TEXT::GetTextPos(); }
 

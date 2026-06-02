@@ -441,7 +441,7 @@ DIALOG_TRACK_VIA_PROPERTIES_BASE::DIALOG_TRACK_VIA_PROPERTIES_BASE( wxWindow* pa
 	fgSizer7->SetFlexibleDirection( wxBOTH );
 	fgSizer7->SetNonFlexibleGrowMode( wxFLEX_GROWMODE_SPECIFIED );
 
-	m_backdrillFrontSizeLabel = new wxStaticText( m_sbViaSizer->GetStaticBox(), wxID_ANY, _("Front backdrill size:"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_backdrillFrontSizeLabel = new wxStaticText( m_sbViaSizer->GetStaticBox(), wxID_ANY, _("Top backdrill size:"), wxDefaultPosition, wxDefaultSize, 0 );
 	m_backdrillFrontSizeLabel->Wrap( -1 );
 	fgSizer7->Add( m_backdrillFrontSizeLabel, 0, wxALIGN_CENTER_VERTICAL|wxRIGHT|wxLEFT, 5 );
 
@@ -458,7 +458,7 @@ DIALOG_TRACK_VIA_PROPERTIES_BASE::DIALOG_TRACK_VIA_PROPERTIES_BASE( wxWindow* pa
 
 	fgSizer7->Add( bSizer31, 1, wxEXPAND, 5 );
 
-	m_backdrillFrontLayerLabel = new wxStaticText( m_sbViaSizer->GetStaticBox(), wxID_ANY, _("Front backdrill must-cut:"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_backdrillFrontLayerLabel = new wxStaticText( m_sbViaSizer->GetStaticBox(), wxID_ANY, _("Top backdrill must-cut:"), wxDefaultPosition, wxDefaultSize, 0 );
 	m_backdrillFrontLayerLabel->Wrap( -1 );
 	fgSizer7->Add( m_backdrillFrontLayerLabel, 0, wxALIGN_CENTER_VERTICAL|wxRIGHT|wxLEFT, 5 );
 
@@ -473,7 +473,7 @@ DIALOG_TRACK_VIA_PROPERTIES_BASE::DIALOG_TRACK_VIA_PROPERTIES_BASE( wxWindow* pa
 	fgSizer8->SetFlexibleDirection( wxBOTH );
 	fgSizer8->SetNonFlexibleGrowMode( wxFLEX_GROWMODE_SPECIFIED );
 
-	m_backdrillBackSizeLabel = new wxStaticText( m_sbViaSizer->GetStaticBox(), wxID_ANY, _("Back backdrill size:"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_backdrillBackSizeLabel = new wxStaticText( m_sbViaSizer->GetStaticBox(), wxID_ANY, _("Bottom backdrill size:"), wxDefaultPosition, wxDefaultSize, 0 );
 	m_backdrillBackSizeLabel->Wrap( -1 );
 	fgSizer8->Add( m_backdrillBackSizeLabel, 0, wxALIGN_CENTER_VERTICAL|wxRIGHT|wxLEFT, 5 );
 
@@ -490,7 +490,7 @@ DIALOG_TRACK_VIA_PROPERTIES_BASE::DIALOG_TRACK_VIA_PROPERTIES_BASE( wxWindow* pa
 
 	fgSizer8->Add( bSizer32, 1, wxEXPAND, 5 );
 
-	m_backdrillBackLayerLabel = new wxStaticText( m_sbViaSizer->GetStaticBox(), wxID_ANY, _("Back backdrill must-cut:"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_backdrillBackLayerLabel = new wxStaticText( m_sbViaSizer->GetStaticBox(), wxID_ANY, _("Bottom backdrill must-cut:"), wxDefaultPosition, wxDefaultSize, 0 );
 	m_backdrillBackLayerLabel->Wrap( -1 );
 	fgSizer8->Add( m_backdrillBackLayerLabel, 0, wxALIGN_CENTER_VERTICAL|wxTOP|wxBOTTOM|wxLEFT, 5 );
 
@@ -527,7 +527,7 @@ DIALOG_TRACK_VIA_PROPERTIES_BASE::DIALOG_TRACK_VIA_PROPERTIES_BASE( wxWindow* pa
 	fgSizer9->SetFlexibleDirection( wxBOTH );
 	fgSizer9->SetNonFlexibleGrowMode( wxFLEX_GROWMODE_SPECIFIED );
 
-	m_topPostMachineLabel = new wxStaticText( m_sbViaSizer->GetStaticBox(), wxID_ANY, _("Front:"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_topPostMachineLabel = new wxStaticText( m_sbViaSizer->GetStaticBox(), wxID_ANY, _("Top:"), wxDefaultPosition, wxDefaultSize, 0 );
 	m_topPostMachineLabel->Wrap( -1 );
 	fgSizer9->Add( m_topPostMachineLabel, 0, wxALIGN_CENTER_VERTICAL|wxRIGHT|wxLEFT, 5 );
 
@@ -574,7 +574,7 @@ DIALOG_TRACK_VIA_PROPERTIES_BASE::DIALOG_TRACK_VIA_PROPERTIES_BASE( wxWindow* pa
 	fgSizer10->SetFlexibleDirection( wxBOTH );
 	fgSizer10->SetNonFlexibleGrowMode( wxFLEX_GROWMODE_SPECIFIED );
 
-	m_bottomPostMachineLabel = new wxStaticText( m_sbViaSizer->GetStaticBox(), wxID_ANY, _("Back:"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_bottomPostMachineLabel = new wxStaticText( m_sbViaSizer->GetStaticBox(), wxID_ANY, _("Bottom:"), wxDefaultPosition, wxDefaultSize, 0 );
 	m_bottomPostMachineLabel->Wrap( -1 );
 	fgSizer10->Add( m_bottomPostMachineLabel, 0, wxALIGN_CENTER_VERTICAL|wxRIGHT|wxLEFT, 5 );
 

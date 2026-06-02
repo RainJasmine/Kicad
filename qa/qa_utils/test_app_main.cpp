@@ -181,12 +181,8 @@ struct APP_TEST : public wxApp
 
     int  OnExit() override
     {
-        // Drain wxPendingDelete (frames deferred via Destroy()) before tearing down
-        // PGM_BASE singletons. Kept consistent with the GUI apps; see
-        // https://gitlab.com/kicad/code/kicad/-/issues/23373
-        int ret = wxApp::OnExit();
         program.OnPgmExit();
-        return ret;
+        return wxApp::OnExit();
     }
 
     int OnRun() override
@@ -237,9 +233,9 @@ int main( int argc, char** argv )
     wxInitialize( argc, argv );
 
 #ifdef TEST_APP_GUI
-    Pgm().InitPgm( false );
+    Pgm().InitPgm( false, true );
 #else
-    Pgm().InitPgm( true );
+    Pgm().InitPgm( true, true );
 #endif
 
     auto ret = wxEntry( argc, argv );

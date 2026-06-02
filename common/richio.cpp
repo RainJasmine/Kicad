@@ -24,19 +24,15 @@
 
 
 #include <cstdarg>
-#include <exception>
 #include <config.h> // HAVE_FGETC_NOLOCK
 
 #include <kiplatform/io.h>
 #include <core/ignore.h>
 #include <richio.h>
 #include <errno.h>
-#include <string.h>
 #include <advanced_config.h>
 #include <io/kicad/kicad_io_utils.h>
 
-#include <wx/filename.h>
-#include <wx/log.h>
 #include <wx/translation.h>
 #include <wx/ffile.h>
 
@@ -543,122 +539,22 @@ void STRING_FORMATTER::StripUseless()
 }
 
 
-// Both file-output formatters below write to a sibling temp file and atomically rename
-// over the target on Finish(). A crash, throw, or power loss before commit leaves the
-// final target byte-identical to its prior contents.
-
-namespace
-{
-void atomicCommit( FILE*& aFp, const wxString& aTempPath, const wxString& aFinalPath )
-{
-    if( !KIPLATFORM::IO::FlushToDisk( aFp ) )
-    {
-        int err = errno;
-        fclose( aFp );
-        aFp = nullptr;
-        wxRemoveFile( aTempPath );
-        THROW_IO_ERROR( wxString::Format( _( "Cannot flush '%s' to disk: %s" ), aTempPath,
-                                          wxString::FromUTF8( strerror( err ) ) ) );
-    }
-
-    fclose( aFp );
-    aFp = nullptr;
-
-    wxString commitError;
-
-    if( !KIPLATFORM::IO::CommitTempFile( aTempPath, aFinalPath, &commitError ) )
-    {
-        wxRemoveFile( aTempPath );
-        THROW_IO_ERROR( commitError );
-    }
-}
-
-
-void discardTempFile( FILE*& aFp, const wxString& aTempPath )
-{
-    if( aFp )
-    {
-        fclose( aFp );
-        aFp = nullptr;
-    }
-
-    if( !aTempPath.IsEmpty() )
-        wxRemoveFile( aTempPath );
-}
-
-
-// Shared destructor body for the atomic-commit formatters. Throwing from a destructor
-// while another exception is in flight calls std::terminate, so during stack unwinding
-// we discard the temp and let the original exception propagate. When no exception is in
-// flight we fall back to a best-effort commit for callers that have not been migrated to
-// explicit Finish() yet. Explicit Finish() is the contract for anything that cares about
-// data-loss detection; destructor-path failures are surfaced as wxLogError because we
-// cannot throw safely from here.
-template <typename FinishFn>
-void finalizeFormatter( FILE*& aFp, const wxString& aTempPath, const wxString& aFilename,
-                        bool aCommitted, FinishFn aFinish )
-{
-    if( aCommitted )
-        return;
-
-    if( std::uncaught_exceptions() > 0 )
-    {
-        discardTempFile( aFp, aTempPath );
-        return;
-    }
-
-    try
-    {
-        aFinish();
-    }
-    catch( const std::exception& e )
-    {
-        wxLogError( _( "Failed to commit save of '%s': %s. "
-                       "The file on disk has not been modified." ),
-                    aFilename, wxString::FromUTF8( e.what() ) );
-        discardTempFile( aFp, aTempPath );
-    }
-}
-} // anonymous namespace
-
-
 FILE_OUTPUTFORMATTER::FILE_OUTPUTFORMATTER( const wxString& aFileName, const wxChar* aMode,
                                             char aQuoteChar ):
     OUTPUTFORMATTER( OUTPUTFMTBUFZ, aQuoteChar ),
-    m_fp( nullptr ),
-    m_filename( KIPLATFORM::IO::ResolveSymlinkTarget( aFileName ) ),
-    m_committed( false )
+    m_filename( aFileName )
 {
-    wxString err;
-    m_fp = KIPLATFORM::IO::OpenUniqueSiblingTempFile( m_filename, aMode, &m_tempPath, &err );
+    m_fp = wxFopen( aFileName, aMode );
 
     if( !m_fp )
-        THROW_IO_ERROR( err );
+        THROW_IO_ERROR( strerror( errno ) );
 }
 
 
 FILE_OUTPUTFORMATTER::~FILE_OUTPUTFORMATTER()
 {
-    finalizeFormatter( m_fp, m_tempPath, m_filename, m_committed, [this] { Finish(); } );
-}
-
-
-bool FILE_OUTPUTFORMATTER::Finish()
-{
-    if( m_committed )
-        return true;
-
-    if( !m_fp )
-    {
-        if( !m_tempPath.IsEmpty() )
-            wxRemoveFile( m_tempPath );
-
-        return false;
-    }
-
-    atomicCommit( m_fp, m_tempPath, m_filename );
-    m_committed = true;
-    return true;
+    if( m_fp )
+        fclose( m_fp );
 }
 
 
@@ -674,56 +570,42 @@ PRETTIFIED_FILE_OUTPUTFORMATTER::PRETTIFIED_FILE_OUTPUTFORMATTER( const wxString
                                                                   const wxChar* aMode,
                                                                   char aQuoteChar ) :
         OUTPUTFORMATTER( OUTPUTFMTBUFZ, aQuoteChar ),
-        m_fp( nullptr ),
-        m_filename( KIPLATFORM::IO::ResolveSymlinkTarget( aFileName ) ),
-        m_committed( false ),
         m_mode( aFormatMode )
 {
     if( ADVANCED_CFG::GetCfg().m_CompactSave && m_mode == KICAD_FORMAT::FORMAT_MODE::NORMAL )
         m_mode = KICAD_FORMAT::FORMAT_MODE::COMPACT_TEXT_PROPERTIES;
 
-    wxString err;
-    m_fp = KIPLATFORM::IO::OpenUniqueSiblingTempFile( m_filename, aMode, &m_tempPath, &err );
+    m_fp = wxFopen( aFileName, aMode );
 
     if( !m_fp )
-        THROW_IO_ERROR( err );
+        THROW_IO_ERROR( strerror( errno ) );
 }
 
 
 PRETTIFIED_FILE_OUTPUTFORMATTER::~PRETTIFIED_FILE_OUTPUTFORMATTER()
 {
-    finalizeFormatter( m_fp, m_tempPath, m_filename, m_committed,
-                       [this] { PRETTIFIED_FILE_OUTPUTFORMATTER::Finish(); } );
+    try
+    {
+        PRETTIFIED_FILE_OUTPUTFORMATTER::Finish();
+    }
+    catch( ... )
+    {}
 }
 
 
 bool PRETTIFIED_FILE_OUTPUTFORMATTER::Finish()
 {
-    if( m_committed )
-        return true;
-
     if( !m_fp )
-    {
-        if( !m_tempPath.IsEmpty() )
-            wxRemoveFile( m_tempPath );
-
         return false;
-    }
 
     KICAD_FORMAT::Prettify( m_buf, m_mode );
 
-    if( !m_buf.empty() && fwrite( m_buf.c_str(), m_buf.length(), 1, m_fp ) != 1 )
-    {
-        int err = errno;
-        fclose( m_fp );
-        m_fp = nullptr;
-        wxRemoveFile( m_tempPath );
-        THROW_IO_ERROR( wxString::Format( _( "Write failed to '%s': %s" ), m_tempPath,
-                                          wxString::FromUTF8( strerror( err ) ) ) );
-    }
+    if( fwrite( m_buf.c_str(), m_buf.length(), 1, m_fp ) != 1 )
+        THROW_IO_ERROR( strerror( errno ) );
 
-    atomicCommit( m_fp, m_tempPath, m_filename );
-    m_committed = true;
+    fclose( m_fp );
+    m_fp = nullptr;
+
     return true;
 }
 

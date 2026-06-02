@@ -57,13 +57,6 @@ TOOL_ACTION EDA_3D_ACTIONS::toggleRaytacing( TOOL_ACTION_ARGS()
         .Icon( BITMAPS::ray_tracing )
         .ToolbarState( TOOLBAR_STATE::TOGGLE) );
 
-TOOL_ACTION EDA_3D_ACTIONS::toggleShowMissingModels( TOOL_ACTION_ARGS()
-        .Name( "3DViewer.Control.toggleShowMissingModels" )
-        .Scope( AS_GLOBAL )
-        .FriendlyName( _( "Show parts without 3D model" ) )
-        .Tooltip( _( "Display a placeholder for footprints with missing 3D models" ) )
-        .ToolbarState( TOOLBAR_STATE::TOGGLE ) );
-
 TOOL_ACTION EDA_3D_ACTIONS::copyToClipboard( TOOL_ACTION_ARGS()
         .Name( "3DViewer.Control.copyToClipboard" )
         .Scope( AS_GLOBAL )

@@ -108,7 +108,7 @@ private:
 
 
 /**
- * Class that parses a single FILE_STREAM into a BRD_DB,
+ * Class that parses a single FILE_STREAM into a RAW_BOARD,
  * and handles any state involved in that parsing
  *
  * This only handles converting rawfile stream data into

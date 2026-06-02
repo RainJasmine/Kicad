@@ -30,7 +30,7 @@
 
 #include <vector>
 
-#include <geometry/rtree/dynamic_rtree_cow.h>
+#include <geometry/rtree.h>
 #include <geometry/shape.h>
 #include <math/box2.h>
 
@@ -113,25 +113,39 @@ template <class T = SHAPE*>
 class SHAPE_INDEX
 {
     public:
-        using TREE_TYPE = KIRTREE::COW_RTREE<T, int, 2>;
-
         class Iterator
         {
         private:
-            using TreeIterator = typename TREE_TYPE::Iterator;
-            TreeIterator m_current;
-            TreeIterator m_end;
+            typedef typename RTree<T, int, 2, double>::Iterator RTreeIterator;
+            RTreeIterator iterator;
 
-        public:
-            Iterator( const TREE_TYPE& aTree ) :
-                    m_current( aTree.begin() ),
-                    m_end( aTree.end() )
+            /**
+             * Setup the internal tree iterator.
+             *
+             * @param aTree is a #RTREE object/
+             */
+            void Init( RTree<T, int, 2, double>* aTree )
             {
+                aTree->GetFirst( iterator );
             }
 
+        public:
+            /**
+             * Create an iterator for the index object.
+             *
+             * @param aIndex is a #SHAPE_INDEX object to iterate.
+             */
+            Iterator( SHAPE_INDEX* aIndex )
+            {
+                Init( aIndex->m_tree );
+            }
+
+            /**
+             * Return the next data element.
+             */
             T operator*()
             {
-                return *m_current;
+                return *iterator;
             }
 
             /**
@@ -139,8 +153,7 @@ class SHAPE_INDEX
              */
             bool operator++()
             {
-                ++m_current;
-                return m_current != m_end;
+                return ++iterator;
             }
 
             /**
@@ -148,8 +161,7 @@ class SHAPE_INDEX
              */
             bool operator++( int )
             {
-                ++m_current;
-                return m_current != m_end;
+                return ++iterator;
             }
 
             /**
@@ -159,7 +171,7 @@ class SHAPE_INDEX
              */
             bool IsNull() const
             {
-                return m_current == m_end;
+                return iterator.IsNull();
             }
 
             /**
@@ -169,7 +181,7 @@ class SHAPE_INDEX
              */
             bool IsNotNull() const
             {
-                return m_current != m_end;
+                return iterator.IsNotNull();
             }
 
             /**
@@ -179,49 +191,23 @@ class SHAPE_INDEX
              */
             T Next()
             {
-                T object = *m_current;
-                ++m_current;
+                T object = *iterator;
+                ++iterator;
 
                 return object;
             }
         };
 
-        explicit SHAPE_INDEX( int aLayer ) : m_shapeLayer( aLayer ) {}
+        explicit SHAPE_INDEX( int aLayer );
 
-        ~SHAPE_INDEX() = default;
-
-        // Move semantics
-        SHAPE_INDEX( SHAPE_INDEX&& aOther ) noexcept = default;
-        SHAPE_INDEX& operator=( SHAPE_INDEX&& aOther ) noexcept = default;
-
-        // Non-copyable (use Clone() for intentional sharing)
-        SHAPE_INDEX( const SHAPE_INDEX& ) = delete;
-        SHAPE_INDEX& operator=( const SHAPE_INDEX& ) = delete;
-
-        /**
-         * Create a CoW clone that shares tree structure with this index.
-         * O(1) -- only increments the root node's refcount.
-         */
-        SHAPE_INDEX Clone() const
-        {
-            SHAPE_INDEX clone( m_shapeLayer );
-            clone.m_tree = m_tree.Clone();
-            return clone;
-        }
+        ~SHAPE_INDEX();
 
         /**
          * Add a #SHAPE to the index.
          *
          * @param aShape is the new SHAPE.
          */
-        void Add( T aShape )
-        {
-            BOX2I box = boundingBox( aShape, m_shapeLayer );
-            int min[2] = { box.GetX(), box.GetY() };
-            int max[2] = { box.GetRight(), box.GetBottom() };
-
-            m_tree.Insert( min, max, aShape );
-        }
+        void Add( T aShape );
 
         /**
          * Add a shape with alternate BBox.
@@ -229,35 +215,19 @@ class SHAPE_INDEX
          * @param aShape Shape (Item) to add.
          * @param aBbox alternate bounding box.  This should be a subset of the item's bbox
          */
-        void Add( T aShape, const BOX2I& aBbox )
-        {
-            int min[2] = { aBbox.GetX(), aBbox.GetY() };
-            int max[2] = { aBbox.GetRight(), aBbox.GetBottom() };
-
-            m_tree.Insert( min, max, aShape );
-        }
+        void Add( T aShape, const BOX2I& aBbox );
 
         /**
          * Remove a #SHAPE from the index.
          *
          * @param aShape is the #SHAPE to remove.
          */
-        void Remove( T aShape )
-        {
-            BOX2I box = boundingBox( aShape, m_shapeLayer );
-            int min[2] = { box.GetX(), box.GetY() };
-            int max[2] = { box.GetRight(), box.GetBottom() };
-
-            m_tree.Remove( min, max, aShape );
-        }
+        void Remove( T aShape );
 
         /**
          * Remove all the contents of the index.
          */
-        void RemoveAll()
-        {
-            m_tree.RemoveAll();
-        }
+        void RemoveAll();
 
         /**
          * Accept a visitor for every #SHAPE object contained in this INDEX.
@@ -267,32 +237,14 @@ class SHAPE_INDEX
         template <class V>
         void Accept( V aVisitor )
         {
-            for( const T& item : m_tree )
-                acceptVisitor( item, aVisitor );
-        }
+            Iterator iter = this->Begin();
 
-        /**
-         * Build from a batch of items using Hilbert-curve bulk loading.
-         * Replaces all existing content. O(n log n).
-         */
-        void BulkLoad( std::vector<std::pair<T, BOX2I>>& aItems )
-        {
-            using BULK_ENTRY = typename TREE_TYPE::BULK_ENTRY;
-            std::vector<BULK_ENTRY> entries;
-            entries.reserve( aItems.size() );
-
-            for( const auto& [item, box] : aItems )
+            while( !iter.IsNull() )
             {
-                BULK_ENTRY e;
-                e.min[0] = box.GetX();
-                e.min[1] = box.GetY();
-                e.max[0] = box.GetRight();
-                e.max[1] = box.GetBottom();
-                e.data = item;
-                entries.push_back( e );
+                T shape = *iter;
+                acceptVisitor( shape, aVisitor );
+                iter++;
             }
-
-            m_tree.BulkLoad( entries );
         }
 
         /**
@@ -300,19 +252,7 @@ class SHAPE_INDEX
          *
          * This should be used if the geometry of the objects contained by the index has changed.
          */
-        void Reindex()
-        {
-            std::vector<T> items;
-            items.reserve( m_tree.size() );
-
-            for( const T& item : m_tree )
-                items.push_back( item );
-
-            m_tree.RemoveAll();
-
-            for( T& item : items )
-                Add( item );
-        }
+        void Reindex();
 
         /**
          * Run a callback on every #SHAPE object contained in the bounding box of (shape).
@@ -330,7 +270,7 @@ class SHAPE_INDEX
             int min[2] = { box.GetX(),         box.GetY() };
             int max[2] = { box.GetRight(),     box.GetBottom() };
 
-            return m_tree.Search( min, max, aVisitor );
+            return this->m_tree->Search( min, max, aVisitor );
         }
 
         /**
@@ -338,20 +278,91 @@ class SHAPE_INDEX
          *
          * @return iterator to the first object.
          */
-        Iterator Begin() const
-        {
-            return Iterator( m_tree );
-        }
-
-        // Range-for support
-        typename TREE_TYPE::Iterator begin() const { return m_tree.begin(); }
-        typename TREE_TYPE::Iterator end() const { return m_tree.end(); }
-
-        size_t Size() const { return m_tree.size(); }
+        Iterator Begin();
 
     private:
-        TREE_TYPE m_tree;
+        RTree<T, int, 2, double>* m_tree;
         int m_shapeLayer;
 };
+
+/*
+ * Class members implementation
+ */
+
+template <class T>
+SHAPE_INDEX<T>::SHAPE_INDEX( int aLayer )
+{
+    this->m_tree = new RTree<T, int, 2, double>();
+    this->m_shapeLayer = aLayer;
+}
+
+template <class T>
+SHAPE_INDEX<T>::~SHAPE_INDEX()
+{
+    delete this->m_tree;
+}
+
+template <class T>
+void SHAPE_INDEX<T>::Add( T aShape, const BOX2I& aBbox )
+{
+    int min[2] = { aBbox.GetX(), aBbox.GetY() };
+    int max[2] = { aBbox.GetRight(), aBbox.GetBottom() };
+
+    this->m_tree->Insert( min, max, aShape );
+}
+
+template <class T>
+void SHAPE_INDEX<T>::Add( T aShape )
+{
+    BOX2I box = boundingBox( aShape, this->m_shapeLayer );
+    int min[2] = { box.GetX(), box.GetY() };
+    int max[2] = { box.GetRight(), box.GetBottom() };
+
+    this->m_tree->Insert( min, max, aShape );
+}
+
+template <class T>
+void SHAPE_INDEX<T>::Remove( T aShape )
+{
+    BOX2I box = boundingBox( aShape, this->m_shapeLayer );
+    int min[2] = { box.GetX(), box.GetY() };
+    int max[2] = { box.GetRight(), box.GetBottom() };
+
+    this->m_tree->Remove( min, max, aShape );
+}
+
+template <class T>
+void SHAPE_INDEX<T>::RemoveAll()
+{
+    this->m_tree->RemoveAll();
+}
+
+template <class T>
+void SHAPE_INDEX<T>::Reindex()
+{
+    RTree<T, int, 2, double>* newTree;
+    newTree = new RTree<T, int, 2, double>();
+
+    Iterator iter = this->Begin();
+
+    while( !iter.IsNull() )
+    {
+        T shape = *iter;
+        BOX2I box = boundingBox( shape, this->m_shapeLayer );
+        int min[2] = { box.GetX(), box.GetY() };
+        int max[2] = { box.GetRight(), box.GetBottom() };
+        newTree->Insert( min, max, shape );
+        iter++;
+    }
+
+    delete this->m_tree;
+    this->m_tree = newTree;
+}
+
+template <class T>
+typename SHAPE_INDEX<T>::Iterator SHAPE_INDEX<T>::Begin()
+{
+    return Iterator( this );
+}
 
 #endif /* __SHAPE_INDEX_H */

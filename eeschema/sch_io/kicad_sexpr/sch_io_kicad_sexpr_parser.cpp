@@ -615,18 +615,6 @@ LIB_SYMBOL* SCH_IO_KICAD_SEXPR_PARSER::parseLibSymbol( LIB_SYMBOL_MAP& aSymbolLi
             catch( const IO_ERROR& e )
             {
                 m_parseWarnings.push_back( e.What() );
-
-                int depth = 0;
-
-                for( int tok = embeddedFilesParser.NextTok();
-                     tok != DSN_EOF;
-                     tok = embeddedFilesParser.NextTok() )
-                {
-                    if( tok == DSN_LEFT )
-                        depth++;
-                    else if( tok == DSN_RIGHT && --depth < 0 )
-                        break;
-                }
             }
 
             SyncLineReaderWith( embeddedFilesParser );
@@ -2959,7 +2947,6 @@ void SCH_IO_KICAD_SEXPR_PARSER::ParseSchematic( SCH_SHEET* aSheet, bool aIsCopya
                 line->SetStartPoint( outline.CPoint(0) );
                 line->SetEndPoint( outline.CPoint(1) );
                 line->SetStroke( poly->GetStroke() );
-                line->SetLocked( poly->IsLocked() );
                 const_cast<KIID&>( line->m_Uuid ) = poly->m_Uuid;
 
                 screen->Append( line );
@@ -3059,18 +3046,6 @@ void SCH_IO_KICAD_SEXPR_PARSER::ParseSchematic( SCH_SHEET* aSheet, bool aIsCopya
             catch( const PARSE_ERROR& e )
             {
                 m_parseWarnings.push_back( e.What() );
-
-                int depth = 0;
-
-                for( int tok = embeddedFilesParser.NextTok();
-                     tok != DSN_EOF;
-                     tok = embeddedFilesParser.NextTok() )
-                {
-                    if( tok == DSN_LEFT )
-                        depth++;
-                    else if( tok == DSN_RIGHT && --depth < 0 )
-                        break;
-                }
             }
 
             SyncLineReaderWith( embeddedFilesParser );
@@ -3259,11 +3234,6 @@ SCH_SYMBOL* SCH_IO_KICAD_SEXPR_PARSER::parseSchematicSymbol()
 
         case T_dnp:
             symbol->SetDNP( parseBool() );
-            NeedRIGHT();
-            break;
-
-        case T_locked:
-            symbol->SetLocked( parseBool() );
             NeedRIGHT();
             break;
 
@@ -3684,13 +3654,8 @@ SCH_BITMAP* SCH_IO_KICAD_SEXPR_PARSER::parseImage()
             break;
         }
 
-        case T_locked:
-            bitmap->SetLocked( parseBool() );
-            NeedRIGHT();
-            break;
-
         default:
-            Expecting( "at, scale, uuid, data or locked" );
+            Expecting( "at, scale, uuid or data" );
         }
     }
 
@@ -3764,11 +3729,6 @@ SCH_SHEET* SCH_IO_KICAD_SEXPR_PARSER::parseSheet()
 
         case T_dnp:
             sheet->SetDNP( parseBool() );
-            NeedRIGHT();
-            break;
-
-        case T_locked:
-            sheet->SetLocked( parseBool() );
             NeedRIGHT();
             break;
 
@@ -4070,13 +4030,8 @@ SCH_JUNCTION* SCH_IO_KICAD_SEXPR_PARSER::parseJunction()
             NeedRIGHT();
             break;
 
-        case T_locked:
-            junction->SetLocked( parseBool() );
-            NeedRIGHT();
-            break;
-
         default:
-            Expecting( "at, diameter, color, uuid or locked" );
+            Expecting( "at, diameter, color or uuid" );
         }
     }
 
@@ -4112,13 +4067,8 @@ SCH_NO_CONNECT* SCH_IO_KICAD_SEXPR_PARSER::parseNoConnect()
             NeedRIGHT();
             break;
 
-        case T_locked:
-            no_connect->SetLocked( parseBool() );
-            NeedRIGHT();
-            break;
-
         default:
-            Expecting( "at, uuid or locked" );
+            Expecting( "at or uuid" );
         }
     }
 
@@ -4171,13 +4121,8 @@ SCH_BUS_WIRE_ENTRY* SCH_IO_KICAD_SEXPR_PARSER::parseBusEntry()
             NeedRIGHT();
             break;
 
-        case T_locked:
-            busEntry->SetLocked( parseBool() );
-            NeedRIGHT();
-            break;
-
         default:
-            Expecting( "at, size, uuid, stroke or locked" );
+            Expecting( "at, size, uuid or stroke" );
         }
     }
 
@@ -4252,13 +4197,8 @@ SCH_SHAPE* SCH_IO_KICAD_SEXPR_PARSER::parseSchPolyLine()
             NeedRIGHT();
             break;
 
-        case T_locked:
-            polyline->SetLocked( parseBool() );
-            NeedRIGHT();
-            break;
-
         default:
-            Expecting( "pts, uuid, stroke, fill or locked" );
+            Expecting( "pts, uuid, stroke, or fill" );
         }
     }
 
@@ -4326,13 +4266,8 @@ SCH_LINE* SCH_IO_KICAD_SEXPR_PARSER::parseLine()
             NeedRIGHT();
             break;
 
-        case T_locked:
-            line->SetLocked( parseBool() );
-            NeedRIGHT();
-            break;
-
         default:
-            Expecting( "pts, uuid, stroke or locked" );
+            Expecting( "at, uuid or stroke" );
         }
     }
 
@@ -4395,13 +4330,8 @@ SCH_SHAPE* SCH_IO_KICAD_SEXPR_PARSER::parseSchArc()
             NeedRIGHT();
             break;
 
-        case T_locked:
-            arc->SetLocked( parseBool() );
-            NeedRIGHT();
-            break;
-
         default:
-            Expecting( "start, mid, end, stroke, fill, uuid or locked" );
+            Expecting( "start, mid, end, stroke, fill or uuid" );
         }
     }
 
@@ -4460,13 +4390,8 @@ SCH_SHAPE* SCH_IO_KICAD_SEXPR_PARSER::parseSchCircle()
             NeedRIGHT();
             break;
 
-        case T_locked:
-            circle->SetLocked( parseBool() );
-            NeedRIGHT();
-            break;
-
         default:
-            Expecting( "center, radius, stroke, fill, uuid or locked" );
+            Expecting( "center, radius, stroke, fill or uuid" );
         }
     }
 
@@ -4529,13 +4454,8 @@ SCH_SHAPE* SCH_IO_KICAD_SEXPR_PARSER::parseSchRectangle()
             NeedRIGHT();
             break;
 
-        case T_locked:
-            rectangle->SetLocked( parseBool() );
-            NeedRIGHT();
-            break;
-
         default:
-            Expecting( "start, end, stroke, fill, uuid or locked" );
+            Expecting( "start, end, stroke, fill or uuid" );
         }
     }
 
@@ -4601,13 +4521,8 @@ SCH_RULE_AREA* SCH_IO_KICAD_SEXPR_PARSER::parseSchRuleArea()
             NeedRIGHT();
             break;
 
-        case T_locked:
-            ruleArea->SetLocked( parseBool() );
-            NeedRIGHT();
-            break;
-
         default:
-            Expecting( "exclude_from_sim, on_board, in_bom, dnp, locked, or polyline" );
+            Expecting( "exclude_from_sim, on_board, in_bom, dnp, or polyline" );
         }
     }
 
@@ -4680,13 +4595,8 @@ SCH_SHAPE* SCH_IO_KICAD_SEXPR_PARSER::parseSchBezier()
             NeedRIGHT();
             break;
 
-        case T_locked:
-            bezier->SetLocked( parseBool() );
-            NeedRIGHT();
-            break;
-
         default:
-            Expecting( "pts, stroke, fill, uuid or locked" );
+            Expecting( "pts, stroke, fill or uuid" );
         }
     }
 
@@ -4848,13 +4758,8 @@ SCH_TEXT* SCH_IO_KICAD_SEXPR_PARSER::parseSchText()
             break;
         }
 
-        case T_locked:
-            text->SetLocked( parseBool() );
-            NeedRIGHT();
-            break;
-
         default:
-            Expecting( "at, shape, iref, uuid, effects or locked" );
+            Expecting( "at, shape, iref, uuid or effects" );
         }
     }
 
@@ -4996,16 +4901,11 @@ void SCH_IO_KICAD_SEXPR_PARSER::parseSchTextBoxContent( SCH_TEXTBOX* aTextBox )
             NeedRIGHT();
             break;
 
-        case T_locked:
-            aTextBox->SetLocked( parseBool() );
-            NeedRIGHT();
-            break;
-
         default:
             if( dynamic_cast<SCH_TABLECELL*>( aTextBox ) != nullptr )
-                Expecting( "at, size, stroke, fill, effects, span, uuid or locked" );
+                Expecting( "at, size, stroke, fill, effects, span or uuid" );
             else
-                Expecting( "at, size, stroke, fill, effects, uuid or locked" );
+                Expecting( "at, size, stroke, fill, effects or uuid" );
         }
     }
 
@@ -5162,13 +5062,8 @@ SCH_TABLE* SCH_IO_KICAD_SEXPR_PARSER::parseSchTable()
             NeedRIGHT();
             break;
 
-        case T_locked:
-            table->SetLocked( parseBool() );
-            NeedRIGHT();
-            break;
-
         default:
-            Expecting( "columns, col_widths, row_heights, border, separators, uuid, locked, header or cells" );
+            Expecting( "columns, col_widths, row_heights, border, separators, uuid, header or cells" );
         }
     }
 
@@ -5318,13 +5213,8 @@ void SCH_IO_KICAD_SEXPR_PARSER::parseGroup()
             break;
         }
 
-        case T_locked:
-            groupInfo.locked = parseBool();
-            NeedRIGHT();
-            break;
-
         default:
-            Expecting( "uuid, lib_id, members, locked" );
+            Expecting( "uuid, lib_id, members" );
         }
     }
 }
@@ -5367,8 +5257,6 @@ void SCH_IO_KICAD_SEXPR_PARSER::resolveGroups( SCH_SCREEN* aParent )
 
         if( groupInfo.libId.IsValid() )
             group->SetDesignBlockLibId( groupInfo.libId );
-
-        group->SetLocked( groupInfo.locked );
 
         aParent->Append( group );
     }

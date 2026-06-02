@@ -21,7 +21,6 @@
 #include <wx/sizer.h>
 #include <wx/statbox.h>
 #include <wx/button.h>
-#include <wx/checkbox.h>
 #include <wx/bitmap.h>
 #include <wx/image.h>
 #include <wx/icon.h>
@@ -47,7 +46,6 @@ class DIALOG_IMPORTED_LAYERS_BASE : public DIALOG_SHIM
 		wxButton* m_button_removeall;
 		wxListCtrl* m_matched_layers_list;
 		wxButton* m_button_automatch;
-		wxCheckBox* m_cbKeepKiCadLayerNames;
 		wxStdDialogButtonSizer* m_sdbSizer;
 		wxButton* m_sdbSizerOK;
 

@@ -33,7 +33,6 @@ set( QA_COMMON_SRCS
     test_angle_item.cpp
 
     test_array_axis.cpp
-    test_atomic_save.cpp
     test_backup_settings.cpp
     test_base_set.cpp
     test_bitmap_base.cpp
@@ -46,13 +45,10 @@ set( QA_COMMON_SRCS
     test_eda_text.cpp
     test_embedded_file_compress.cpp
     test_expand_text_vars.cpp
-    test_text_var_dependency.cpp
-    test_drawing_sheet_reactive.cpp
     test_file_history.cpp
     test_filename_resolver.cpp
     test_hotkey_store.cpp
     test_increment.cpp
-    test_item_realignment.cpp
     test_ki_any.cpp
     test_library_tables.cpp
     test_markup_parser.cpp
@@ -60,7 +56,6 @@ set( QA_COMMON_SRCS
     test_kicad_stroke_font.cpp
     test_gerber_plotter.cpp
     test_pdf_unicode_plot.cpp
-    test_png_plotter.cpp
     test_kiid.cpp
     test_layer_ids.cpp
     test_lib_id.cpp
@@ -71,7 +66,6 @@ set( QA_COMMON_SRCS
     test_property.cpp
     test_property_holder.cpp
     test_reporting.cpp
-    test_rc_tree_model.cpp
     test_refdes_utils.cpp
     test_grid_helper.cpp
     test_string_utils.cpp
@@ -92,20 +86,6 @@ set( QA_COMMON_SRCS
 
     libeval/test_numeric_evaluator.cpp
 
-    transline_calculations/test_coax.cpp
-    transline_calculations/test_coplanar.cpp
-    transline_calculations/test_dielectric_selector.cpp
-    transline_calculations/test_djordjevic_sarkar.cpp
-    transline_calculations/test_djordjevic_sarkar_integration.cpp
-    transline_calculations/test_coupled_microstrip.cpp
-    transline_calculations/test_coupled_stripline.cpp
-    transline_calculations/test_coupled_stripline_offset.cpp
-    transline_calculations/test_microstrip_cover.cpp
-    transline_calculations/test_rectwaveguide.cpp
-    transline_calculations/test_soldermask.cpp
-    transline_calculations/test_transline_roundtrip.cpp
-    transline_calculations/test_twistedpair.cpp
-
     io/test_csv.cpp
     io/altium/test_altium_parser.cpp
     io/altium/test_altium_parser_utils.cpp
@@ -117,8 +97,6 @@ set( QA_COMMON_SRCS
     io/pads/test_pads_common.cpp
     io/pads/test_pads_unit_converter.cpp
 
-    test_kigit_common.cpp
-    test_kigit_orphan_registry.cpp
     test_throttle.cpp
     view/test_zoom_controller.cpp
 
@@ -129,7 +107,6 @@ set( QA_COMMON_SRCS
 
     # Graphics import tests
     test_graphics_importer_buffer.cpp
-    test_svg_import.cpp
 
     # Project template tests (source included directly since it's from kicad executable)
     test_project_template.cpp

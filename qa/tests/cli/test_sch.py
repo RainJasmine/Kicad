@@ -66,62 +66,15 @@ def test_sch_export_svg( kitest: KiTestFixture,
 
     png_converted_from_svg_path = output_svg_path.with_suffix( '.png' )
 
-    cairosvg.svg2png( url=str( output_svg_path ), write_to=str( png_converted_from_svg_path ), dpi=600 )
+    cairosvg.svg2png( url=str( output_svg_path ), write_to=str( png_converted_from_svg_path ), dpi=1200 )
 
     compare_file_path = kitest.get_data_file_path( compare_fn )
     compare_stem = f"orig_{output_dir}"
     compare_png_converted_from_svg_path = output_svg_path.with_suffix( '.png' ).with_stem(compare_stem)
-    cairosvg.svg2png( url=str( compare_file_path ), write_to=str( compare_png_converted_from_svg_path ), dpi=600 )
+    cairosvg.svg2png( url=str( compare_file_path ), write_to=str( compare_png_converted_from_svg_path ), dpi=1200 )
 
     assert utils.images_are_equal( png_converted_from_svg_path, compare_png_converted_from_svg_path,
                                    diff_handler=kitest.add_attachment )
-
-
-@pytest.mark.parametrize("test_file,output_dir,cli_args",
-                            [("cli/basic_test/basic_test.kicad_sch", "basic_test_png", []),
-                             ("cli/basic_test/basic_test.kicad_sch", "basic_test_png_bnw_nobg",
-                              ["--no-background-color", "--black-and-white"])
-                             ])
-def test_sch_export_png( kitest: KiTestFixture,
-                         test_file: str,
-                         output_dir: str,
-                         cli_args: List[str] ):
-    input_file = kitest.get_data_file_path( test_file )
-
-    output_path = kitest.get_output_path( "cli/{}/".format( output_dir ) )
-
-    command = [utils.kicad_cli(), "sch", "export", "png", "--dpi", "150"]
-    command.extend( cli_args )
-    command.append( "-o" )
-    command.append( str( output_path ) )
-    command.append( str( input_file ) )
-
-    stdout, stderr, exitcode = utils.run_and_capture( command )
-
-    assert exitcode == 0
-    assert stderr == ''
-    assert stdout is not None
-
-    png_files = list( output_path.glob( "*.png" ) )
-    assert len( png_files ) >= 1, \
-        "Expected at least 1 PNG file in output dir, found {}".format( len( png_files ) )
-
-    for png in png_files:
-        kitest.add_attachment( png )
-        assert not utils.image_is_blank( str( png ) )
-
-
-def test_sch_export_png_invalid_dpi( kitest: KiTestFixture ):
-    input_file = kitest.get_data_file_path( "cli/basic_test/basic_test.kicad_sch" )
-    output_path = kitest.get_output_path( "cli/basic_test_png_invalid_dpi/" )
-
-    command = [utils.kicad_cli(), "sch", "export", "png", "--dpi", "1",
-               "-o", str( output_path ), str( input_file )]
-
-    stdout, stderr, exitcode = utils.run_and_capture( command )
-
-    assert exitcode != 0
-    assert "DPI must be between" in stderr
 
 
 @pytest.mark.parametrize("test_file,output_fn,line_skip_count,skip_compare,cli_args",

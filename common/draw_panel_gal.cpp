@@ -52,8 +52,6 @@
 
 #include <core/profile.h>
 
-#include <wx/display.h>
-
 #include <pgm_base.h>
 #include <confirm.h>
 
@@ -277,10 +275,6 @@ bool EDA_DRAW_PANEL_GAL::DoRePaint( bool aAllowSkip )
     if( Pgm().GetCommonSettings()->m_Appearance.show_scrollbars )
         m_viewControls->UpdateScrollbars();
 
-#ifdef KICAD_GAL_PROFILE
-    latencyProbeZoomToRender.Checkpoint("do-repaint-start");
-#endif
-
     SCOPED_SET_RESET<bool> drawing( m_drawing, true );
 
     ( *m_PaintEventCounter )++;
@@ -290,11 +284,11 @@ bool EDA_DRAW_PANEL_GAL::DoRePaint( bool aAllowSkip )
     KIGFX::RENDER_SETTINGS* settings =
             static_cast<KIGFX::RENDER_SETTINGS*>( m_painter->GetSettings() );
 
-    PROF_TIMER cntUpd("view-upd-items", false);
-    PROF_TIMER cntTotal("view-total", false);
-    PROF_TIMER cntCtx("view-context-create", false);
-    PROF_TIMER cntCtxDestroy("view-context-destroy", false);
-    PROF_TIMER cntRedraw("view-redraw-rects", false);
+    PROF_TIMER cntUpd("view-upd-items");
+    PROF_TIMER cntTotal("view-total");
+    PROF_TIMER cntCtx("view-context-create");
+    PROF_TIMER cntCtxDestroy("view-context-destroy");
+    PROF_TIMER cntRedraw("view-redraw-rects");
 
     bool isDirty = false;
 
@@ -399,20 +393,11 @@ bool EDA_DRAW_PANEL_GAL::DoRePaint( bool aAllowSkip )
 
             m_gal->DrawCursor( cursorPos );
 
-	    #ifdef KICAD_GAL_PROFILE
-	    latencyProbeZoomToRender.Checkpoint("do-repaint-pre-ctx-destroy");
-	    #endif
-
-
             cntCtxDestroy.Start();
         }
 
         // ctx goes out of scope here so destructor would be called
         cntCtxDestroy.Stop();
-
-#ifdef KICAD_GAL_PROFILE
-    	latencyProbeZoomToRender.Checkpoint("do-repaint-ctx-done");
-#endif
 
         // OpenGL frame completed successfully, allow future recovery attempts
         m_glRecoveryAttempted = false;
@@ -434,24 +419,16 @@ bool EDA_DRAW_PANEL_GAL::DoRePaint( bool aAllowSkip )
 
     if( isDirty )
     {
-#ifdef KICAD_GAL_PROFILE
-        wxLogTrace( traceGalProfile, "View timing: %s %s %s %s %s",
+        KI_TRACE( traceGalProfile, "View timing: %s %s %s %s %s\n",
             cntTotal.to_string(),
             cntUpd.to_string(),
             cntRedraw.to_string(),
             cntCtx.to_string(),
             cntCtxDestroy.to_string()
         );
-#endif
     }
 
     m_lastRepaintEnd = wxGetLocalTimeMillis();
-
-#ifdef KICAD_GAL_PROFILE
-    wxLogTrace( traceGalProfile, "%s", latencyProbeZoomToRender.to_string() );
-    latencyProbeRepaintToMotion.Reset();
-    latencyProbeRepaintToMotion.Checkpoint("repaint-done");
-#endif    
 
     return true;
 }
@@ -507,30 +484,13 @@ void EDA_DRAW_PANEL_GAL::Refresh( bool aEraseBackground, const wxRect* aRect )
     wxLongLong delta = now - m_lastRepaintEnd;
     bool galInitialized = m_gal && m_gal->IsInitialized();
 
-    // wxGetLocalTimeMillis is wall clock, so an NTP correction or manual
-    // clock change can make delta negative. Treat that as "long enough".
-    if( delta < 0 )
-        delta = 0;
-
     // When vsync is available the driver throttles SwapBuffers, so we only need
     // a small guard to avoid queueing work faster than the GPU can consume it.
-    // Without vsync, cap the render rate at the monitor refresh rate so the
-    // GPU is not saturated producing frames that will never be shown.
+    // Without vsync, enforce a 60 FPS ceiling to prevent saturating the GPU.
     int minPeriodMs = 3;
 
     if( galInitialized && m_gal->GetSwapInterval() == 0 )
-    {
-        // wxDisplay reports 0 on headless, some virtualized, and a few driver
-        // combinations. Clamp to a plausible monitor range before trusting it
-        // and fall back to 60 Hz otherwise.
-        int refreshHz = 60;
-        int reported = wxDisplay( this ).GetCurrentMode().refresh;
-
-        if( reported >= 24 && reported <= 1000 )
-            refreshHz = reported;
-
-        minPeriodMs = 1000 / refreshHz;
-    }
+        minPeriodMs = 16;
 
     if( delta >= minPeriodMs )
     {
@@ -539,7 +499,7 @@ void EDA_DRAW_PANEL_GAL::Refresh( bool aEraseBackground, const wxRect* aRect )
     }
     else if( !m_refreshTimer.IsRunning() )
     {
-        m_refreshTimer.StartOnce( static_cast<int>( ( minPeriodMs - delta ).GetValue() ) );
+        m_refreshTimer.StartOnce( ( minPeriodMs - delta ).GetValue() );
     }
 }
 

@@ -915,18 +915,12 @@ bool FOOTPRINT_EDIT_FRAME::SaveFootprintToBoard( bool aAddNew )
                     aUuid = KIID();
             };
 
-    {
-        KIID uuid = newFootprint->m_Uuid;
-        fixUuid( uuid );
-        newFootprint->SetUuid( uuid );
-    }
+    fixUuid( const_cast<KIID&>( newFootprint->m_Uuid ) );
 
     newFootprint->RunOnChildren(
             [&]( BOARD_ITEM* aChild )
             {
-                KIID uuid = aChild->m_Uuid;
-                fixUuid( uuid );
-                aChild->SetUuid( uuid );
+                fixUuid( const_cast<KIID&>( aChild->m_Uuid ) );
             },
             RECURSE_MODE::RECURSE );
 
@@ -964,7 +958,7 @@ bool FOOTPRINT_EDIT_FRAME::SaveFootprintToBoard( bool aAddNew )
         // In the main board the new footprint replaces the old one (pos, orient, ref, value,
         // connections and properties are kept) and the sourceFootprint (old footprint) is
         // deleted
-        pcbframe->ExchangeFootprint( sourceFootprint, newFootprint, commit, true );
+        pcbframe->ExchangeFootprint( sourceFootprint, newFootprint, commit );
         commit.Push( _( "Update Footprint" ) );
     }
     else        // This is an insert command
@@ -977,7 +971,7 @@ bool FOOTPRINT_EDIT_FRAME::SaveFootprintToBoard( bool aAddNew )
         pcbframe->PlaceFootprint( newFootprint );
         newFootprint->SetPosition( VECTOR2I( 0, 0 ) );
         viewControls->SetCrossHairCursorPosition( cursorPos, false );
-        newFootprint->ResetUuid();
+        const_cast<KIID&>( newFootprint->m_Uuid ) = KIID();
         commit.Push( _( "Insert Footprint" ) );
 
         pcbframe->Raise();

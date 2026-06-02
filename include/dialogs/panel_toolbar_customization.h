@@ -91,8 +91,9 @@ protected:
     void populateToolbarTree();
 
     void populateActions();
-    void applyActionFilter();
     bool isActionSupported( const TOOL_ACTION& aAction ) const;
+
+    void applyActionFilter();
     bool actionMatchesFilter( const ACTION_LIST_ENTRY& aEntry, const wxString& aFilter ) const;
 
     void enableCustomControls( bool enable );

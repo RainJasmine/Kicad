@@ -443,7 +443,7 @@ FOOTPRINT* MICROWAVE_TOOL::createMicrowaveInductor( MICROWAVE_INDUCTOR_PATTERN& 
     pad->SetShape( PADSTACK::ALL_LAYERS, PAD_SHAPE::CIRCLE );
 
     PAD* newpad = new PAD( *pad );
-    newpad->ResetUuidDirect();
+    const_cast<KIID&>( newpad->m_Uuid ) = KIID();
 
     footprint->Add( newpad );
 

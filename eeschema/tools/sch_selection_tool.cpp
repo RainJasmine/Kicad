@@ -158,36 +158,6 @@ SELECTION_CONDITION SCH_CONDITIONS::AllPinsOrSheetPins = []( const SELECTION& aS
 };
 
 
-SELECTION_CONDITION SCH_CONDITIONS::HasLockedItems = []( const SELECTION& aSel )
-{
-    for( EDA_ITEM* item : aSel.Items() )
-    {
-        if( SCH_ITEM* schItem = dynamic_cast<SCH_ITEM*>( item ) )
-        {
-            if( schItem->IsLocked() )
-                return true;
-        }
-    }
-
-    return false;
-};
-
-
-SELECTION_CONDITION SCH_CONDITIONS::HasUnlockedItems = []( const SELECTION& aSel )
-{
-    for( EDA_ITEM* item : aSel.Items() )
-    {
-        if( SCH_ITEM* schItem = dynamic_cast<SCH_ITEM*>( item ) )
-        {
-            if( !schItem->IsLocked() )
-                return true;
-        }
-    }
-
-    return false;
-};
-
-
 static void passEvent( TOOL_EVENT* const aEvent, const TOOL_ACTION* const aAllowedActions[] )
 {
     for( int i = 0; aAllowedActions[i]; ++i )
@@ -2093,16 +2063,14 @@ bool SCH_SELECTION_TOOL::itemPassesFilter( EDA_ITEM* aItem, SCH_SELECTION_FILTER
     if( !aItem )
         return false;
 
+    // Locking is not yet exposed uniformly in the schematic
+#if 0
     if( SCH_ITEM* schItem = dynamic_cast<SCH_ITEM*>( aItem ) )
     {
         if( schItem->IsLocked() && !m_filter.lockedItems )
-        {
-            if( aRejected )
-                aRejected->lockedItems = true;
-
             return false;
-        }
     }
+#endif
 
     switch( aItem->Type() )
     {
@@ -2775,37 +2743,6 @@ void SCH_SELECTION_TOOL::filterCollectorForHierarchy( SCH_COLLECTOR& aCollector,
         if( !aCollector.HasItem( item ) )
             aCollector.Append( item );
     }
-}
-
-
-void SCH_SELECTION_TOOL::FilterSelectionForLockedItems()
-{
-    if( m_frame && m_frame->GetOverrideLocks() )
-        return;
-
-    std::vector<EDA_ITEM*> toRemove;
-
-    for( EDA_ITEM* item : m_selection )
-    {
-        if( SCH_ITEM* schItem = dynamic_cast<SCH_ITEM*>( item ) )
-        {
-            bool lockedDescendant = false;
-
-            schItem->RunOnChildren(
-                    [&]( SCH_ITEM* child )
-                    {
-                        if( child->IsLocked() )
-                            lockedDescendant = true;
-                    },
-                    RECURSE_MODE::RECURSE );
-
-            if( schItem->IsLocked() || lockedDescendant )
-                toRemove.push_back( item );
-        }
-    }
-
-    for( EDA_ITEM* item : toRemove )
-        RemoveItemFromSel( item, true /* quiet mode */ );
 }
 
 

@@ -135,7 +135,6 @@ void FP_CACHE::Save( FOOTPRINT* aFootprintFilter )
 
             m_owner->SetOutputFormatter( &formatter );
             m_owner->Format( footprint.get() );
-            formatter.Finish();
         }
 
         m_cache_timestamp += fn.GetTimestamp();
@@ -1496,50 +1495,6 @@ void PCB_IO_KICAD_SEXPR::format( const FOOTPRINT* aFootprint ) const
 
     if( !aFootprint->GetEmbeddedFiles()->IsEmpty() )
         aFootprint->WriteEmbeddedFiles( *m_out, !( m_ctl & CTL_FOR_BOARD ) );
-
-    // Save extruded 3D body info.
-    if( const EXTRUDED_3D_BODY* body = aFootprint->GetExtrudedBody(); body && body->m_height > 0 )
-    {
-        m_out->Print( "(model" );
-        m_out->Print( "(type extruded)" );
-        KICAD_FORMAT::FormatBool( m_out, "hide", !body->m_show );
-        m_out->Print( "(overall_height %s)", formatInternalUnits( body->m_height ).c_str() );
-        m_out->Print( "(body_pcb_gap %s)", formatInternalUnits( body->m_standoff ).c_str() );
-
-        if( body->m_layer == UNSELECTED_LAYER )
-            m_out->Print( "(layer pad_bbox)" );
-        else if( body->m_layer != UNDEFINED_LAYER )
-            m_out->Print( "(layer %s)", m_out->Quotew( LSET::Name( body->m_layer ) ).c_str() );
-        else
-            m_out->Print( "(layer auto)" );
-
-        {
-            static const char* matNames[] = { "plastic", "matte", "metal", "copper" };
-            m_out->Print( "(material %s)", matNames[static_cast<int>( body->m_material )] );
-        }
-
-        if( body->m_color != KIGFX::COLOR4D::UNSPECIFIED )
-        {
-            m_out->Print( "(color %s %s %s %s)", FormatDouble2Str( body->m_color.r ).c_str(),
-                          FormatDouble2Str( body->m_color.g ).c_str(), FormatDouble2Str( body->m_color.b ).c_str(),
-                          FormatDouble2Str( body->m_color.a ).c_str() );
-        }
-        else
-        {
-            m_out->Print( "(color unspecified)" );
-        }
-
-        m_out->Print( "(offset (xyz %s %s %s))", FormatDouble2Str( body->m_offset.x ).c_str(),
-                      FormatDouble2Str( body->m_offset.y ).c_str(), FormatDouble2Str( body->m_offset.z ).c_str() );
-
-        m_out->Print( "(scale (xyz %s %s %s))", FormatDouble2Str( body->m_scale.x ).c_str(),
-                      FormatDouble2Str( body->m_scale.y ).c_str(), FormatDouble2Str( body->m_scale.z ).c_str() );
-
-        m_out->Print( "(rotate (xyz %s %s %s))", FormatDouble2Str( body->m_rotation.x ).c_str(),
-                      FormatDouble2Str( body->m_rotation.y ).c_str(), FormatDouble2Str( body->m_rotation.z ).c_str() );
-
-        m_out->Print( ")" );
-    }
 
     // Save 3D info.
     auto bs3D = aFootprint->Models().begin();
@@ -3480,9 +3435,9 @@ void PCB_IO_KICAD_SEXPR::FootprintSave( const wxString& aLibraryPath, const FOOT
 
     if( it != m_cache->GetFootprints().end() )
     {
-        // Save() below writes atomically via sibling temp + rename, so no pre-delete.
-        wxLogTrace( traceKicadPcbPlugin, wxT( "Replacing footprint file '%s'." ), fullPath );
+        wxLogTrace( traceKicadPcbPlugin, wxT( "Removing footprint file '%s'." ), fullPath );
         m_cache->GetFootprints().erase( footprintName );
+        wxRemoveFile( fullPath );
     }
 
     // I need my own copy for the cache

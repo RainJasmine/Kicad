@@ -718,7 +718,6 @@ PANEL_PCBNEW_COLOR_SETTINGS::PANEL_PCBNEW_COLOR_SETTINGS( wxWindow* aParent, BOA
     m_validLayers.push_back( LAYER_PAGE_LIMITS );
     m_validLayers.push_back( LAYER_DRC_WARNING );
     m_validLayers.push_back( LAYER_DRC_EXCLUSION );
-    m_validLayers.push_back( LAYER_DRC_HIGHLIGHTED );
     m_validLayers.push_back( NETNAMES_LAYER_ID_START );
     m_validLayers.push_back( LAYER_PAD_NETNAMES );
 

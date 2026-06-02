@@ -26,8 +26,6 @@
 #include <wx/wfstream.h>
 #include <wx/txtstrm.h>
 
-#include <mmh3_hash.h>
-
 namespace IO_UTILS
 {
     const std::vector<uint8_t> COMPOUND_FILE_HEADER = { 0xD0, 0xCF, 0x11, 0xE0,
@@ -85,36 +83,5 @@ bool fileHasBinaryHeader( const wxString& aFilePath, const std::vector<uint8_t>&
 
     return false;
 }
-
-
-std::optional<wxString> fileHashMMH3( const wxString& aFilePath )
-{
-    constexpr size_t c_BufSize = 1024;
-    wxFFileInputStream input( aFilePath );
-    MMH3_HASH hash( 0x68AF835D ); // Arbitrary seed
-
-    if( input.IsOk() )
-    {
-        uint8_t buf[ c_BufSize ];
-        while ( !input.Eof() )
-        {
-            input.Read( buf, c_BufSize);
-            size_t byteCount = input.LastRead();
-            if( byteCount > 0 )
-            {
-                hash.addData( buf, byteCount );
-            }
-            else
-            {
-                break;
-            }
-        }
-
-        return hash.digest().ToString();
-    }
-
-    return std::optional<wxString>();
-}
-
 
 }

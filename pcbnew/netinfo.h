@@ -29,6 +29,7 @@
 #ifndef CLASS_NETINFO_
 #define CLASS_NETINFO_
 
+#include <macros_swig.h>
 #include <netclass.h>
 #include <board_item.h>
 
@@ -42,6 +43,9 @@ class BOARD_COMMIT;
 class MSG_PANEL_ITEM;
 class PCB_BASE_FRAME;
 
+
+DECL_VEC_FOR_SWIG( PADS_VEC, PAD* )
+DECL_VEC_FOR_SWIG( TRACKS_VEC, PCB_TRACK* )
 
 /**
  * Handle the data for a net.
@@ -93,6 +97,11 @@ public:
      *       std::shared_ptr stuff shows up large in performance profiling.
      */
     NETCLASS* GetNetClass() { return m_netClass.get(); }
+
+    /**
+     * @note Slow version for swig access
+    */
+    std::shared_ptr<NETCLASS> GetNetClassSlow() { return m_netClass; }
 
     int GetNetCode() const { return m_netCode; }
     void SetNetCode( int aNetCode ) { m_netCode = aNetCode; }
@@ -183,8 +192,18 @@ private:
 };
 
 
-typedef std::map<wxString, NETINFO_ITEM*> NETNAMES_MAP;
-typedef std::map<int, NETINFO_ITEM*> NETCODES_MAP;
+#if 0
+// waiting for swig to support std::unordered_map, see
+// http://www.swig.org/Doc3.0/CPlusPlus11.html
+// section 7.3.3
+#include <hashtables.h>
+DECL_HASH_FOR_SWIG( NETNAMES_MAP, wxString,  NETINFO_ITEM* )
+DECL_HASH_FOR_SWIG( NETCODES_MAP, int,       NETINFO_ITEM* )
+#else
+// use std::map for now
+DECL_MAP_FOR_SWIG( NETNAMES_MAP, wxString,  NETINFO_ITEM* )
+DECL_MAP_FOR_SWIG( NETCODES_MAP, int,       NETINFO_ITEM* )
+#endif
 
 /**
  * Container for #NETINFO_ITEM elements, which are the nets.
@@ -247,6 +266,7 @@ public:
     void Show() const;
 #endif
 
+#ifndef SWIG
     /// Wrapper class, so you can iterate through NETINFO_ITEM*s, not
     /// std::pair<int/wxString, NETINFO_ITEM*>
     class iterator
@@ -304,6 +324,7 @@ public:
     {
         return iterator( m_netNames.end() );
     }
+#endif
 
     BOARD* GetParent() const
     {
@@ -328,16 +349,6 @@ private:
      * Delete the list of nets (and free memory).
      */
     void clear();
-
-    /**
-     * Drop all entries from the lookup maps without freeing the items.
-     *
-     * Used when ownership of the contained NETINFO_ITEMs is being transferred
-     * to a caller that will free them after some intermediate operation (for
-     * example, after dispatching listener notifications that need live
-     * pointers).
-     */
-    void detachAll();
 
     /**
      * Rebuild the list of NETINFO_ITEMs

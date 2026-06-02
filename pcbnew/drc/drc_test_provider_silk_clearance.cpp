@@ -138,9 +138,6 @@ bool DRC_TEST_PROVIDER_SILK_CLEARANCE::Run()
     forEachGeometryItem( s_allBasicItems, silkLayers, addToSilkTree );
     forEachGeometryItem( s_allBasicItems, targetLayers, addToTargetTree );
 
-    silkTree.Build();
-    targetTree.Build();
-
     REPORT_AUX( wxString::Format( wxT( "Testing %d silkscreen features against %d board items." ),
                                   silkTree.size(),
                                   targetTree.size() ) );

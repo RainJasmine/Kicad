@@ -208,7 +208,7 @@ bool PCB_BARCODE::Deserialize( const google::protobuf::Any& aContainer )
     if( !aContainer.UnpackTo( &barcode ) )
         return false;
 
-    SetUuidDirect( KIID( barcode.id().value() ) );
+    const_cast<KIID&>( m_Uuid ) = KIID( barcode.id().value() );
     SetText( wxString::FromUTF8( barcode.text() ) );
 
     switch( barcode.kind() )
@@ -373,7 +373,7 @@ void PCB_BARCODE::AssembleBarcode()
     if( !m_angle.IsZero() )
         m_poly.Rotate( m_angle, m_pos );
 
-    m_poly.CacheTriangulation();
+    m_poly.CacheTriangulation( false );
     m_bbox = m_poly.BBox();
 }
 

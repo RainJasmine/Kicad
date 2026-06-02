@@ -121,7 +121,6 @@ set( KICOMMON_SRCS
     git/kicad_git_common.cpp
     git/kicad_git_errors.cpp
     git/git_backend.cpp
-    git/kigit_orphan_registry.cpp
     git/libgit_backend.cpp
 
     # Jobs
@@ -139,7 +138,6 @@ set( KICOMMON_SRCS
     jobs/job_export_pcb_ipcd356.cpp
     jobs/job_export_pcb_odb.cpp
     jobs/job_export_pcb_pdf.cpp
-    jobs/job_export_pcb_png.cpp
     jobs/job_export_pcb_stats.cpp
     jobs/job_export_pcb_plot.cpp
     jobs/job_export_pcb_pos.cpp
@@ -156,9 +154,6 @@ set( KICOMMON_SRCS
     jobs/jobset.cpp
     jobs/job_fp_export_svg.cpp
     jobs/job_fp_upgrade.cpp
-    jobs/job_gerber_diff.cpp
-    jobs/job_gerber_export_png.cpp
-    jobs/job_gerber_info.cpp
     jobs/job_pcb_import.cpp
     jobs/job_pcb_render.cpp
     jobs/job_pcb_drc.cpp
@@ -255,7 +250,6 @@ set( KICOMMON_SRCS
     build_version.cpp
     cli_progress_reporter.cpp
     common.cpp
-    text_var_dependency.cpp
     config_params.cpp
     confirm.cpp
     dialog_shim.cpp
@@ -317,6 +311,8 @@ set( KICOMMON_SRCS
     singleton.cpp
     pgm_base.cpp
 
+    ../scripting/python_scripting.cpp
+
     io/kicad/kicad_io_utils.cpp    # needed by richio
     io/io_base.cpp
     io/io_utils.cpp
@@ -343,7 +339,8 @@ if( KICAD_IPC_API )
         api/api_plugin.cpp
         api/api_plugin_manager.cpp
         api/api_server.cpp
-        api/python_manager.cpp
+
+        ../scripting/python_manager.cpp
     )
 endif()
 
@@ -396,6 +393,9 @@ target_link_libraries( kicommon
    	${FREETYPE_LIBRARIES}
    	${HarfBuzz_LIBRARIES}
 	${Fontconfig_LIBRARIES}
+
+    # needed because of python_scripting.cpp
+    ${PYTHON_LIBRARIES}
     )
 
 
@@ -492,6 +492,8 @@ set( COMMON_DLG_SRCS
     ${COMMON_GIT_DLG_SRCS}
     dialogs/dialog_assign_netclass.cpp
     dialogs/dialog_assign_netclass_base.cpp
+    dialogs/dialog_autosave_recovery.cpp
+    dialogs/dialog_autosave_recovery_base.cpp
     dialogs/dialog_book_reporter.cpp
     dialogs/dialog_book_reporter_base.cpp
     dialogs/dialog_color_picker.cpp
@@ -672,7 +674,6 @@ set( PLOTTERS_CONTROL_SRCS
     plotters/PDF_plotter.cpp
     plotters/pdf_stroke_font.cpp
     plotters/pdf_outline_font.cpp
-    plotters/PNG_plotter.cpp
     plotters/PS_plotter.cpp
     plotters/SVG_plotter.cpp
     plotters/common_plot_functions.cpp
@@ -707,15 +708,10 @@ set( COMMON_IO_SRCS
 
 set ( COMMON_TRANSLINE_CALCULATION_SRCS
     transline_calculations/transline_calculation_base.cpp
-    transline_calculations/dielectric_djordjevic_sarkar.cpp
     transline_calculations/microstrip.cpp
     transline_calculations/coupled_microstrip.cpp
     transline_calculations/stripline.cpp
     transline_calculations/coupled_stripline.cpp
-    transline_calculations/coax.cpp
-    transline_calculations/coplanar.cpp
-    transline_calculations/rectwaveguide.cpp
-    transline_calculations/twistedpair.cpp
     )
 
 set( COMMON_IMPORT_GFX_SRCS
@@ -766,7 +762,6 @@ set( COMMON_SRCS
     hotkey_store.cpp
     hotkeys_basic.cpp
     inspectable.cpp
-    item_realignment.cpp
     kiface_base.cpp
     kiway_player.cpp
     lib_table_grid_tricks.cpp
@@ -907,7 +902,9 @@ target_link_libraries( common
     nanosvg
     dxflib_qcad
     tinyspline_lib
+    scripting
     nlohmann_json
+    pybind11::embed
     compoundfilereader
     Boost::headers
     # Database support needs these two
@@ -963,7 +960,6 @@ set( PCB_COMMON_SRCS
     ${CMAKE_SOURCE_DIR}/pcbnew/teardrop/teardrop_parameters.cpp     #needed by board_design_settings.cpp
     ${CMAKE_SOURCE_DIR}/pcbnew/router/pns_meander.cpp               #needed by board_design_settings.cpp
     ${CMAKE_SOURCE_DIR}/pcbnew/board.cpp
-    ${CMAKE_SOURCE_DIR}/pcbnew/board_text_var_adapter.cpp
     ${CMAKE_SOURCE_DIR}/pcbnew/component_classes/component_class.cpp
     ${CMAKE_SOURCE_DIR}/pcbnew/component_classes/component_class_assignment_rule.cpp
     ${CMAKE_SOURCE_DIR}/pcbnew/component_classes/component_class_cache_proxy.cpp
@@ -975,7 +971,6 @@ set( PCB_COMMON_SRCS
     ${CMAKE_SOURCE_DIR}/pcbnew/pcb_group.cpp
     ${CMAKE_SOURCE_DIR}/pcbnew/pcb_marker.cpp
     ${CMAKE_SOURCE_DIR}/pcbnew/footprint.cpp
-    ${CMAKE_SOURCE_DIR}/pcbnew/footprint_utils.cpp
     ${CMAKE_SOURCE_DIR}/pcbnew/footprint_library_adapter.cpp
     ${CMAKE_SOURCE_DIR}/pcbnew/fix_board_shape.cpp
     ${CMAKE_SOURCE_DIR}/pcbnew/layer_utils.cpp

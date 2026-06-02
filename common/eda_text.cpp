@@ -31,14 +31,12 @@
 #include <eda_item.h>
 #include <base_units.h>
 #include <callback_gal.h>
-#include <api/api_utils.h>
 #include <eda_text.h>    // for EDA_TEXT, TEXT_EFFECTS, GR_TEXT_VJUSTIF...
 #include <gal/color4d.h> // for COLOR4D, COLOR4D::BLACK
 #include <font/glyph.h>
 #include <gr_text.h>
 #include <string_utils.h> // for UnescapeString
 #include <text_eval/text_eval_wrapper.h>
-#include <common.h>
 #include <math/util.h> // for KiROUND
 #include <math/vector2d.h>
 #include <core/kicad_algo.h>
@@ -107,7 +105,16 @@ EDA_TEXT::EDA_TEXT( const EDA_IU_SCALE& aIuScale, const wxString& aText ) :
     SetTextSize( VECTOR2I( EDA_UNIT_UTILS::Mils2IU( m_IuScale, DEFAULT_SIZE_TEXT ),
                            EDA_UNIT_UTILS::Mils2IU( m_IuScale, DEFAULT_SIZE_TEXT ) ) );
 
-    cacheShownText();
+    if( m_text.IsEmpty() )
+    {
+        m_shown_text = wxEmptyString;
+        m_shown_text_has_text_var_refs = false;
+    }
+    else
+    {
+        m_shown_text = UnescapeString( m_text );
+        m_shown_text_has_text_var_refs = m_shown_text.Contains( wxT( "${" ) );
+    }
 }
 
 
@@ -117,7 +124,6 @@ EDA_TEXT::EDA_TEXT( const EDA_TEXT& aText ) :
     m_text = aText.m_text;
     m_shown_text = aText.m_shown_text;
     m_shown_text_has_text_var_refs = aText.m_shown_text_has_text_var_refs;
-    m_text_var_refs = aText.m_text_var_refs;
 
     m_attributes = aText.m_attributes;
     m_pos = aText.m_pos;
@@ -147,7 +153,6 @@ EDA_TEXT& EDA_TEXT::operator=( const EDA_TEXT& aText )
     m_text = aText.m_text;
     m_shown_text = aText.m_shown_text;
     m_shown_text_has_text_var_refs = aText.m_shown_text_has_text_var_refs;
-    m_text_var_refs = aText.m_text_var_refs;
 
     m_attributes = aText.m_attributes;
     m_pos = aText.m_pos;
@@ -168,18 +173,12 @@ EDA_TEXT& EDA_TEXT::operator=( const EDA_TEXT& aText )
 
 void EDA_TEXT::Serialize( google::protobuf::Any& aContainer ) const
 {
-    Serialize( aContainer, pcbIUScale );
-}
-
-
-void EDA_TEXT::Serialize( google::protobuf::Any& aContainer, const EDA_IU_SCALE& aScale ) const
-{
     using namespace kiapi::common;
     types::Text text;
 
     text.set_text( GetText().ToUTF8() );
     text.set_hyperlink( GetHyperlink().ToUTF8() );
-    PackVector2( *text.mutable_position(), GetTextPos(), aScale );
+    PackVector2( *text.mutable_position(), GetTextPos() );
 
     types::TextAttributes* attrs = text.mutable_attributes();
 
@@ -192,7 +191,7 @@ void EDA_TEXT::Serialize( google::protobuf::Any& aContainer, const EDA_IU_SCALE&
 
     attrs->mutable_angle()->set_value_degrees( GetTextAngleDegrees() );
     attrs->set_line_spacing( GetLineSpacing() );
-    PackDistance( *attrs->mutable_stroke_width(), GetTextThickness(), aScale );
+    attrs->mutable_stroke_width()->set_value_nm( GetTextThickness() );
     attrs->set_italic( IsItalic() );
     attrs->set_bold( IsBold() );
     attrs->set_underlined( GetAttributes().m_Underlined );
@@ -200,22 +199,13 @@ void EDA_TEXT::Serialize( google::protobuf::Any& aContainer, const EDA_IU_SCALE&
     attrs->set_mirrored( IsMirrored() );
     attrs->set_multiline( IsMultilineAllowed() );
     attrs->set_keep_upright( IsKeepUpright() );
-    PackVector2( *attrs->mutable_size(), GetTextSize(), aScale );
-
-    if( GetTextColor() != COLOR4D::UNSPECIFIED )
-        PackColor( *attrs->mutable_color(), GetTextColor() );
+    PackVector2( *attrs->mutable_size(), GetTextSize() );
 
     aContainer.PackFrom( text );
 }
 
 
 bool EDA_TEXT::Deserialize( const google::protobuf::Any& aContainer )
-{
-    return Deserialize( aContainer, pcbIUScale );
-}
-
-
-bool EDA_TEXT::Deserialize( const google::protobuf::Any& aContainer, const EDA_IU_SCALE& aScale )
 {
     using namespace kiapi::common;
     types::Text text;
@@ -225,7 +215,7 @@ bool EDA_TEXT::Deserialize( const google::protobuf::Any& aContainer, const EDA_I
 
     SetText( wxString( text.text().c_str(), wxConvUTF8 ) );
     SetHyperlink( wxString( text.hyperlink().c_str(), wxConvUTF8 ) );
-    SetTextPos( UnpackVector2( text.position(), aScale ) );
+    SetTextPos( UnpackVector2( text.position() ) );
 
     if( text.has_attributes() )
     {
@@ -237,12 +227,7 @@ bool EDA_TEXT::Deserialize( const google::protobuf::Any& aContainer, const EDA_I
         attrs.m_Mirrored = text.attributes().mirrored();
         attrs.m_Multiline = text.attributes().multiline();
         attrs.m_KeepUpright = text.attributes().keep_upright();
-        attrs.m_Size = UnpackVector2( text.attributes().size(), aScale );
-
-        if( text.attributes().has_color() )
-            attrs.m_Color = UnpackColor( text.attributes().color() );
-        else
-            attrs.m_Color = COLOR4D::UNSPECIFIED;
+        attrs.m_Size = UnpackVector2( text.attributes().size() );
 
         if( !text.attributes().font_name().empty() )
         {
@@ -252,7 +237,7 @@ bool EDA_TEXT::Deserialize( const google::protobuf::Any& aContainer, const EDA_I
 
         attrs.m_Angle = EDA_ANGLE( text.attributes().angle().value_degrees(), DEGREES_T );
         attrs.m_LineSpacing = text.attributes().line_spacing();
-        attrs.m_StrokeWidth = UnpackDistance( text.attributes().stroke_width(), aScale );
+        attrs.m_StrokeWidth = text.attributes().stroke_width().value_nm();
         attrs.m_Halign = FromProtoEnum<GR_TEXT_H_ALIGN_T, types::HorizontalAlignment>(
                 text.attributes().horizontal_alignment() );
 
@@ -445,7 +430,6 @@ void EDA_TEXT::SwapText( EDA_TEXT& aTradingPartner )
 {
     std::swap( m_text, aTradingPartner.m_text );
     cacheShownText();
-    aTradingPartner.cacheShownText();
 }
 
 
@@ -616,7 +600,8 @@ void EDA_TEXT::Offset( const VECTOR2I& aOffset )
 void EDA_TEXT::Empty()
 {
     m_text.Empty();
-    cacheShownText();
+    ClearRenderCache();
+    ClearBoundingBoxCache();
 }
 
 
@@ -633,22 +618,8 @@ void EDA_TEXT::cacheShownText()
         m_shown_text_has_text_var_refs = m_shown_text.Contains( wxT( "${" ) ) || m_shown_text.Contains( wxT( "@{" ) );
     }
 
-    // Extract against raw m_text so backslash-escaped ${...} literals do not
-    // fabricate dependency edges. Eager population keeps the read path
-    // lock-free for concurrent workers.
-    if( m_text.IsEmpty() )
-        m_text_var_refs.clear();
-    else
-        m_text_var_refs = ExtractTextVarReferences( m_text );
-
     ClearRenderCache();
     ClearBoundingBoxCache();
-}
-
-
-const std::vector<TEXT_VAR_REF_KEY>& EDA_TEXT::GetTextVarReferences() const
-{
-    return m_text_var_refs;
 }
 
 

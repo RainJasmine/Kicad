@@ -330,35 +330,6 @@ bool REFERENCE_IMAGE::SetImage( const wxImage& aImage )
 }
 
 
-void REFERENCE_IMAGE::PackToBytes( std::string& aOutputBytes ) const
-{
-    wxMemoryOutputStream imageStream;
-
-    if( m_bitmapBase->GetImageData() && m_bitmapBase->SaveImageData( imageStream ) )
-    {
-        size_t size = imageStream.GetSize();
-
-        if( size > 0 )
-        {
-            aOutputBytes.resize( size );
-            imageStream.CopyTo( aOutputBytes.data(), size );
-        }
-    }
-}
-
-
-bool REFERENCE_IMAGE::UnpackFromBytes( const std::string& aInputBytes )
-{
-    if( aInputBytes.empty() )
-        return false;
-
-    wxMemoryBuffer imageBuffer;
-    imageBuffer.AppendData( aInputBytes.data(), aInputBytes.size() );
-
-    return ReadImageFile( imageBuffer );
-}
-
-
 const BITMAP_BASE& REFERENCE_IMAGE::GetImage() const
 {
     // This cannot be null after construction

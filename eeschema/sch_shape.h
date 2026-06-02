@@ -41,9 +41,6 @@ public:
 
     virtual ~SCH_SHAPE() override {}
 
-    void Serialize( google::protobuf::Any& aContainer ) const override;
-    bool Deserialize( const google::protobuf::Any& aContainer ) override;
-
     wxString GetClass() const override
     {
         return wxT( "SCH_SHAPE" );

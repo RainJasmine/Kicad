@@ -25,7 +25,6 @@
 #include <magic_enum.hpp>
 #include <thread_pool.h>
 #include <ranges>
-#include <set>
 #include <unordered_set>
 
 #include <paths.h>
@@ -426,7 +425,6 @@ bool LIBRARY_MANAGER::CreateGlobalTable( LIBRARY_TABLE_TYPE aType, bool aPopulat
     {
         PRETTIFIED_FILE_OUTPUTFORMATTER formatter( fn.GetFullPath(), KICAD_FORMAT::FORMAT_MODE::LIBRARY_TABLE );
         table.Format( &formatter );
-        formatter.Finish();
     }
     catch( IO_ERROR& e )
     {

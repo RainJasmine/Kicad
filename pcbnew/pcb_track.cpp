@@ -135,7 +135,7 @@ PCB_VIA::PCB_VIA( const PCB_VIA& aOther ) :
 {
     PCB_VIA::operator=( aOther );
 
-    SetUuidDirect( aOther.m_Uuid );
+    const_cast<KIID&>( m_Uuid ) = aOther.m_Uuid;
     m_zoneLayerOverrides = aOther.m_zoneLayerOverrides;
 }
 
@@ -427,7 +427,7 @@ bool PCB_TRACK::Deserialize( const google::protobuf::Any &aContainer )
     if( !aContainer.UnpackTo( &track ) )
         return false;
 
-    SetUuidDirect( KIID( track.id().value() ) );
+    const_cast<KIID&>( m_Uuid ) = KIID( track.id().value() );
     SetStart( VECTOR2I( track.start().x_nm(), track.start().y_nm() ) );
     SetEnd( VECTOR2I( track.end().x_nm(), track.end().y_nm() ) );
     SetWidth( track.width().value_nm() );
@@ -469,7 +469,7 @@ bool PCB_ARC::Deserialize( const google::protobuf::Any &aContainer )
     if( !aContainer.UnpackTo( &arc ) )
         return false;
 
-    SetUuidDirect( KIID( arc.id().value() ) );
+    const_cast<KIID&>( m_Uuid ) = KIID( arc.id().value() );
     SetStart( VECTOR2I( arc.start().x_nm(), arc.start().y_nm() ) );
     SetMid( VECTOR2I( arc.mid().x_nm(), arc.mid().y_nm() ) );
     SetEnd( VECTOR2I( arc.end().x_nm(), arc.end().y_nm() ) );
@@ -517,7 +517,7 @@ bool PCB_VIA::Deserialize( const google::protobuf::Any &aContainer )
     if( !aContainer.UnpackTo( &via ) )
         return false;
 
-    SetUuidDirect( KIID( via.id().value() ) );
+    const_cast<KIID&>( m_Uuid ) = KIID( via.id().value() );
     SetStart( VECTOR2I( via.position().x_nm(), via.position().y_nm() ) );
     SetEnd( GetStart() );
 
@@ -1080,7 +1080,7 @@ double PCB_TRACK::GetDelay() const
 
     const LENGTH_DELAY_CALCULATION*            calc = board->GetLengthCalculation();
     std::vector<LENGTH_DELAY_CALCULATION_ITEM> items{ calc->GetLengthCalculationItem( this ) };
-    constexpr PATH_OPTIMISATIONS               opts = { .OptimiseVias = false,
+    constexpr PATH_OPTIMISATIONS               opts = { .OptimiseViaLayers = false,
                                                         .MergeTracks = false,
                                                         .OptimiseTracesInPads = false,
                                                         .InferViaInPad = false
@@ -2093,7 +2093,7 @@ double PCB_TRACK::ViewGetLOD( int aLayer, const KIGFX::VIEW* aView ) const
     PCB_PAINTER*         painter = static_cast<PCB_PAINTER*>( aView->GetPainter() );
     PCB_RENDER_SETTINGS* renderSettings = painter->GetSettings();
 
-    if( !aView->IsLayerVisibleCached( LAYER_TRACKS ) )
+    if( !aView->IsLayerVisible( LAYER_TRACKS ) )
         return LOD_HIDE;
 
     if( IsNetnameLayer( aLayer ) )
@@ -2131,7 +2131,7 @@ double PCB_TRACK::ViewGetLOD( int aLayer, const KIGFX::VIEW* aView ) const
     if( aLayer == LAYER_LOCKED_ITEM_SHADOW )
     {
         // Hide shadow if the main layer is not shown
-        if( !aView->IsLayerVisibleCached( m_layer ) )
+        if( !aView->IsLayerVisible( m_layer ) )
             return LOD_HIDE;
 
         // Hide shadow on dimmed tracks
@@ -2213,7 +2213,7 @@ double PCB_VIA::ViewGetLOD( int aLayer, const KIGFX::VIEW* aView ) const
     const BOARD*         board = GetBoard();
 
     // Meta control for hiding all vias
-    if( !aView->IsLayerVisibleCached( LAYER_VIAS ) )
+    if( !aView->IsLayerVisible( LAYER_VIAS ) )
         return LOD_HIDE;
 
     // In high contrast mode don't show vias that don't cross the high-contrast layer
@@ -3387,3 +3387,4 @@ ENUM_TO_WXANY( COVERING_MODE );
 ENUM_TO_WXANY( PLUGGING_MODE );
 ENUM_TO_WXANY( CAPPING_MODE );
 ENUM_TO_WXANY( FILLING_MODE );
+

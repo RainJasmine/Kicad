@@ -152,7 +152,6 @@ void CONSTRUCTION_GEOM::ViewDraw( int aLayer, VIEW* aView ) const
     for( const SNAP_GUIDE& guide : m_snapGuides )
     {
         const SEG& segment = guide.Segment;
-        const int  dashSize = aView->ToWorld( 8 );
 
         if( segment.A == segment.B )
             continue;
@@ -164,7 +163,7 @@ void CONSTRUCTION_GEOM::ViewDraw( int aLayer, VIEW* aView ) const
 
         gal.SetStrokeColor( guide.Color );
         gal.SetLineWidth( guide.LineWidth );
-        KIGFX::DrawDashedLine( gal, *clipped, dashSize );
+        gal.DrawLine( clipped->A, clipped->B );
     }
 
     if( haveSnapLine )

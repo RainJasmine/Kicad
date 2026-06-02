@@ -57,8 +57,7 @@ SCH_ITEM::SCH_ITEM( EDA_ITEM* aParent, KICAD_T aType, int aUnit, int aBodyStyle 
         EDA_ITEM( aParent, aType, true, false ),
         m_unit( aUnit ),
         m_bodyStyle( aBodyStyle ),
-        m_private( false ),
-        m_isLocked( false )
+        m_private( false )
 {
     m_layer              = LAYER_WIRE;   // It's only a default, in fact
     m_fieldsAutoplaced   = AUTOPLACE_NONE;
@@ -75,7 +74,6 @@ SCH_ITEM::SCH_ITEM( const SCH_ITEM& aItem ) :
     m_private            = aItem.m_private;
     m_fieldsAutoplaced   = aItem.m_fieldsAutoplaced;
     m_connectivity_dirty = aItem.m_connectivity_dirty;
-    m_isLocked           = aItem.m_isLocked;
 }
 
 
@@ -87,7 +85,6 @@ SCH_ITEM& SCH_ITEM::operator=( const SCH_ITEM& aItem )
     m_private            = aItem.m_private;
     m_fieldsAutoplaced   = aItem.m_fieldsAutoplaced;
     m_connectivity_dirty = aItem.m_connectivity_dirty;
-    m_isLocked           = aItem.m_isLocked;
 
     return *this;
 }
@@ -146,18 +143,6 @@ bool SCH_ITEM::IsGroupableType() const
     default:
         return false;
     }
-}
-
-
-bool SCH_ITEM::IsLocked() const
-{
-    if( EDA_GROUP* group = GetParentGroup() )
-    {
-        if( group->AsEdaItem()->IsLocked() )
-            return true;
-    }
-
-    return m_isLocked;
 }
 
 
@@ -647,7 +632,6 @@ void SCH_ITEM::SwapItemData( SCH_ITEM* aImage )
     std::swap( m_private, aImage->m_private );
     std::swap( m_fieldsAutoplaced, aImage->m_fieldsAutoplaced );
     std::swap( m_group, aImage->m_group );
-    std::swap( m_isLocked, aImage->m_isLocked );
     swapData( aImage );
 
     SetParent( parent );
@@ -863,9 +847,11 @@ static struct SCH_ITEM_DESC
         REGISTER_TYPE( SCH_ITEM );
         propMgr.InheritsAfter( TYPE_HASH( SCH_ITEM ), TYPE_HASH( EDA_ITEM ) );
 
+#ifdef NOTYET
+        // Not yet functional in UI
         propMgr.AddProperty( new PROPERTY<SCH_ITEM, bool>( _HKI( "Locked" ),
-                &SCH_ITEM::SetLocked, &SCH_ITEM::IsLocked ) )
-                .SetIsHiddenFromLibraryEditors();
+                &SCH_ITEM::SetLocked, &SCH_ITEM::IsLocked ) );
+#endif
 
         auto multiUnit =
                 [=]( INSPECTABLE* aItem ) -> bool

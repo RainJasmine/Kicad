@@ -136,6 +136,15 @@ public:
 
     SELECTION_CONDITION BoundingBoxes();
 
+    /**
+     * Create a functor testing if the python scripting console window is visible.
+     *
+     * @note This requires the frame passed into the constructor be be derived from EDA_DRAW_FRAME.
+     *
+     * @return Functor testing if the python scripting console window is visible
+     */
+    SELECTION_CONDITION ScriptingConsoleVisible();
+
 protected:
     /// Helper function used by ContentModified().
     static bool contentModifiedFunc( const SELECTION& aSelection, EDA_BASE_FRAME* aFrame );
@@ -171,6 +180,9 @@ protected:
 
     /// Helper function used by DrawBoundingBoxes().
     static bool bboxesFunc( const SELECTION& aSelection, EDA_DRAW_FRAME* aFrame );
+
+    /// Helper function used by ScriptingConsoleVisible().
+    static bool consoleVisibleFunc( const SELECTION& aSelection, EDA_DRAW_FRAME* aFrame );
 
     /// The frame to apply the conditions to.
     EDA_BASE_FRAME* m_frame;

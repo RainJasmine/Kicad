@@ -290,8 +290,6 @@ public:
     {
         m_type = val.m_type;
         m_valueDbl = val.m_valueDbl;
-        m_stringIsWildcard = val.m_stringIsWildcard;
-        m_units = val.m_units;
 
         if( m_type == VT_STRING )
             m_valueStr = val.m_valueStr;

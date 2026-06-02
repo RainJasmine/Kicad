@@ -441,7 +441,7 @@ void DIALOG_DRC::OnRunDRCClick( wxCommandEvent& aEvent )
 
     m_runningResultsBook->ChangeSelection( 0 );   // Display the "Tests Running..." tab
     m_messages->Clear();
-    Update();                                     // Repaint only, don't enter the full event loop
+    wxSafeYield();                                // Allow time slice to refresh Messages
 
     m_running = true;
     m_sdbSizerCancel->SetLabel( _( "Cancel" ) );
@@ -491,7 +491,7 @@ void DIALOG_DRC::OnRunDRCClick( wxCommandEvent& aEvent )
     }
 
     Raise();
-    Update();                                     // Repaint only, don't enter the full event loop
+    wxSafeYield();                                // Allow time slice to refresh Messages
 
     m_running = false;
     m_sdbSizerCancel->SetLabel( _( "Close" ) );
@@ -589,27 +589,17 @@ void DIALOG_DRC::OnDRCItemSelected( wxDataViewEvent& aEvent )
 
     if( !item )
     {
+        // nothing to highlight / focus on
         aEvent.Skip();
         return;
     }
 
-    PCB_MARKER*  parentMarker = dynamic_cast<PCB_MARKER*>( rc_item->GetParent() );
     PCB_LAYER_ID principalLayer;
     LSET         violationLayers;
     BOARD_ITEM*  a = board->ResolveItem( rc_item->GetMainItemID(), true );
     BOARD_ITEM*  b = board->ResolveItem( rc_item->GetAuxItemID(), true );
     BOARD_ITEM*  c = board->ResolveItem( rc_item->GetAuxItem2ID(), true );
     BOARD_ITEM*  d = board->ResolveItem( rc_item->GetAuxItem3ID(), true );
-
-    auto focus = [&]( BOARD_ITEM* aItem )
-    {
-        std::vector<BOARD_ITEM*> items = { aItem };
-
-        if( parentMarker && parentMarker != aItem )
-            items.push_back( parentMarker );
-
-        m_frame->FocusOnItems( items, principalLayer, m_scroll_on_crossprobe );
-    };
 
     if( rc_item->GetErrorCode() == DRCE_MALFORMED_COURTYARD )
     {
@@ -632,9 +622,9 @@ void DIALOG_DRC::OnDRCItemSelected( wxDataViewEvent& aEvent )
         principalLayer = UNDEFINED_LAYER;
 
         // The marker's layer is set by the test provider
-        if( parentMarker )
+        if( auto* marker = dynamic_cast<PCB_MARKER*>( rc_item->GetParent() ) )
         {
-            PCB_LAYER_ID markerLayer = parentMarker->GetLayer();
+            PCB_LAYER_ID markerLayer = marker->GetLayer();
 
             if( markerLayer > UNDEFINED_LAYER )
                 principalLayer = markerLayer;
@@ -681,7 +671,7 @@ void DIALOG_DRC::OnDRCItemSelected( wxDataViewEvent& aEvent )
 
         if( item->Type() == PCB_ZONE_T )
         {
-            focus( item );
+            m_frame->FocusOnItem( item, principalLayer, m_scroll_on_crossprobe );
 
             m_frame->GetBoard()->GetConnectivity()->RunOnUnconnectedEdges(
                     [&]( CN_EDGE& edge )
@@ -721,7 +711,7 @@ void DIALOG_DRC::OnDRCItemSelected( wxDataViewEvent& aEvent )
         }
         else
         {
-            focus( item );
+            m_frame->FocusOnItem( item, principalLayer, m_scroll_on_crossprobe );
         }
     }
     else if( rc_item->GetErrorCode() == DRCE_DIFF_PAIR_UNCOUPLED_LENGTH_TOO_LONG )
@@ -748,16 +738,11 @@ void DIALOG_DRC::OnDRCItemSelected( wxDataViewEvent& aEvent )
             items.push_back( item );
         }
 
-        if( parentMarker && std::find( items.begin(), items.end(), parentMarker ) == items.end() )
-        {
-            items.push_back( parentMarker );
-        }
-
         m_frame->FocusOnItems( items, principalLayer, m_scroll_on_crossprobe );
     }
     else
     {
-        focus( item );
+        m_frame->FocusOnItem( item, principalLayer, m_scroll_on_crossprobe );
     }
 
     aEvent.Skip();

@@ -1987,43 +1987,6 @@ int SHAPE_LINE_CHAIN::PathLength( const VECTOR2I& aP, int aIndex ) const
 }
 
 
-bool SHAPE_LINE_CHAIN::PointInside( const VECTOR2I& aPt, int aAccuracy,
-                                    bool aUseBBoxCache ) const
-{
-    if( aUseBBoxCache && GetCachedBBox() && !GetCachedBBox()->Contains( aPt ) )
-        return false;
-
-    const int pointCount = static_cast<int>( m_points.size() );
-
-    if( !m_closed || pointCount < 3 )
-        return false;
-
-    // Direct access to m_points avoids virtual GetPoint() dispatch and per-call bounds checking
-    const VECTOR2I* pts = m_points.data();
-    bool inside = false;
-
-    for( int i = 0; i < pointCount; )
-    {
-        const VECTOR2I& p1 = pts[i++];
-        const VECTOR2I& p2 = pts[i == pointCount ? 0 : i];
-        const VECTOR2I diff = p2 - p1;
-
-        if( diff.y == 0 )
-            continue;
-
-        const int d = rescale( diff.x, ( aPt.y - p1.y ), diff.y );
-
-        if( ( ( p1.y >= aPt.y ) != ( p2.y >= aPt.y ) ) && ( aPt.x - p1.x < d ) )
-            inside = !inside;
-    }
-
-    if( aAccuracy <= 1 )
-        return inside;
-    else
-        return inside || PointOnEdge( aPt, aAccuracy );
-}
-
-
 bool SHAPE_LINE_CHAIN_BASE::PointInside( const VECTOR2I& aPt, int aAccuracy,
                                          bool aUseBBoxCache ) const
 {
@@ -2814,10 +2777,10 @@ void SHAPE_LINE_CHAIN::Simplify( int aTolerance )
                  test_idx != end_idx;
                  test_idx = ( test_idx + 1 ) % m_points.size() )
             {
-                // Only intermediate test points must be regular points (not arcs).
-                // Allow start or end to be arc endpoints so collinear segments
-                // adjacent to arcs can still be simplified while preserving arcs.
-                if( m_shapes[test_idx].first != SHAPE_IS_PT )
+                // Check if all points are regular points (not arcs)
+                if( m_shapes[start_idx].first != SHAPE_IS_PT ||
+                    m_shapes[test_idx].first != SHAPE_IS_PT ||
+                    m_shapes[end_idx].first != SHAPE_IS_PT )
                 {
                     can_simplify = false;
                     break;

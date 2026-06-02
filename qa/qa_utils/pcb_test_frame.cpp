@@ -86,8 +86,8 @@ void PCB_TEST_FRAME_BASE::SetBoard( std::shared_ptr<BOARD> b )
 
     m_galPanel->UpdateColors();
 
-    wxLogTrace( traceGalProfile, "%s", cntConnectivity.to_string() );
-    wxLogTrace( traceGalProfile, "%s", cntView.to_string() );
+    KI_TRACE( traceGalProfile, "%s\n", cntConnectivity.to_string() );
+    KI_TRACE( traceGalProfile, "%s\n", cntView.to_string() );
 
 #ifdef USE_TOOL_MANAGER
     SETTINGS_MANAGER& mgr = Pgm().GetSettingsManager();

@@ -32,32 +32,39 @@
 #include <json_schema_validator.h>
 
 
-LOGGING_ERROR_HANDLER::LOGGING_ERROR_HANDLER() :
-        m_hasError( false )
+class LOGGING_ERROR_HANDLER : public nlohmann::json_schema::error_handler
 {
-}
+public:
+    LOGGING_ERROR_HANDLER() : m_hasError( false ) {}
 
+    bool HasError() const { return m_hasError; }
 
-void LOGGING_ERROR_HANDLER::error( const nlohmann::json::json_pointer& ptr,
-                                   const nlohmann::json& instance,
-                                   const std::string& message )
-{
-    m_hasError = true;
-    wxLogTrace( traceApi,
-                wxString::Format( wxS( "JSON error: at %s, value:\n%s\n%s" ),
-                                  ptr.to_string(), instance.dump(), message ) );
+    const wxString& ErrorMessage() const { return m_errorMessage; }
 
-    wxString location = wxString::FromUTF8( ptr.to_string() );
+    void error( const nlohmann::json::json_pointer& ptr, const nlohmann::json& instance,
+                const std::string& message ) override
+    {
+        m_hasError = true;
+        wxLogTrace( traceApi,
+                    wxString::Format( wxS( "JSON error: at %s, value:\n%s\n%s" ),
+                                      ptr.to_string(), instance.dump(), message ) );
 
-    if( location.IsEmpty() )
-        location = wxS( "/" );
+        wxString location = wxString::FromUTF8( ptr.to_string() );
 
-    if( !m_errorMessage.IsEmpty() )
-        m_errorMessage << '\n';
+        if( location.IsEmpty() )
+            location = wxS( "/" );
 
-    m_errorMessage << wxString::Format( _( "invalid plugin configuration at '%s': %s" ),
-                                        location, wxString::FromUTF8( message ) );
-}
+        if( !m_errorMessage.IsEmpty() )
+            m_errorMessage << '\n';
+
+        m_errorMessage << wxString::Format( _( "invalid plugin configuration at '%s': %s" ),
+                                            location, wxString::FromUTF8( message ) );
+    }
+
+private:
+    bool m_hasError;
+    wxString m_errorMessage;
+};
 
 
 tl::expected<bool, wxString> PLUGIN_RUNTIME::FromJson( const nlohmann::json& aJson )

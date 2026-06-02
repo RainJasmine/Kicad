@@ -47,7 +47,7 @@ bool init_unit_test()
 
     if( ok )
     {
-        Pgm().InitPgm( true, true );
+        Pgm().InitPgm( true, true, true );
         Pgm().GetSettingsManager().RegisterSettings( new KICAD_SETTINGS, false );
         Pgm().GetSettingsManager().Load();
         Pgm().GetSettingsManager().LoadProject( "" );

@@ -56,8 +56,10 @@ enum class BARCODE_ECC_T : int
     H = 4  // High
 };
 
+#ifndef SWIG
 DECLARE_ENUM_TO_WXANY( BARCODE_T );
 DECLARE_ENUM_TO_WXANY( BARCODE_ECC_T );
+#endif
 
 class PCB_BARCODE : public BOARD_ITEM
 {

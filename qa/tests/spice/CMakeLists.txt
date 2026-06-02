@@ -58,7 +58,6 @@ set( QA_SPICE_SRCS
     test_library_spice.cpp
     test_sim_model_inference.cpp
     test_sim_model_ngspice.cpp
-    test_sim_model_source_pwl.cpp
     test_sim_regressions.cpp
 
     # IBIS files
@@ -87,6 +86,7 @@ target_link_libraries( qa_spice
 PRIVATE
     eeschema_kiface_objects
     common
+    scripting
     kimath
     qa_utils
     qa_schematic_utils

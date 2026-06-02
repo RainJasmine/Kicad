@@ -69,9 +69,6 @@ PROJECT_FILE::PROJECT_FILE( const wxString& aFullPath ) :
     m_params.emplace_back( new PARAM_LIST<wxString>( "libraries.pinned_footprint_libs",
             &m_PinnedFootprintLibs, {} ) );
 
-    m_params.emplace_back(
-            new PARAM_LIST<wxString>( "pcbnew.find_by_properties.recent_queries", &m_FindByPropertiesQueries, {} ) );
-
     m_params.emplace_back( new PARAM_PATH_LIST( "cvpcb.equivalence_files",
             &m_EquivalenceFiles, {} ) );
 

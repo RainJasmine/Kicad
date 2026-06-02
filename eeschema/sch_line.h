@@ -401,7 +401,9 @@ private:
 };
 
 
+#ifndef SWIG
 DECLARE_ENUM_TO_WXANY( WIRE_STYLE );
+#endif
 
 
 #endif    // _SCH_LINE_H_

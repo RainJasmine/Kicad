@@ -21,6 +21,8 @@
 * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 */
 
+#include <pybind11/pybind11.h>
+
 #include <common.h>
 #include <settings/color_settings.h>
 #include <footprint_editor_settings.h>
@@ -63,7 +65,6 @@ PCBNEW_SETTINGS::PCBNEW_SETTINGS()
           m_ShowCourtyardCollisions( true ),
           m_AutoRefillZones( false ),
           m_AllowFreePads( false ),
-          m_ImportKeepKiCadLayerNames( false ),
           m_PnsSettings( nullptr ),
           m_FootprintViewerLibListWidth( 200 ),
           m_FootprintViewerFPListWidth( 300 )
@@ -195,9 +196,6 @@ PCBNEW_SETTINGS::PCBNEW_SETTINGS()
     m_params.emplace_back( new PARAM<bool>( "editing.allow_free_pads",
             &m_AllowFreePads, false ) );
 
-    m_params.emplace_back( new PARAM<bool>( "import.keep_kicad_layer_names",
-            &m_ImportKeepKiCadLayerNames, false ) );
-
     m_params.emplace_back( new PARAM_LAMBDA<int>( "editing.rotation_angle",
             [this] () -> int
             {
@@ -289,6 +287,39 @@ PCBNEW_SETTINGS::PCBNEW_SETTINGS()
 
     m_params.emplace_back( new PARAM<bool>( "export_d356.doNotExportUnconnectedPads",
             &m_ExportD356.doNotExportUnconnectedPads, false ) );
+
+    m_params.emplace_back( new PARAM_LAMBDA<nlohmann::json>( "action_plugins",
+            [&]() -> nlohmann::json
+            {
+                nlohmann::json js = nlohmann::json::array();
+
+                for( const auto& pair : m_VisibleActionPlugins )
+                    js.push_back( nlohmann::json( { { pair.first.ToUTF8(), pair.second } } ) );
+
+                return js;
+            },
+            [&]( const nlohmann::json& aObj )
+            {
+                m_VisibleActionPlugins.clear();
+
+                if( !aObj.is_array() )
+                {
+                    return;
+                }
+
+                for( const auto& entry : aObj )
+                {
+                    if( entry.empty() || !entry.is_object() )
+                        continue;
+
+                    for( const auto& pair : entry.items() )
+                    {
+                        m_VisibleActionPlugins.emplace_back( std::make_pair(
+                                wxString( pair.key().c_str(), wxConvUTF8 ), pair.value() ) );
+                    }
+                }
+            },
+            nlohmann::json::array() ) );
 
     addParamsForWindow( &m_FootprintViewer, "footprint_viewer" );
 
@@ -594,3 +625,17 @@ bool PCBNEW_SETTINGS::MigrateFromLegacy( wxConfigBase* aCfg )
 
     return ret;
 }
+
+//namespace py = pybind11;
+//
+//PYBIND11_MODULE( pcbnew, m )
+//{
+//    py::class_<PCBNEW_SETTINGS>( m, "settings" )
+//            .def_readwrite( "Use45DegreeGraphicSegments", &PCBNEW_SETTINGS::m_Use45DegreeGraphicSegments )
+//            .def_readwrite( "FlipLeftRight", &PCBNEW_SETTINGS::m_FlipDirection )
+//            .def_readwrite( "AddUnlockedPads", &PCBNEW_SETTINGS::m_AddUnlockedPads)
+//            .def_readwrite( "UsePolarCoords", &PCBNEW_SETTINGS::m_PolarCoords)
+//            .def_readwrite( "RotationAngle", &PCBNEW_SETTINGS::m_RotationAngle)
+//            .def_readwrite( "ShowPageLimits", &PCBNEW_SETTINGS::m_ShowPageLimits)
+//            ;
+//}

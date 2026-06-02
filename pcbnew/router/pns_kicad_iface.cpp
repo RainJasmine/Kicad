@@ -1742,7 +1742,7 @@ bool PNS_KICAD_IFACE_BASE::syncZone( PNS::NODE* aWorld, ZONE* aZone, SHAPE_POLY_
     LSET layers = aZone->GetLayerSet();
 
     poly = aZone->Outline();
-    poly->CacheTriangulation();
+    poly->CacheTriangulation( false );
 
     if( !poly->IsTriangulationUpToDate() )
     {
@@ -2938,7 +2938,7 @@ long long int PNS_KICAD_IFACE_BASE::CalculateRoutedPathLength( const PNS::ITEM_S
         endPad = static_cast<PAD*>( aEndPad->Parent() );
 
     constexpr PATH_OPTIMISATIONS opts = {
-        .OptimiseVias = false,
+        .OptimiseViaLayers = false,
         .MergeTracks = false,
         .OptimiseTracesInPads = false,
         .InferViaInPad = true
@@ -2963,7 +2963,7 @@ int64_t PNS_KICAD_IFACE_BASE::CalculateRoutedPathDelay( const PNS::ITEM_SET& aLi
         endPad = static_cast<PAD*>( aEndPad->Parent() );
 
     constexpr PATH_OPTIMISATIONS opts = {
-        .OptimiseVias = false,
+        .OptimiseViaLayers = false,
         .MergeTracks = false,
         .OptimiseTracesInPads = false,
         .InferViaInPad = true

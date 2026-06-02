@@ -57,7 +57,11 @@ class wxCmdLineParser;
  * #EDA_BASE_FRAME would not have sufficed because #BM2CMP_FRAME_BASE is not derived
  * from it.
  */
+#ifdef SWIG
+class KIWAY_PLAYER : public wxFrame, public KIWAY_HOLDER
+#else
 class KIWAY_PLAYER : public EDA_BASE_FRAME
+#endif
 {
 public:
     KIWAY_PLAYER( KIWAY* aKiway, wxWindow* aParent, FRAME_T aFrameType,
@@ -189,7 +193,9 @@ protected:
     wxSocketServer*             m_socketServer;
     std::vector<wxSocketBase*>  m_sockets;         /// Interprocess communication.
 
+#ifndef SWIG
     DECLARE_EVENT_TABLE()
+#endif
 };
 
 #endif // KIWAY_PLAYER_H_

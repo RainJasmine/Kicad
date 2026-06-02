@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////
-// C++ code generated with wxFormBuilder (version 4.2.1-0-g80c4cb6)
+// C++ code generated with wxFormBuilder (version 3.10.1-0-g8feb16b)
 // http://www.wxformbuilder.org/
 //
 // PLEASE DO *NOT* EDIT THIS FILE!
@@ -27,6 +27,7 @@
 
 ///////////////////////////////////////////////////////////////////////////
 
+
 ///////////////////////////////////////////////////////////////////////////////
 /// Class PANEL_PACKAGE_BASE
 ///////////////////////////////////////////////////////////////////////////////
@@ -37,7 +38,6 @@ class PANEL_PACKAGE_BASE : public wxPanel
 	protected:
 		wxStaticBitmap* m_bitmap;
 		wxStaticText* m_name;
-		wxStaticBitmap* m_warningIcon;
 		wxBoxSizer* m_descSizer;
 		wxStaticText* m_desc;
 		wxButton* m_button;

@@ -1833,12 +1833,12 @@ bool PCB_CONTROL::placeBoardItems( BOARD_COMMIT* aCommit, std::vector<BOARD_ITEM
     {
         if( aIsNew )
         {
-            item->ResetUuid();
+            const_cast<KIID&>( item->m_Uuid ) = KIID();
 
             item->RunOnChildren(
                     []( BOARD_ITEM* aChild )
                     {
-                        aChild->ResetUuid();
+                        const_cast<KIID&>( aChild->m_Uuid ) = KIID();
                     },
                     RECURSE_MODE::RECURSE );
 

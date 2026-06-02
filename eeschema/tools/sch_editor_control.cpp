@@ -2292,9 +2292,6 @@ int SCH_EDITOR_CONTROL::Paste( const TOOL_EVENT& aEvent )
         if( schItem->IsConnectable() )
             schItem->SetConnectivityDirty();
 
-        // Clear lock state on paste to match PCB editor behavior
-        schItem->SetLocked( false );
-
         if( item->Type() == SCH_SYMBOL_T )
         {
             SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
@@ -2967,8 +2964,7 @@ int SCH_EDITOR_CONTROL::EditSymbolFields( const TOOL_EVENT& aEvent )
 {
     DIALOG_SYMBOL_FIELDS_TABLE* dlg = m_frame->GetSymbolFieldsTableDialog();
 
-    if( !dlg )
-        return 0;
+    wxCHECK( dlg, 0 );
 
     // Needed at least on Windows. Raise() is not enough
     dlg->Show( true );
@@ -3029,8 +3025,7 @@ int SCH_EDITOR_CONTROL::GenerateBOM( const TOOL_EVENT& aEvent )
 {
     DIALOG_SYMBOL_FIELDS_TABLE* dlg = m_frame->GetSymbolFieldsTableDialog();
 
-    if( !dlg )
-        return 0;
+    wxCHECK( dlg, 0 );
 
     // Needed at least on Windows. Raise() is not enough
     dlg->Show( true );
@@ -3327,6 +3322,11 @@ int SCH_EDITOR_CONTROL::ToggleAnnotateAuto( const TOOL_EVENT& aEvent )
 }
 
 
+int SCH_EDITOR_CONTROL::TogglePythonConsole( const TOOL_EVENT& aEvent )
+{
+    m_frame->ScriptingConsoleEnableDisable();
+    return 0;
+}
 int SCH_EDITOR_CONTROL::OnAngleSnapModeChanged( const TOOL_EVENT& aEvent )
 {
     // Update the left toolbar Line modes group icon to match current mode

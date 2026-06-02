@@ -34,7 +34,6 @@
 #include <jobs/job_export_pcb_dxf.h>
 #include <jobs/job_export_pcb_pdf.h>
 #include <jobs/job_export_pcb_plot.h>
-#include <jobs/job_export_pcb_png.h>
 #include <jobs/job_export_pcb_ps.h>
 #include <jobs/job_export_pcb_svg.h>
 #include <pgm_base.h>
@@ -67,8 +66,7 @@ PCB_PLOTTER::PCB_PLOTTER( BOARD* aBoard, REPORTER* aReporter, PCB_PLOT_PARAMS& a
 bool PCB_PLOTTER::Plot( const wxString& aOutputPath, const LSEQ& aLayersToPlot,
                         const LSEQ& aCommonLayers, bool aUseGerberFileExtensions,
                         bool aOutputPathIsSingle, std::optional<wxString> aLayerName,
-                        std::optional<wxString> aSheetName, std::optional<wxString> aSheetPath,
-                        std::vector<wxString>* aOutputFiles )
+                        std::optional<wxString> aSheetName, std::optional<wxString> aSheetPath )
 {
     std::function<bool( wxString* )> textResolver = [&]( wxString* token ) -> bool
     {
@@ -247,9 +245,6 @@ bool PCB_PLOTTER::Plot( const wxString& aOutputPath, const LSEQ& aLayersToPlot,
             catch( ... )
             {
                 success = false;
-                delete plotter->RenderSettings();
-                delete plotter;
-                plotter = nullptr;
                 break;
             }
 
@@ -299,9 +294,6 @@ bool PCB_PLOTTER::Plot( const wxString& aOutputPath, const LSEQ& aLayersToPlot,
 
                 msg.Printf( _( "Plotted to '%s'." ), fn.GetFullPath() );
                 m_reporter->Report( msg, RPT_SEVERITY_ACTION );
-
-                if( aOutputFiles )
-                    aOutputFiles->push_back( fn.GetFullPath() );
             }
         }
         else
@@ -325,9 +317,6 @@ bool PCB_PLOTTER::Plot( const wxString& aOutputPath, const LSEQ& aLayersToPlot,
         // Build gerber job file from basename
         BuildPlotFileName( &fn, aOutputPath, wxT( "job" ), FILEEXT::GerberJobFileExtension );
         jobfile_writer->CreateJobFile( fn.GetFullPath() );
-
-        if( aOutputFiles )
-            aOutputFiles->push_back( fn.GetFullPath() );
     }
 
     m_reporter->ReportTail( _( "Done." ), RPT_SEVERITY_INFO );
@@ -469,13 +458,6 @@ void PCB_PLOTTER::PlotJobToPlotOpts( PCB_PLOT_PARAMS& aOpts, JOB_EXPORT_PCB_PLOT
         aOpts.SetA4Output( psJob->m_forceA4 );
     }
 
-    if( aJob->m_plotFormat == JOB_EXPORT_PCB_PLOT::PLOT_FORMAT::PNG )
-    {
-        JOB_EXPORT_PCB_PNG* pngJob = static_cast<JOB_EXPORT_PCB_PNG*>( aJob );
-        aOpts.SetPngDPI( pngJob->m_dpi );
-        aOpts.SetPngAntialias( pngJob->m_antialias );
-    }
-
     aOpts.SetUseAuxOrigin( aJob->m_useDrillOrigin );
     aOpts.SetPlotFrameRef( aJob->m_plotDrawingSheet );
     aOpts.SetSubtractMaskFromSilk( aJob->m_subtractSolderMaskFromSilk );
@@ -503,7 +485,6 @@ void PCB_PLOTTER::PlotJobToPlotOpts( PCB_PLOT_PARAMS& aOpts, JOB_EXPORT_PCB_PLOT
     case JOB_EXPORT_PCB_PLOT::PLOT_FORMAT::DXF:    aOpts.SetFormat( PLOT_FORMAT::DXF );    break;
     case JOB_EXPORT_PCB_PLOT::PLOT_FORMAT::HPGL:   /* no longer supported */               break;
     case JOB_EXPORT_PCB_PLOT::PLOT_FORMAT::PDF:    aOpts.SetFormat( PLOT_FORMAT::PDF );    break;
-    case JOB_EXPORT_PCB_PLOT::PLOT_FORMAT::PNG:    aOpts.SetFormat( PLOT_FORMAT::PNG );    break;
     }
 
     wxString theme = aJob->m_colorTheme;

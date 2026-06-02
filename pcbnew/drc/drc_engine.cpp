@@ -739,17 +739,6 @@ void DRC_ENGINE::compileRules()
             engineConstraint->condition = condition;
             engineConstraint->constraint = constraint;
             engineConstraint->parentRule = rule;
-
-            if( rule->IsImplicit() && constraint.m_Type == DISALLOW_CONSTRAINT
-                && m_board && rule->m_ImplicitItemId != niluuid )
-            {
-                const auto& cache = m_board->GetItemByIdCache();
-                auto        it = cache.find( rule->m_ImplicitItemId );
-
-                if( it != cache.end() && it->second->Type() == PCB_ZONE_T )
-                    engineConstraint->implicitKeepoutZone = static_cast<ZONE*>( it->second );
-            }
-
             ruleVec->push_back( engineConstraint );
         }
     }
@@ -1741,19 +1730,6 @@ DRC_CONSTRAINT DRC_ENGINE::EvalRules( DRC_CONSTRAINT_T aConstraintType, const BO
                 }
                 else
                 {
-                    // For implicit keepout rules with a pre-resolved zone pointer, skip the
-                    // expensive expression evaluation when the item doesn't overlap the
-                    // zone's bounding box. This avoids UUID string parsing and cache lock
-                    // contention for the vast majority of item-keepout pairs.
-                    if( c->implicitKeepoutZone && !aReporter )
-                    {
-                        BOX2I itemBBox = a->GetBoundingBox();
-                        BOX2I zoneBBox = c->implicitKeepoutZone->GetBoundingBox();
-
-                        if( !itemBBox.Intersects( zoneBBox ) )
-                            return;
-                    }
-
                     if( implicit )
                     {
                         // Don't report on implicit rule conditions; they're synthetic.

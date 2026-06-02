@@ -18,6 +18,7 @@
       },
       "cacheVariables": {
         "KICAD_BUILD_QA_TESTS": "ON",
+        "KICAD_SCRIPTING_WXPYTHON": "ON",
         "KICAD_WIN32_DPI_AWARE": "ON"
       },
       "vendor": {

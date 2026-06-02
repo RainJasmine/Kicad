@@ -91,50 +91,6 @@ message GraphicsDefaultsResponse
   kiapi.board.GraphicsDefaults defaults = 1;
 }
 
-enum CustomRulesStatus
-{
-  CRS_UNKNOWN = 0;
-  CRS_NONE = 1;
-  CRS_VALID = 2;
-  CRS_INVALID = 3;
-}
-
-message GetBoardDesignRules
-{
-  kiapi.common.types.DocumentSpecifier board = 1;
-}
-
-message SetBoardDesignRules
-{
-  kiapi.common.types.DocumentSpecifier board = 1;
-  kiapi.board.BoardDesignRules rules = 2;
-}
-
-message BoardDesignRulesResponse
-{
-  kiapi.board.BoardDesignRules rules = 1;
-  CustomRulesStatus custom_rules_status = 2;
-}
-
-message GetCustomDesignRules
-{
-  kiapi.common.types.DocumentSpecifier board = 1;
-}
-
-// Returns CustomRulesResponse
-message SetCustomDesignRules
-{
-  kiapi.common.types.DocumentSpecifier board = 1;
-  repeated kiapi.board.CustomRule rules = 2;
-}
-
-message CustomRulesResponse
-{
-  CustomRulesStatus status = 1;
-  repeated kiapi.board.CustomRule rules = 2;
-  string error_text = 3;
-}
-
 enum BoardOriginType
 {
   BOT_UNKNOWN = 0;
@@ -337,7 +293,6 @@ message PadstackPresenceResponse
 
 // DRC markers
 
-// Deprecated - use common.types.RuleSeverity
 enum DrcSeverity // Since 10.0
 {
   DRS_UNKNOWN = 0;

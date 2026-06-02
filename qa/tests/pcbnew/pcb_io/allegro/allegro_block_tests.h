@@ -66,6 +66,8 @@ struct BLOCK_TEST_INFO
     bool m_Skip;
     /// Do we have an additional block-level test to run for this block?
     bool m_ExtraBlockTest;
+    /// Do we have an additional DB_OBJ-level test to run for this block?
+    bool m_ExtraDbObjTest;
     /// The the source of the block data (probably a filename)
     std::string m_DataSource;
 
@@ -102,6 +104,18 @@ struct BOARD_TEST_DEF
  * Note that these tests don't have context of the wider board, so they are necessarily
  * limited to quite "static" checks of the block content.
  */
-void RunAdditionalBlockTest( const std::string& aBoardName, size_t aBlockOffset, const ALLEGRO::BLOCK_BASE& aBlock );
+extern void RunAdditionalBlockTest( const std::string& aBoardName, size_t aBlockOffset,
+                                    const ALLEGRO::BLOCK_BASE& aBlock );
+
+/**
+ * Look up and run any additional ad-hoc tests for a DB_OBJ (parsed and converted block)
+ *
+ * Since most "useful" functionality probably should come from the resolved and
+ * invariant-assured DB_OBJ, these tests are probably more useful than binary-level
+ * block tests.
+ */
+extern void RunAdditionalObjectTest( const std::string& aBoardName, size_t aBlockOffset,
+                                     const ALLEGRO::DB_OBJ& aDbObj );
+
 
 } // namespace KI_TEST

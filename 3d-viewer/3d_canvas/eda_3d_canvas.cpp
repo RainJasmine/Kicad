@@ -190,25 +190,19 @@ void EDA_3D_CANVAS::releaseOpenGL()
     if( m_glRC )
     {
         GL_CONTEXT_MANAGER* gl_mgr = Pgm().GetGLContextManager();
-        wxASSERT( gl_mgr );
+        gl_mgr->LockCtx( m_glRC, this );
 
-        if( gl_mgr )
-        {
-            gl_mgr->LockCtx( m_glRC, this );
+        delete m_3d_render_raytracing;
+        m_3d_render_raytracing = nullptr;
 
-            delete m_3d_render_raytracing;
-            m_3d_render_raytracing = nullptr;
+        delete m_3d_render_opengl;
+        m_3d_render_opengl = nullptr;
 
-            delete m_3d_render_opengl;
-            m_3d_render_opengl = nullptr;
+        // This is just a copy of a pointer, can safely be set to NULL.
+        m_3d_render = nullptr;
 
-            // This is just a copy of a pointer, can safely be set to NULL.
-            m_3d_render = nullptr;
-
-            gl_mgr->UnlockCtx( m_glRC );
-            gl_mgr->DestroyCtx( m_glRC );
-        }
-
+        gl_mgr->UnlockCtx( m_glRC );
+        gl_mgr->DestroyCtx( m_glRC );
         m_glRC = nullptr;
     }
 }
@@ -399,12 +393,6 @@ void EDA_3D_CANVAS::DoRePaint()
     STATUSBAR_REPORTER  activityReporter( m_parentStatusBar, EDA_3D_VIEWER_STATUSBAR::ACTIVITY );
     int64_t             start_time = GetRunningMicroSecs();
     GL_CONTEXT_MANAGER* gl_mgr = Pgm().GetGLContextManager();
-
-    if( !gl_mgr )
-    {
-        m_is_currently_painting.clear();
-        return;
-    }
 
     // "Makes the OpenGL state that is represented by the OpenGL rendering
     //  context context current, i.e. it will be used by all subsequent OpenGL calls.
@@ -642,12 +630,6 @@ void EDA_3D_CANVAS::RenderToFrameBuffer( unsigned char* buffer, int width, int h
     wxString            err_messages;
     int64_t             start_time = GetRunningMicroSecs();
     GL_CONTEXT_MANAGER* gl_mgr = Pgm().GetGLContextManager();
-
-    if( !gl_mgr )
-    {
-        m_is_currently_painting.clear();
-        return;
-    }
 
     // Create OpenGL context if needed
     if( m_glRC == nullptr )

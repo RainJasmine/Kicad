@@ -69,6 +69,8 @@ public:
     // This is called when the user changes to a new sheet, not when a sheet is altered.
     // Sheet alteration events will call OnSchItems*
     virtual void OnSchSheetChanged( SCHEMATIC& aSch ) {}
+
+    virtual void OnSchCurrentVariantChanged( SCHEMATIC& aSch ) {}
 };
 
 enum SCH_CLEANUP_FLAGS
@@ -624,13 +626,6 @@ private:
     /// Re-entry guard to prevent infinite recursion between ensureDefaultTopLevelSheet and
     /// RefreshHierarchy when setting up new schematics
     bool m_settingTopLevelSheets = false;
-
-    /// Reactive text-variable dependency adapter. Installed as a listener
-    /// during SCHEMATIC construction.
-    std::unique_ptr<class SCHEMATIC_TEXT_VAR_ADAPTER> m_textVarAdapter;
-
-public:
-    class SCHEMATIC_TEXT_VAR_ADAPTER* GetTextVarAdapter() const { return m_textVarAdapter.get(); }
 };
 
 #endif

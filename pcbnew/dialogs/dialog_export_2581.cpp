@@ -292,6 +292,8 @@ void DIALOG_EXPORT_2581::onOKClick( wxCommandEvent& event )
         return;
     }
 
+    wxString tempFile = wxFileName::CreateTempFileName( wxS( "pcbnew_ipc" ) );
+
     WX_PROGRESS_REPORTER progress( this, _( "Generate IPC-2581 File" ), 5, PR_CAN_ABORT );
 
     if( !GenerateFile( job, m_parent->GetBoard(), &progress, &reporter ) )
@@ -398,9 +400,8 @@ bool DIALOG_EXPORT_2581::GenerateFile( JOB_EXPORT_PCB_IPC2581& aJob, BOARD* aBoa
                                                   outPath,
                                                   tempFile ),
                                 RPT_SEVERITY_ERROR );
+            return false;
         }
-
-        return false;
     }
 
     aJob.AddOutput( outPath );

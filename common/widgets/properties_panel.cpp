@@ -171,17 +171,23 @@ void PROPERTIES_PANEL::OnLanguageChanged( wxCommandEvent& aEvent )
 }
 
 
-SUPPRESS_GRID_CHANGED_EVENTS::SUPPRESS_GRID_CHANGED_EVENTS( PROPERTIES_PANEL* aPanel ) :
+class SUPPRESS_GRID_CHANGED_EVENTS
+{
+public:
+    SUPPRESS_GRID_CHANGED_EVENTS( PROPERTIES_PANEL* aPanel ) :
             m_panel( aPanel )
-{
-    m_panel->m_SuppressGridChangeEvents++;
-}
+    {
+        m_panel->m_SuppressGridChangeEvents++;
+    }
 
+    ~SUPPRESS_GRID_CHANGED_EVENTS()
+    {
+        m_panel->m_SuppressGridChangeEvents--;
+    }
 
-SUPPRESS_GRID_CHANGED_EVENTS::~SUPPRESS_GRID_CHANGED_EVENTS()
-{
-    m_panel->m_SuppressGridChangeEvents--;
-}
+private:
+    PROPERTIES_PANEL* m_panel;
+};
 
 
 void PROPERTIES_PANEL::rebuildProperties( const SELECTION& aSelection )

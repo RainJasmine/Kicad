@@ -340,7 +340,7 @@ bool ZONE::Deserialize( const google::protobuf::Any& aContainer )
     if( !aContainer.UnpackTo( &zone ) )
         return false;
 
-    SetUuidDirect( KIID( zone.id().value() ) );
+    const_cast<KIID&>( m_Uuid ) = KIID( zone.id().value() );
     SetLayerSet( UnpackLayerSet( zone.layers() ) );
     SetAssignedPriority( zone.priority() );
     SetZoneName( wxString::FromUTF8( zone.name() ) );
@@ -609,7 +609,8 @@ std::vector<int> ZONE::ViewGetLayers() const
                 layers.push_back( layer + static_cast<int>( LAYER_ZONE_START ) );
             } );
 
-    layers.push_back( LAYER_CONFLICTS_SHADOW );
+    if( IsConflicting() )
+        layers.push_back( LAYER_CONFLICTS_SHADOW );
 
     return layers;
 }
@@ -620,7 +621,7 @@ double ZONE::ViewGetLOD( int aLayer, const KIGFX::VIEW* aView ) const
     if( !aView )
         return LOD_SHOW;
 
-    if( !aView->IsLayerVisibleCached( LAYER_ZONES ) )
+    if( !aView->IsLayerVisible( LAYER_ZONES ) )
         return LOD_HIDE;
 
     if( FOOTPRINT* parentFP = GetParentFootprint() )
@@ -635,8 +636,8 @@ double ZONE::ViewGetLOD( int aLayer, const KIGFX::VIEW* aView ) const
             onBack = parentFP->GetLayer() == B_Cu;
         }
 
-        const bool frHidden = !aView->IsLayerVisibleCached( LAYER_FOOTPRINTS_FR );
-        const bool bkHidden = !aView->IsLayerVisibleCached( LAYER_FOOTPRINTS_BK );
+        const bool frHidden = !aView->IsLayerVisible( LAYER_FOOTPRINTS_FR );
+        const bool bkHidden = !aView->IsLayerVisible( LAYER_FOOTPRINTS_BK );
 
         if( onFront && !onBack && frHidden )
             return LOD_HIDE;
@@ -1369,16 +1370,16 @@ void ZONE::swapData( BOARD_ITEM* aImage )
 }
 
 
-void ZONE::CacheTriangulation( PCB_LAYER_ID aLayer, const SHAPE_POLY_SET::TASK_SUBMITTER& aSubmitter )
+void ZONE::CacheTriangulation( PCB_LAYER_ID aLayer )
 {
     if( aLayer == UNDEFINED_LAYER )
     {
         std::lock_guard<std::mutex> lock( m_filledPolysListMutex );
 
         for( auto& [ layer, poly ] : m_FilledPolysList )
-            poly->CacheTriangulation( false, aSubmitter );
+            poly->CacheTriangulation();
 
-        m_Poly->CacheTriangulation();
+        m_Poly->CacheTriangulation( false );
     }
     else
     {
@@ -1397,7 +1398,7 @@ void ZONE::CacheTriangulation( PCB_LAYER_ID aLayer, const SHAPE_POLY_SET::TASK_S
         }
 
         if( poly )
-            poly->CacheTriangulation( false, aSubmitter );
+            poly->CacheTriangulation();
     }
 }
 

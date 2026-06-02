@@ -474,6 +474,7 @@ public:
 
     static TOOL_ACTION showLayersManager;
     static TOOL_ACTION showNetInspector;
+    static TOOL_ACTION showPythonConsole;
     static TOOL_ACTION zonesManager;
 
     // Design Block management
@@ -601,9 +602,6 @@ public:
     /// Find an item
     static TOOL_ACTION find;
 
-    /// Find items by property criteria or expression
-    static TOOL_ACTION findByProperties;
-
     /// Find an item and start moving
     static TOOL_ACTION getAndPlace;
 
@@ -629,6 +627,8 @@ public:
     /// Footprint wizard frame actions:
     static TOOL_ACTION showWizards;
     static TOOL_ACTION resetWizardPrms;
+    static TOOL_ACTION selectPreviousWizardPage;
+    static TOOL_ACTION selectNextWizardPage;
     static TOOL_ACTION exportFpToEditor;
 };
 

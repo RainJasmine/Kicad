@@ -53,7 +53,6 @@
 #include <wx/msgdlg.h>
 #include <dialogs/eda_view_switcher.h>
 #include "dialog_symbol_fields_table.h"
-#include "dialog_resolve_field_case_conflicts.h"
 #include <fields_data_model.h>
 #include <eda_list_dialog.h>
 #include <project_sch.h>
@@ -199,20 +198,6 @@ DIALOG_SYMBOL_FIELDS_TABLE::DIALOG_SYMBOL_FIELDS_TABLE( SCH_EDIT_FRAME* parent, 
 {
     // Get all symbols from the list of schematic sheets
     m_parent->Schematic().Hierarchy().GetSymbols( m_symbolsList, SYMBOL_FILTER_NON_POWER );
-
-    if( auto conflicts = DetectFieldCaseConflicts( m_symbolsList ); !conflicts.empty() )
-    {
-        DIALOG_RESOLVE_FIELD_CASE_CONFLICTS resolver( this, m_parent, std::move( conflicts ) );
-
-        if( resolver.ShowModal() != wxID_OK )
-        {
-            m_aborted = true;
-            return;
-        }
-
-        m_symbolsList.Clear();
-        m_parent->Schematic().Hierarchy().GetSymbols( m_symbolsList, SYMBOL_FILTER_NON_POWER );
-    }
 
     m_bRefresh->SetBitmap( KiBitmapBundle( BITMAPS::small_refresh ) );
     m_bMenu->SetBitmap( KiBitmapBundle( BITMAPS::config ) );
@@ -2649,6 +2634,16 @@ void DIALOG_SYMBOL_FIELDS_TABLE::OnSchSheetChanged( SCHEMATIC& aSch )
 }
 
 
+void DIALOG_SYMBOL_FIELDS_TABLE::OnSchCurrentVariantChanged( SCHEMATIC& aSch )
+{
+    if( m_syncingVariantSelection )
+        return;
+
+    m_variantListBox->Set( aSch.GetVariantNamesForUI() );
+    syncVariantSelection( aSch.GetCurrentVariant(), false );
+}
+
+
 void DIALOG_SYMBOL_FIELDS_TABLE::EnableSelectionEvents()
 {
     m_grid->Connect( wxEVT_GRID_RANGE_SELECTED,
@@ -3034,18 +3029,35 @@ void DIALOG_SYMBOL_FIELDS_TABLE::onEditVariantDescription( wxCommandEvent& aEven
 
 void DIALOG_SYMBOL_FIELDS_TABLE::onVariantSelectionChange( wxCommandEvent& aEvent )
 {
-    wxString currentVariant;
-    wxString selectedVariant = getSelectedVariant();
+    wxUnusedVar( aEvent );
+
+    syncVariantSelection( getSelectedVariant(), true );
+}
+
+
+void DIALOG_SYMBOL_FIELDS_TABLE::syncVariantSelection( const wxString& aVariantName, bool aUpdateSchematic )
+{
+    wxString selectedVariant = aVariantName;
+
+    if( selectedVariant == GetDefaultVariantName() )
+        selectedVariant.Clear();
+
+    wxString selectionName = selectedVariant.IsEmpty() ? GetDefaultVariantName() : selectedVariant;
+    int      selection = m_variantListBox->FindString( selectionName );
+
+    if( selection != wxNOT_FOUND && m_variantListBox->GetSelection() != selection )
+        m_variantListBox->SetSelection( selection );
 
     updateVariantButtonStates();
 
-    if( m_parent )
+    if( aUpdateSchematic && m_parent && m_parent->Schematic().GetCurrentVariant() != selectedVariant )
     {
-        currentVariant = m_parent->Schematic().GetCurrentVariant();
-
-        if( currentVariant != selectedVariant )
-            m_parent->SetCurrentVariant( selectedVariant );
+        m_syncingVariantSelection = true;
+        m_parent->SetCurrentVariant( selectedVariant );
+        m_syncingVariantSelection = false;
     }
+
+    wxString currentVariant = m_dataModel->GetCurrentVariant();
 
     if( currentVariant != selectedVariant )
     {

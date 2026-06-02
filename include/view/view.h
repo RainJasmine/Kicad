@@ -35,7 +35,7 @@
 
 #include <math/box2.h>
 #include <gal/definitions.h>
-#include <base_set.h>
+
 #include <view/view_overlay.h>
 
 namespace KIGFX
@@ -96,14 +96,6 @@ public:
      * @param aDrawPriority: priority to draw this item on its layer, lowest first.
      */
     virtual void Add( VIEW_ITEM* aItem, int aDrawPriority = -1 );
-
-    /**
-     * Add a batch of items to the view, using bulk-loaded R-trees for initial population.
-     *
-     * Much faster than calling Add() in a loop when adding many items at once (e.g. during
-     * board load) because it avoids R*-tree forced-reinsertion cascades.
-     */
-    void AddBatch( const std::vector<VIEW_ITEM*>& aItems );
 
     /**
      * Remove a #VIEW_ITEM from the view.
@@ -428,7 +420,7 @@ public:
      *
      * @param aLayer true if the layer is visible, false otherwise.
      */
-    bool IsLayerVisible( int aLayer ) const
+    inline bool IsLayerVisible( int aLayer ) const
     {
         auto it = m_layers.find( aLayer );
 
@@ -436,11 +428,6 @@ public:
             return false;
 
         return it->second.visible;
-    }
-
-    inline bool IsLayerVisibleCached( int aLayer ) const
-    {
-        return m_layerVisibilityCache[ aLayer ];
     }
 
     /**
@@ -875,8 +862,6 @@ protected:
     /// Check if every layer required by the aLayerId layer is enabled.
     bool areRequiredLayersEnabled( int aLayerId ) const;
 
-    void syncLayerVisibilityCache();
-
     // Function objects that need to access VIEW/VIEW_ITEM private/protected members
     struct CLEAR_LAYER_CACHE_VISITOR;
     struct RECACHE_ITEM_VISITOR;
@@ -912,8 +897,6 @@ protected:
 
     bool                               m_mirrorX;
     bool                               m_mirrorY;
-    BASE_SET                           m_layerVisibilityCache;
-    BASE_SET                           m_layerCachedFlagCache;
 
     /// PAINTER contains information how do draw items.
     PAINTER* m_painter;

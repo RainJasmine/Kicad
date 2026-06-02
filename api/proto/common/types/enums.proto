@@ -120,16 +120,3 @@ enum StrokeLineStyle
   SLS_DASHDOT    = 5;
   SLS_DASHDOTDOT = 6;
 }
-
-// Units used for various commands that can have customizable units (e.g. export jobs).
-// All internal API commands use nanometers.
-// Not every value is accepted by every command; check the documentation.
-enum Units
-{
-  U_UNKNOWN = 0;
-  U_INCH = 1;
-  U_MM = 2;
-  U_MILS = 3;
-  U_METERS = 4;
-  U_TENTHS = 5;
-}

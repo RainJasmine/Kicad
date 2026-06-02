@@ -74,11 +74,6 @@ const wxChar* const traceLibraries = wxT( "KICAD_LIBRARIES" );
 const wxChar* const traceSchMove = wxT( "KICAD_SCH_MOVE" );
 const wxChar* const traceSymbolInheritance = wxT( "KICAD_SYMBOL_INHERITANCE" );
 
-#ifdef KICAD_GAL_PROFILE
-LATENCY_PROBE latencyProbeZoomToRender( "zoom-to-render", 16 );
-LATENCY_PROBE latencyProbeRepaintToMotion( "repaint-to-motion", 16 );
-#endif
-
 wxString dump( const wxArrayString& aArray )
 {
     wxString tmp;
@@ -302,3 +297,67 @@ wxString dump( const wxKeyEvent& aEvent )
     return msg;
 }
 
+
+TRACE_MANAGER& TRACE_MANAGER::Instance()
+{
+    static TRACE_MANAGER* self = nullptr;
+
+    if( !self )
+    {
+        self = new TRACE_MANAGER;
+        self->init();
+    }
+
+    return *self;
+}
+
+
+bool TRACE_MANAGER::IsTraceEnabled( const wxString& aWhat )
+{
+    if( !m_printAllTraces )
+    {
+        if( !m_globalTraceEnabled )
+            return false;
+
+        if( m_enabledTraces.find( aWhat ) == m_enabledTraces.end() )
+            return false;
+    }
+
+    return true;
+}
+
+
+void TRACE_MANAGER::traceV( const wxString& aWhat, const wxString& aFmt, va_list vargs )
+{
+    if( !IsTraceEnabled( aWhat ) )
+        return;
+
+    wxString str;
+    str.PrintfV( aFmt, vargs );
+
+#if defined( __UNIX__ ) || defined( _WIN32 )
+    fprintf( stderr, " %-30s | %s", aWhat.c_str().AsChar(), str.c_str().AsChar() );
+#endif
+}
+
+
+void TRACE_MANAGER::init()
+{
+    wxString traceVars;
+    m_globalTraceEnabled = wxGetEnv( wxT( "KICAD_TRACE" ), &traceVars );
+    m_printAllTraces = false;
+
+    if( !m_globalTraceEnabled )
+        return;
+
+    wxStringTokenizer tokenizer( traceVars, "," );
+
+    while( tokenizer.HasMoreTokens() )
+    {
+        wxString token = tokenizer.GetNextToken();
+        m_enabledTraces[token] = true;
+
+        if( token.Lower() == wxT( "all" ) )
+            m_printAllTraces = true;
+    }
+}

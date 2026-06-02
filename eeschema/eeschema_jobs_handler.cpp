@@ -99,10 +99,6 @@ EESCHEMA_JOBS_HANDLER::EESCHEMA_JOBS_HANDLER( KIWAY* aKiway ) :
                   wxCHECK( bomJob && editFrame, false );
 
                   DIALOG_SYMBOL_FIELDS_TABLE dlg( editFrame, bomJob );
-
-                  if( dlg.WasAborted() )
-                      return false;
-
                   return dlg.ShowModal() == wxID_OK;
               } );
     Register( "pythonbom",
@@ -173,13 +169,6 @@ EESCHEMA_JOBS_HANDLER::EESCHEMA_JOBS_HANDLER( KIWAY* aKiway ) :
               {
                   return true;
               } );
-}
-
-
-void EESCHEMA_JOBS_HANDLER::ClearCachedSchematic()
-{
-    delete m_cliSchematic;
-    m_cliSchematic = nullptr;
 }
 
 
@@ -347,7 +336,6 @@ int EESCHEMA_JOBS_HANDLER::JobExportPlot( JOB* aJob )
     case SCH_PLOT_FORMAT::PDF:    format = PLOT_FORMAT::PDF;    break;
     case SCH_PLOT_FORMAT::SVG:    format = PLOT_FORMAT::SVG;    break;
     case SCH_PLOT_FORMAT::POST:   format = PLOT_FORMAT::POST;   break;
-    case SCH_PLOT_FORMAT::PNG:    format = PLOT_FORMAT::PNG;    break;
     case SCH_PLOT_FORMAT::HPGL:   /* no longer supported */     break;
     }
 
@@ -408,20 +396,10 @@ int EESCHEMA_JOBS_HANDLER::JobExportPlot( JOB* aJob )
     // Always export dxf in mm by kicad-cli (similar to Pcbnew)
     plotOpts.m_DXF_File_Unit = DXF_UNITS::MM;
 
-    if( aPlotJob->m_plotFormat == SCH_PLOT_FORMAT::PNG )
-    {
-        JOB_EXPORT_SCH_PLOT_PNG* pngJob = static_cast<JOB_EXPORT_SCH_PLOT_PNG*>( aPlotJob );
-        plotOpts.m_pngDPI = pngJob->m_dpi;
-        plotOpts.m_pngAntialias = pngJob->m_antialias;
-    }
-
     schPlotter->Plot( format, plotOpts, renderSettings.get(), m_reporter );
 
     if( m_reporter->HasMessageOfSeverity( RPT_SEVERITY_ERROR ) )
         return CLI::EXIT_CODES::ERR_UNKNOWN;
-
-    for( const wxString& outputPath : schPlotter->GetOutputFilePaths() )
-        aJob->AddOutput( outputPath );
 
     return CLI::EXIT_CODES::OK;
 }
@@ -550,8 +528,6 @@ int EESCHEMA_JOBS_HANDLER::JobExportNetlist( JOB* aJob )
 
     if( !res )
         return CLI::EXIT_CODES::ERR_UNKNOWN;
-
-    aJob->AddOutput( outPath );
 
     return CLI::EXIT_CODES::OK;
 }
@@ -918,8 +894,6 @@ int EESCHEMA_JOBS_HANDLER::JobExportBom( JOB* aJob )
         if( !res )
             return CLI::EXIT_CODES::ERR_UNKNOWN;
 
-        aJob->AddOutput( outPath );
-
         m_reporter->Report( wxString::Format( _( "Wrote bill of materials to '%s'." ), outPath ),
                             RPT_SEVERITY_ACTION );
     }
@@ -991,8 +965,6 @@ int EESCHEMA_JOBS_HANDLER::JobExportPythonBom( JOB* aJob )
 
     if( !res )
         return CLI::EXIT_CODES::ERR_UNKNOWN;
-
-    aJob->AddOutput( outPath );
 
     m_reporter->Report( wxString::Format( _( "Wrote bill of materials to '%s'." ), outPath ),
                         RPT_SEVERITY_ACTION );

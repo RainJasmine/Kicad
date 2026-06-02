@@ -55,9 +55,9 @@ void EDA_GROUP::RemoveAll()
 }
 
 
-std::vector<KIID> EDA_GROUP::GetGroupMemberIds() const
+KIID_VECT_LIST EDA_GROUP::GetGroupMemberIds() const
 {
-    std::vector<KIID> members;
+    KIID_VECT_LIST members;
 
     for( EDA_ITEM* item : m_items )
         members.push_back( item->m_Uuid );

@@ -52,18 +52,18 @@ REMOTE_PROVIDER_OAUTH_SERVER_METADATA::FromJson( const nlohmann::json& aJson, bo
     }
 
     if( !ValidateRemoteUrlSecurity( metadata.authorization_endpoint, aAllowInsecureLocalhost, aError,
-                                    "authorization_endpoint" ) )
+                              _( "authorization_endpoint" ) ) )
     {
         return std::nullopt;
     }
 
-    if( !ValidateRemoteUrlSecurity( metadata.token_endpoint, aAllowInsecureLocalhost, aError, "token_endpoint" ) )
+    if( !ValidateRemoteUrlSecurity( metadata.token_endpoint, aAllowInsecureLocalhost, aError, _( "token_endpoint" ) ) )
     {
         return std::nullopt;
     }
 
     if( !ValidateRemoteUrlSecurity( metadata.revocation_endpoint, aAllowInsecureLocalhost, aError,
-                                    "revocation_endpoint" ) )
+                              _( "revocation_endpoint" ) ) )
     {
         return std::nullopt;
     }
@@ -133,7 +133,7 @@ std::optional<REMOTE_PROVIDER_PART_MANIFEST> REMOTE_PROVIDER_PART_MANIFEST::From
             asset.required = assetJson.at( "required" ).get<bool>();
 
             if( !ValidateRemoteUrlSecurity( asset.download_url, aAllowInsecureLocalhost, aError,
-                                            "assets[].download_url" ) )
+                                      _( "assets[].download_url" ) ) )
             {
                 return std::nullopt;
             }

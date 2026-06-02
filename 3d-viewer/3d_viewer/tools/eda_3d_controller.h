@@ -85,7 +85,6 @@ public:
 
     int ReloadBoard( const TOOL_EVENT& aEvent );
     int ToggleRaytracing( const TOOL_EVENT& aEvent );
-    int ToggleShowMissingModels( const TOOL_EVENT& aEvent );
     int ExportImage( const TOOL_EVENT& aEvent );
 
 private:

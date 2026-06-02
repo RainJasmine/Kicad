@@ -40,7 +40,6 @@
 
 using namespace APP_MONITOR;
 
-
 SENTRY::SENTRY() :
         m_isOptedIn( false )
 {
@@ -166,13 +165,6 @@ void SENTRY::sentryInit()
         // only capture 5% of transactions
         sentry_options_set_traces_sample_rate( options, 0.05 );
         sentry_options_set_dsn( options, KICAD_SENTRY_DSN );
-
-#ifdef __WXMAC__
-        wxString handlerPath = PATHS::GetExecutablePath() + wxT( "Contents/MacOS/crashpad_handler" );
-
-        if( wxFileExists( handlerPath ) )
-            sentry_options_set_handler_path( options, handlerPath.c_str() );
-#endif
 
         wxFileName tmp;
         tmp.AssignDir( PATHS::GetUserCachePath() );

@@ -36,8 +36,7 @@ public:
         POST,
         DXF,
         PDF,
-        SVG,
-        PNG
+        SVG
     };
 
     JOB_EXPORT_PCB_PLOT( PLOT_FORMAT aFormat, const std::string& aType, bool aOutputIsDirectory );

@@ -384,15 +384,6 @@ int EDA_3D_CONTROLLER::ToggleRaytracing( const TOOL_EVENT& aEvent )
 }
 
 
-int EDA_3D_CONTROLLER::ToggleShowMissingModels( const TOOL_EVENT& aEvent )
-{
-    m_boardAdapter->m_Cfg->m_Render.show_missing_models = !m_boardAdapter->m_Cfg->m_Render.show_missing_models;
-    m_canvas->ReloadRequest();
-    m_canvas->Request_refresh();
-    return 0;
-}
-
-
 int EDA_3D_CONTROLLER::ExportImage( const TOOL_EVENT& aEvent )
 {
     EDA_BASE_FRAME* frame = dynamic_cast<EDA_BASE_FRAME*>( m_toolMgr->GetToolHolder() );
@@ -430,7 +421,6 @@ void EDA_3D_CONTROLLER::setTransitions()
     // Miscellaneous control
     Go( &EDA_3D_CONTROLLER::ReloadBoard,        EDA_3D_ACTIONS::reloadBoard.MakeEvent() );
     Go( &EDA_3D_CONTROLLER::ToggleRaytracing,   EDA_3D_ACTIONS::toggleRaytacing.MakeEvent() );
-    Go( &EDA_3D_CONTROLLER::ToggleShowMissingModels, EDA_3D_ACTIONS::toggleShowMissingModels.MakeEvent() );
     Go( &EDA_3D_CONTROLLER::ExportImage,        EDA_3D_ACTIONS::copyToClipboard.MakeEvent() );
     Go( &EDA_3D_CONTROLLER::ExportImage,        EDA_3D_ACTIONS::exportImage.MakeEvent() );
 

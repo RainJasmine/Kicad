@@ -80,7 +80,6 @@ class PCB_MARKER;
 class NETCLASS;
 class NETLIST;
 class NETINFO_ITEM;
-class ZONE;
 class PROGRESS_REPORTER;
 class REPORTER;
 class wxFileName;
@@ -351,11 +350,6 @@ private:
         DRC_RULE_CONDITION*        condition;
         std::shared_ptr<DRC_RULE>  parentRule;
         DRC_CONSTRAINT             constraint;
-
-        // Pre-resolved zone pointer for implicit keepout disallow rules. Allows the fast
-        // path in processConstraint to skip UUID parsing and expression evaluation by
-        // doing a direct bounding box pre-filter against the keepout zone.
-        ZONE*                      implicitKeepoutZone = nullptr;
     };
 
     void loadImplicitRules();

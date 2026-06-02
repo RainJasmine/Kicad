@@ -71,7 +71,6 @@ set( QA_EESCHEMA_SRCS
     erc/test_erc_bus_member_label_local_pins.cpp
     erc/test_erc_marker_deduplication.cpp
 
-    test_schematic_text_var_reactive.cpp
     test_annotation_refdes_tracker_units.cpp
     test_annotation_units_conflicts.cpp
     test_annotation_units_integration.cpp
@@ -94,6 +93,7 @@ set( QA_EESCHEMA_SRCS
     test_issue23719_global_label_chain.cpp
     test_issue24107_multiunit_grouping.cpp
     test_issue24072_symbol_arc_edit_mode.cpp
+    test_issue24290_local_labels_across_top_sheets.cpp
     test_issue16915_bus_netclass.cpp
     test_nc_pin_connectivity.cpp
     test_crossing_label.cpp
@@ -113,9 +113,6 @@ set( QA_EESCHEMA_SRCS
     test_incremental_netlister.cpp
     test_legacy_power_symbols.cpp
     test_history_autosave_legacy.cpp
-    test_sch_api_enums.cpp
-    test_sch_api_hittest.cpp
-    test_sch_api_proto.cpp
     test_sch_commit.cpp
     test_shape_corner_radius.cpp
     test_sch_group.cpp
@@ -159,7 +156,6 @@ set( QA_EESCHEMA_SRCS
     test_symbol_clipboard_export.cpp
     test_schematic_clipboard_export.cpp
     test_autoplace_fields.cpp
-    test_field_case_conflicts.cpp
 )
 
 if( WIN32 )
@@ -185,6 +181,7 @@ PRIVATE
     common
     kicommon
     pads_common
+    scripting
     kimath
     qa_utils
     qa_schematic_utils

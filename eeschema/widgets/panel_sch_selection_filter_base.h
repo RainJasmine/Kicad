@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////
-// C++ code generated with wxFormBuilder (version 4.2.1-0-g80c4cb6)
+// C++ code generated with wxFormBuilder (version 4.2.1-0-g80c4cb6a-dirty)
 // http://www.wxformbuilder.org/
 //
 // PLEASE DO *NOT* EDIT THIS FILE!
@@ -33,6 +33,7 @@ class PANEL_SCH_SELECTION_FILTER_BASE : public WX_PANEL
 		wxGridBagSizer* m_gridSizer;
 		wxCheckBox* m_cbAllItems;
 		wxCheckBox* m_cbRuleAreas;
+		wxCheckBox* m_cbLockedItems;
 		wxCheckBox* m_cbSymbols;
 		wxCheckBox* m_cbPins;
 		wxCheckBox* m_cbWires;
@@ -41,7 +42,6 @@ class PANEL_SCH_SELECTION_FILTER_BASE : public WX_PANEL
 		wxCheckBox* m_cbImages;
 		wxCheckBox* m_cbText;
 		wxCheckBox* m_cbOtherItems;
-		wxCheckBox* m_cbLockedItems;
 
 		// Virtual event handlers, override them in your derived class
 		virtual void OnFilterChanged( wxCommandEvent& event ) { event.Skip(); }

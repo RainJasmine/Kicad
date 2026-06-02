@@ -43,6 +43,10 @@ std::optional<TOOLBAR_CONFIGURATION> FOOTPRINT_WIZARD_TOOLBAR_SETTINGS::DefaultT
         config.AppendSeparator();
         config.AppendAction( PCB_ACTIONS::resetWizardPrms );
 
+        config.AppendSeparator();
+        config.AppendAction( PCB_ACTIONS::selectPreviousWizardPage );
+        config.AppendAction( PCB_ACTIONS::selectNextWizardPage );
+
         config.AppendSeparator()
             .AppendAction( ACTIONS::zoomRedraw )
             .AppendAction( ACTIONS::zoomInCenter )

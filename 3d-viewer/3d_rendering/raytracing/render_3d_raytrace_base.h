@@ -121,9 +121,6 @@ protected:
                                 bool aIsFront );
     void backfillPostMachine();
     void load3DModels( CONTAINER_3D& aDstContainer, bool aSkipMaterialInformation );
-    void addPlaceholderToRaytracer( CONTAINER_3D& aDstContainer, const FOOTPRINT* aFootprint,
-                                    const glm::mat4& aFpMatrix, bool aHasExtrudedBody = false );
-    bool addExtrudedBodyToRaytracer( CONTAINER_3D& aDstContainer, const FOOTPRINT* aFootprint );
     void addModels( CONTAINER_3D& aDstContainer, const S3DMODEL* a3DModel,
                     const glm::mat4& aModelMatrix, float aFPOpacity,
                     bool aSkipMaterialInformation, BOARD_ITEM* aBoardItem );
@@ -147,8 +144,6 @@ protected:
         BLINN_PHONG_MATERIAL m_NonPlatedCopper;
         BLINN_PHONG_MATERIAL m_Floor;
     } m_materials;
-
-    std::vector<std::unique_ptr<BLINN_PHONG_MATERIAL>> m_extrusionMaterials;
 
     BOARD_NORMAL         m_boardMaterial;
     COPPER_NORMAL        m_copperMaterial;

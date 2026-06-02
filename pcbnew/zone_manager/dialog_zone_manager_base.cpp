@@ -99,7 +99,7 @@ DIALOG_ZONE_MANAGER_BASE::DIALOG_ZONE_MANAGER_BASE( wxWindow* parent, wxWindowID
 	m_sizerZoneOP->Add( m_btnAutoAssign, 0, wxALIGN_CENTER_VERTICAL|wxRIGHT, 5 );
 
 
-	m_leftColumn->Add( m_sizerZoneOP, 0, wxBOTTOM|wxEXPAND|wxTOP, 5 );
+	m_leftColumn->Add( m_sizerZoneOP, 0, wxEXPAND|wxTOP|wxBOTTOM, 5 );
 
 
 	listPanelSizer->Add( m_leftColumn, 1, wxEXPAND|wxRIGHT|wxLEFT, 5 );
@@ -127,7 +127,7 @@ DIALOG_ZONE_MANAGER_BASE::DIALOG_ZONE_MANAGER_BASE( wxWindow* parent, wxWindowID
 	m_rightColumn->Add( m_sizerPreview, 1, wxEXPAND, 5 );
 
 
-	zonePanelSizer->Add( m_rightColumn, 1, wxBOTTOM|wxEXPAND, 5 );
+	zonePanelSizer->Add( m_rightColumn, 1, wxEXPAND, 5 );
 
 
 	m_zonePanel->SetSizer( zonePanelSizer );

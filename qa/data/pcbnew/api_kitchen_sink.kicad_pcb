@@ -1,5 +1,5 @@
 (kicad_pcb
-	(version 20260206)
+	(version 20241229)
 	(generator "pcbnew")
 	(generator_version "10.0")
 	(general
@@ -41,20 +41,7 @@
 	(setup
 		(pad_to_mask_clearance 0)
 		(allow_soldermask_bridges_in_footprints no)
-		(tenting
-			(front yes)
-			(back yes)
-		)
-		(covering
-			(front no)
-			(back no)
-		)
-		(plugging
-			(front no)
-			(back no)
-		)
-		(capping no)
-		(filling no)
+		(tenting front back)
 		(pcbplotparams
 			(layerselection 0x00000000_00000000_000010fc_ffffffff)
 			(plot_on_all_layers_selection 0x00000000_00000000_00000000_00000000)
@@ -63,12 +50,15 @@
 			(usegerberattributes yes)
 			(usegerberadvancedattributes yes)
 			(creategerberjobfile yes)
-			(dashed_line_dash_ratio 12)
-			(dashed_line_gap_ratio 3)
+			(dashed_line_dash_ratio 12.000000)
+			(dashed_line_gap_ratio 3.000000)
 			(svgprecision 4)
 			(plotframeref no)
 			(mode 1)
 			(useauxorigin no)
+			(hpglpennumber 1)
+			(hpglpenspeed 20)
+			(hpglpendiameter 15.000000)
 			(pdf_front_fp_property_popups yes)
 			(pdf_back_fp_property_popups yes)
 			(pdf_metadata yes)
@@ -92,6 +82,8 @@
 			(outputdirectory "")
 		)
 	)
+	(net 0 "")
+	(net 1 "A")
 	(footprint "Resistor_SMD:R_0603_1608Metric"
 		(layer "F.Cu")
 		(uuid "0b9cc5a8-6a75-47df-9617-9721c2785946")
@@ -145,7 +137,6 @@
 			)
 		)
 		(attr smd)
-		(duplicate_pad_numbers_are_jumpers no)
 		(fp_line
 			(start -0.237258 -0.5225)
 			(end 0.237258 -0.5225)
@@ -539,7 +530,6 @@
 			)
 		)
 		(attr through_hole)
-		(duplicate_pad_numbers_are_jumpers no)
 		(fp_line
 			(start -5.08 -1.27)
 			(end -5.08 0)
@@ -646,7 +636,7 @@
 			(drill 1.143)
 			(layers "*.Cu" "*.Mask" "F.SilkS")
 			(remove_unused_layers no)
-			(net "A")
+			(net 1 "A")
 			(uuid "af83e208-80d8-4838-9ffe-eaca56d969d0")
 		)
 		(pad "2" thru_hole rect
@@ -952,7 +942,6 @@
 			)
 		)
 		(attr through_hole)
-		(duplicate_pad_numbers_are_jumpers no)
 		(fp_line
 			(start -5.08 3.81)
 			(end 5.08 3.81)
@@ -1009,7 +998,7 @@
 			(drill 1.524)
 			(layers "*.Cu" "*.Mask" "F.SilkS")
 			(remove_unused_layers no)
-			(net "A")
+			(net 1 "A")
 			(uuid "afe67c4a-2148-455d-81b1-6bcc2a745c4d")
 		)
 		(pad "2" thru_hole circle
@@ -1057,7 +1046,7 @@
 			)
 		)
 		(stroke
-			(width 0.1)
+			(width 0)
 			(type solid)
 		)
 		(fill no)
@@ -1536,7 +1525,7 @@
 			(back no)
 		)
 		(filling no)
-		(net "")
+		(net 0)
 		(uuid "1960d56a-6a04-4e66-966f-9a4deaf28ebf")
 	)
 	(via
@@ -1558,7 +1547,7 @@
 			(back no)
 		)
 		(filling yes)
-		(net "")
+		(net 0)
 		(uuid "697fcc5c-9cf0-474e-bfab-8afc0fb18c62")
 	)
 	(via
@@ -1580,7 +1569,7 @@
 			(back no)
 		)
 		(filling no)
-		(net "")
+		(net 0)
 		(uuid "beec9209-4c19-4ad5-ac29-5a2a547cb37b")
 	)
 	(segment
@@ -1588,7 +1577,7 @@
 		(end 90.65 60.85)
 		(width 0.2)
 		(layer "B.Cu")
-		(net "A")
+		(net 1)
 		(uuid "314404ac-770d-48bd-95c0-61764c6aa3ed")
 	)
 	(segment
@@ -1596,7 +1585,7 @@
 		(end 95 60.85)
 		(width 0.2)
 		(layer "B.Cu")
-		(net "A")
+		(net 1)
 		(uuid "50e69c17-3b82-46ec-8e12-83615bba445c")
 	)
 	(segment
@@ -1604,7 +1593,7 @@
 		(end 88.3 63.2)
 		(width 0.2)
 		(layer "B.Cu")
-		(net "A")
+		(net 1)
 		(uuid "68c5bb53-edda-4916-9e13-61e1c3937aec")
 	)
 	(segment
@@ -1612,10 +1601,12 @@
 		(end 99.5 65.35)
 		(width 0.2)
 		(layer "B.Cu")
-		(net "A")
+		(net 1)
 		(uuid "fabfab7b-4ea2-487a-a340-e24bbc4c982e")
 	)
 	(zone
+		(net 0)
+		(net_name "")
 		(locked yes)
 		(layers "F.Cu" "B.Cu")
 		(uuid "0f5227b8-34f3-4302-949f-9de38b16fecf")
@@ -1625,6 +1616,7 @@
 			(clearance 0)
 		)
 		(min_thickness 0.25)
+		(filled_areas_thickness no)
 		(keepout
 			(tracks allowed)
 			(vias not_allowed)
@@ -1639,7 +1631,6 @@
 		(fill
 			(thermal_gap 0.5)
 			(thermal_bridge_width 0.5)
-			(island_removal_mode 0)
 		)
 		(polygon
 			(pts
@@ -1648,6 +1639,8 @@
 		)
 	)
 	(zone
+		(net 0)
+		(net_name "")
 		(layers "F.Cu" "B.Cu")
 		(uuid "9c3e186b-0f1d-48ef-8724-baad4fa44742")
 		(hatch edge 1)
@@ -1655,6 +1648,7 @@
 			(clearance 0)
 		)
 		(min_thickness 0.25)
+		(filled_areas_thickness no)
 		(keepout
 			(tracks allowed)
 			(vias allowed)
@@ -1669,7 +1663,6 @@
 		(fill
 			(thermal_gap 0.5)
 			(thermal_bridge_width 0.5)
-			(island_removal_mode 0)
 		)
 		(polygon
 			(pts
@@ -1683,6 +1676,8 @@
 		)
 	)
 	(zone
+		(net 0)
+		(net_name "")
 		(layers "F.Cu" "B.Cu")
 		(uuid "f52cce18-23b9-4645-b87a-21d0716548c2")
 		(hatch none 0.65)
@@ -1690,6 +1685,7 @@
 			(clearance 0)
 		)
 		(min_thickness 0.25)
+		(filled_areas_thickness no)
 		(keepout
 			(tracks allowed)
 			(vias allowed)
@@ -1704,7 +1700,6 @@
 		(fill
 			(thermal_gap 0.5)
 			(thermal_bridge_width 0.5)
-			(island_removal_mode 0)
 		)
 		(polygon
 			(pts
@@ -1713,6 +1708,8 @@
 		)
 	)
 	(zone
+		(net 0)
+		(net_name "")
 		(layer "B.Cu")
 		(uuid "6f75f268-7b12-4df8-b032-ef2b7e95c515")
 		(hatch edge 0.508)
@@ -1720,10 +1717,10 @@
 			(clearance 0.508)
 		)
 		(min_thickness 0.254)
+		(filled_areas_thickness no)
 		(fill yes
 			(thermal_gap 0.762)
 			(thermal_bridge_width 0.508)
-			(island_removal_mode 0)
 		)
 		(property
 			(layer "B.Cu")
@@ -1738,7 +1735,7 @@
 		)
 		(filled_polygon
 			(layer "B.Cu")
-			(island yes)
+			(island)
 			(pts
 				(xy 232.775121 38.456002) (xy 232.821614 38.509658) (xy 232.833 38.562) (xy 232.833 116.168359)
 				(xy 232.812998 116.23648) (xy 232.759342 116.282973) (xy 232.693829 116.293669) (xy 232.625623 116.2865)
@@ -4611,7 +4608,7 @@
 		)
 		(filled_polygon
 			(layer "B.Cu")
-			(island yes)
+			(island)
 			(pts
 				(xy 151.594412 102.769302) (xy 151.640485 102.822049) (xy 151.677829 102.902133) (xy 151.696431 102.942025)
 				(xy 151.800512 103.090669) (xy 151.826491 103.12777) (xy 151.98683 103.288109) (xy 152.172575 103.418169)
@@ -4669,7 +4666,7 @@
 		)
 		(filled_polygon
 			(layer "B.Cu")
-			(island yes)
+			(island)
 			(pts
 				(xy 168.461821 49.932222) (xy 168.508314 49.985878) (xy 168.5197 50.03822) (xy 168.5197 52.730151)
 				(xy 168.499698 52.798272) (xy 168.482796 52.819246) (xy 168.404847 52.897195) (xy 168.283715 53.070191)

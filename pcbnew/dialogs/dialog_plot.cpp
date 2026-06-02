@@ -54,7 +54,6 @@
 #include <jobs/job_export_pcb_hpgl.h>
 #include <jobs/job_export_pcb_dxf.h>
 #include <jobs/job_export_pcb_pdf.h>
-#include <jobs/job_export_pcb_png.h>
 #include <jobs/job_export_pcb_ps.h>
 #include <jobs/job_export_pcb_svg.h>
 #include <plotters/plotters_pslike.h>
@@ -341,7 +340,6 @@ bool DIALOG_PLOT::TransferDataToWindow()
     case PLOT_FORMAT::DXF:    m_plotFormatOpt->SetSelection( 3 ); break;
     case PLOT_FORMAT::HPGL:   /* no longer supported */           break;
     case PLOT_FORMAT::PDF:    m_plotFormatOpt->SetSelection( 4 ); break;
-    case PLOT_FORMAT::PNG:    m_plotFormatOpt->SetSelection( 5 ); break;
     }
 
     m_plotPSNegativeOpt->SetValue( m_plotOpts.GetNegative() );
@@ -381,10 +379,6 @@ bool DIALOG_PLOT::TransferDataToWindow()
     // SVG precision and units for coordinates
     m_svgPrecsision->SetValue( m_plotOpts.GetSvgPrecision() );
     m_SVG_fitPageToBoard->SetValue( m_plotOpts.GetSvgFitPagetoBoard() );
-
-    // PNG options
-    m_pngDPI->SetValue( m_plotOpts.GetPngDPI() );
-    m_pngAntialias->SetValue( m_plotOpts.GetPngAntialias() );
 
     m_sketchPadsOnFabLayers->SetValue( m_plotOpts.GetSketchPadsOnFabLayers() );
     m_plotPadNumbers->SetValue( m_plotOpts.GetPlotPadNumbers() );
@@ -519,13 +513,6 @@ void DIALOG_PLOT::transferPlotParamsToJob()
         {
             pdfJob->m_pdfGenMode = JOB_EXPORT_PCB_PDF::GEN_MODE::ALL_LAYERS_SEPARATE_FILE;
         }
-    }
-
-    if( m_job->m_plotFormat == JOB_EXPORT_PCB_PLOT::PLOT_FORMAT::PNG )
-    {
-        JOB_EXPORT_PCB_PNG* pngJob = static_cast<JOB_EXPORT_PCB_PNG*>( m_job );
-        pngJob->m_dpi = m_plotOpts.GetPngDPI();
-        pngJob->m_antialias = m_plotOpts.GetPngAntialias();
     }
 
     m_job->m_subtractSolderMaskFromSilk = m_plotOpts.GetSubtractMaskFromSilk();
@@ -856,8 +843,7 @@ PLOT_FORMAT DIALOG_PLOT::getPlotFormat()
             PLOT_FORMAT::POST,
             PLOT_FORMAT::SVG,
             PLOT_FORMAT::DXF,
-            PLOT_FORMAT::PDF,
-            PLOT_FORMAT::PNG };
+            PLOT_FORMAT::PDF };
 
     return plotFmt[m_plotFormatOpt->GetSelection()];
 }
@@ -883,8 +869,6 @@ void DIALOG_PLOT::SetPlotFormat( wxCommandEvent& event )
         m_PlotOptionsSizer->Hide( m_SizerSolderMaskAlert );
     }
 
-    wxSizer* shownFormatSizer = nullptr;
-
     switch( getPlotFormat() )
     {
     case PLOT_FORMAT::SVG:
@@ -900,7 +884,20 @@ void DIALOG_PLOT::SetPlotFormat( wxCommandEvent& event )
         m_forcePSA4OutputOpt->Enable( false );
         m_forcePSA4OutputOpt->SetValue( false );
 
-        shownFormatSizer = ( getPlotFormat() == PLOT_FORMAT::SVG ) ? m_svgOptionsSizer : m_PDFOptionsSizer;
+        if( getPlotFormat() == PLOT_FORMAT::SVG )
+        {
+            m_PlotOptionsSizer->Show( m_svgOptionsSizer );
+            m_PlotOptionsSizer->Hide( m_PDFOptionsSizer );
+        }
+        else
+        {
+            m_PlotOptionsSizer->Hide( m_svgOptionsSizer );
+            m_PlotOptionsSizer->Show( m_PDFOptionsSizer );
+        }
+
+        m_PlotOptionsSizer->Hide( m_GerberOptionsSizer );
+        m_PlotOptionsSizer->Hide( m_PSOptionsSizer );
+        m_PlotOptionsSizer->Hide( m_SizerDXF_options );
         break;
 
     case PLOT_FORMAT::POST:
@@ -915,7 +912,11 @@ void DIALOG_PLOT::SetPlotFormat( wxCommandEvent& event )
         m_plotPSNegativeOpt->Enable( true );
         m_forcePSA4OutputOpt->Enable( true );
 
-        shownFormatSizer = m_PSOptionsSizer;
+        m_PlotOptionsSizer->Hide( m_GerberOptionsSizer );
+        m_PlotOptionsSizer->Show( m_PSOptionsSizer );
+        m_PlotOptionsSizer->Hide( m_SizerDXF_options );
+        m_PlotOptionsSizer->Hide( m_svgOptionsSizer );
+        m_PlotOptionsSizer->Hide( m_PDFOptionsSizer );
         break;
 
     case PLOT_FORMAT::GERBER:
@@ -934,7 +935,11 @@ void DIALOG_PLOT::SetPlotFormat( wxCommandEvent& event )
         m_forcePSA4OutputOpt->Enable( false );
         m_forcePSA4OutputOpt->SetValue( false );
 
-        shownFormatSizer = m_GerberOptionsSizer;
+        m_PlotOptionsSizer->Show( m_GerberOptionsSizer );
+        m_PlotOptionsSizer->Hide( m_PSOptionsSizer );
+        m_PlotOptionsSizer->Hide( m_SizerDXF_options );
+        m_PlotOptionsSizer->Hide( m_svgOptionsSizer );
+        m_PlotOptionsSizer->Hide( m_PDFOptionsSizer );
         break;
 
     case PLOT_FORMAT::DXF:
@@ -951,35 +956,19 @@ void DIALOG_PLOT::SetPlotFormat( wxCommandEvent& event )
         m_forcePSA4OutputOpt->Enable( false );
         m_forcePSA4OutputOpt->SetValue( false );
 
-        shownFormatSizer = m_SizerDXF_options;
+        m_PlotOptionsSizer->Hide( m_GerberOptionsSizer );
+        m_PlotOptionsSizer->Hide( m_PSOptionsSizer );
+        m_PlotOptionsSizer->Show( m_SizerDXF_options );
+        m_PlotOptionsSizer->Hide( m_svgOptionsSizer );
+        m_PlotOptionsSizer->Hide( m_PDFOptionsSizer );
+
         OnChangeDXFPlotMode( event );
-        break;
-
-    case PLOT_FORMAT::PNG:
-        m_drillShapeOpt->Enable( true );
-        m_plotMirrorOpt->Enable( true );
-        m_useAuxOriginCheckBox->Enable( true );
-        m_scaleOpt->Enable( true );
-        m_fineAdjustXCtrl->Enable( false );
-        m_fineAdjustYCtrl->Enable( false );
-        m_trackWidthCorrection.Enable( false );
-        m_plotPSNegativeOpt->Enable( true );
-        m_forcePSA4OutputOpt->Enable( false );
-        m_forcePSA4OutputOpt->SetValue( false );
-
-        shownFormatSizer = m_pngOptionsSizer;
         break;
 
     default:
     case PLOT_FORMAT::HPGL:
     case PLOT_FORMAT::UNDEFINED:
         break;
-    }
-
-    for( wxSizer* formatSizer : { m_GerberOptionsSizer, m_PSOptionsSizer, m_SizerDXF_options,
-                                  m_svgOptionsSizer, m_PDFOptionsSizer, m_pngOptionsSizer } )
-    {
-        m_PlotOptionsSizer->Show( formatSizer, formatSizer == shownFormatSizer );
     }
 
     Layout();
@@ -1073,11 +1062,6 @@ void DIALOG_PLOT::applyPlotSettings()
         tempOptions.m_PDFSingle = m_pdfSingle->GetValue();
         tempOptions.m_PDFBackgroundColor = m_pdfBackgroundColorSwatch->GetSwatchColor();
     }
-    else if( getPlotFormat() == PLOT_FORMAT::PNG )
-    {
-        // Match the CLI default; a dedicated UI control will be added with the next .fbp regen.
-        tempOptions.SetBlackAndWhite( false );
-    }
     else
     {
         tempOptions.SetBlackAndWhite( true );
@@ -1142,8 +1126,6 @@ void DIALOG_PLOT::applyPlotSettings()
     tempOptions.SetGerberPrecision( m_coordFormatCtrl->GetSelection() == 0 ? 5 : 6 );
     tempOptions.SetSvgPrecision( m_svgPrecsision->GetValue() );
     tempOptions.SetSvgFitPageToBoard( m_SVG_fitPageToBoard->GetValue() );
-    tempOptions.SetPngDPI( m_pngDPI->GetValue() );
-    tempOptions.SetPngAntialias( m_pngAntialias->GetValue() );
 
     LSET selectedLayers;
 
