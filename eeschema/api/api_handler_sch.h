@@ -23,13 +23,17 @@
 
 #include <api/api_handler_editor.h>
 #include <api/common/commands/editor_commands.pb.h>
+#include <api/schematic/schematic_commands.pb.h>
 #include <kiid.h>
+#include <sch_sheet_path.h>
 
 using namespace kiapi;
 using namespace kiapi::common;
 
 class SCH_EDIT_FRAME;
 class SCH_ITEM;
+class SCH_SCREEN;
+class LIB_SYMBOL;
 
 
 class API_HANDLER_SCH : public API_HANDLER_EDITOR
@@ -66,6 +70,23 @@ protected:
 private:
     HANDLER_RESULT<commands::GetOpenDocumentsResponse> handleGetOpenDocuments(
             const HANDLER_CONTEXT<commands::GetOpenDocuments>& aCtx );
+
+    HANDLER_RESULT<kiapi::schematic::commands::SearchSymbolLibraryResponse>
+    handleSearchSymbolLibrary(
+            const HANDLER_CONTEXT<kiapi::schematic::commands::SearchSymbolLibrary>& aCtx );
+
+    HANDLER_RESULT<kiapi::schematic::commands::SymbolLibraryDefinition>
+    handleGetSymbolLibraryDefinition(
+            const HANDLER_CONTEXT<kiapi::schematic::commands::GetSymbolLibraryDefinition>& aCtx );
+
+    HANDLER_RESULT<kiapi::schematic::commands::ActiveSchematicContext>
+    handleGetActiveSchematicContext(
+            const HANDLER_CONTEXT<kiapi::schematic::commands::GetActiveSchematicContext>& aCtx );
+
+    std::optional<SCH_SHEET_PATH> resolveSheetPath( const DocumentSpecifier& aDocument ) const;
+    SCH_SCREEN* resolveScreen( const DocumentSpecifier& aDocument ) const;
+    void fillSymbolSummary( kiapi::schematic::commands::SymbolLibrarySummary& aOutput,
+                            const LIB_SYMBOL& aSymbol ) const;
 
     SCH_EDIT_FRAME* m_frame;
 };

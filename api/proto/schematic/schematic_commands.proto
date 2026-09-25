@@ -19,6 +19,97 @@
 
 syntax = "proto3";
 
-package kiapi.schematic.types;
+package kiapi.schematic.commands;
+
+import "common/types/base_types.proto";
+
+// Searches the symbol libraries visible through the active project's library table.
+enum SymbolLibraryMatchMode
+{
+  SLMM_SUBSTRING = 0;
+  SLMM_EXACT     = 1;
+  SLMM_PREFIX    = 2;
+}
+
+message SearchSymbolLibrary
+{
+  string                 query            = 1;
+  optional string        library_nickname = 2;
+  uint32                 max_results      = 3;
+  SymbolLibraryMatchMode match_mode       = 4;
+}
+
+message SymbolLibrarySummary
+{
+  kiapi.common.types.LibraryIdentifier library_id       = 1;
+  string                               display_name     = 2;
+  string                               description      = 3;
+  string                               keywords         = 4;
+  string                               reference_prefix = 5;
+  uint32                               unit_count       = 6;
+  uint32                               body_style_count = 7;
+}
+
+message SearchSymbolLibraryResponse
+{
+  repeated SymbolLibrarySummary symbols = 1;
+}
+
+message GetSymbolLibraryDefinition
+{
+  kiapi.common.types.LibraryIdentifier library_id = 1;
+}
+
+message SymbolLibraryPin
+{
+  string                      number     = 1;
+  string                      name       = 2;
+  // Library-local coordinates. The Vector2 *_nm fields carry schematic internal units.
+  kiapi.common.types.Vector2  position   = 3;
+  int32                       unit       = 4;
+  int32                       body_style = 5;
+}
+
+message SymbolLibraryField
+{
+  string                     name     = 1;
+  string                     value    = 2;
+  // Library-local coordinates in schematic internal units.
+  kiapi.common.types.Vector2 position = 3;
+  bool                       visible  = 4;
+}
+
+message SymbolLibraryVariant
+{
+  uint32                    unit          = 1;
+  uint32                    body_style    = 2;
+  repeated SymbolLibraryPin pins          = 3;
+  // Library-local bounding box in schematic internal units.
+  kiapi.common.types.Box2   bounding_box = 4;
+}
+
+message SymbolLibraryDefinition
+{
+  SymbolLibrarySummary         summary        = 1;
+  repeated SymbolLibraryField  default_fields = 2;
+  repeated SymbolLibraryVariant variants      = 3;
+  // Library-local bounding box in schematic internal units.
+  kiapi.common.types.Box2     bounding_box   = 4;
+}
+
+message GetActiveSchematicContext
+{
+}
+
+message ActiveSchematicContext
+{
+  kiapi.common.types.DocumentSpecifier document        = 1;
+  string                               screen_filename = 2;
+  kiapi.common.types.Box2              visible_canvas  = 3;
+  kiapi.common.types.Vector2           grid            = 4;
+  kiapi.common.types.Vector2           cursor          = 5;
+  // Vector2 coordinates currently use schematic internal units in this API.
+  string                               coordinate_unit = 6;
+}
 
 
