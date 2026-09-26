@@ -26,13 +26,18 @@
 #include <lib_symbol.h>
 #include <magic_enum.hpp>
 #include <project_sch.h>
+#include <refdes_utils.h>
 #include <sch_commit.h>
 #include <sch_edit_frame.h>
 #include <sch_field.h>
+#include <sch_junction.h>
+#include <sch_line.h>
 #include <sch_pin.h>
 #include <sch_screen.h>
 #include <sch_sheet_path.h>
+#include <sch_symbol.h>
 #include <schematic.h>
+#include <symbol.h>
 #include <string_utils.h>
 #include <view/view.h>
 #include <view/view_controls.h>
@@ -40,12 +45,57 @@
 #include <algorithm>
 
 #include <api/common/types/base_types.pb.h>
+#include <api/schematic/schematic_types.pb.h>
 
 using namespace kiapi::common::commands;
 using kiapi::common::types::CommandStatus;
 using kiapi::common::types::DocumentType;
 using kiapi::common::types::ItemRequestStatus;
 using namespace kiapi::schematic::commands;
+
+
+// 返回创建后的实际实例数据，尤其是经过旋转、镜像后的引脚坐标。
+static void packCreatedSymbol( google::protobuf::Any& aOutput, const SCH_SYMBOL& aSymbol,
+                               const SCH_SHEET_PATH& aSheet )
+{
+    kiapi::schematic::types::Symbol result;
+    result.mutable_id()->set_value( aSymbol.m_Uuid.AsStdString() );
+    kiapi::common::PackVector2( *result.mutable_position(), aSymbol.GetPosition() );
+    result.mutable_library_id()->CopyFrom( kiapi::common::LibIdToProto( aSymbol.GetLibId() ) );
+    result.set_schematic_library_name( TO_UTF8( aSymbol.GetSchSymbolLibraryName() ) );
+    result.set_unit( aSymbol.GetUnit() );
+    result.set_body_style( aSymbol.GetBodyStyle() );
+    result.set_orientation( aSymbol.GetOrientation() );
+    result.set_reference_prefix( TO_UTF8( aSymbol.GetPrefix() ) );
+    kiapi::common::PackBox2( *result.mutable_bounding_box(), aSymbol.GetBoundingBox() );
+
+    std::vector<SCH_FIELD*> fields;
+    aSymbol.GetFields( fields, false );
+
+    for( const SCH_FIELD* field : fields )
+    {
+        kiapi::schematic::types::SymbolField* output = result.add_fields();
+        output->set_name( TO_UTF8( field->GetCanonicalName() ) );
+        output->set_field_id( static_cast<int>( field->GetId() ) );
+        output->set_value( TO_UTF8( field->GetId() == FIELD_T::REFERENCE
+                                             ? aSymbol.GetRef( &aSheet ) : field->GetText() ) );
+        output->set_visible( field->IsVisible() );
+        kiapi::common::PackVector2( *output->mutable_position(), field->GetTextPos() );
+    }
+
+    for( const SCH_PIN* pin : aSymbol.GetPins( &aSheet ) )
+    {
+        kiapi::schematic::types::SymbolPin* output = result.add_pins();
+        output->set_number( TO_UTF8( pin->GetNumber() ) );
+        output->set_name( TO_UTF8( pin->GetName() ) );
+        kiapi::common::PackVector2( *output->mutable_position(),
+                                    aSymbol.GetPinPhysicalPosition( pin ) );
+        output->set_unit( pin->GetUnit() );
+        output->set_body_style( pin->GetBodyStyle() );
+    }
+
+    aOutput.PackFrom( result );
+}
 
 
 API_HANDLER_SCH::API_HANDLER_SCH( SCH_EDIT_FRAME* aFrame ) :
@@ -435,7 +485,7 @@ HANDLER_RESULT<ActiveSchematicContext> API_HANDLER_SCH::handleGetActiveSchematic
 HANDLER_RESULT<std::unique_ptr<EDA_ITEM>> API_HANDLER_SCH::createItemForType( KICAD_T aType,
         EDA_ITEM* aContainer )
 {
-    if( !aContainer )
+    if( !aContainer && aType != SCH_LINE_T && aType != SCH_JUNCTION_T )
     {
         ApiResponseStatus e;
         e.set_status( ApiStatusCode::AS_BAD_REQUEST );
@@ -448,15 +498,6 @@ HANDLER_RESULT<std::unique_ptr<EDA_ITEM>> API_HANDLER_SCH::createItemForType( KI
         ApiResponseStatus e;
         e.set_status( ApiStatusCode::AS_BAD_REQUEST );
         e.set_error_message( fmt::format( "Tried to create a pin in {}, which is not a symbol",
-                                          aContainer->GetFriendlyName().ToStdString() ) );
-        return tl::unexpected( e );
-    }
-    else if( aType == SCH_SYMBOL_T && !dynamic_cast<SCHEMATIC*>( aContainer ) )
-    {
-        ApiResponseStatus e;
-        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
-        e.set_error_message( fmt::format( "Tried to create a symbol in {}, which is not a "
-                                          "schematic",
                                           aContainer->GetFriendlyName().ToStdString() ) );
         return tl::unexpected( e );
     }
@@ -548,6 +589,7 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsIntern
     }
 
     COMMIT* commit = getCurrentCommit( aClientName );
+    const std::optional<SCH_SHEET_PATH> sheetPath = resolveSheetPath( aHeader.document() );
 
     for( const google::protobuf::Any& anyItem : aItems )
     {
@@ -563,25 +605,210 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsIntern
             continue;
         }
 
-        HANDLER_RESULT<std::unique_ptr<EDA_ITEM>> creationResult =
-                createItemForType( *type, container );
+        std::unique_ptr<EDA_ITEM> item;
 
-        if( !creationResult )
+        if( *type == SCH_SYMBOL_T && aCreate && !container && sheetPath )
         {
-            status.set_code( ItemStatusCode::ISC_INVALID_TYPE );
-            status.set_error_message( creationResult.error().error_message() );
-            aItemHandler( status, anyItem );
-            continue;
+            kiapi::schematic::types::Symbol request;
+
+            if( !anyItem.UnpackTo( &request ) || !request.has_position()
+                || request.library_id().library_nickname().empty()
+                || request.library_id().entry_name().empty() )
+            {
+                status.set_code( ItemStatusCode::ISC_INVALID_DATA );
+                status.set_error_message( "symbol requires a position and exact library ID" );
+                aItemHandler( status, anyItem );
+                continue;
+            }
+
+            const int unit = request.unit() == 0 ? 1 : request.unit();
+            const int bodyStyle = request.body_style() == 0 ? 1 : request.body_style();
+            const int orientation = request.orientation() == 0 ? SYM_ORIENT_0
+                                                             : request.orientation();
+            const int rotation = orientation & 0xff;
+            const int mirror = orientation & ~0xff;
+
+            if( rotation < SYM_ORIENT_0 || rotation > SYM_ORIENT_270
+                || ( mirror != 0 && mirror != SYM_MIRROR_X && mirror != SYM_MIRROR_Y
+                     && mirror != ( SYM_MIRROR_X | SYM_MIRROR_Y ) ) )
+            {
+                status.set_code( ItemStatusCode::ISC_INVALID_DATA );
+                status.set_error_message( "invalid symbol orientation" );
+                aItemHandler( status, anyItem );
+                continue;
+            }
+
+            LIB_ID libId = kiapi::common::LibIdFromProto( request.library_id() );
+            SYMBOL_LIBRARY_ADAPTER* adapter = PROJECT_SCH::SymbolLibAdapter( &m_frame->Prj() );
+            LIB_SYMBOL* librarySymbol = nullptr;
+
+            if( adapter )
+            {
+                try
+                {
+                    // LoadSymbol 返回工程库持有的对象，实例构造函数会复制所需的符号定义。
+                    librarySymbol = adapter->LoadSymbol( libId );
+                }
+                catch( const IO_ERROR& )
+                {
+                }
+            }
+
+            if( !librarySymbol || unit < 1 || unit > std::max( 1, librarySymbol->GetUnitCount() )
+                || bodyStyle < 1 || bodyStyle > std::max( 1, librarySymbol->GetBodyStyleCount() ) )
+            {
+                status.set_code( ItemStatusCode::ISC_INVALID_DATA );
+                status.set_error_message( "symbol is unavailable or its unit/body style is invalid" );
+                aItemHandler( status, anyItem );
+                continue;
+            }
+
+            auto symbol = std::make_unique<SCH_SYMBOL>( *librarySymbol, libId, &*sheetPath,
+                    unit, bodyStyle, kiapi::common::UnpackVector2( request.position() ) );
+            symbol->SetOrientation( orientation );
+
+            if( !request.id().value().empty() )
+                const_cast<KIID&>( symbol->m_Uuid ) = KIID( request.id().value() );
+
+            if( !request.reference_prefix().empty() )
+            {
+                wxString reference = UTIL::GetRefDesUnannotated(
+                        wxString::FromUTF8( request.reference_prefix() ) );
+                symbol->SetRef( &*sheetPath, reference );
+                symbol->GetField( FIELD_T::REFERENCE )->SetText( reference );
+            }
+
+            for( const kiapi::schematic::types::SymbolField& override : request.fields() )
+            {
+                SCH_FIELD* field = nullptr;
+
+                if( override.field_id() >= static_cast<int>( FIELD_T::REFERENCE )
+                    && override.field_id() <= static_cast<int>( FIELD_T::DESCRIPTION ) )
+                {
+                    field = symbol->GetField( static_cast<FIELD_T>( override.field_id() ) );
+                }
+                else if( !override.name().empty() )
+                {
+                    wxString name = wxString::FromUTF8( override.name() );
+                    field = symbol->GetField( name );
+
+                    if( !field )
+                    {
+                        SCH_FIELD custom( symbol.get(), FIELD_T::USER, name );
+                        custom.SetOrdinal( symbol->GetNextFieldOrdinal() );
+                        custom.SetTextPos( symbol->GetPosition() );
+                        field = symbol->AddField( custom );
+                    }
+                }
+
+                if( !field )
+                    continue;
+
+                if( override.has_value() )
+                {
+                    wxString value = wxString::FromUTF8( override.value() );
+
+                    if( field->GetId() == FIELD_T::REFERENCE )
+                        symbol->SetRef( &*sheetPath, value );
+
+                    field->SetText( value );
+                }
+
+                if( override.has_visible() )
+                    field->SetVisible( override.visible() );
+
+                if( override.has_position() )
+                    field->SetTextPos( kiapi::common::UnpackVector2( override.position() ) );
+            }
+
+            item = std::move( symbol );
+        }
+        else if( *type == SCH_LINE_T && aCreate && !container )
+        {
+            kiapi::schematic::types::Line request;
+
+            if( !anyItem.UnpackTo( &request ) || !request.has_start()
+                || !request.has_end() )
+            {
+                status.set_code( ItemStatusCode::ISC_INVALID_DATA );
+                status.set_error_message( "line requires start and end points" );
+                aItemHandler( status, anyItem );
+                continue;
+            }
+
+            if( request.layer() != kiapi::schematic::types::SL_WIRE
+                && request.layer() != kiapi::schematic::types::SL_BUS
+                && request.layer() != kiapi::schematic::types::SL_NOTES )
+            {
+                status.set_code( ItemStatusCode::ISC_INVALID_DATA );
+                status.set_error_message( "line layer must be wire, bus, or notes" );
+                aItemHandler( status, anyItem );
+                continue;
+            }
+
+            SCH_LAYER_ID layer = kiapi::common::FromProtoEnum<SCH_LAYER_ID,
+                    kiapi::schematic::types::SchematicLayer>( request.layer() );
+
+            item = std::make_unique<SCH_LINE>(
+                    kiapi::common::UnpackVector2( request.start() ), layer );
+
+            if( !item->Deserialize( anyItem ) )
+            {
+                status.set_code( ItemStatusCode::ISC_INVALID_DATA );
+                status.set_error_message( "line endpoints must be different" );
+                aItemHandler( status, anyItem );
+                continue;
+            }
+        }
+        else if( *type == SCH_JUNCTION_T && aCreate && !container )
+        {
+            kiapi::schematic::types::Junction request;
+
+            if( !anyItem.UnpackTo( &request ) || !request.has_position() )
+            {
+                status.set_code( ItemStatusCode::ISC_INVALID_DATA );
+                status.set_error_message( "junction requires a position" );
+                aItemHandler( status, anyItem );
+                continue;
+            }
+
+            auto junction = std::make_unique<SCH_JUNCTION>(
+                    kiapi::common::UnpackVector2( request.position() ) );
+
+            if( !request.id().value().empty() )
+                const_cast<KIID&>( junction->m_Uuid ) = KIID( request.id().value() );
+
+            item = std::move( junction );
+        }
+        else
+        {
+            HANDLER_RESULT<std::unique_ptr<EDA_ITEM>> creationResult =
+                    createItemForType( *type, container );
+
+            if( !creationResult )
+            {
+                status.set_code( ItemStatusCode::ISC_INVALID_TYPE );
+                status.set_error_message( creationResult.error().error_message() );
+                aItemHandler( status, anyItem );
+                continue;
+            }
+
+            item = std::move( *creationResult );
+
+            if( !item->Deserialize( anyItem ) )
+            {
+                status.set_code( ItemStatusCode::ISC_INVALID_DATA );
+                status.set_error_message( "could not deserialize schematic item" );
+                aItemHandler( status, anyItem );
+                continue;
+            }
         }
 
-        std::unique_ptr<EDA_ITEM> item( std::move( *creationResult ) );
-
-        if( !item->Deserialize( anyItem ) )
+        if( !item )
         {
-            e.set_status( ApiStatusCode::AS_BAD_REQUEST );
-            e.set_error_message( fmt::format( "could not unpack {} from request",
-                                              item->GetClass().ToStdString() ) );
-            return tl::unexpected( e );
+            status.set_code( ItemStatusCode::ISC_INVALID_DATA );
+            aItemHandler( status, anyItem );
+            continue;
         }
 
         if( aCreate && itemUuidMap.count( item->m_Uuid ) )
@@ -606,11 +833,21 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsIntern
 
         if( aCreate )
         {
-            item->Serialize( newItem );
-            commit->Add( item.release(), screen );
+            if( *type == SCH_SYMBOL_T && sheetPath )
+                packCreatedSymbol( newItem, *static_cast<SCH_SYMBOL*>( item.get() ), *sheetPath );
+            else if( *type == SCH_JUNCTION_T )
+            {
+                kiapi::schematic::types::Junction output;
+                output.mutable_id()->set_value( item->m_Uuid.AsStdString() );
+                kiapi::common::PackVector2( *output.mutable_position(),
+                                             item->GetPosition() );
+                newItem.PackFrom( output );
+            }
+            else
+                item->Serialize( newItem );
 
-            if( !m_activeClients.count( aClientName ) )
-                pushCurrentCommit( aClientName, _( "Added items via API" ) );
+            itemUuidMap[item->m_Uuid] = item.get();
+            commit->Add( item.release(), screen );
         }
         else
         {
@@ -618,21 +855,24 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsIntern
 
             if( SCH_ITEM* schItem = dynamic_cast<SCH_ITEM*>( edaItem ) )
             {
+                commit->Modify( schItem, screen );
                 schItem->SwapItemData( static_cast<SCH_ITEM*>( item.get() ) );
                 schItem->Serialize( newItem );
-                commit->Modify( schItem, screen );
             }
             else
             {
                 wxASSERT( false );
             }
 
-            if( !m_activeClients.count( aClientName ) )
-                pushCurrentCommit( aClientName, _( "Created items via API" ) );
         }
 
         aItemHandler( status, newItem );
     }
+
+    // 单次请求只提交一次；显式事务则留给 EndCommit 统一提交符号和导线。
+    if( !m_activeClients.count( aClientName ) )
+        pushCurrentCommit( aClientName, aCreate ? _( "Added items via API" )
+                                               : _( "Updated items via API" ) );
 
 
     return ItemRequestStatus::IRS_OK;

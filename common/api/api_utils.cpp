@@ -47,6 +47,9 @@ KICOMMON_API std::optional<KICAD_T> TypeNameFromAny( const google::protobuf::Any
         { "type.googleapis.com/kiapi.board.types.Group", PCB_GROUP_T },
         { "type.googleapis.com/kiapi.board.types.Field", PCB_FIELD_T },
         { "type.googleapis.com/kiapi.board.types.FootprintInstance", PCB_FOOTPRINT_T },
+        { "type.googleapis.com/kiapi.schematic.types.Line", SCH_LINE_T },
+        { "type.googleapis.com/kiapi.schematic.types.Junction", SCH_JUNCTION_T },
+        { "type.googleapis.com/kiapi.schematic.types.Symbol", SCH_SYMBOL_T },
     };
 
     auto it = s_types.find( aMessage.type_url() );

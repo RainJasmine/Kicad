@@ -26,6 +26,9 @@ import "common/types/base_types.proto";
 enum SchematicLayer
 {
   SL_UNKNOWN = 0;
+  SL_WIRE    = 1;
+  SL_BUS     = 2;
+  SL_NOTES   = 3;
 }
 
 /// Represents a schematic line segment, which may be a wire, bus, or graphical line
@@ -39,6 +42,49 @@ message Line
    * One of: LAYER_BUS, LAYER_WIRE, LAYER_NOTES
    */
   SchematicLayer layer = 4;
+}
+
+// An explicit electrical junction at a wire branch or crossing.
+message Junction
+{
+  kiapi.common.types.KIID    id       = 1;
+  kiapi.common.types.Vector2 position = 2;
+}
+
+// A field override on a placed symbol. Omitted values keep the library default.
+message SymbolField
+{
+  string                     name     = 1;
+  optional string            value    = 2;
+  int32                      field_id = 3;
+  optional bool              visible  = 4;
+  kiapi.common.types.Vector2 position = 5;
+}
+
+// Returned by CreateItems with the physical pin position on the target sheet.
+message SymbolPin
+{
+  string                     number     = 1;
+  string                     name       = 2;
+  kiapi.common.types.Vector2 position   = 3;
+  int32                      unit       = 4;
+  int32                      body_style = 5;
+}
+
+message Symbol
+{
+  // An empty ID requests a new KIID from the host.
+  kiapi.common.types.KIID              id                     = 1;
+  kiapi.common.types.Vector2           position               = 2;
+  kiapi.common.types.LibraryIdentifier library_id             = 3;
+  string                               schematic_library_name = 4; // response only
+  int32                                unit                   = 5; // 0 selects unit 1
+  int32                                body_style             = 6; // 0 selects style 1
+  int32                                orientation            = 7; // 0 selects SYM_ORIENT_0
+  string                               reference_prefix       = 8;
+  repeated SymbolField                 fields                 = 9;
+  repeated SymbolPin                   pins                   = 10; // response only
+  kiapi.common.types.Box2              bounding_box           = 11; // response only
 }
 
 message Text

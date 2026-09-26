@@ -124,7 +124,14 @@ bool SCH_LINE::Deserialize( const google::protobuf::Any &aContainer )
     if( !aContainer.UnpackTo( &line ) )
         return false;
 
-    const_cast<KIID&>( m_Uuid ) = KIID( line.id().value() );
+    if( !line.id().value().empty() )
+        const_cast<KIID&>( m_Uuid ) = KIID( line.id().value() );
+
+    if( !line.has_start() || !line.has_end()
+        || ( line.start().x_nm() == line.end().x_nm()
+             && line.start().y_nm() == line.end().y_nm() ) )
+        return false;
+
     SetStartPoint( kiapi::common::UnpackVector2( line.start() ) );
     SetEndPoint( kiapi::common::UnpackVector2( line.end() ) );
     SCH_LAYER_ID layer =
@@ -139,7 +146,7 @@ bool SCH_LINE::Deserialize( const google::protobuf::Any &aContainer )
         break;
 
     default:
-        break;
+        return false;
     }
 
     return true;
