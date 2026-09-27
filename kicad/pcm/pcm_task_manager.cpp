@@ -371,7 +371,8 @@ PCM_TASK_MANAGER::STATUS PCM_TASK_MANAGER::InstallFromFile( wxWindow*       aPar
             {
                 wxLogError( wxString::Format( _( "Unable to parse package metadata:\n\n%s" ),
                                               e.what() ) );
-                break;
+                // 校验失败后不能继续将非空 JSON 转为 PCM_PACKAGE，否则缺少必填字段会再次抛异常。
+                return PCM_TASK_MANAGER::STATUS::FAILED;
             }
         }
     }
@@ -382,7 +383,18 @@ PCM_TASK_MANAGER::STATUS PCM_TASK_MANAGER::InstallFromFile( wxWindow*       aPar
         return PCM_TASK_MANAGER::STATUS::FAILED;
     }
 
-    PCM_PACKAGE package = metadata.get<PCM_PACKAGE>();
+    PCM_PACKAGE package;
+
+    try
+    {
+        package = metadata.get<PCM_PACKAGE>();
+    }
+    catch( const std::exception& e )
+    {
+        wxLogError( wxString::Format( _( "Unable to parse package metadata:\n\n%s" ),
+                                      e.what() ) );
+        return PCM_TASK_MANAGER::STATUS::FAILED;
+    }
     PLUGIN_CONTENT_MANAGER::PreparePackage( package );
 
     if( package.versions.size() != 1 )

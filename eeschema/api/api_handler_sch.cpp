@@ -20,6 +20,7 @@
 
 #include <api/api_handler_sch.h>
 #include <api/api_sch_utils.h>
+#include <api/api_enums.h>
 #include <api/api_utils.h>
 #include <gal/graphics_abstraction_layer.h>
 #include <libraries/symbol_library_adapter.h>
@@ -88,8 +89,8 @@ static void packCreatedSymbol( google::protobuf::Any& aOutput, const SCH_SYMBOL&
         kiapi::schematic::types::SymbolPin* output = result.add_pins();
         output->set_number( TO_UTF8( pin->GetNumber() ) );
         output->set_name( TO_UTF8( pin->GetName() ) );
-        kiapi::common::PackVector2( *output->mutable_position(),
-                                    aSymbol.GetPinPhysicalPosition( pin ) );
+        // 实例引脚的 GetPosition() 已经是图纸坐标；再次变换会使插件导线偏离引脚。
+        kiapi::common::PackVector2( *output->mutable_position(), pin->GetPosition() );
         output->set_unit( pin->GetUnit() );
         output->set_body_style( pin->GetBodyStyle() );
     }
@@ -99,7 +100,8 @@ static void packCreatedSymbol( google::protobuf::Any& aOutput, const SCH_SYMBOL&
 
 
 API_HANDLER_SCH::API_HANDLER_SCH( SCH_EDIT_FRAME* aFrame ) :
-        API_HANDLER_EDITOR(),
+        // 基类处理 BeginCommit 等通用请求时需要编辑器窗口来判断是否忙碌。
+        API_HANDLER_EDITOR( aFrame ),
         m_frame( aFrame )
 {
     registerHandler<GetOpenDocuments, GetOpenDocumentsResponse>(
@@ -746,7 +748,8 @@ HANDLER_RESULT<ItemRequestStatus> API_HANDLER_SCH::handleCreateUpdateItemsIntern
                 continue;
             }
 
-            SCH_LAYER_ID layer = kiapi::common::FromProtoEnum<SCH_LAYER_ID,
+            // 复用原理图线段序列化所用的全局枚举转换，避免把导线层误当成 protobuf 数值。
+            SCH_LAYER_ID layer = FromProtoEnum<SCH_LAYER_ID,
                     kiapi::schematic::types::SchematicLayer>( request.layer() );
 
             item = std::make_unique<SCH_LINE>(
