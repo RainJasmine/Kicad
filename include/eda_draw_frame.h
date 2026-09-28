@@ -37,6 +37,8 @@
 #include <hotkeys_basic.h>
 #include <lib_id.h>
 
+#include <map>
+
 struct EDA_SEARCH_DATA;
 struct PLUGIN_ACTION;
 class LIB_TREE;
@@ -627,6 +629,8 @@ protected:
                                         ///< any EDA_DRAW_FRAME?
 
 private:
+    // 每个编辑器分别保存工具栏按钮，避免重建另一窗口时清除本窗口的动作映射。
+    std::map<int, wxString>     m_apiPluginButtonBindings;
     BASE_SCREEN*                m_currentScreen;      ///< current used SCREEN
     EDA_DRAW_PANEL_GAL*         m_canvas;
 

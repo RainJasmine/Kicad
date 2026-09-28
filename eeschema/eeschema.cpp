@@ -65,6 +65,7 @@
 #include <panel_template_fieldnames.h>
 #include <panel_eeschema_color_settings.h>
 #include <panel_sch_data_sources.h>
+#include <panel_sch_plugins.h>
 #include <panel_sym_color_settings.h>
 #include <panel_eeschema_editing_options.h>
 #include <panel_eeschema_annotation_options.h>
@@ -356,6 +357,11 @@ static struct IFACE : public KIFACE_BASE, public UNITS_PROVIDER
 
             return new PANEL_TOOLBAR_CUSTOMIZATION( aParent, cfg, tb, FRAME_SCH, actions, controls );
         }
+
+#ifdef KICAD_IPC_API
+        case PANEL_SCH_PLUGINS:
+            return new PANEL_SCHEMATIC_API_PLUGINS( aParent );
+#endif
 
         case PANEL_SCH_COLORS:
             return new PANEL_EESCHEMA_COLOR_SETTINGS( aParent );

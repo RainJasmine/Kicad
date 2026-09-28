@@ -845,6 +845,11 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
 
     switch( mail.Command() )
     {
+    case MAIL_RELOAD_PLUGINS:
+        // PCM 安装或更新插件后，让原理图编辑器与 PCB 编辑器一样触发重载。
+        GetToolManager()->RunAction( ACTIONS::pluginsReload );
+        break;
+
     case MAIL_ADD_LOCAL_LIB:
     {
         std::stringstream ss( payload );

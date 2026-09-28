@@ -43,6 +43,9 @@
 #include <widgets/std_bitmap_button.h>
 #include <widgets/wx_html_report_box.h>
 #include <wx/app.h>
+#include <wx/choicdlg.h>
+#include <wx/filename.h>
+#include <wx/msgdlg.h>
 
 
 #define GRID_CELL_MARGIN 4
@@ -126,6 +129,7 @@ PANEL_PCBNEW_ACTION_PLUGINS::PANEL_PCBNEW_ACTION_PLUGINS( wxWindow* aParent ) :
     m_moveUpButton->SetBitmap( KiBitmapBundle( BITMAPS::small_up ) );
     m_moveDownButton->SetBitmap( KiBitmapBundle( BITMAPS::small_down ) );
     m_openDirectoryButton->SetBitmap( KiBitmapBundle( BITMAPS::small_folder ) );
+    m_openDirectoryButton->SetToolTip( _( "Open a plugin directory (PCM or legacy Python)" ) );
     m_reloadButton->SetBitmap( KiBitmapBundle( BITMAPS::small_refresh ) );
     m_showErrorsButton->SetBitmap( KiBitmapBundle( BITMAPS::small_warning ) );
 
@@ -380,6 +384,32 @@ bool PANEL_PCBNEW_ACTION_PLUGINS::TransferDataToWindow()
 
 void PANEL_PCBNEW_ACTION_PLUGINS::OnOpenDirectoryButtonClick( wxCommandEvent& event )
 {
+#ifdef KICAD_IPC_API
+    // PCB 列表同时包含 PCM API 插件与传统 Python 插件，两类插件的目录不同。
+    wxArrayString choices;
+    choices.Add( _( "Installed API plugins (PCM)" ) );
+    choices.Add( _( "Legacy PCB Python plugins" ) );
+
+    wxSingleChoiceDialog dialog( this, _( "Choose the plugin directory to open:" ),
+                                 _( "Plugin Directory" ), choices );
+
+    if( dialog.ShowModal() != wxID_OK )
+        return;
+
+    if( dialog.GetSelection() == 0 )
+    {
+        wxFileName directory = wxFileName::DirName( API_PLUGIN_MANAGER::GetThirdPartyPath() );
+        directory.AppendDir( wxS( "plugins" ) );
+        const wxString path = directory.GetPath();
+
+        if( !wxFileName::DirExists( path ) || !LaunchExternal( path ) )
+            wxMessageBox( wxString::Format( _( "Unable to open plugin directory '%s'." ), path ),
+                          _( "Plugin Directory" ), wxOK | wxICON_ERROR, this );
+
+        return;
+    }
+#endif
+
     SCRIPTING_TOOL::ShowPluginFolder();
 }
 

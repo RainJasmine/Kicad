@@ -19,6 +19,7 @@
  */
 
 #include <wildcards_and_files_ext.h>
+#include <api/api_plugin_manager.h>
 #include <env_vars.h>
 #include <executable_names.h>
 #include <pgm_base.h>
@@ -921,7 +922,17 @@ int KICAD_MANAGER_CONTROL::ShowPluginManager( const TOOL_EVENT& aEvent )
     if( changed.count( PCM_PACKAGE_TYPE::PT_PLUGIN ) || changed.count( PCM_PACKAGE_TYPE::PT_FAB ) )
     {
         std::string payload = "";
-        m_frame->Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_RELOAD_PLUGINS, payload );
+
+        // API 插件管理器由整个进程共享，只需让一个已打开的编辑器触发扫描；
+        // 扫描完成后，插件可用性事件会刷新 PCB 和原理图编辑器的工具栏。
+        if( m_frame->Kiway().Player( FRAME_PCB_EDITOR, false ) )
+            m_frame->Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_RELOAD_PLUGINS, payload );
+        else if( m_frame->Kiway().Player( FRAME_SCH, false ) )
+            m_frame->Kiway().ExpressMail( FRAME_SCH, MAIL_RELOAD_PLUGINS, payload );
+#ifdef KICAD_IPC_API
+        else if( Pgm().GetCommonSettings()->m_Api.enable_server )
+            Pgm().GetPluginManager().ReloadPlugins();
+#endif
     }
 
     KICAD_SETTINGS* settings = GetAppSettings<KICAD_SETTINGS>( "kicad" );

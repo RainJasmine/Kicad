@@ -218,7 +218,13 @@ wxString PYTHON_MANAGER::FindPythonInterpreter()
 std::optional<wxString> PYTHON_MANAGER::GetPythonEnvironment( const wxString& aNamespace )
 {
     wxFileName path( PATHS::GetUserCachePath(), wxEmptyString );
+#ifdef _WIN32
+    // Windows 的默认路径叠加 PySide6 等依赖内部目录后可能超过 MAX_PATH。
+    // 改用短目录，也让旧目录中安装失败的虚拟环境在下次加载时重新创建。
+    path.AppendDir( wxS( "pyenv" ) );
+#else
     path.AppendDir( wxS( "python-environments" ) );
+#endif
     path.AppendDir( aNamespace );
 
     if( !PATHS::EnsurePathExists( path.GetPath() ) )

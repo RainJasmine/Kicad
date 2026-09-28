@@ -1500,9 +1500,13 @@ std::vector<const PLUGIN_ACTION*> EDA_DRAW_FRAME::GetOrderedPluginActions( PLUGI
 void EDA_DRAW_FRAME::AddApiPluginTools( ACTION_TOOLBAR* aToolbar )
 {
 #ifdef KICAD_IPC_API
-    API_PLUGIN_MANAGER& mgr = Pgm().GetPluginManager();
+    for( const auto& binding : m_apiPluginButtonBindings )
+    {
+        Disconnect( binding.first, wxEVT_COMMAND_MENU_SELECTED,
+                    wxCommandEventHandler( EDA_DRAW_FRAME::OnApiPluginInvoke ) );
+    }
 
-    mgr.ButtonBindings().clear();
+    m_apiPluginButtonBindings.clear();
 
     std::vector<const PLUGIN_ACTION*> actions = GetOrderedPluginActions( PluginActionScope(), config() );
 
@@ -1519,7 +1523,7 @@ void EDA_DRAW_FRAME::AddApiPluginTools( ACTION_TOOLBAR* aToolbar )
         Connect( button->GetId(), wxEVT_COMMAND_MENU_SELECTED,
                  wxCommandEventHandler( EDA_DRAW_FRAME::OnApiPluginInvoke ) );
 
-        mgr.ButtonBindings().insert( { button->GetId(), action->identifier } );
+        m_apiPluginButtonBindings.insert( { button->GetId(), action->identifier } );
     }
 #endif
 }
@@ -1530,14 +1534,16 @@ void EDA_DRAW_FRAME::OnApiPluginInvoke( wxCommandEvent& aEvent )
 #ifdef KICAD_IPC_API
     API_PLUGIN_MANAGER& mgr = Pgm().GetPluginManager();
 
-    if( mgr.ButtonBindings().count( aEvent.GetId() ) )
+    auto binding = m_apiPluginButtonBindings.find( aEvent.GetId() );
+
+    if( binding != m_apiPluginButtonBindings.end() )
     {
         std::shared_ptr<REPORTER> reporter;
 
         if( KISTATUSBAR* statusBar = dynamic_cast<KISTATUSBAR*>( GetStatusBar() ) )
             reporter = std::make_shared<STATUSBAR_WARNING_REPORTER>( statusBar, wxS( "plugin" ) );
 
-        mgr.InvokeAction( mgr.ButtonBindings().at( aEvent.GetId() ), reporter );
+        mgr.InvokeAction( binding->second, reporter );
     }
 #endif
 }

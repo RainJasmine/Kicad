@@ -172,6 +172,18 @@ public:
         return wxDIR_CONTINUE;
     }
 };
+wxString API_PLUGIN_MANAGER::GetThirdPartyPath()
+{
+    // 与扫描器共用路径计算，偏好设置中的目录按钮才能打开实际的 PCM 安装位置。
+    const ENV_VAR_MAP& env = Pgm().GetLocalEnvVariables();
+
+    if( std::optional<wxString> path = ENV_VAR::GetVersionedEnvVarValue( env, wxT( "3RD_PARTY" ) ) )
+        return *path;
+
+    return PATHS::GetDefault3rdPartyPath();
+}
+
+
 void API_PLUGIN_MANAGER::ReloadPlugins( std::optional<wxString> aDirectoryToScan,
                                         std::shared_ptr<REPORTER> aReporter )
 {
@@ -181,9 +193,9 @@ void API_PLUGIN_MANAGER::ReloadPlugins( std::optional<wxString> aDirectoryToScan
     m_pluginsCache.clear();
     m_actionsCache.clear();
     m_environmentCache.clear();
-    m_buttonBindings.clear();
     m_menuBindings.clear();
     m_readyPlugins.clear();
+    m_pluginErrors.clear();
 
     PLUGIN_TRAVERSER loader(
             [&]( const wxFileName& aFile )
@@ -219,6 +231,7 @@ void API_PLUGIN_MANAGER::ReloadPlugins( std::optional<wxString> aDirectoryToScan
                 {
                     wxLogTrace( traceApi, "Manager: loading failed" );
 
+                    m_pluginErrors[aFile.GetFullPath()] = plugin->ErrorMessage();
                     reportPluginLoadMessage( m_reloadReporter.get(), aFile.GetFullPath(),
                                              plugin->ErrorMessage() );
                 }
@@ -233,15 +246,7 @@ void API_PLUGIN_MANAGER::ReloadPlugins( std::optional<wxString> aDirectoryToScan
         systemPluginsDir.Traverse( loader );
     }
 
-    wxString thirdPartyPath;
-    const ENV_VAR_MAP& env = Pgm().GetLocalEnvVariables();
-
-    if( std::optional<wxString> v = ENV_VAR::GetVersionedEnvVarValue( env, wxT( "3RD_PARTY" ) ) )
-        thirdPartyPath = *v;
-    else
-        thirdPartyPath = PATHS::GetDefault3rdPartyPath();
-
-    wxDir thirdParty( thirdPartyPath );
+    wxDir thirdParty( GetThirdPartyPath() );
 
     if( thirdParty.IsOpened() )
     {
@@ -261,7 +266,8 @@ void API_PLUGIN_MANAGER::ReloadPlugins( std::optional<wxString> aDirectoryToScan
 
     processPluginDependencies();
 
-    m_reloadReporter.reset();
+    if( m_jobs.empty() && m_busyPlugins.empty() )
+        m_reloadReporter.reset();
 
     wxCommandEvent* evt = new wxCommandEvent( EDA_EVT_PLUGIN_AVAILABILITY_CHANGED, wxID_ANY );
     m_parent->QueueEvent( evt );
@@ -515,13 +521,14 @@ void API_PLUGIN_MANAGER::InvokeAction( const wxString& aIdentifier, std::shared_
 }
 
 
-std::vector<const PLUGIN_ACTION*> API_PLUGIN_MANAGER::GetActionsForScope( PLUGIN_ACTION_SCOPE aScope )
+std::vector<const PLUGIN_ACTION*> API_PLUGIN_MANAGER::GetActionsForScope( PLUGIN_ACTION_SCOPE aScope,
+                                                                          bool aIncludeUnready )
 {
     std::vector<const PLUGIN_ACTION*> actions;
 
     for( auto& [identifier, action] : m_actionsCache )
     {
-        if( !m_readyPlugins.count( action->plugin.Identifier() ) )
+        if( !aIncludeUnready && !m_readyPlugins.count( action->plugin.Identifier() ) )
             continue;
 
         if( action->scopes.count( aScope ) )
@@ -529,6 +536,16 @@ std::vector<const PLUGIN_ACTION*> API_PLUGIN_MANAGER::GetActionsForScope( PLUGIN
     }
 
     return actions;
+}
+
+
+void API_PLUGIN_MANAGER::recordPluginFailure( const wxString& aIdentifier,
+                                               const wxString& aMessage )
+{
+    m_pluginErrors[aIdentifier] = aMessage;
+    m_busyPlugins.erase( aIdentifier );
+    reportPluginLoadMessage( m_reloadReporter.get(), aIdentifier, aMessage );
+    wxTheApp->QueueEvent( new wxCommandEvent( EDA_EVT_PLUGIN_AVAILABILITY_CHANGED, wxID_ANY ) );
 }
 
 
@@ -559,6 +576,7 @@ void API_PLUGIN_MANAGER::processPluginDependencies()
         {
             wxLogTrace( traceApi, wxString::Format( "Manager: could not create env for %s",
                                                      plugin->Identifier() ) );
+            recordPluginFailure( plugin->Identifier(), _( "could not create plugin environment" ) );
             continue;
         }
 
@@ -606,6 +624,10 @@ void API_PLUGIN_MANAGER::processNextJob( wxCommandEvent& aEvent )
     if( m_jobs.empty() )
     {
         wxLogTrace( traceApi, "Manager: no more jobs to process" );
+
+        if( m_busyPlugins.empty() )
+            m_reloadReporter.reset();
+
         return;
     }
 
@@ -662,7 +684,13 @@ void API_PLUGIN_MANAGER::processNextJob( wxCommandEvent& aEvent )
 
                         error = wxString::Format( _( "could not create plugin environment: %s" ), error );
 
-                        reportPluginLoadMessage( m_reloadReporter.get(), job.identifier, error );
+                        recordPluginFailure( job.identifier, error );
+                    }
+                    else
+                    {
+                        JOB nextJob( job );
+                        nextJob.type = JOB_TYPE::SETUP_ENV;
+                        m_jobs.emplace_back( nextJob );
                     }
 
                     wxCommandEvent* evt =
@@ -670,9 +698,6 @@ void API_PLUGIN_MANAGER::processNextJob( wxCommandEvent& aEvent )
                     QueueEvent( evt );
                 }, &env );
 
-        JOB nextJob( job );
-        nextJob.type = JOB_TYPE::SETUP_ENV;
-        m_jobs.emplace_back( nextJob );
     }
     else if( job.type == JOB_TYPE::SETUP_ENV )
     {
@@ -687,8 +712,8 @@ void API_PLUGIN_MANAGER::processNextJob( wxCommandEvent& aEvent )
             wxLogTrace( traceApi, wxString::Format( "Manager: error: python not found at %s",
                                                     job.env_path ) );
 
-            reportPluginLoadMessage( m_reloadReporter.get(), job.identifier,
-                                     _( "missing plugin environment" ) );
+            recordPluginFailure( job.identifier, _( "missing plugin environment" ) );
+            QueueEvent( new wxCommandEvent( EDA_EVT_PLUGIN_MANAGER_JOB_FINISHED, wxID_ANY ) );
         }
         else
         {
@@ -747,14 +772,15 @@ void API_PLUGIN_MANAGER::processNextJob( wxCommandEvent& aEvent )
                         reportPluginLoadMessage( m_reloadReporter.get(), job.identifier, error );
                     }
 
+                    JOB nextJob( job );
+                    nextJob.type = JOB_TYPE::INSTALL_REQUIREMENTS;
+                    m_jobs.emplace_back( nextJob );
+
                     wxCommandEvent* evt =
                             new wxCommandEvent( EDA_EVT_PLUGIN_MANAGER_JOB_FINISHED, wxID_ANY );
                     QueueEvent( evt );
                 }, &env );
 
-            JOB nextJob( job );
-            nextJob.type = JOB_TYPE::INSTALL_REQUIREMENTS;
-            m_jobs.emplace_back( nextJob );
         }
     }
     else if( job.type == JOB_TYPE::INSTALL_REQUIREMENTS )
@@ -771,8 +797,8 @@ void API_PLUGIN_MANAGER::processNextJob( wxCommandEvent& aEvent )
             wxLogTrace( traceApi, wxString::Format( "Manager: error: python not found at %s",
                                                     job.env_path ) );
 
-            reportPluginLoadMessage( m_reloadReporter.get(), job.identifier,
-                                     _( "missing plugin environment" ) );
+            recordPluginFailure( job.identifier, _( "missing plugin environment" ) );
+            QueueEvent( new wxCommandEvent( EDA_EVT_PLUGIN_MANAGER_JOB_FINISHED, wxID_ANY ) );
         }
         else if( !reqs.IsFileReadable() )
         {
@@ -780,8 +806,8 @@ void API_PLUGIN_MANAGER::processNextJob( wxCommandEvent& aEvent )
                         wxString::Format( "Manager: error: requirements.txt not found at %s",
                                           job.plugin_path ) );
 
-            reportPluginLoadMessage( m_reloadReporter.get(), job.identifier,
-                                     _( "requirements.txt could not be read" ) );
+            recordPluginFailure( job.identifier, _( "requirements.txt could not be read" ) );
+            QueueEvent( new wxCommandEvent( EDA_EVT_PLUGIN_MANAGER_JOB_FINISHED, wxID_ANY ) );
         }
         else
         {
@@ -834,7 +860,7 @@ void API_PLUGIN_MANAGER::processNextJob( wxCommandEvent& aEvent )
 
                         error = wxString::Format( _( "could not create plugin environment: %s" ), error );
 
-                        reportPluginLoadMessage( m_reloadReporter.get(), job.identifier, error );
+                        recordPluginFailure( job.identifier, error );
                     }
 
                     if( aRetVal == 0 )
@@ -843,6 +869,7 @@ void API_PLUGIN_MANAGER::processNextJob( wxCommandEvent& aEvent )
                                                                 job.identifier ) );
                         m_readyPlugins.insert( job.identifier );
                         m_busyPlugins.erase( job.identifier );
+                        m_pluginErrors.erase( job.identifier );
                         wxCommandEvent* availabilityEvt =
                                 new wxCommandEvent( EDA_EVT_PLUGIN_AVAILABILITY_CHANGED, wxID_ANY );
                         wxTheApp->QueueEvent( availabilityEvt );
@@ -855,13 +882,9 @@ void API_PLUGIN_MANAGER::processNextJob( wxCommandEvent& aEvent )
                 }, &env );
         }
 
-        wxCommandEvent* evt = new wxCommandEvent( EDA_EVT_PLUGIN_MANAGER_JOB_FINISHED, wxID_ANY );
-        QueueEvent( evt );
     }
 
     m_jobs.pop_front();
-
-    m_reloadReporter.reset();
 
     wxLogTrace( traceApi, wxString::Format( "Manager: finished job; %zu left in queue",
                                             m_jobs.size() ) );

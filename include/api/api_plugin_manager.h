@@ -61,15 +61,31 @@ public:
 
     std::optional<const PLUGIN_ACTION*> GetAction( const wxString& aIdentifier );
 
-    std::vector<const PLUGIN_ACTION*> GetActionsForScope( PLUGIN_ACTION_SCOPE aScope );
+    std::vector<const PLUGIN_ACTION*> GetActionsForScope( PLUGIN_ACTION_SCOPE aScope,
+                                                          bool aIncludeUnready = false );
 
-    std::map<int, wxString>& ButtonBindings() { return m_buttonBindings; }
+    bool IsPluginReady( const wxString& aIdentifier ) const
+    {
+        return m_readyPlugins.contains( aIdentifier );
+    }
+
+    bool IsPluginBusy( const wxString& aIdentifier ) const
+    {
+        return m_busyPlugins.contains( aIdentifier );
+    }
+
+    const std::map<wxString, wxString>& PluginErrors() const { return m_pluginErrors; }
+
+    /// Return the PCM root actually scanned for API plugins, including user path overrides.
+    static wxString GetThirdPartyPath();
 
     std::map<int, wxString>& MenuBindings() { return m_menuBindings; }
 
     std::shared_ptr<REPORTER> GetReporter() { return m_reloadReporter; }
 
 private:
+    void recordPluginFailure( const wxString& aIdentifier, const wxString& aMessage );
+
     void processPluginDependencies();
 
     void processNextJob( wxCommandEvent& aEvent );
@@ -85,15 +101,15 @@ private:
     /// Map of plugin identifier to a path for the plugin's virtual environment, if it has one
     std::map<wxString, wxString> m_environmentCache;
 
-    /// Map of button wx item id to action identifier
-    std::map<int, wxString> m_buttonBindings;
-
     /// Map of menu wx item id to action identifier
     std::map<int, wxString> m_menuBindings;
 
     std::set<wxString> m_readyPlugins;
 
     std::set<wxString> m_busyPlugins;
+
+    /// Manifest or Python setup errors, keyed by plugin identifier or manifest path.
+    std::map<wxString, wxString> m_pluginErrors;
 
     enum class JOB_TYPE
     {

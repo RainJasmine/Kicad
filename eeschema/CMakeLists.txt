@@ -201,6 +201,7 @@ set( EESCHEMA_DLGS
     dialogs/panel_simulator_preferences.cpp
     dialogs/panel_simulator_preferences_base.cpp
     dialogs/panel_sch_data_sources.cpp
+    dialogs/panel_sch_plugins.cpp
     dialogs/panel_sym_color_settings.cpp
     dialogs/panel_sym_color_settings_base.cpp
     dialogs/panel_sym_display_options.cpp
